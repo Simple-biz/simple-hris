@@ -126,16 +126,18 @@ The core feature. A 5-step wizard for the weekly payroll cycle, called the **"Fr
 
 **Purpose**: Load existing Hubstaff data from the DB and allow uploading a new CSV.
 
-**On mount**: Fetches `GET /api/hubstaff-hours`. If service-role key is present, the response includes all DB columns in their actual order (derived from OpenAPI spec). If anon only, returns the standard payroll columns.
+**On mount**: Fetches `GET /api/hubstaff-hours`. Both the service-role and anon-key paths now return the same JSON shape: `{ columns, rows, payrollRows, error }`. The service-role path uses `fetchHubstaffRowsOrdered()` (OpenAPI column discovery); the anon path does a direct `select("*")` and builds the same structure. This ensures `hubstaffDisplayColumns` and `hubstaffDisplayRows` are always populated.
 
-**Table lock mechanism**: Once Hubstaff data is present, the upload area shows a "Data locked" badge and the table is rendered. A "Replace data" button unlocks the upload area. This prevents accidental re-upload mid-wizard.
+**Table lock mechanism**: Once Hubstaff data is present (`hubstaffDisplayRows.length > 0`), the component sets `hubstaffTableLocked = true`. The upload area shows a "Data locked" badge and the table is rendered. A "Replace data" button sets `hubstaffTableLocked = false`, which shows the upload button again. This prevents accidental re-upload mid-wizard.
 
 **CSV upload flow**:
 1. File chosen via `<input type="file">`.
 2. SHA-256 hash computed client-side (`src/lib/hash.ts`).
-3. If hash matches last uploaded file: show approval dialog (warns about duplicate data).
+3. If hash matches last uploaded file: show duplicate-data approval dialog.
 4. Approval dialog confirmed → `POST /api/hubstaff-hours` with CSV as `FormData`.
-5. On success: store hash, reload preview data.
+5. On success: **the CSV text is re-parsed client-side** using `parseCsv()` and `buildHubstaffDataFromParsedGrid()`. This sets `hubstaffDisplayColumns` and `hubstaffDisplayRows` directly from the CSV — not from a Supabase re-fetch.
+6. **Why client-side re-parse?** The Supabase table may have ISO date column names (`"2026-03-24"`) while the CSV has Hubstaff-format names (`"Mon 3/24"`). Even with the server-side date-aware column mapping, there can be cases where daily column values end up as `null` in Supabase (e.g., different week's dates). Parsing client-side guarantees the daily breakdown data is always available for Perfect Attendance detection in Step 3.
+7. Store hash, lock table. The previous `loadHubstaffPreview()` call is skipped — the CSV data is authoritative.
 
 **Preview table**:
 - Up to 8 columns shown. Priority order: Member, Email, Total Worked, Overtime Hours, Activity, Spent Total, Organization, Time Zone. Remaining actual columns fill slots after these.
@@ -202,11 +204,24 @@ The **unassigned count** badge in the header shows how many Hubstaff employees h
 
 #### Perfect Attendance Auto-Detection
 
-Scans the Hubstaff raw rows for weekday columns. Day-column detection: column headers matching the pattern `Mon|Tue|Wed|Thu|Fri` (plus date suffix like `Mon 7/1` or `Mon 2025-07-01`).
+**Data source**: `hubstaffDisplayRows` — the raw row data with daily columns. After a CSV upload, this comes from the **client-side CSV re-parse** (not Supabase), so daily values are always present. On initial page load (no upload this session), it comes from Supabase — daily columns may be `null` if the original upload had a column-name mismatch (see Step 1 notes). When all daily values are null, a `dailyDataMissing` flag is set and an amber warning banner appears telling the user to re-upload.
 
-For each employee in the current tab's list:
-- For each detected Mon–Fri column: parse the cell value to seconds with `rawValueToTotalSeconds()`.
-- If every weekday column has ≥ 25,200 seconds (7 hours), the `perfect_attendance` toggle is auto-enabled.
+**Weekday column detection** (`colIsWeekday()`): Uses a two-tier approach:
+1. **Day-name prefix** takes priority: if the column starts with `Mon`, `Tue`, `Wed`, `Thu`, or `Fri` (short or full names like `Monday`), it is a weekday regardless of the date portion. This is authoritative because Hubstaff CSV headers always label the correct day.
+2. **ISO date fallback**: for columns without a day-name prefix (e.g., `"2026-03-24"`), `parseColDate()` parses the date and `getDay()` determines the day of week.
+
+`colDayPrefix()` + `DAY_PREFIX_MAP` drive identification, `colDayOrder()` sorts them Mon→Fri, and `dayLabel()` / `dayLetter()` produce the display labels.
+
+**Per-employee eligibility** (`perfectAttendanceEligible` useMemo):
+- Filters `hubstaffDisplayColumns` to weekday columns.
+- For each employee row, parses every weekday cell to integer seconds with `rawValueToTotalSeconds()`.
+- If **all** weekday values ≥ 25,200 seconds (7 hours), the employee is added to the eligible set.
+
+**Per-employee breakdown** (`employeeWeekdayHours` useMemo):
+- Maps each employee's normalized email to an array of `{ col, seconds, passes }` for each weekday column, sorted Mon→Fri.
+- Used to render colored day-pill indicators (M T W T F) in the PA toggle cell. Green = ≥7h, red = <7h. Hovering shows a tooltip with the full column name and logged hours.
+
+**Auto-apply effect**: When `perfectAttendanceEligible` recomputes, a `useEffect` auto-toggles the `perfect_attendance` bonus for all department-assigned employees. Manual overrides after the effect are preserved.
 
 #### Common Bonuses (all departments)
 

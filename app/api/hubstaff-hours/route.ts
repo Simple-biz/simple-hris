@@ -1,4 +1,5 @@
-import { getHubstaffHoursPayrollRows } from "@/lib/supabase/hubstaff-hours";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { mapHubstaffHoursRow } from "@/lib/supabase/hubstaff-hours";
 import {
   fetchHubstaffRowsOrdered,
   replaceHubstaffHoursFromCsvText,
@@ -10,6 +11,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
+  // Service role path: full ordered fetch with OpenAPI column discovery
   if (process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
     try {
       const { columns, rows } = await fetchHubstaffRowsOrdered();
@@ -21,8 +23,24 @@ export async function GET() {
     }
   }
 
-  const { rows: payrollRows, error } = await getHubstaffHoursPayrollRows();
-  return NextResponse.json({ columns: null, rows: null, payrollRows, error });
+  // Anon key path: also return raw rows so PA daily-column detection works in the UI
+  try {
+    const supabase = createSupabaseServerClient();
+    const table =
+      process.env.NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE?.trim() || "hubstaff_hours";
+    const { data, error } = await supabase!.from(table).select("*");
+    if (error) throw new Error(error.message);
+
+    const rawRows = ((data ?? []) as Record<string, unknown>[]).filter((r) =>
+      Object.values(r).some((v) => v != null && String(v).trim() !== ""),
+    );
+    const columns = rawRows.length > 0 ? Object.keys(rawRows[0]) : [];
+    const payrollRows = rawRows.map((r) => mapHubstaffHoursRow(r));
+    return NextResponse.json({ columns, rows: rawRows, payrollRows, error: null });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ columns: null, rows: null, payrollRows: [], error: msg });
+  }
 }
 
 export async function POST(req: NextRequest) {

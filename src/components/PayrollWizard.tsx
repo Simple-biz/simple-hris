@@ -274,40 +274,124 @@ const DEPARTMENTS: {
   { key: 'site_building',    name: 'Site Building',      bonuses: [] },
 ];
 
-/** Known non-date Hubstaff column names (lowercase). */
+/** Known non-date Hubstaff column names (lowercase). Used as a quick-reject before date parsing. */
 const HUBSTAFF_NON_DATE_COLS = new Set([
-  'member', 'email', 'total worked', 'activity', 'spent total',
-  'organization', 'time zone', 'overtime',
+  'id', 'member', 'email', 'total worked', 'activity', 'activity (%)', 'spent', 'spent total',
+  'billable', 'earned', 'organization', 'time zone', 'timezone', 'overtime',
+  'job title', 'job type', 'client', 'project', 'task', 'note', 'created_at', 'updated_at',
 ]);
 
 /**
- * Returns true when a Hubstaff column name represents a Mon–Fri workday.
- * Handles:
- *   • "Mon 7/1", "Tue 07/01", "Wed 7/1/2024"  (Hubstaff export format)
- *   • ISO "2024-07-01"
- *   • Full names "Monday 7/1" etc.
+ * Tries to extract an actual calendar date from a Hubstaff daily column name.
+ * Handles all known formats from Supabase + Hubstaff exports:
+ *   • "Mon 7/1"           → month/day, year = current year
+ *   • "Mon 07/01"         → same, zero-padded
+ *   • "Mon 7/1/2025"      → month/day/year (4-digit)
+ *   • "Mon 7/1/25"        → month/day/year (2-digit, +2000)
+ *   • "Monday 7/1"        → full day name + date
+ *   • "2025-07-01"        → ISO 8601
+ */
+function parseColDate(col: string): Date | null {
+  const s = col.trim();
+
+  // ISO 8601: "2025-07-01"
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (iso) {
+    const d = new Date(parseInt(iso[1], 10), parseInt(iso[2], 10) - 1, parseInt(iso[3], 10));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // Hubstaff format: <DayName> M/D[/YY|YYYY]
+  // Matches "Mon 7/1", "Monday 7/1", "Tue 07/01/2025", etc.
+  const hub = /^(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/i.exec(s);
+  if (hub) {
+    const month = parseInt(hub[1], 10) - 1; // 0-indexed
+    const day   = parseInt(hub[2], 10);
+    let year = hub[3] ? parseInt(hub[3], 10) : new Date().getFullYear();
+    if (year < 100) year += 2000;
+    const d = new Date(year, month, day);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  return null;
+}
+
+/** Map short day-name prefixes to a canonical 3-letter label + sort order. */
+const DAY_PREFIX_MAP: Record<string, { label: string; order: number; weekday: boolean }> = {
+  mon: { label: 'Mon', order: 1, weekday: true },
+  tue: { label: 'Tue', order: 2, weekday: true },
+  wed: { label: 'Wed', order: 3, weekday: true },
+  thu: { label: 'Thu', order: 4, weekday: true },
+  fri: { label: 'Fri', order: 5, weekday: true },
+  sat: { label: 'Sat', order: 6, weekday: false },
+  sun: { label: 'Sun', order: 0, weekday: false },
+};
+
+/**
+ * Extract a day-name match from the column header prefix.
+ * Handles short ("Mon 3/24") and full ("Monday 3/24") names.
+ */
+function colDayPrefix(col: string): { label: string; order: number; weekday: boolean } | null {
+  const m = /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/i.exec(col.trim());
+  return m ? DAY_PREFIX_MAP[m[1].toLowerCase()] ?? null : null;
+}
+
+/**
+ * Returns true when a Hubstaff column name represents a Monday–Friday workday.
+ *
+ * Priority:
+ *  1. If the column starts with a day name ("Mon …", "Friday …"), trust that name.
+ *     The Hubstaff CSV header is always correct even when year is ambiguous.
+ *  2. For ISO columns without a day-name prefix ("2025-07-01"), parse the date and
+ *     use getDay() to determine weekday.
  */
 function colIsWeekday(col: string): boolean {
   const s = col.trim();
   const lower = s.toLowerCase();
-  // Skip known non-date cols
+
+  // Quick reject: known non-date columns
   for (const nd of HUBSTAFF_NON_DATE_COLS) {
     if (lower === nd || lower.startsWith(nd + ' ')) return false;
   }
-  // "Mon …", "Tue …", "Wed …", "Thu …", "Fri …" → weekday
-  if (/^(Mon|Tue|Wed|Thu|Fri)\b/i.test(s)) return true;
-  // "Sat …" or "Sun …" → weekend
-  if (/^(Sat|Sun)\b/i.test(s)) return false;
-  // ISO date: "2024-07-01"
-  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (iso) {
-    const d = new Date(parseInt(iso[1]), parseInt(iso[2]) - 1, parseInt(iso[3]));
-    if (!isNaN(d.getTime())) {
-      const dow = d.getDay();
-      return dow >= 1 && dow <= 5;
-    }
+
+  // Day-name prefix takes priority (always correct regardless of year)
+  const prefix = colDayPrefix(s);
+  if (prefix !== null) return prefix.weekday;
+
+  // ISO dates without day-name prefix: parse and check getDay()
+  const date = parseColDate(s);
+  if (date !== null) {
+    const dow = date.getDay();
+    return dow >= 1 && dow <= 5;
   }
+
   return false;
+}
+
+/** Day-of-week sort order (Mon=1, Tue=2, …, Fri=5). Uses column name prefix first, then parsed date. */
+function colDayOrder(col: string): number {
+  const prefix = colDayPrefix(col.trim());
+  if (prefix) return prefix.order;
+  const date = parseColDate(col.trim());
+  if (date) return date.getDay();
+  return 9;
+}
+
+/** Returns the short day label for a column (e.g. "Mon 7/1" → "Mon", "2025-07-01" → "Tue"). */
+function dayLabel(col: string): string {
+  const prefix = colDayPrefix(col.trim());
+  if (prefix) return prefix.label;
+  const date = parseColDate(col.trim());
+  if (date) {
+    const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return names[date.getDay()] ?? '?';
+  }
+  return col.trim().slice(0, 3);
+}
+
+/** Returns the single-letter weekday label for a Hubstaff day column (e.g. "Mon 7/1" → "M"). */
+function dayLetter(col: string): string {
+  return dayLabel(col)[0]?.toUpperCase() ?? '?';
 }
 
 /**
@@ -680,11 +764,30 @@ export default function PayrollWizard() {
   );
 
   /**
+   * True when the Hubstaff data has weekday columns but every value is null/empty.
+   * This means the daily breakdown was never stored (column-name mismatch during upload)
+   * and the user needs to re-upload the CSV for PA detection to work.
+   */
+  const dailyDataMissing = useMemo<boolean>(() => {
+    if (!hubstaffDisplayColumns || !hubstaffDisplayRows || hubstaffDisplayRows.length === 0) return false;
+    const weekdayCols = hubstaffDisplayColumns.filter(colIsWeekday);
+    if (weekdayCols.length === 0) return false;
+    // Check if EVERY weekday cell across ALL rows is null/empty
+    return hubstaffDisplayRows.every(row =>
+      weekdayCols.every(col => {
+        const v = row[col];
+        return v == null || String(v).trim() === '';
+      }),
+    );
+  }, [hubstaffDisplayColumns, hubstaffDisplayRows]);
+
+  /**
    * Computes which employees qualify for Perfect Attendance by scanning the
    * raw Hubstaff daily columns. An employee qualifies if every Mon–Fri column
    * in the dataset shows ≥ 7 hours (25 200 seconds).
    */
   const perfectAttendanceEligible = useMemo<Set<string>>(() => {
+    if (dailyDataMissing) return new Set(); // can't compute — all daily values are null
     if (!hubstaffDisplayColumns || !hubstaffDisplayRows || hubstaffDisplayRows.length === 0) {
       return new Set();
     }
@@ -707,6 +810,39 @@ export default function PayrollWizard() {
       if (perfect) eligible.add(email);
     }
     return eligible;
+  }, [hubstaffDisplayColumns, hubstaffDisplayRows, dailyDataMissing]);
+
+  /**
+   * Per-employee weekday breakdown: maps normalized email → array of
+   * { col, seconds, passes } for each Mon–Fri column in the Hubstaff data.
+   * Used to render per-day indicators in the Perfect Attendance cell.
+   */
+  const employeeWeekdayHours = useMemo<
+    Map<string, { col: string; seconds: number; passes: boolean }[]>
+  >(() => {
+    if (!hubstaffDisplayColumns || !hubstaffDisplayRows || hubstaffDisplayRows.length === 0) {
+      return new Map();
+    }
+    // Sort weekday cols Mon→Fri by actual day-of-week order
+    const weekdayCols = hubstaffDisplayColumns
+      .filter(colIsWeekday)
+      .sort((a, b) => colDayOrder(a) - colDayOrder(b));
+    if (weekdayCols.length === 0) return new Map();
+
+    const map = new Map<string, { col: string; seconds: number; passes: boolean }[]>();
+    for (const row of hubstaffDisplayRows) {
+      const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
+      const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
+      if (!email) continue;
+      map.set(
+        email,
+        weekdayCols.map(col => {
+          const seconds = rawValueToTotalSeconds(row[col]);
+          return { col, seconds, passes: seconds >= 7 * 3600 };
+        }),
+      );
+    }
+    return map;
   }, [hubstaffDisplayColumns, hubstaffDisplayRows]);
 
   /**
@@ -1079,8 +1215,11 @@ export default function PayrollWizard() {
     if (!pendingWeekly) return;
     setWeeklyUploadLoading(true);
     try {
+      // ── 1. Save CSV text before clearing pendingWeekly ──
+      const csvText = pendingWeekly.text;
+
       const form = new FormData();
-      form.append('file', new Blob([pendingWeekly.text], { type: 'text/csv' }), pendingWeekly.fileName);
+      form.append('file', new Blob([csvText], { type: 'text/csv' }), pendingWeekly.fileName);
 
       const res = await fetch('/api/hubstaff-hours', { method: 'POST', body: form });
       const json = (await res.json()) as { success?: boolean; error?: string; rowCount?: number };
@@ -1094,7 +1233,39 @@ export default function PayrollWizard() {
       setApproveUploadDialogOpen(false);
       setHubstaffTableLocked(true);
 
-      await loadHubstaffPreview();
+      // ── 2. Parse CSV client-side so daily column data is available ──
+      // Supabase may not store daily columns if its schema has different
+      // date column names (e.g. ISO "2026-03-24" vs Hubstaff "Mon 3/24").
+      // Parsing client-side guarantees the PA detection has real values.
+      const rawGrid = parseCsv(csvText);
+      const cleanGrid = [
+        rawGrid[0],
+        ...rawGrid.slice(1).filter((row) => row.some((cell) => cell.trim() !== '')),
+      ];
+
+      if (cleanGrid.length >= 2) {
+        const headers = cleanGrid[0].map((h) => h.trim());
+        const csvRows: Record<string, unknown>[] = cleanGrid.slice(1).map((row) => {
+          const obj: Record<string, unknown> = {};
+          headers.forEach((h, i) => {
+            const val = (row[i] ?? '').trim();
+            obj[h] = val || null;
+          });
+          return obj;
+        });
+        setHubstaffDisplayColumns(headers);
+        setHubstaffDisplayRows(csvRows);
+        setHubstaffPage(1);
+        setHubstaffSearch('');
+
+        // Also build hubstaffData from the CSV so Step 2 calc has fresh data
+        const hd = buildHubstaffDataFromParsedGrid(cleanGrid);
+        setHubstaffData(hd);
+        setIssues(buildReconciliationIssues(hd, users));
+      } else {
+        // Fallback: re-fetch from Supabase (daily cols may be null)
+        await loadHubstaffPreview();
+      }
 
       toast.success('Saved to hubstaff_hours', {
         description: `${json.rowCount ?? 0} rows replaced in public.hubstaff_hours.`,
@@ -1760,6 +1931,15 @@ export default function PayrollWizard() {
                     Perfect Attendance Bonus (₱5,000)
                   </span>.
                 </p>
+                {dailyDataMissing && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      <strong>Perfect Attendance cannot be detected.</strong> The daily hours breakdown (Mon–Fri columns) is empty in Supabase.
+                      Go back to <strong>Step 1</strong> and <strong>re-upload the Hubstaff CSV</strong> — daily data will be stored correctly this time.
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 {unassignedEmployees.length > 0 && (
@@ -2352,6 +2532,8 @@ export default function PayrollWizard() {
                                   const paEligible = isPA && perfectAttendanceEligible.has(
                                     normEmail(emp.email) ?? emp.email.toLowerCase(),
                                   );
+                                  const normEmpEmail = normEmail(emp.email) ?? emp.email.toLowerCase();
+                                  const weekdayBreakdown = isPA ? (employeeWeekdayHours.get(normEmpEmail) ?? null) : null;
                                   return (
                                     <TableCell key={bonus.id} className="px-2 py-2 text-center">
                                       <div className="flex flex-col items-center gap-0.5">
@@ -2361,12 +2543,32 @@ export default function PayrollWizard() {
                                           className="data-[state=checked]:bg-indigo-600"
                                         />
                                         {isPA && (
-                                          <span className={cn(
-                                            'text-[9px] font-semibold leading-none',
-                                            paEligible ? 'text-emerald-500' : 'text-zinc-400',
-                                          )}>
-                                            {paEligible ? '✓ Eligible' : '✗ Ineligible'}
-                                          </span>
+                                          <>
+                                            <span className={cn(
+                                              'text-[9px] font-semibold leading-none',
+                                              paEligible ? 'text-emerald-500' : 'text-zinc-400',
+                                            )}>
+                                              {paEligible ? '✓ Eligible' : '✗ Ineligible'}
+                                            </span>
+                                            {weekdayBreakdown && weekdayBreakdown.length > 0 && (
+                                              <div className="mt-0.5 flex gap-px">
+                                                {weekdayBreakdown.map(({ col, seconds, passes }) => (
+                                                  <span
+                                                    key={col}
+                                                    title={`${dayLabel(col)} (${col}): ${formatSeconds(seconds)} logged${passes ? ' ✓' : ' — needs 7 h'}`}
+                                                    className={cn(
+                                                      'flex h-3.5 w-3.5 cursor-default items-center justify-center rounded-sm text-[7px] font-bold leading-none select-none',
+                                                      passes
+                                                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+                                                        : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+                                                    )}
+                                                  >
+                                                    {dayLetter(col)}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </>
                                         )}
                                       </div>
                                     </TableCell>

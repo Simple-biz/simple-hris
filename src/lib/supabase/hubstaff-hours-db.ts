@@ -46,6 +46,36 @@ function rowIsEmpty(row: Record<string, unknown>): boolean {
   return Object.values(row).every((v) => v == null || String(v).trim() === "");
 }
 
+/**
+ * Try to parse a CSV column header into an ISO date string (YYYY-MM-DD).
+ * Handles:
+ *   • "2026-03-24"              → "2026-03-24"
+ *   • "Mon 3/24", "Mon 3/24/26" → "2026-03-24"
+ *   • "Monday 3/24/2026"        → "2026-03-24"
+ * Returns null if the column isn't a date.
+ */
+function csvColToIsoDate(col: string): string | null {
+  const s = col.trim();
+
+  // Already ISO
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // Hubstaff format: <DayName> M/D[/YY|YYYY]
+  const hub =
+    /^(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/i.exec(
+      s,
+    );
+  if (hub) {
+    const month = parseInt(hub[1], 10);
+    const day = parseInt(hub[2], 10);
+    let year = hub[3] ? parseInt(hub[3], 10) : new Date().getFullYear();
+    if (year < 100) year += 2000;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  return null;
+}
+
 /** Fetches ALL rows from hubstaff_hours (paginated, no hard cap), drops rows that are empty in every preview column. */
 export async function fetchHubstaffRowsOrdered(): Promise<{
   columns: string[];
@@ -107,12 +137,43 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
   const insertCols: { csvIdx: number; dbCol: string }[] = [];
 
   if (dbColumns.length > 0) {
+    const usedCsvIdx = new Set<number>();
+
+    // ── Pass 1: exact case-insensitive match (handles "Email", "Total worked", etc.) ──
     for (const dbCol of dbColumns) {
       if (dbCol === "id") continue; // auto-generated; skip unless CSV explicitly has it
       const csvIdx = csvHeaders.findIndex(
         (h) => h.toLowerCase() === dbCol.toLowerCase(),
       );
-      if (csvIdx >= 0) insertCols.push({ csvIdx, dbCol });
+      if (csvIdx >= 0) {
+        insertCols.push({ csvIdx, dbCol });
+        usedCsvIdx.add(csvIdx);
+      }
+    }
+
+    // ── Pass 2: date-aware match ──
+    // The DB may have ISO date columns ("2026-03-24") while the CSV uses
+    // Hubstaff-format names ("Mon 3/24"). Parse both to ISO and match.
+    const unmatchedDbDateCols = dbColumns.filter(
+      (c) =>
+        c !== "id" &&
+        !insertCols.some((ic) => ic.dbCol === c) &&
+        /^\d{4}-\d{2}-\d{2}$/.test(c),
+    );
+    if (unmatchedDbDateCols.length > 0) {
+      const csvDateMap = new Map<string, number>();
+      csvHeaders.forEach((h, i) => {
+        if (usedCsvIdx.has(i)) return;
+        const iso = csvColToIsoDate(h);
+        if (iso) csvDateMap.set(iso, i);
+      });
+      for (const dbCol of unmatchedDbDateCols) {
+        const csvIdx = csvDateMap.get(dbCol); // dbCol is already ISO
+        if (csvIdx !== undefined) {
+          insertCols.push({ csvIdx, dbCol });
+          usedCsvIdx.add(csvIdx);
+        }
+      }
     }
   } else {
     // Spec unavailable — use CSV headers directly, omitting 'id'

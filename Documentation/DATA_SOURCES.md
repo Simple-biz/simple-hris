@@ -95,9 +95,13 @@ The weekly Hubstaff export. Replaced entirely on each upload. Configured via `NE
 - `fetchHubstaffRowsOrdered()`: Paginates 1,000 rows at a time (Supabase default limit), derives column order from the first row or the OpenAPI spec.
 - `replaceHubstaffHoursFromCsvText()`:
   1. Deletes all existing rows (`.not('id', 'is', null)` filter — deletes everything).
-  2. Parses incoming CSV text.
-  3. Batch-inserts 50 rows at a time.
-  4. Column mapping between CSV headers and DB columns is resolved via the OpenAPI spec (case-insensitive).
+  2. Parses incoming CSV text via `csv-parse/sync`.
+  3. **Two-pass column mapping** against the DB schema (fetched from PostgREST OpenAPI spec):
+     - **Pass 1 — Exact match**: CSV header `toLowerCase()` === DB column `toLowerCase()`. Handles fixed columns like `"Email"`, `"Total worked"`, `"Activity"`.
+     - **Pass 2 — Date-aware match**: For any DB column that is an ISO date (`2026-03-24`) and any unmatched CSV header that contains a date (`"Mon 3/24"`, `"Monday 3/24/2026"`), `csvColToIsoDate()` parses both to ISO strings and maps them if they resolve to the same calendar date. This is critical because Hubstaff CSVs use `"Mon M/D"` headers while the Supabase table may have ISO column names.
+     - **Fallback**: If the OpenAPI spec is unreachable, CSV headers are used directly as column names (minus `id`).
+  4. Batch-inserts 50 rows at a time.
+- `csvColToIsoDate()`: Parses Hubstaff date column headers (`"Mon 3/24"`, `"Tue 3/25/26"`, `"2026-03-24"`) into ISO date strings for the date-aware mapping pass. Defaults to the current year when the CSV header omits it.
 - `rowsToPayrollRows()`: Converts raw DB rows to `PayrollHubstaffRow[]`, calling `parseHoursToDecimal()` on `Total worked`.
 
 **Hours parsing (`src/lib/supabase/hubstaff-hours.ts`):**
@@ -160,11 +164,13 @@ All routes are `export const dynamic = "force-dynamic"` (no caching).
 | `/api/employee-hourly-rates` | GET | Anon | `src/lib/supabase/employee-hourly-rates.ts` |
 | `/api/employee-rate-profiles` | GET | Service role preferred | `src/lib/supabase/employee-rate-profiles.ts` |
 | `/api/employee-ids` | GET | Anon | `src/lib/supabase/employee-ids.ts` |
-| `/api/hubstaff-hours` | GET | Service role for full; anon for payroll rows | `src/lib/supabase/hubstaff-hours-db.ts` |
+| `/api/hubstaff-hours` | GET | Service role preferred; anon fallback returns same JSON shape | `src/lib/supabase/hubstaff-hours-db.ts` |
 | `/api/hubstaff-hours` | POST | Service role required | `src/lib/supabase/hubstaff-hours-db.ts` |
 | `/api/add-employee` | POST | Service role preferred | Both tables |
 | `/api/delete-employee` | DELETE | Service role preferred | Both tables |
 | `/api/update-employee-rates` | POST | Service role preferred | `employee_hourly_rates` |
+| `/api/update-employee-profile` | POST | Service role preferred | Both tables |
+| `/api/app-settings` | GET/POST | Anon read; service role preferred write | `app_settings` table |
 | `/api/import-daily-report` | POST | `DATABASE_URL` (pg direct) | `src/lib/supabase/import-daily-report.ts` |
 
 ---
@@ -195,17 +201,21 @@ User uploads CSV
         ▼
 Browser: SHA-256 hash check (dedup guard)
         │
-        ▼
-POST /api/hubstaff-hours
-        │
-        ▼
-replaceHubstaffHoursFromCsvText()
-  ├─ Delete all existing rows
-  ├─ Parse CSV (csv-parse/sync)
-  └─ Batch insert 50 rows at a time
-        │
-        ▼
+        ├──────────────────────────────────────┐
+        ▼                                      ▼
+POST /api/hubstaff-hours              Browser: parseCsv(csvText)
+        │                              (client-side re-parse)
+        ▼                                      │
+replaceHubstaffHoursFromCsvText()              ▼
+  ├─ Delete all existing rows         Sets hubstaffDisplayColumns
+  ├─ Parse CSV (csv-parse/sync)       Sets hubstaffDisplayRows
+  ├─ Pass 1: exact column match         (with real daily values)
+  ├─ Pass 2: date-aware column match         │
+  └─ Batch insert 50 rows                   ▼
+        │                             Drives PA detection +
+        ▼                             Step 1 preview table
 hubstaff_hours table (Supabase)
+  (daily data stored if dates match)
 
 
 PayrollWizard Step 2 (Initial Calc)

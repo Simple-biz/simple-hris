@@ -64,13 +64,40 @@ Auto-detected in Step 3. The rule:
 
 > An employee has perfect attendance if they logged ≥ 7 hours (25,200 seconds) on **every Monday through Friday** in the Hubstaff export.
 
-Detection steps:
-1. Scan all column headers in the Hubstaff raw rows.
-2. Identify weekday columns: headers matching `Mon`, `Tue`, `Wed`, `Thu`, `Fri` (with optional date suffix).
-3. For each employee, parse each weekday cell to seconds.
-4. If all weekday values ≥ 25,200: auto-enable the `perfect_attendance` toggle.
+### Data source
 
-The toggle can be manually overridden by the payroll operator.
+PA detection reads from `hubstaffDisplayRows` — the raw per-employee row data that includes daily columns.
+
+- **After a CSV upload (same session)**: The data comes from the **client-side CSV re-parse** (`parseCsv` + `buildHubstaffDataFromParsedGrid`). This is authoritative — daily column values are always present because they come directly from the CSV, bypassing any Supabase column-name mismatch.
+- **On initial page load (no upload)**: The data comes from `GET /api/hubstaff-hours` (Supabase). If the Supabase table's date columns don't match the CSV that was originally uploaded (e.g., DB has `"2026-03-24"` but CSV had `"Mon 3/24"`), daily values may be `null`. When all daily values are null, the `dailyDataMissing` flag is set and an amber warning banner in Step 3 instructs the user to re-upload the CSV.
+
+### Weekday column detection
+
+`colIsWeekday()` uses a two-tier approach:
+
+1. **Day-name prefix** (priority): If the column starts with `Mon`, `Tue`, `Wed`, `Thu`, or `Fri` (short or full name like `Monday`), it is immediately classified as a weekday. The prefix from the CSV header is always correct regardless of year.
+2. **ISO date fallback**: For columns without a day-name prefix (e.g., `"2026-03-24"`), `parseColDate()` extracts the date and `getDay()` determines the day of week (1–5 = Mon–Fri).
+
+Supporting functions: `colDayPrefix()`, `DAY_PREFIX_MAP`, `parseColDate()`, `colDayOrder()` (sorts Mon→Fri), `dayLabel()`, `dayLetter()`.
+
+### Detection steps
+
+1. Filter `hubstaffDisplayColumns` through `colIsWeekday()` → weekday columns only.
+2. Sort weekday columns Mon→Fri via `colDayOrder()`.
+3. For each employee row, parse every weekday cell to integer seconds with `rawValueToTotalSeconds()`.
+4. If **all** weekday values ≥ 25,200 seconds: add the employee's normalized email to the `perfectAttendanceEligible` set.
+5. A `useEffect` auto-applies the `perfect_attendance` bonus toggle to all department-assigned employees based on the eligible set.
+
+The toggle can be manually overridden by the payroll operator after the auto-apply runs.
+
+### UI indicators
+
+Each employee's PA toggle cell shows:
+- A Switch (on/off)
+- "✓ Eligible" or "✗ Ineligible" text label
+- A row of colored day pills (M T W T F): green = ≥7h, red = <7h. Hover tooltip shows the full column name and logged hours (e.g., `"Mon (Mon 3/24): 8:15 logged ✓"`).
+
+At the department level, the common bonuses section shows `X/Y eligible (7 h+ every Mon–Fri)`.
 
 **Perfect Attendance bonus: ₱5,000** (applies to all departments).
 
@@ -193,7 +220,12 @@ Step 5 is currently a **placeholder**. The "Confirm & Dispatch" button fires a s
 1. Only Hubstaff-format CSVs are accepted (must have `Email` + `Total worked` columns).
 2. Duplicate uploads are detected via SHA-256 hash. Re-uploading the same file triggers a warning dialog.
 3. Upload replaces the **entire** `hubstaff_hours` table. There is no append mode.
-4. Batch insert: 50 rows per batch. Column mapping uses the OpenAPI spec for case-insensitive matching between CSV headers and DB column names.
+4. **Two-pass column mapping** against the DB schema (from PostgREST OpenAPI spec):
+   - **Pass 1**: Exact case-insensitive match (`"Email"` → `"Email"`, `"Total worked"` → `"Total worked"`).
+   - **Pass 2**: Date-aware match — `csvColToIsoDate()` parses Hubstaff-format dates (`"Mon 3/24"`) and ISO dates (`"2026-03-24"`) to the same canonical form, then maps them if they resolve to the same calendar date. This ensures daily hour values are stored even when the DB uses ISO column names and the CSV uses `"DayName M/D"` headers.
+   - **Fallback**: If the OpenAPI spec is unreachable, CSV headers are used directly as column names.
+5. Batch insert: 50 rows per batch.
+6. **Client-side re-parse**: After the upload succeeds, the CSV text is also parsed client-side (`parseCsv()`) and used to set `hubstaffDisplayColumns` / `hubstaffDisplayRows` directly. This guarantees that Perfect Attendance detection in Step 3 has access to daily column values, regardless of whether Supabase stored them correctly.
 
 ---
 

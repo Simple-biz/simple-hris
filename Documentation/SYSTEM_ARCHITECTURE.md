@@ -207,3 +207,12 @@ The `YYMM-NNNN` employee IDs shown in the UI are generated dynamically in `gener
 
 **5. Dual-table employee insert/delete**
 When adding or removing an employee, both `employee_hourly_rates` and `global_master_list` are modified in the same API call. There is no foreign key constraint between them — the application layer is responsible for keeping them in sync.
+
+**6. Date-aware CSV column mapping**
+Hubstaff CSVs use day-name date headers (`"Mon 3/24"`) while the Supabase table may have ISO column names (`"2026-03-24"`). The upload function `replaceHubstaffHoursFromCsvText()` runs two column-mapping passes: exact case-insensitive match first, then `csvColToIsoDate()` parses both formats to ISO strings and matches by calendar date. Without this, daily hour values end up as `null` in Supabase.
+
+**7. Client-side CSV re-parse for PA detection**
+After uploading a CSV, the component re-parses the CSV text client-side (`parseCsv()`) and uses it to set `hubstaffDisplayColumns` / `hubstaffDisplayRows` directly — rather than re-fetching from Supabase. This guarantees Perfect Attendance detection in Step 3 always has real daily values, even if the Supabase date columns don't match. The `dailyDataMissing` flag detects the case where Supabase daily columns are all null and shows a warning banner.
+
+**8. No authentication (planned)**
+The app currently has no login, sessions, or role-based access. The user identity is hardcoded as `"Fran M / Senior Admin"`. A full RBAC implementation plan with 6 roles, API guards, RLS policies, and audit logging is documented in `Documentation/IMPLEMENTATION_PLAN_RBAC.md`.
