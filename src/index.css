@@ -1,0 +1,107 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  /* Light theme — Orange primary · Blue secondary · White surfaces */
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 220 20% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 10%;
+    /* Orange-500 as primary */
+    --primary: 22 95% 52%;
+    --primary-foreground: 0 0% 100%;
+    /* Blue-600 as secondary */
+    --secondary: 221 83% 53%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 46%;
+    /* Orange accent */
+    --accent: 22 95% 52%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 22 95% 52%;
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 222 35% 7%;
+    --foreground: 210 40% 96%;
+    --card: 222 35% 7%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 35% 7%;
+    --popover-foreground: 210 40% 96%;
+    /* Orange-400 (lighter for dark bg) */
+    --primary: 25 94% 60%;
+    --primary-foreground: 0 0% 100%;
+    /* Blue-400 */
+    --secondary: 213 94% 68%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 60%;
+    --accent: 25 94% 60%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 25 94% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-zinc-200 dark:border-zinc-800;
+  }
+  body {
+    @apply bg-white text-zinc-900 antialiased font-sans dark:bg-[#0d1117] dark:text-zinc-200;
+  }
+
+  /* Custom scrollbar — orange accent */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-orange-200 hover:bg-orange-300 transition-colors dark:bg-blue-900/60 dark:hover:bg-blue-800/80;
+  }
+}
+
+@layer components {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Smooth theme transitions */
+*,
+*::before,
+*::after {
+  transition-property: background-color, color, border-color, box-shadow, fill, stroke, filter;
+  transition-duration: 260ms;
+  transition-timing-function: ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+  }
+}
