@@ -4,17 +4,11 @@
       "Bash(gh auth:*)",
       "Bash(rm:*)",
       "WebFetch(domain:simple-hris.vercel.app)",
-      "Bash(curl -s 'https://ookpxwxxujdtppqizlrp.supabase.co/rest/v1/hubstaff_hours?select=*&limit=2' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM')",
       "Bash(python -m json.tool)",
-      "Bash(curl -s 'https://ookpxwxxujdtppqizlrp.supabase.co/rest/v1/?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM')",
-      "Bash(python -c \"import sys,json; spec=json.load\\(sys.stdin\\); cols=list\\(spec.get\\('definitions',{}\\).get\\('hubstaff_hours',{}\\).get\\('properties',{}\\).keys\\(\\)\\); print\\('\\\\n'.join\\(cols\\)\\)\")",
-      "Bash(curl -s 'https://ookpxwxxujdtppqizlrp.supabase.co/rest/v1/hubstaff_hours?select=\"2026-03-22\",\"2026-03-23\",\"2026-03-24\",\"2026-03-25\",\"2026-03-26\",\"2026-03-27\",\"2026-03-28\",\"Total worked\",\"Email\"&limit=5' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM')",
-      "Bash(curl -s 'https://ookpxwxxujdtppqizlrp.supabase.co/rest/v1/hubstaff_hours?select=*&limit=5&Email=neq.null' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM')",
       "Bash(python -c ':*)",
       "Bash(npx tsc:*)",
       "Bash(npx next:*)",
-      "Bash(node:*)",
-      "Bash(curl -s 'https://ookpxwxxujdtppqizlrp.supabase.co/rest/v1/hubstaff_hours?select=*&limit=3&Email=neq.null' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM')"
+      "Bash(node:*)"
     ]
   }
 }

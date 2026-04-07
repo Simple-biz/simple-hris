@@ -7,3 +7,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Claude Code local settings (may contain approved commands with secrets)
+.claude/settings.local.json
