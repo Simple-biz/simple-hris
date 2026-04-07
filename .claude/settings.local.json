@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(gh auth:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "WebFetch(domain:simple-hris.vercel.app)"
     ]
   }
 }

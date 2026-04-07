@@ -12,7 +12,6 @@ import {
   Lock,
   ArrowRight,
   ArrowLeft,
-  Plus,
   Trash2,
   Loader2,
   DollarSign,
@@ -239,102 +238,36 @@ const DEPARTMENTS: {
   name: string;
   bonuses: { id: string; label: string; amount: number }[];
 }[] = [
-  {
-    key: 'accounting',
-    name: 'Accounting',
-    bonuses: [
-      { id: 'acc_accuracy', label: 'Accuracy & Reconciliation Bonus', amount: 2500 },
-      { id: 'acc_audit', label: 'Audit Compliance Bonus', amount: 2000 },
-    ],
-  },
-  {
-    key: 'edit',
-    name: 'Edit',
-    bonuses: [
-      { id: 'edit_quality', label: 'Content Quality Bonus', amount: 1800 },
-      { id: 'edit_revision', label: 'Revision Excellence Award', amount: 1500 },
-    ],
-  },
-  {
-    key: 'devs',
-    name: 'Devs',
-    bonuses: [
-      { id: 'devs_sprint', label: 'Sprint Completion Bonus', amount: 2000 },
-      { id: 'devs_code_review', label: 'Code Review Excellence', amount: 1200 },
-    ],
-  },
-  {
-    key: 'lead_gen',
-    name: 'Lead Gen',
-    bonuses: [
-      { id: 'lg_quality', label: 'Lead Quality Bonus', amount: 3000 },
-      { id: 'lg_conversion', label: 'Conversion Rate Bonus', amount: 2500 },
-    ],
-  },
+  { key: 'accounting',       name: 'Accounting',         bonuses: [] },
+  { key: 'edit',             name: 'Edit',               bonuses: [] },
+  { key: 'devs',             name: 'Devs',               bonuses: [] },
+  { key: 'lead_gen',         name: 'Lead Gen',           bonuses: [] },
   {
     key: 'us_manager_bonus',
     name: 'US - Manager Bonus',
     bonuses: [
       { id: 'usmgr_leadership', label: 'Leadership Excellence Award', amount: 3500 },
-      { id: 'usmgr_team', label: 'Team Performance Bonus', amount: 3000 },
+      { id: 'usmgr_team',       label: 'Team Performance Bonus',      amount: 3000 },
     ],
   },
-  {
-    key: 'callback',
-    name: 'Callback',
-    bonuses: [
-      { id: 'cb_resolution', label: 'Call Resolution Bonus', amount: 2000 },
-      { id: 'cb_csat', label: 'Customer Satisfaction Bonus', amount: 1500 },
-    ],
-  },
-  {
-    key: 'qc',
-    name: 'QC',
-    bonuses: [
-      { id: 'qc_zero_defect', label: 'Zero-Defect Achievement Bonus', amount: 2500 },
-      { id: 'qc_excellence', label: 'Quality Excellence Award', amount: 1800 },
-    ],
-  },
-  {
-    key: 'discovery',
-    name: 'Discovery',
-    bonuses: [
-      { id: 'disc_prospect', label: 'Prospect Qualification Bonus', amount: 2500 },
-      { id: 'disc_pipeline', label: 'Pipeline Growth Award', amount: 2000 },
-    ],
-  },
-  {
-    key: 'hr',
-    name: 'HR',
-    bonuses: [
-      { id: 'hr_recruitment', label: 'Recruitment Excellence Bonus', amount: 1800 },
-      { id: 'hr_retention', label: 'Employee Retention Award', amount: 1500 },
-    ],
-  },
-  {
-    key: 'sales_assistant',
-    name: 'Sales Assistant',
-    bonuses: [
-      { id: 'sa_support', label: 'Sales Support Bonus', amount: 2000 },
-      { id: 'sa_client', label: 'Client Management Award', amount: 1500 },
-    ],
-  },
-  {
-    key: 'smart_staff',
-    name: 'Smart Staff',
-    bonuses: [
-      { id: 'ss_performance', label: 'Performance Excellence Award', amount: 2500 },
-      { id: 'ss_efficiency', label: 'Efficiency & Output Bonus', amount: 2000 },
-    ],
-  },
+  { key: 'callback',         name: 'Callback',           bonuses: [] },
+  { key: 'qc',               name: 'QC',                 bonuses: [] },
+  { key: 'discovery',        name: 'Discovery',          bonuses: [] },
+  { key: 'hr',               name: 'HR',                 bonuses: [] },
+  { key: 'sales_assistant',  name: 'Sales Assistant',    bonuses: [] },
+  { key: 'smart_staff',      name: 'Smart Staff',        bonuses: [] },
   {
     key: 'hogan_smith_law',
     name: 'Hogan Smith Law',
     bonuses: [
-      { id: 'hsl_case', label: 'Case Resolution Bonus', amount: 3000 },
+      { id: 'hsl_case',       label: 'Case Resolution Bonus',       amount: 3000 },
       { id: 'hsl_compliance', label: 'Compliance Achievement Award', amount: 2500 },
     ],
   },
+  { key: 'smm',              name: 'Social Media',       bonuses: [] },
+  { key: 'pm_team',          name: 'PM Team',            bonuses: [] },
+  { key: 'client_va',        name: 'Client VA',          bonuses: [] },
+  { key: 'site_building',    name: 'Site Building',      bonuses: [] },
 ];
 
 /** Known non-date Hubstaff column names (lowercase). */
@@ -384,6 +317,182 @@ function calcLeadGenBonus(appointments: number): number {
 }
 
 /**
+ * Returns true when every token in `pattern` appears in the tokenized employee name.
+ * Case-insensitive; ignores punctuation. Supports both "Last, First" and "First Last" formats.
+ */
+function nameMatchesPattern(empName: string, pattern: string): boolean {
+  const normalize = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+  const empTokens = new Set(normalize(empName));
+  return normalize(pattern).every(t => empTokens.has(t));
+}
+
+/** DEVS — Site Delivery eligibles: Enriquez Harry Jr. and Lagundi Bryan */
+function isDevsDelivery(name: string): boolean {
+  return nameMatchesPattern(name, 'Enriquez Harry') || nameMatchesPattern(name, 'Lagundi Bryan');
+}
+
+/** DEVS — Site Checking eligibles: Ranis Christian, Velasco Anjeo, Felices John Carl */
+function isDevsChecking(name: string): boolean {
+  return (
+    nameMatchesPattern(name, 'Ranis Christian') ||
+    nameMatchesPattern(name, 'Velasco Anjeo') ||
+    nameMatchesPattern(name, 'Felices John Carl')
+  );
+}
+
+/** QC — Jerome Rosero receives a separate calculation and optional Callback bonuses */
+function isJeromeRosero(name: string): boolean {
+  return nameMatchesPattern(name, 'Jerome Rosero');
+}
+
+/** HR — "Teal" is excluded from the headcount multiplier */
+function isTeal(name: string): boolean {
+  return name.trim().toLowerCase().includes('teal');
+}
+
+/**
+ * Departments that use formula-based bonus calculation instead of manual toggles.
+ * Lead Gen is included but intentionally returns zero (department disregarded per policy).
+ */
+const FORMULA_DEPT_KEYS = new Set([
+  'accounting', 'edit', 'devs', 'lead_gen',
+  'callback', 'qc', 'discovery', 'hr', 'sales_assistant', 'smart_staff',
+]);
+
+/**
+ * Computes department-specific bonuses for all employees in a single department.
+ * Returns a map of email → bonus amount (does NOT include common bonuses).
+ *
+ * @param deptKey        - Department key from DEPARTMENTS
+ * @param employees      - CalcRows assigned to this department
+ * @param empMetrics     - Per-employee numeric metrics (tickets, collected, appts, etc.)
+ * @param deptMetrics    - Department-level numeric metrics (unitsSold for QC, newHires for HR)
+ */
+function calculateDepartmentBonus(
+  deptKey: string,
+  employees: CalcRow[],
+  empMetrics: Record<string, Record<string, number>>,
+  deptMetrics: Record<string, Record<string, number>>,
+): Record<string, number> {
+  const result: Record<string, number> = {};
+  const em = (email: string) => empMetrics[email] ?? {};
+  const dm = deptMetrics[deptKey] ?? {};
+
+  switch (deptKey) {
+    // ── Accounting (tiered by collected count) ─────────────────────────────
+    case 'accounting': {
+      for (const emp of employees) {
+        const collected = em(emp.email).collected ?? 0;
+        let bonus = 0;
+        if (collected >= 30)      bonus = 450;
+        else if (collected >= 22) bonus = 300;
+        else if (collected >= 17) bonus = 200;
+        result[emp.email] = bonus;
+      }
+      break;
+    }
+
+    // ── Edit (₱50 per completed ticket) ────────────────────────────────────
+    case 'edit': {
+      for (const emp of employees) {
+        result[emp.email] = (em(emp.email).tickets ?? 0) * 50;
+      }
+      break;
+    }
+
+    // ── Devs (tickets + site delivery or site checking) ────────────────────
+    case 'devs': {
+      for (const emp of employees) {
+        const metrics = em(emp.email);
+        let bonus = (metrics.tickets ?? 0) * 50;
+        if (isDevsDelivery(emp.name)) {
+          bonus += (metrics.siteDelivery ?? 0) * 50;
+        } else if (isDevsChecking(emp.name)) {
+          bonus += (metrics.siteChecking ?? 0) * 250;
+        }
+        result[emp.email] = bonus;
+      }
+      break;
+    }
+
+    // ── Callback (₱50/callback appt + lead gen tier inside callback) ───────
+    case 'callback': {
+      for (const emp of employees) {
+        const metrics = em(emp.email);
+        const callbackBonus = (metrics.callbackAppts ?? 0) * 50;
+        const leadGenBonus  = calcLeadGenBonus(metrics.leadGenAppts ?? 0);
+        result[emp.email] = callbackBonus + leadGenBonus;
+      }
+      break;
+    }
+
+    // ── QC (pool split + Jerome Rosero exception) ──────────────────────────
+    case 'qc': {
+      const unitsSold = dm.unitsSold ?? 0;
+      const standardMembers = employees.filter(e => !isJeromeRosero(e.name));
+      const standardCount = standardMembers.length;
+      const poolRate = standardCount >= 6 ? 150 : 125;
+      const pool = unitsSold * poolRate;
+      const perMember = standardCount > 0 ? pool / standardCount : 0;
+
+      for (const emp of employees) {
+        if (isJeromeRosero(emp.name)) {
+          const callbackBonus = (em(emp.email).callbackAppts ?? 0) * 50;
+          result[emp.email] = unitsSold * 30 + callbackBonus;
+        } else {
+          result[emp.email] = perMember;
+        }
+      }
+      break;
+    }
+
+    // ── Discovery (₱25 per unit sold prior week) ───────────────────────────
+    case 'discovery': {
+      for (const emp of employees) {
+        result[emp.email] = (em(emp.email).unitsSoldPriorWeek ?? 0) * 25;
+      }
+      break;
+    }
+
+    // ── HR (pool ÷ new hires; Teal excluded from headcount multiplier) ─────
+    case 'hr': {
+      const newHires = dm.newHires ?? 0;
+      const billableCount = employees.filter(e => !isTeal(e.name)).length;
+      const pool = billableCount * 1000;
+      const individual = newHires > 0 ? pool / newHires : 0;
+      for (const emp of employees) {
+        result[emp.email] = individual;
+      }
+      break;
+    }
+
+    // ── Sales Assistant (₱150 per sale last week) ──────────────────────────
+    case 'sales_assistant': {
+      for (const emp of employees) {
+        result[emp.email] = (em(emp.email).salesLastWeek ?? 0) * 150;
+      }
+      break;
+    }
+
+    // ── SmartStaff (₱250 per appointment set) ──────────────────────────────
+    case 'smart_staff': {
+      for (const emp of employees) {
+        result[emp.email] = (em(emp.email).appointmentsSet ?? 0) * 250;
+      }
+      break;
+    }
+
+    // ── Lead Gen — disregarded per policy ─────────────────────────────────
+    case 'lead_gen':
+    default:
+      break;
+  }
+
+  return result;
+}
+
+/**
  * Maps a raw Supabase Department string to one of the DEPARTMENTS keys.
  * Case-insensitive and trims whitespace.
  */
@@ -391,24 +500,60 @@ function normalizeDeptToKey(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const s = raw.trim().toLowerCase();
   const map: Record<string, string> = {
-    'accounting': 'accounting',
-    'edit': 'edit',
-    'devs': 'devs',
-    'lead gen': 'lead_gen',
-    'lead generation': 'lead_gen',
-    'us - manager bonus': 'us_manager_bonus',
-    'us manager bonus': 'us_manager_bonus',
-    'manager bonus': 'us_manager_bonus',
-    'callback': 'callback',
-    'qc': 'qc',
-    'quality control': 'qc',
-    'discovery': 'discovery',
-    'hr': 'hr',
-    'human resources': 'hr',
-    'sales assistant': 'sales_assistant',
-    'smart staff': 'smart_staff',
-    'hogan smith law': 'hogan_smith_law',
-    'hogan': 'hogan_smith_law',
+    // Accounting
+    'accounting':               'accounting',
+    'accounting team':          'accounting',
+    // Edit
+    'edit':                     'edit',
+    'edit team':                'edit',
+    // Devs / AI / Site Building
+    'devs':                     'devs',
+    'ai/api team':              'devs',
+    'ai api team':              'devs',
+    // Lead Gen
+    'lead gen':                 'lead_gen',
+    'lead generation':          'lead_gen',
+    // US Manager Bonus
+    'us - manager bonus':       'us_manager_bonus',
+    'us manager bonus':         'us_manager_bonus',
+    'manager bonus':            'us_manager_bonus',
+    // Callback
+    'callback':                 'callback',
+    'callback team':            'callback',
+    // QC
+    'qc':                       'qc',
+    'quality control':          'qc',
+    // Discovery
+    'discovery':                'discovery',
+    // HR
+    'hr':                       'hr',
+    'human resources':          'hr',
+    // Sales Assistant
+    'sales assistant':          'sales_assistant',
+    'sales':                    'sales_assistant',
+    // SmartStaff
+    'smart staff':              'smart_staff',
+    'smartstaff':               'smart_staff',
+    // Hogan Smith Law
+    'hogan smith law':          'hogan_smith_law',
+    'hogan':                    'hogan_smith_law',
+    'hsl':                      'hogan_smith_law',
+    // Social Media
+    'smm':                      'smm',
+    'smm freelancer':           'smm',
+    'social media':             'smm',
+    'social media team':        'smm',
+    // PM Team
+    'pm team':                  'pm_team',
+    'pm':                       'pm_team',
+    'project management':       'pm_team',
+    'project management team':  'pm_team',
+    // Client VA
+    'client va':                'client_va',
+    'client - va':              'client_va',
+    'client-va':                'client_va',
+    // Site Building
+    'site building':            'site_building',
   };
   return map[s] ?? null;
 }
@@ -458,8 +603,10 @@ export default function PayrollWizard() {
   const [activeDeptTab, setActiveDeptTab] = useState('accounting');
   const [employeeDepts, setEmployeeDepts] = useState<Record<string, string>>({});
   const [employeeBonuses, setEmployeeBonuses] = useState<Record<string, Record<string, boolean>>>({});
-  /** Lead Gen only: email → number of appointments this pay period */
-  const [employeeAppointments, setEmployeeAppointments] = useState<Record<string, number>>({});
+  /** Per-employee numeric metrics: email → { metric → value }. Used by formula-based departments. */
+  const [employeeMetrics, setEmployeeMetrics] = useState<Record<string, Record<string, number>>>({});
+  /** Department-level numeric metrics: deptKey → { metric → value }. Used for pool calculations (QC, HR). */
+  const [deptMetrics, setDeptMetrics] = useState<Record<string, Record<string, number>>>({});
 
   const fileInputWeeklyRef = useRef<HTMLInputElement>(null);
 
@@ -501,30 +648,6 @@ export default function PayrollWizard() {
     () => indexHourlyRatesByEmail(hourlyRateRows),
     [hourlyRateRows],
   );
-
-  const bonusTotals = useMemo(() => {
-    const result: Record<string, number> = {};
-    for (const [email, deptKey] of Object.entries(employeeDepts)) {
-      const dept = DEPARTMENTS.find(d => d.key === deptKey);
-      if (!dept) continue;
-      const bonuses = employeeBonuses[email] ?? {};
-      let total = 0;
-      // Common bonuses always use toggle state
-      for (const cb of COMMON_BONUSES) {
-        if (bonuses[cb.id]) total += cb.amount;
-      }
-      if (deptKey === 'lead_gen') {
-        // Appointment-based formula instead of fixed toggle bonuses
-        total += calcLeadGenBonus(employeeAppointments[email] ?? 0);
-      } else {
-        for (const db of dept.bonuses) {
-          if (bonuses[db.id]) total += db.amount;
-        }
-      }
-      result[email] = total;
-    }
-    return result;
-  }, [employeeDepts, employeeBonuses, employeeAppointments]);
 
   /**
    * Computes which employees qualify for Perfect Attendance by scanning the
@@ -613,6 +736,20 @@ export default function PayrollWizard() {
     });
   }, []);
 
+  const updateEmployeeMetric = React.useCallback((email: string, metric: string, value: number) => {
+    setEmployeeMetrics(prev => ({
+      ...prev,
+      [email]: { ...(prev[email] ?? {}), [metric]: value },
+    }));
+  }, []);
+
+  const updateDeptMetric = React.useCallback((deptKey: string, metric: string, value: number) => {
+    setDeptMetrics(prev => ({
+      ...prev,
+      [deptKey]: { ...(prev[deptKey] ?? {}), [metric]: value },
+    }));
+  }, []);
+
   /**
    * Match Hubstaff Email to employee_hourly_rates Work Email (or Personal Email).
    * Reg Pay = Reg Rate × min(Total Hrs, 40), OT Pay = OT Rate × OT Hrs, Initial Pay = sum.
@@ -648,6 +785,53 @@ export default function PayrollWizard() {
       };
     });
   }, [hubstaffData, ratesByEmail]);
+
+  const bonusTotals = useMemo(() => {
+    const result: Record<string, number> = {};
+
+    // Group assigned employees by department for formula-based dept calculations
+    const deptEmployeeMap: Record<string, CalcRow[]> = {};
+    for (const calcRow of calcResults) {
+      const deptKey = employeeDepts[calcRow.email];
+      if (!deptKey) continue;
+      if (!deptEmployeeMap[deptKey]) deptEmployeeMap[deptKey] = [];
+      deptEmployeeMap[deptKey].push(calcRow);
+    }
+
+    // Department-specific bonus (formula-based or toggle-based)
+    for (const [deptKey, employees] of Object.entries(deptEmployeeMap)) {
+      if (FORMULA_DEPT_KEYS.has(deptKey)) {
+        const deptBonuses = calculateDepartmentBonus(deptKey, employees, employeeMetrics, deptMetrics);
+        for (const [email, bonus] of Object.entries(deptBonuses)) {
+          result[email] = (result[email] ?? 0) + bonus;
+        }
+      } else {
+        const dept = DEPARTMENTS.find(d => d.key === deptKey);
+        if (!dept) continue;
+        for (const emp of employees) {
+          const toggles = employeeBonuses[emp.email] ?? {};
+          let total = 0;
+          for (const db of dept.bonuses) {
+            if (toggles[db.id]) total += db.amount;
+          }
+          result[emp.email] = (result[emp.email] ?? 0) + total;
+        }
+      }
+    }
+
+    // Common bonuses (Technology, Perfect Attendance) — always toggle-based for every dept
+    for (const [email, deptKey] of Object.entries(employeeDepts)) {
+      if (!deptKey) continue;
+      const toggles = employeeBonuses[email] ?? {};
+      let commonTotal = 0;
+      for (const cb of COMMON_BONUSES) {
+        if (toggles[cb.id]) commonTotal += cb.amount;
+      }
+      result[email] = (result[email] ?? 0) + commonTotal;
+    }
+
+    return result;
+  }, [calcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics]);
 
   const filteredCalcResults = useMemo(() => {
     const needle = initialCalcSearch.toLowerCase().trim();
@@ -1397,6 +1581,23 @@ export default function PayrollWizard() {
           (sum, r) => sum + (r.initialPay ?? 0) + (bonusTotals[r.email] ?? 0),
           0,
         );
+        // QC derived values (used in both left panel and table)
+        const qcUnitsSold = deptMetrics['qc']?.unitsSold ?? 0;
+        const standardQcMembers = activeDeptTab === 'qc'
+          ? deptEmployees.filter(e => !isJeromeRosero(e.name))
+          : [];
+        const qcPoolRate = standardQcMembers.length >= 6 ? 150 : 125;
+        const qcPoolPerMember = standardQcMembers.length > 0
+          ? (qcUnitsSold * qcPoolRate) / standardQcMembers.length
+          : 0;
+        // HR derived values (used in both left panel and table)
+        const hrNewHires = deptMetrics['hr']?.newHires ?? 0;
+        const hrBillableMembers = activeDeptTab === 'hr'
+          ? deptEmployees.filter(e => !isTeal(e.name))
+          : [];
+        const hrPoolShare = hrBillableMembers.length > 0 && hrNewHires > 0
+          ? (hrBillableMembers.length * 1000) / hrNewHires
+          : 0;
 
         return (
           <div className="space-y-6">
@@ -1553,47 +1754,258 @@ export default function PayrollWizard() {
                   </CardContent>
                 </Card>
 
-                {/* Dept-specific Bonuses — Lead Gen uses appointment-based rate card */}
+                {/* Dept-specific Bonus Panel — formula descriptions or toggle buttons */}
                 {activeDeptTab === 'lead_gen' ? (
-                  <Card className="border-violet-200/60 bg-violet-50/60 dark:border-violet-800/40 dark:bg-violet-950/20">
+                  <Card className="border-amber-200/60 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-950/20">
                     <CardHeader className="pb-3 pt-4">
-                      <CardTitle className="flex items-center gap-2 text-sm text-violet-800 dark:text-violet-200">
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-900">
-                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                      <CardTitle className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-amber-100 dark:bg-amber-900">
+                          <AlertCircle className="h-3 w-3 text-amber-600 dark:text-amber-400" />
                         </span>
-                        Lead Gen Bonus Rate
+                        Lead Gen — Disregarded
                       </CardTitle>
-                      <CardDescription className="text-xs text-violet-600/80 dark:text-violet-400/80">
-                        Per-appointment formula
+                      <CardDescription className="text-xs text-amber-600/80 dark:text-amber-400/80">
+                        No department bonus formula applied to Lead Gen per policy.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-2 pb-4">
-                      <div className="rounded-lg border border-violet-200 bg-white px-3 py-2.5 dark:border-violet-800/50 dark:bg-zinc-900">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-zinc-600 dark:text-zinc-400">1 – 9 appointments</span>
-                          <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">₱250 × appts</span>
+                  </Card>
+                ) : activeDeptTab === 'accounting' ? (
+                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <CardHeader className="pb-3 pt-4">
+                      <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
+                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                        </span>
+                        Accounting — Tiered Bonus
+                      </CardTitle>
+                      <CardDescription className="text-xs text-zinc-500">Based on total collected per employee</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-1.5 pb-4">
+                      {([['≥ 30 collected', '₱450'], ['22 – 29 collected', '₱300'], ['17 – 21 collected', '₱200'], ['< 17 collected', '₱0']] as [string, string][]).map(([label, amount]) => (
+                        <div key={label} className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+                          <span className="text-xs text-zinc-600 dark:text-zinc-400">{label}</span>
+                          <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">{amount}</span>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                ) : activeDeptTab === 'edit' ? (
+                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <CardHeader className="pb-3 pt-4">
+                      <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
+                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                        </span>
+                        Edit — Ticket-Based Bonus
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pb-4">
+                      <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900">
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">Per completed ticket</span>
+                        <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">₱50 × tickets</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : activeDeptTab === 'devs' ? (
+                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <CardHeader className="pb-3 pt-4">
+                      <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
+                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                        </span>
+                        Devs — Ticket + Site Bonus
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-1.5 pb-4">
+                      <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">Completed tickets (all)</span>
+                        <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">₱50 × tickets</span>
+                      </div>
+                      <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Site Delivery</div>
+                        <div className="text-[10px] text-zinc-500">Enriquez, Harry Jr. · Lagundi, Bryan</div>
+                        <div className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">₱50 / site</div>
+                      </div>
+                      <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Site Checking</div>
+                        <div className="text-[10px] text-zinc-500">Ranis, Christian · Velasco, Anjeo · Felices, John Carl</div>
+                        <div className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">₱250 / site</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : activeDeptTab === 'callback' ? (
+                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <CardHeader className="pb-3 pt-4">
+                      <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
+                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                        </span>
+                        Callback — Hybrid Bonus
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-1.5 pb-4">
+                      <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">Callback appointments</span>
+                        <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">₱50 × appts</span>
+                      </div>
+                      <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Lead Gen within Callback</div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-zinc-500">1 – 9 appts</span>
+                          <span className="font-mono font-bold text-violet-600 dark:text-violet-400">₱250 × appts</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-zinc-500">10+ appts</span>
+                          <span className="font-mono font-bold text-violet-600 dark:text-violet-400">₱500 × appts</span>
                         </div>
                       </div>
-                      <div className="rounded-lg border border-violet-200 bg-white px-3 py-2.5 dark:border-violet-800/50 dark:bg-zinc-900">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-zinc-600 dark:text-zinc-400">10+ appointments</span>
-                          <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">₱500 × appts</span>
-                        </div>
+                    </CardContent>
+                  </Card>
+                ) : activeDeptTab === 'qc' ? (
+                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <CardHeader className="pb-3 pt-4">
+                      <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
+                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                        </span>
+                        QC — Pool & Exceptions
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3 pb-4">
+                      <div>
+                        <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">Units Sold (this period)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={qcUnitsSold === 0 ? '' : qcUnitsSold}
+                          placeholder="0"
+                          onChange={e => {
+                            const v = parseInt(e.target.value, 10);
+                            updateDeptMetric('qc', 'unitsSold', Number.isFinite(v) && v >= 0 ? v : 0);
+                          }}
+                          className="h-8 border-violet-200 bg-white font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                        />
                       </div>
-                      <div className="mt-2 space-y-1 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
-                        <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Examples</div>
-                        {[5, 9, 10, 15].map(n => (
-                          <div key={n} className="flex justify-between text-[11px]">
-                            <span className="text-zinc-500">{n} appts</span>
-                            <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">
-                              {formatPHP(calcLeadGenBonus(n))}
-                            </span>
+                      {qcUnitsSold > 0 && (
+                        <div className="space-y-1 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+                          <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Pool Preview</div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-zinc-500">Rate ({standardQcMembers.length} std. members)</span>
+                            <span className="font-mono font-bold text-violet-600 dark:text-violet-400">₱{qcPoolRate}/unit</span>
                           </div>
-                        ))}
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-zinc-500">Pool total</span>
+                            <span className="font-mono font-bold text-zinc-700 dark:text-zinc-300">{formatPHP(qcUnitsSold * qcPoolRate)}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-zinc-500">Per member</span>
+                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{formatPHP(qcPoolPerMember)}</span>
+                          </div>
+                        </div>
+                      )}
+                      <div className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Jerome Rosero</div>
+                        <div className="mt-0.5 text-[11px] text-zinc-500">Units × ₱30 + Callback appts × ₱50</div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : activeDeptTab === 'discovery' ? (
+                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <CardHeader className="pb-3 pt-4">
+                      <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
+                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                        </span>
+                        Discovery — Unit Bonus
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pb-4">
+                      <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900">
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">Per unit sold (prior week)</span>
+                        <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">₱25 × units</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : activeDeptTab === 'hr' ? (
+                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <CardHeader className="pb-3 pt-4">
+                      <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
+                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                        </span>
+                        HR — Pool-Based Bonus
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3 pb-4">
+                      <div>
+                        <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">New Hires after 4 weeks</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={hrNewHires === 0 ? '' : hrNewHires}
+                          placeholder="0"
+                          onChange={e => {
+                            const v = parseInt(e.target.value, 10);
+                            updateDeptMetric('hr', 'newHires', Number.isFinite(v) && v >= 0 ? v : 0);
+                          }}
+                          className="h-8 border-violet-200 bg-white font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                        />
+                      </div>
+                      {hrBillableMembers.length > 0 && (
+                        <div className="space-y-1 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+                          <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Pool Preview</div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-zinc-500">Billable members (excl. Teal)</span>
+                            <span className="font-mono font-bold text-zinc-700 dark:text-zinc-300">{hrBillableMembers.length}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-zinc-500">Pool ({hrBillableMembers.length} × ₱1,000)</span>
+                            <span className="font-mono font-bold text-zinc-700 dark:text-zinc-300">{formatPHP(hrBillableMembers.length * 1000)}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-zinc-500">÷ {hrNewHires > 0 ? hrNewHires : '?'} new hires</span>
+                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">{hrNewHires > 0 ? formatPHP(hrPoolShare) : '—'}</span>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ) : activeDeptTab === 'sales_assistant' ? (
+                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <CardHeader className="pb-3 pt-4">
+                      <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
+                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                        </span>
+                        Sales Asst. — Sale Bonus
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pb-4">
+                      <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900">
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">Per sale (last week scoreboard)</span>
+                        <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">₱150 × sales</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : activeDeptTab === 'smart_staff' ? (
+                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <CardHeader className="pb-3 pt-4">
+                      <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
+                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
+                        </span>
+                        SmartStaff — Appointment Bonus
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pb-4">
+                      <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900">
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">Per appointment set</span>
+                        <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">₱250 × appts</span>
                       </div>
                     </CardContent>
                   </Card>
                 ) : (
+                  /* Toggle-based departments: US Manager Bonus, Hogan Smith Law */
                   <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
@@ -1650,35 +2062,6 @@ export default function PayrollWizard() {
                   </Card>
                 )}
 
-                {/* Assign unassigned employees */}
-                {unassignedEmployees.length > 0 && (
-                  <Card className="border-dashed border-zinc-200 bg-transparent dark:border-zinc-800">
-                    <CardHeader className="pb-3 pt-4">
-                      <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                        Assign to {activeDept.name}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="max-h-48 space-y-1.5 overflow-y-auto pb-4">
-                      {unassignedEmployees.map(emp => (
-                        <div key={emp.email} className="flex items-center justify-between gap-2">
-                          <span className="min-w-0 truncate text-xs text-zinc-700 dark:text-zinc-300">
-                            {emp.name || emp.email}
-                          </span>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 shrink-0 border-indigo-500/30 px-2 text-[10px] font-semibold text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50 dark:border-indigo-500/20 dark:text-indigo-400 dark:hover:bg-indigo-500/10"
-                            onClick={() => assignToDept(emp.email, activeDeptTab)}
-                          >
-                            <Plus className="mr-1 h-2.5 w-2.5" />
-                            Add
-                          </Button>
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
-                )}
               </div>
 
               {/* Right column: Employee bonus table */}
@@ -1693,7 +2076,7 @@ export default function PayrollWizard() {
                         No employees in {activeDept.name}
                       </div>
                       <div className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
-                        Use the &ldquo;Assign to {activeDept.name}&rdquo; panel on the left
+                        Employees are auto-assigned from Supabase department data
                       </div>
                     </div>
                   </div>
@@ -1714,34 +2097,81 @@ export default function PayrollWizard() {
                                 key={b.id}
                                 className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-indigo-600 dark:text-indigo-400"
                               >
-                                {b.label}
-                                <br />
+                                {b.label}<br />
                                 <span className="font-mono font-bold">{formatPHP(b.amount)}</span>
                               </TableHead>
                             ))}
-                            {activeDeptTab === 'lead_gen' ? (
+                            {/* Formula-based dept metric columns */}
+                            {activeDeptTab === 'accounting' && (
+                              <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Collected<br /><span className="font-mono font-normal text-zinc-400">≥30→₱450 · 22–29→₱300 · 17–21→₱200</span>
+                              </TableHead>
+                            )}
+                            {activeDeptTab === 'edit' && (
+                              <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Tickets<br /><span className="font-mono font-normal text-zinc-400">₱50 × tickets</span>
+                              </TableHead>
+                            )}
+                            {activeDeptTab === 'devs' && (
                               <>
-                                <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                  Appointments
-                                  <br />
-                                  <span className="font-mono font-normal text-zinc-400">1–9: ₱250 / 10+: ₱500</span>
+                                <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                  Tickets<br /><span className="font-mono font-normal text-zinc-400">₱50 × tickets</span>
                                 </TableHead>
-                                <TableHead className="min-w-[110px] px-2 text-right text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                  Lead Gen Bonus
+                                <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                  Sites<br /><span className="font-mono font-normal text-zinc-400">Delivery ₱50 · Checking ₱250</span>
                                 </TableHead>
                               </>
-                            ) : (
-                              activeDept.bonuses.map(b => (
-                                <TableHead
-                                  key={b.id}
-                                  className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400"
-                                >
-                                  {b.label}
-                                  <br />
-                                  <span className="font-mono font-bold">{formatPHP(b.amount)}</span>
-                                </TableHead>
-                              ))
                             )}
+                            {activeDeptTab === 'callback' && (
+                              <>
+                                <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                  Callback Appts<br /><span className="font-mono font-normal text-zinc-400">₱50 × appts</span>
+                                </TableHead>
+                                <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                  Lead Gen Appts<br /><span className="font-mono font-normal text-zinc-400">1–9: ₱250 / 10+: ₱500</span>
+                                </TableHead>
+                              </>
+                            )}
+                            {activeDeptTab === 'qc' && (
+                              <>
+                                <TableHead className="min-w-[110px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                  Role
+                                </TableHead>
+                                <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                  Callback Appts<br /><span className="font-mono font-normal text-zinc-400">Jerome only</span>
+                                </TableHead>
+                              </>
+                            )}
+                            {activeDeptTab === 'discovery' && (
+                              <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Units (Prior Wk)<br /><span className="font-mono font-normal text-zinc-400">₱25 × units</span>
+                              </TableHead>
+                            )}
+                            {activeDeptTab === 'hr' && (
+                              <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                HR Pool Share
+                              </TableHead>
+                            )}
+                            {activeDeptTab === 'sales_assistant' && (
+                              <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Sales (Last Wk)<br /><span className="font-mono font-normal text-zinc-400">₱150 × sales</span>
+                              </TableHead>
+                            )}
+                            {activeDeptTab === 'smart_staff' && (
+                              <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Appts Set<br /><span className="font-mono font-normal text-zinc-400">₱250 × appts</span>
+                              </TableHead>
+                            )}
+                            {/* Toggle-based dept bonus columns */}
+                            {!FORMULA_DEPT_KEYS.has(activeDeptTab) && activeDept.bonuses.map(b => (
+                              <TableHead
+                                key={b.id}
+                                className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400"
+                              >
+                                {b.label}<br />
+                                <span className="font-mono font-bold">{formatPHP(b.amount)}</span>
+                              </TableHead>
+                            ))}
                             <TableHead className="min-w-[100px] px-2 text-right text-xs font-medium text-emerald-600 dark:text-emerald-400">
                               Bonus Total
                             </TableHead>
@@ -1755,8 +2185,8 @@ export default function PayrollWizard() {
                           {deptEmployees.map((emp, i) => {
                             const bonusTotal = bonusTotals[emp.email] ?? 0;
                             const finalPay = (emp.initialPay ?? 0) + bonusTotal;
-                            const appts = employeeAppointments[emp.email] ?? 0;
-                            const leadGenBonus = calcLeadGenBonus(appts);
+                            const empM = employeeMetrics[emp.email] ?? {};
+                            const isJerome = isJeromeRosero(emp.name);
                             return (
                               <TableRow
                                 key={`${emp.email}-${i}`}
@@ -1799,59 +2229,227 @@ export default function PayrollWizard() {
                                     </TableCell>
                                   );
                                 })}
-                                {/* Lead Gen: appointment input + computed bonus */}
-                                {activeDeptTab === 'lead_gen' ? (
+                                {/* Accounting: collected input */}
+                                {activeDeptTab === 'accounting' && (
+                                  <TableCell className="px-2 py-2">
+                                    <Input
+                                      type="number" min={0}
+                                      value={empM.collected ?? 0 ? (empM.collected ?? 0) : ''}
+                                      placeholder="0"
+                                      onChange={e => {
+                                        const v = parseInt(e.target.value, 10);
+                                        updateEmployeeMetric(emp.email, 'collected', Number.isFinite(v) && v >= 0 ? v : 0);
+                                      }}
+                                      className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                                    />
+                                  </TableCell>
+                                )}
+                                {/* Edit: tickets input */}
+                                {activeDeptTab === 'edit' && (
+                                  <TableCell className="px-2 py-2">
+                                    <Input
+                                      type="number" min={0}
+                                      value={empM.tickets ?? 0 ? (empM.tickets ?? 0) : ''}
+                                      placeholder="0"
+                                      onChange={e => {
+                                        const v = parseInt(e.target.value, 10);
+                                        updateEmployeeMetric(emp.email, 'tickets', Number.isFinite(v) && v >= 0 ? v : 0);
+                                      }}
+                                      className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                                    />
+                                  </TableCell>
+                                )}
+                                {/* Devs: tickets + site delivery/checking */}
+                                {activeDeptTab === 'devs' && (
                                   <>
                                     <TableCell className="px-2 py-2">
-                                      <div className="flex items-center justify-center gap-1">
+                                      <Input
+                                        type="number" min={0}
+                                        value={empM.tickets ?? 0 ? (empM.tickets ?? 0) : ''}
+                                        placeholder="0"
+                                        onChange={e => {
+                                          const v = parseInt(e.target.value, 10);
+                                          updateEmployeeMetric(emp.email, 'tickets', Number.isFinite(v) && v >= 0 ? v : 0);
+                                        }}
+                                        className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                                      />
+                                    </TableCell>
+                                    <TableCell className="px-2 py-2">
+                                      {isDevsDelivery(emp.name) ? (
+                                        <div className="flex flex-col items-center gap-0.5">
+                                          <Input
+                                            type="number" min={0}
+                                            value={empM.siteDelivery ?? 0 ? (empM.siteDelivery ?? 0) : ''}
+                                            placeholder="0"
+                                            onChange={e => {
+                                              const v = parseInt(e.target.value, 10);
+                                              updateEmployeeMetric(emp.email, 'siteDelivery', Number.isFinite(v) && v >= 0 ? v : 0);
+                                            }}
+                                            className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                                          />
+                                          <span className="text-[9px] text-violet-500">Delivery ₱50</span>
+                                        </div>
+                                      ) : isDevsChecking(emp.name) ? (
+                                        <div className="flex flex-col items-center gap-0.5">
+                                          <Input
+                                            type="number" min={0}
+                                            value={empM.siteChecking ?? 0 ? (empM.siteChecking ?? 0) : ''}
+                                            placeholder="0"
+                                            onChange={e => {
+                                              const v = parseInt(e.target.value, 10);
+                                              updateEmployeeMetric(emp.email, 'siteChecking', Number.isFinite(v) && v >= 0 ? v : 0);
+                                            }}
+                                            className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                                          />
+                                          <span className="text-[9px] text-violet-500">Checking ₱250</span>
+                                        </div>
+                                      ) : (
+                                        <span className="block text-center text-xs text-zinc-400">—</span>
+                                      )}
+                                    </TableCell>
+                                  </>
+                                )}
+                                {/* Callback: callback appts + lead gen appts */}
+                                {activeDeptTab === 'callback' && (
+                                  <>
+                                    <TableCell className="px-2 py-2">
+                                      <Input
+                                        type="number" min={0}
+                                        value={empM.callbackAppts ?? 0 ? (empM.callbackAppts ?? 0) : ''}
+                                        placeholder="0"
+                                        onChange={e => {
+                                          const v = parseInt(e.target.value, 10);
+                                          updateEmployeeMetric(emp.email, 'callbackAppts', Number.isFinite(v) && v >= 0 ? v : 0);
+                                        }}
+                                        className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                                      />
+                                    </TableCell>
+                                    <TableCell className="px-2 py-2">
+                                      <div className="flex flex-col items-center gap-0.5">
                                         <Input
-                                          type="number"
-                                          min={0}
-                                          value={appts === 0 ? '' : appts}
+                                          type="number" min={0}
+                                          value={empM.leadGenAppts ?? 0 ? (empM.leadGenAppts ?? 0) : ''}
                                           placeholder="0"
                                           onChange={e => {
                                             const v = parseInt(e.target.value, 10);
-                                            setEmployeeAppointments(prev => ({
-                                              ...prev,
-                                              [emp.email]: Number.isFinite(v) && v >= 0 ? v : 0,
-                                            }));
+                                            updateEmployeeMetric(emp.email, 'leadGenAppts', Number.isFinite(v) && v >= 0 ? v : 0);
                                           }}
                                           className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
                                         />
-                                        {appts > 0 && (
+                                        {(empM.leadGenAppts ?? 0) > 0 && (
                                           <span className={cn(
-                                            'rounded px-1 py-0.5 text-[10px] font-bold',
-                                            appts >= 10
-                                              ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
-                                              : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+                                            'text-[9px] font-bold',
+                                            (empM.leadGenAppts ?? 0) >= 10 ? 'text-violet-600' : 'text-zinc-500',
                                           )}>
-                                            ×{appts >= 10 ? '₱500' : '₱250'}
+                                            ×{(empM.leadGenAppts ?? 0) >= 10 ? '₱500' : '₱250'}
                                           </span>
                                         )}
                                       </div>
                                     </TableCell>
-                                    <TableCell className="px-2 py-2.5 text-right font-mono text-xs font-bold">
-                                      {leadGenBonus > 0 ? (
-                                        <span className="text-violet-600 dark:text-violet-400">
-                                          +{formatPHP(leadGenBonus)}
+                                  </>
+                                )}
+                                {/* QC: role badge + optional Jerome callback appts */}
+                                {activeDeptTab === 'qc' && (
+                                  <>
+                                    <TableCell className="px-2 py-2 text-center">
+                                      {isJerome ? (
+                                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                                          Jerome · ₱30/unit
                                         </span>
                                       ) : (
-                                        <span className="text-zinc-400">—</span>
+                                        <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                                          Pool ÷ {standardQcMembers.length}
+                                          {qcPoolPerMember > 0 && (
+                                            <span className="ml-1 font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                              = {formatPHP(qcPoolPerMember)}
+                                            </span>
+                                          )}
+                                        </span>
+                                      )}
+                                    </TableCell>
+                                    <TableCell className="px-2 py-2">
+                                      {isJerome ? (
+                                        <Input
+                                          type="number" min={0}
+                                          value={empM.callbackAppts ?? 0 ? (empM.callbackAppts ?? 0) : ''}
+                                          placeholder="0"
+                                          onChange={e => {
+                                            const v = parseInt(e.target.value, 10);
+                                            updateEmployeeMetric(emp.email, 'callbackAppts', Number.isFinite(v) && v >= 0 ? v : 0);
+                                          }}
+                                          className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                                        />
+                                      ) : (
+                                        <span className="block text-center text-xs text-zinc-400">—</span>
                                       )}
                                     </TableCell>
                                   </>
-                                ) : (
-                                  /* Other depts: fixed bonus toggles */
-                                  activeDept.bonuses.map(bonus => (
-                                    <TableCell key={bonus.id} className="px-2 py-2.5 text-center">
-                                      <Switch
-                                        checked={employeeBonuses[emp.email]?.[bonus.id] ?? false}
-                                        onCheckedChange={v => toggleEmployeeBonus(emp.email, bonus.id, v)}
-                                        className="data-[state=checked]:bg-indigo-600"
-                                      />
-                                    </TableCell>
-                                  ))
                                 )}
+                                {/* Discovery: units sold prior week */}
+                                {activeDeptTab === 'discovery' && (
+                                  <TableCell className="px-2 py-2">
+                                    <Input
+                                      type="number" min={0}
+                                      value={empM.unitsSoldPriorWeek ?? 0 ? (empM.unitsSoldPriorWeek ?? 0) : ''}
+                                      placeholder="0"
+                                      onChange={e => {
+                                        const v = parseInt(e.target.value, 10);
+                                        updateEmployeeMetric(emp.email, 'unitsSoldPriorWeek', Number.isFinite(v) && v >= 0 ? v : 0);
+                                      }}
+                                      className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                                    />
+                                  </TableCell>
+                                )}
+                                {/* HR: show computed pool share */}
+                                {activeDeptTab === 'hr' && (
+                                  <TableCell className="px-2 py-2.5 text-center font-mono text-xs font-bold">
+                                    {hrNewHires > 0 ? (
+                                      <span className="text-violet-600 dark:text-violet-400">{formatPHP(hrPoolShare)}</span>
+                                    ) : (
+                                      <span className="text-zinc-400">— (enter new hires)</span>
+                                    )}
+                                  </TableCell>
+                                )}
+                                {/* Sales Assistant: sales last week */}
+                                {activeDeptTab === 'sales_assistant' && (
+                                  <TableCell className="px-2 py-2">
+                                    <Input
+                                      type="number" min={0}
+                                      value={empM.salesLastWeek ?? 0 ? (empM.salesLastWeek ?? 0) : ''}
+                                      placeholder="0"
+                                      onChange={e => {
+                                        const v = parseInt(e.target.value, 10);
+                                        updateEmployeeMetric(emp.email, 'salesLastWeek', Number.isFinite(v) && v >= 0 ? v : 0);
+                                      }}
+                                      className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                                    />
+                                  </TableCell>
+                                )}
+                                {/* SmartStaff: appointments set */}
+                                {activeDeptTab === 'smart_staff' && (
+                                  <TableCell className="px-2 py-2">
+                                    <Input
+                                      type="number" min={0}
+                                      value={empM.appointmentsSet ?? 0 ? (empM.appointmentsSet ?? 0) : ''}
+                                      placeholder="0"
+                                      onChange={e => {
+                                        const v = parseInt(e.target.value, 10);
+                                        updateEmployeeMetric(emp.email, 'appointmentsSet', Number.isFinite(v) && v >= 0 ? v : 0);
+                                      }}
+                                      className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                                    />
+                                  </TableCell>
+                                )}
+                                {/* Toggle-based dept bonus switches */}
+                                {!FORMULA_DEPT_KEYS.has(activeDeptTab) && activeDept.bonuses.map(bonus => (
+                                  <TableCell key={bonus.id} className="px-2 py-2.5 text-center">
+                                    <Switch
+                                      checked={employeeBonuses[emp.email]?.[bonus.id] ?? false}
+                                      onCheckedChange={v => toggleEmployeeBonus(emp.email, bonus.id, v)}
+                                      className="data-[state=checked]:bg-indigo-600"
+                                    />
+                                  </TableCell>
+                                ))}
                                 <TableCell className="px-2 py-2.5 text-right font-mono text-xs font-bold">
                                   {bonusTotal > 0 ? (
                                     <span className="text-emerald-600 dark:text-emerald-400">
