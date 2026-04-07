@@ -604,6 +604,12 @@ export default function PayrollWizard() {
   const [hourlyRatesLoading, setHourlyRatesLoading] = useState(false);
   const [hourlyRatesError, setHourlyRatesError] = useState<string | null>(null);
 
+  /** USD → PHP exchange rate. Stored in app_settings (key: usd_to_php_rate). Default 56. */
+  const DEFAULT_USD_TO_PHP = 56;
+  const [usdToPhpRate, setUsdToPhpRate] = useState<number>(DEFAULT_USD_TO_PHP);
+  const [usdToPhpInput, setUsdToPhpInput] = useState<string>(String(DEFAULT_USD_TO_PHP));
+  const [usdToPhpSaving, setUsdToPhpSaving] = useState(false);
+
   const [activeDeptTab, setActiveDeptTab] = useState('accounting');
   const [employeeDepts, setEmployeeDepts] = useState<Record<string, string>>({});
   const [employeeBonuses, setEmployeeBonuses] = useState<Record<string, Record<string, boolean>>>({});
@@ -624,6 +630,26 @@ export default function PayrollWizard() {
         if (!cancelled) setMasterEmployees(json.employees ?? []);
       } catch {
         // payrollComparison degrades gracefully with an empty list
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' });
+        const json = (await res.json()) as { value: string | null; error: string | null };
+        if (!cancelled && json.value) {
+          const parsed = parseFloat(json.value);
+          if (Number.isFinite(parsed) && parsed > 0) {
+            setUsdToPhpRate(parsed);
+            setUsdToPhpInput(String(parsed));
+          }
+        }
+      } catch {
+        // fall back to default
       }
     })();
     return () => { cancelled = true; };
@@ -767,6 +793,7 @@ export default function PayrollWizard() {
       const em = normEmail(row.email);
       const rateRow = em ? ratesByEmail.get(em) : undefined;
 
+      // Rates stored in PHP; compute pay in PHP then derive USD equivalent
       const regularRate = parseRateField(rateRow?.regular_rate);
       const otRate = parseRateField(rateRow?.ot_rate);
 
@@ -1421,6 +1448,79 @@ export default function PayrollWizard() {
               </Button>
             </div>
 
+            {/* USD → PHP Exchange Rate */}
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50/60 px-4 py-3 dark:border-blue-800/50 dark:bg-blue-950/30">
+              <DollarSign className="h-4 w-4 shrink-0 text-blue-500" />
+              <div className="flex flex-1 flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-blue-900 dark:text-blue-200">
+                  USD → PHP Rate
+                </span>
+                <span className="text-xs text-blue-700/70 dark:text-blue-400/70">
+                  (1 USD =)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm font-medium text-blue-600 dark:text-blue-400">
+                    ₱
+                  </span>
+                  <Input
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    value={usdToPhpInput}
+                    onChange={(e) => setUsdToPhpInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const parsed = parseFloat(usdToPhpInput);
+                        if (Number.isFinite(parsed) && parsed > 0) {
+                          setUsdToPhpRate(parsed);
+                          setUsdToPhpSaving(true);
+                          fetch('/api/app-settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ key: 'usd_to_php_rate', value: String(parsed) }),
+                          })
+                            .then(() => toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`))
+                            .catch(() => toast.error('Failed to save rate'))
+                            .finally(() => setUsdToPhpSaving(false));
+                        }
+                      }
+                    }}
+                    className="h-8 w-28 border-blue-300 bg-white pl-6 pr-2 font-mono text-sm tabular-nums dark:border-blue-700 dark:bg-zinc-950"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={usdToPhpSaving}
+                  className="h-8 bg-blue-600 px-3 text-xs hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600"
+                  onClick={() => {
+                    const parsed = parseFloat(usdToPhpInput);
+                    if (!Number.isFinite(parsed) || parsed <= 0) {
+                      toast.error('Enter a valid positive rate');
+                      return;
+                    }
+                    setUsdToPhpRate(parsed);
+                    setUsdToPhpSaving(true);
+                    fetch('/api/app-settings', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ key: 'usd_to_php_rate', value: String(parsed) }),
+                    })
+                      .then(() => toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`))
+                      .catch(() => toast.error('Failed to save rate'))
+                      .finally(() => setUsdToPhpSaving(false));
+                  }}
+                >
+                  {usdToPhpSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Apply & Save'}
+                </Button>
+              </div>
+              <p className="w-full text-xs text-blue-700/60 dark:text-blue-400/60">
+                Divides PHP Initial Pay by this rate to show the USD equivalent. Current: <span className="font-mono font-semibold">₱{usdToPhpRate.toFixed(2)}</span> = $1 USD. Press <kbd className="rounded border border-blue-300 bg-blue-100 px-1 py-0.5 font-mono text-[10px] dark:border-blue-700 dark:bg-blue-900">Enter</kbd> or click Apply &amp; Save to update all rows.
+              </p>
+            </div>
+
             {hourlyRatesError && (
               <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1523,7 +1623,8 @@ export default function PayrollWizard() {
                           OT Pay
                         </TableHead>
                         <TableHead className="px-2 text-right text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">
-                          Initial Pay
+                          <div>Initial Pay</div>
+                          <div className="text-[10px] font-normal text-blue-500 dark:text-blue-400">≈ USD</div>
                         </TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1590,8 +1691,17 @@ export default function PayrollWizard() {
                               <span className="text-zinc-400">—</span>
                             )}
                           </TableCell>
-                          <TableCell className="px-2 text-right align-middle font-mono text-xs font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                            {row.initialPay != null ? formatPHP(row.initialPay) : '—'}
+                          <TableCell className="px-2 text-right align-middle tabular-nums">
+                            {row.initialPay != null ? (
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span className="font-mono text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                                  {formatPHP(row.initialPay)}
+                                </span>
+                                <span className="font-mono text-[10px] text-blue-500 dark:text-blue-400">
+                                  ≈&nbsp;${(row.initialPay / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                            ) : '—'}
                           </TableCell>
                         </TableRow>
                         ))
