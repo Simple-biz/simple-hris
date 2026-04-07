@@ -64,6 +64,8 @@ function buildHubstaffDataFromParsedGrid(grid: string[][]): HubstaffRow[] {
   const totalIdx = findHeaderColumn(header, 'Total worked');
   if (emailIdx < 0 || totalIdx < 0) return [];
   const memberIdx = findHeaderColumn(header, 'Member');
+  // "Job type" is the Hubstaff column that holds the department/team name
+  const jobTypeIdx = findHeaderColumn(header, 'Job type', 'Job Type', 'job_type', 'Department', 'department');
   const parsedData: HubstaffRow[] = [];
   for (let r = 1; r < grid.length; r++) {
     const row = grid[r];
@@ -71,11 +73,13 @@ function buildHubstaffDataFromParsedGrid(grid: string[][]): HubstaffRow[] {
     if (!email) continue;
     const totalCell = row[totalIdx] ?? '';
     const member = memberIdx >= 0 ? (row[memberIdx] ?? '').trim() : '';
+    const jobType = jobTypeIdx >= 0 ? (row[jobTypeIdx] ?? '').trim() || null : null;
     parsedData.push({
       name: member || email,
       email,
       hours: String(totalCell).trim(),
       decimalHours: parseHoursToDecimal(totalCell),
+      department: jobType,
     });
   }
   return parsedData;
@@ -894,6 +898,8 @@ export default function PayrollWizard() {
           email: p.email ?? '',
           hours: p.hoursDisplay,
           decimalHours: p.hoursDecimal,
+          // Carry the Hubstaff "Job type" column through as a dept fallback
+          department: p.department ?? null,
         }));
         setHubstaffData(hd);
         setIssues(buildReconciliationIssues(hd, users));
@@ -912,15 +918,21 @@ export default function PayrollWizard() {
   }, [loadHubstaffPreview]);
 
   /**
-   * Auto-populate employeeDepts from Supabase global_master_list whenever
-   * calcResults or masterEmployees change. Existing manual assignments are
-   * preserved — only unassigned employees are filled in.
+   * Auto-populate employeeDepts whenever calcResults, masterEmployees, or
+   * hubstaffData change. Existing manual assignments are preserved.
    *
-   * Chain: Hubstaff email → employee_hourly_rates (work_email) → personal_email
-   *        → global_master_list (personal_email) → Department → dept key
+   * Resolution order (first hit wins):
+   *  1. personal_email chain  — Hubstaff work email → employee_hourly_rates
+   *                             → personal_email → global_master_list
+   *  2. Name match            — Hubstaff name → global_master_list name
+   *  3. Work email direct     — Hubstaff email → global_master_list "Work Email"
+   *                             (uses new work_email field fetched from DB)
+   *  4. Hubstaff dept fallback — if still unresolved, use the "Job type" column
+   *                             from hubstaff_hours as the department hint.
+   *                             This covers employees absent from global_master_list.
    */
   useEffect(() => {
-    if (calcResults.length === 0 || masterEmployees.length === 0) return;
+    if (calcResults.length === 0) return;
 
     setEmployeeDepts(prev => {
       const next = { ...prev };
@@ -932,9 +944,15 @@ export default function PayrollWizard() {
         const em = normEmail(calcRow.email);
         const rateRow = em ? ratesByEmail.get(em) : undefined;
 
-        // Try to find the master record via personal email from the rate row
         let deptRaw: string | null = null;
-        if (rateRow?.personal_email) {
+
+        // ── Tier 0: Department column in employee_hourly_rates (primary source)
+        if (!deptRaw && rateRow?.department) {
+          deptRaw = rateRow.department;
+        }
+
+        // ── Tier 1: personal_email from rate row → global_master_list ──────
+        if (!deptRaw && rateRow?.personal_email) {
           const normPE = normEmail(rateRow.personal_email);
           const master = masterEmployees.find(
             e => normEmail(e.personal_email) === normPE,
@@ -942,13 +960,27 @@ export default function PayrollWizard() {
           deptRaw = master?.department ?? null;
         }
 
-        // Fallback: match by name if personal email lookup failed
+        // ── Tier 2: name match → global_master_list ─────────────────────────
         if (!deptRaw && calcRow.name) {
           const nameLower = calcRow.name.trim().toLowerCase();
           const master = masterEmployees.find(
             e => (e.name ?? '').trim().toLowerCase() === nameLower,
           );
           deptRaw = master?.department ?? null;
+        }
+
+        // ── Tier 3: direct work email → global_master_list "Work Email" ────
+        if (!deptRaw && em) {
+          const master = masterEmployees.find(
+            e => normEmail(e.work_email) === em,
+          );
+          deptRaw = master?.department ?? null;
+        }
+
+        // ── Tier 4: Hubstaff "Job type" fallback (employee not in master list)
+        if (!deptRaw) {
+          const hubRow = hubstaffData.find(h => normEmail(h.email) === em);
+          deptRaw = hubRow?.department ?? null;
         }
 
         const deptKey = normalizeDeptToKey(deptRaw);
@@ -960,7 +992,7 @@ export default function PayrollWizard() {
 
       return changed ? next : prev;
     });
-  }, [calcResults, masterEmployees, ratesByEmail]);
+  }, [calcResults, masterEmployees, ratesByEmail, hubstaffData]);
 
   const payrollComparison = useMemo(
     () => comparePayrollToMaster(masterEmployees, hubstaffData),

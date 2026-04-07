@@ -6,6 +6,10 @@ export type EmployeeHourlyRateRow = {
   personal_email: string | null;
   regular_rate: string | null;
   ot_rate: string | null;
+  /** Primary department source — populated from the "Department" column in
+   *  employee_hourly_rates. When present this overrides the global_master_list
+   *  department lookup entirely. */
+  department: string | null;
 };
 
 type RawRow = Record<string, unknown>;
@@ -80,12 +84,19 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
     "ot rate",
     "Ot Rate",
   ]);
+  const department = getField(idx, [
+    "Department",
+    "department",
+    "dept",
+    "Dept",
+  ]);
 
   return {
     work_email: toStr(work_email),
     personal_email: toStr(personal_email),
     regular_rate: toStr(regular_rate),
     ot_rate: toStr(ot_rate),
+    department: toStr(department),
   };
 }
 

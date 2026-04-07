@@ -14,6 +14,8 @@ export type EmployeeRateProfile = {
   subtitle: string | null;
   /** Department line for modal header (pulled out of fields). */
   department: string | null;
+  /** Organization / company name (pulled out of fields). */
+  organization: string | null;
   fields: { key: string; value: unknown }[];
 };
 
@@ -121,9 +123,9 @@ function mergeRowsUniqueFieldOrder(rows: RawRow[]): RawRow {
 }
 
 /**
- * For `hubstaff_hours` profile merge: only Job Title and Job Type (flexible column names).
+ * For `hubstaff_hours` profile merge: pass through Job Title, Job Type, and Organization.
  */
-function filterHubstaffRowToJobTitleAndType(row: RawRow): RawRow {
+function filterHubstaffRowToAllowedFields(row: RawRow): RawRow {
   const out: RawRow = {};
   for (const [k, v] of Object.entries(row)) {
     const nk = normFieldKey(k);
@@ -131,6 +133,8 @@ function filterHubstaffRowToJobTitleAndType(row: RawRow): RawRow {
       out["Job Title"] = v;
     } else if (nk === "job_type" || nk === "jobtype") {
       out["Job Type"] = v;
+    } else if (nk === "organization" || nk === "organisation" || nk === "org") {
+      out["Organization"] = v;
     }
   }
   return out;
@@ -186,11 +190,12 @@ function emailFieldPriority(nk: string): number {
 }
 
 /**
- * Drop noisy columns, lift department for header, collapse all email columns to one "Email".
+ * Drop noisy columns, lift department and organization for header, collapse all email columns to one "Email".
  */
 function finalizeProfileFields(rawFields: { key: string; value: unknown }[]): {
   fields: { key: string; value: unknown }[];
   department: string | null;
+  organization: string | null;
   primaryEmail: string | null;
 } {
   let fields = rawFields.filter((f) => !EXCLUDED_PROFILE_FIELD_KEYS.has(normFieldKey(f.key)));
@@ -202,6 +207,18 @@ function finalizeProfileFields(rawFields: { key: string; value: unknown }[]): {
     if (deptNorm.has(nk)) {
       const s = toStr(f.value);
       if (s && department == null) department = s;
+      return false;
+    }
+    return true;
+  });
+
+  let organization: string | null = null;
+  const orgNorm = new Set(["organization", "organisation", "org", "company", "client"]);
+  fields = fields.filter((f) => {
+    const nk = normFieldKey(f.key);
+    if (orgNorm.has(nk)) {
+      const s = toStr(f.value);
+      if (s && organization == null) organization = s;
       return false;
     }
     return true;
@@ -231,7 +248,7 @@ function finalizeProfileFields(rawFields: { key: string; value: unknown }[]): {
   fields = nonEmail;
   /* Primary email is only in `subtitle` / table fallback — not repeated as a body field. */
 
-  return { fields, department, primaryEmail };
+  return { fields, department, organization, primaryEmail };
 }
 
 function rateGroupKey(row: RawRow, rowIndex: number): string {
@@ -422,14 +439,14 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
       }
       let merged = mergeRowsUniqueFieldOrder(matching);
       if (tableName === hubstaffTable) {
-        merged = filterHubstaffRowToJobTitleAndType(merged);
+        merged = filterHubstaffRowToAllowedFields(merged);
       }
       if (Object.keys(merged).length === 0) continue;
       sources.push(merged);
     }
 
     const rawFields = mergeSourcesDeduped(sources);
-    const { fields, department, primaryEmail } = finalizeProfileFields(rawFields);
+    const { fields, department, organization, primaryEmail } = finalizeProfileFields(rawFields);
     const displayName =
       memberFromHubstaff || resolveDisplayName(mergedRates, master);
 
@@ -438,6 +455,7 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
       displayName,
       subtitle: primaryEmail,
       department,
+      organization,
       fields,
     });
   }

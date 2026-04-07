@@ -6,6 +6,9 @@ export type EmployeeRow = {
   department: string | null;
   name: string | null;
   personal_email: string | null;
+  /** Work / company email from the "Work Email" column in global_master_list.
+   *  Used as a secondary lookup key when personal_email matching fails. */
+  work_email?: string | null;
   start_date: string | null;
   hourlyRate?: number | null;
   bankInfo?: {
@@ -113,6 +116,7 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
   const department = pick(row, ["Department", "department"]);
   const name = pick(row, ["Name", "name"]);
   const personal_email = pick(row, ["Personal Email", "personal_email", "Personal_Email", "personal email"]);
+  const work_email = pick(row, ["Work Email", "work_email", "Work_Email", "work email", "WorkEmail"]);
   const start_date = pick(row, [
     "Start Date",
     "Start_date",
@@ -126,6 +130,7 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
     department: department != null ? String(department) : null,
     name: name != null ? String(name) : null,
     personal_email: personal_email != null ? String(personal_email) : null,
+    work_email: work_email != null ? String(work_email) : null,
     start_date: start_date != null ? String(start_date) : null,
     hourlyRate: null,
     bankInfo: null,
@@ -143,7 +148,7 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
  * Extended fields (Hourly Rate, bank info, address) live in separate tables
  * and are NOT selected here to avoid PostgREST "column does not exist" errors.
  */
-const GLOBAL_MASTER_SELECT = 'Department,Name,"Personal Email","Start Date"';
+const GLOBAL_MASTER_SELECT = 'Department,Name,"Personal Email","Work Email","Start Date"';
 
 /** True when every field is null, empty, or whitespace-only. */
 function isRowEmptyOrWhitespace(row: EmployeeRow): boolean {

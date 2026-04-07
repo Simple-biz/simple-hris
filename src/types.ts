@@ -60,6 +60,10 @@ export interface HubstaffRow {
   name: string;
   hours: string; // "40:30" or "40.5"
   decimalHours: number;
+  /** Department/job-type from Hubstaff — used as a fallback when the employee
+   *  is absent from global_master_list. Populated from the "Job type" column
+   *  in both CSV uploads and the hubstaff_hours Supabase table. */
+  department?: string | null;
 }
 
 export interface ReconciliationIssue {

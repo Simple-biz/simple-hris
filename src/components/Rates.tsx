@@ -12,6 +12,7 @@ import {
   Plus,
   Search,
   Trash2,
+  UserCog,
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -46,6 +47,7 @@ type EmployeeRateProfile = {
   displayName: string;
   subtitle: string | null;
   department: string | null;
+  organization: string | null;
   fields: { key: string; value: unknown }[];
 };
 
@@ -150,6 +152,8 @@ function tableRowFromProfile(
   return {
     employeeId,
     name,
+    department: p.department ?? null,
+    organization: p.organization ?? pickFromMap(m, ["Organization", "organization", "Organisation", "org", "Company", "company"]),
     workEmail,
     regularRate: pickFromMap(m, ["Regular Rate", "regular_rate", "Regular_Rate"]),
     otRate: pickFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"]),
@@ -171,11 +175,22 @@ export default function Rates() {
   const [activeProfile, setActiveProfile] = useState<EmployeeRateProfile | null>(null);
   const [mergeNotes, setMergeNotes] = useState<string[]>([]);
 
-  // Editing state (for profile modal)
+  // Rate editing state
   const [isEditing, setIsEditing] = useState(false);
   const [editRegularRate, setEditRegularRate] = useState("");
   const [editOtRate, setEditOtRate] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+
+  // Profile editing state
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editProfileForm, setEditProfileForm] = useState({
+    name: "",
+    department: "",
+    workEmail: "",
+    personalEmail: "",
+    startDate: "",
+  });
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   // Add Employee modal state
   const [addOpen, setAddOpen] = useState(false);
@@ -341,6 +356,8 @@ export default function Rates() {
         p.displayName,
         p.subtitle ?? "",
         row.name,
+        row.department ?? "",
+        row.organization ?? "",
         row.workEmail,
         row.regularRate,
         row.otRate,
@@ -372,6 +389,7 @@ export default function Rates() {
     setActiveProfile(p);
     setProfileOpen(true);
     setIsEditing(false);
+    setIsEditingProfile(false);
 
     // Find current rates
     const m = buildNormFieldMap(p.fields);
@@ -447,6 +465,80 @@ export default function Rates() {
       toast.error(e instanceof Error ? e.message : "Failed to update rates");
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  function openEditProfile() {
+    if (!activeProfile) return;
+    const m = buildNormFieldMap(activeProfile.fields);
+    const raw = (aliases: string[]) => {
+      for (const a of aliases) {
+        const nk = normFieldKey(a);
+        if (m.has(nk)) {
+          const v = m.get(nk);
+          if (v != null && String(v).trim() !== "") return String(v).trim();
+        }
+      }
+      return "";
+    };
+    const rawDate = raw(["Start Date", "start_date", "StartDate"]);
+    // Normalise to YYYY-MM-DD for <input type="date">
+    let dateValue = "";
+    if (rawDate) {
+      if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) {
+        dateValue = rawDate.slice(0, 10);
+      } else {
+        const d = new Date(rawDate);
+        if (!isNaN(d.getTime())) {
+          dateValue = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        }
+      }
+    }
+    // Emails are moved out of fields into subtitle/id during the merge —
+    // use extractEmailsFromProfile which handles all the fallback logic.
+    const { workEmail: resolvedWork, personalEmail: resolvedPersonal } =
+      extractEmailsFromProfile(activeProfile);
+
+    setEditProfileForm({
+      name: activeProfile.displayName && activeProfile.displayName !== "Unknown"
+        ? activeProfile.displayName
+        : raw(["Name", "name", "Full Name", "full_name"]),
+      department: activeProfile.department ?? "",
+      workEmail: resolvedWork ?? "",
+      personalEmail: resolvedPersonal ?? "",
+      startDate: dateValue,
+    });
+    setIsEditingProfile(true);
+  }
+
+  async function handleSaveProfile() {
+    if (!activeProfile) return;
+    setIsSavingProfile(true);
+    try {
+      const { workEmail: originalWorkEmail, personalEmail: originalPersonalEmail } =
+        extractEmailsFromProfile(activeProfile);
+      const res = await fetch("/api/update-employee-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          originalWorkEmail,
+          originalPersonalEmail,
+          name: editProfileForm.name.trim() || null,
+          department: editProfileForm.department.trim() || null,
+          workEmail: editProfileForm.workEmail.trim() || null,
+          personalEmail: editProfileForm.personalEmail.trim() || null,
+          startDate: editProfileForm.startDate || null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to update profile");
+      toast.success("Profile updated successfully");
+      setIsEditingProfile(false);
+      await fetchProfiles();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update profile");
+    } finally {
+      setIsSavingProfile(false);
     }
   }
 
@@ -580,6 +672,12 @@ export default function Rates() {
                       <TableHead className="min-w-[11rem] whitespace-normal text-zinc-600 dark:text-zinc-400">
                         Name
                       </TableHead>
+                      <TableHead className="min-w-[9rem] whitespace-normal text-zinc-600 dark:text-zinc-400">
+                        Department
+                      </TableHead>
+                      <TableHead className="min-w-[9rem] whitespace-normal text-zinc-600 dark:text-zinc-400">
+                        Organization
+                      </TableHead>
                       <TableHead className="min-w-[10rem] whitespace-normal text-zinc-600 dark:text-zinc-400">
                         Work Email
                       </TableHead>
@@ -611,6 +709,24 @@ export default function Rates() {
                           </TableCell>
                           <TableCell className="min-w-[11rem] whitespace-normal break-words align-top font-medium leading-snug text-zinc-900 dark:text-zinc-100">
                             {row.name}
+                          </TableCell>
+                          <TableCell className="min-w-[9rem] whitespace-normal break-words align-top text-sm leading-snug text-zinc-700 dark:text-zinc-300">
+                            {row.department ? (
+                              <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
+                                {row.department}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="min-w-[9rem] whitespace-normal break-words align-top text-sm leading-snug text-zinc-700 dark:text-zinc-300">
+                            {row.organization && row.organization !== "—" ? (
+                              <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-400">
+                                {row.organization}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="min-w-[10rem] max-w-[280px] whitespace-normal break-all font-mono text-xs leading-snug text-zinc-600 dark:text-zinc-400">
                             {row.workEmail}
@@ -913,7 +1029,10 @@ export default function Rates() {
         open={profileOpen}
         onOpenChange={(open) => {
           setProfileOpen(open);
-          if (!open) setActiveProfile(null);
+          if (!open) {
+            setActiveProfile(null);
+            setIsEditingProfile(false);
+          }
         }}
       >
         <DialogContent
@@ -949,8 +1068,19 @@ export default function Rates() {
                     ) : null;
                   })()}
                 </div>
-                {activeProfile.department ? (
-                  <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">{activeProfile.department}</p>
+                {(activeProfile.department || activeProfile.organization) ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {activeProfile.department ? (
+                      <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
+                        {activeProfile.department}
+                      </span>
+                    ) : null}
+                    {activeProfile.organization ? (
+                      <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-400">
+                        {activeProfile.organization}
+                      </span>
+                    ) : null}
+                  </div>
                 ) : null}
                 {activeProfile.subtitle ? (
                   <DialogDescription className="text-left font-mono text-xs leading-relaxed text-zinc-500 dark:text-zinc-500">
@@ -1037,7 +1167,17 @@ export default function Rates() {
                         </Button>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 gap-1.5 border-zinc-200 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                          onClick={openEditProfile}
+                          disabled={isEditingProfile}
+                        >
+                          <UserCog className="size-3.5" />
+                          Edit Profile
+                        </Button>
                         <Button
                           size="sm"
                           variant="outline"
@@ -1062,53 +1202,157 @@ export default function Rates() {
                 </div>
               </div>
               <div className="overflow-y-auto overflow-x-hidden bg-gradient-to-b from-white to-orange-50/20 px-6 [-webkit-overflow-scrolling:touch] dark:from-[#0d1117] dark:to-blue-950/10" style={{ maxHeight: "min(58vh, 600px)" }}>
-                <div className="pb-6 pt-2">
-                  <dl className="grid grid-cols-1 gap-x-10 gap-y-0 md:grid-cols-2">
-                    {/* Employee ID — always first */}
-                    {(() => {
-                      const empId = tableRowFromProfile(activeProfile, employeeIdMap).employeeId;
-                      if (!empId) return null;
-                      return (
+                {isEditingProfile ? (
+                  <div className="py-5">
+                    <p className="mb-4 text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                      Edit Profile
+                    </p>
+                    <div className="space-y-4">
+                      {/* Name (full width) */}
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                          Name
+                        </Label>
+                        <Input
+                          placeholder="Full name"
+                          value={editProfileForm.name}
+                          onChange={(e) => setEditProfileForm((f) => ({ ...f, name: e.target.value }))}
+                          className="h-9 border-zinc-200 bg-white text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                        />
+                      </div>
+                      {/* Department + Start Date */}
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                            Department
+                          </Label>
+                          <Input
+                            placeholder="e.g. Engineering"
+                            value={editProfileForm.department}
+                            onChange={(e) => setEditProfileForm((f) => ({ ...f, department: e.target.value }))}
+                            className="h-9 border-zinc-200 bg-white text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                            Start Date
+                          </Label>
+                          <Input
+                            type="date"
+                            value={editProfileForm.startDate}
+                            onChange={(e) => setEditProfileForm((f) => ({ ...f, startDate: e.target.value }))}
+                            className="h-9 border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                          />
+                        </div>
+                      </div>
+                      {/* Emails */}
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                            Work Email
+                          </Label>
+                          <Input
+                            type="email"
+                            placeholder="name@company.com"
+                            value={editProfileForm.workEmail}
+                            onChange={(e) => setEditProfileForm((f) => ({ ...f, workEmail: e.target.value }))}
+                            className="h-9 border-zinc-200 bg-white font-mono text-sm text-zinc-900 placeholder:font-sans placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                            Personal Email
+                          </Label>
+                          <Input
+                            type="email"
+                            placeholder="personal@email.com"
+                            value={editProfileForm.personalEmail}
+                            onChange={(e) => setEditProfileForm((f) => ({ ...f, personalEmail: e.target.value }))}
+                            className="h-9 border-zinc-200 bg-white font-mono text-sm text-zinc-900 placeholder:font-sans placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    {/* Form actions */}
+                    <div className="mt-6 flex justify-end gap-2 border-t border-zinc-100 pt-5 dark:border-zinc-800">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => setIsEditingProfile(false)}
+                        disabled={isSavingProfile}
+                        className="text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={handleSaveProfile}
+                        disabled={isSavingProfile}
+                        className="gap-1.5 bg-gradient-to-r from-zinc-800 to-zinc-900 text-white shadow-sm hover:from-zinc-700 hover:to-zinc-800 dark:from-zinc-200 dark:to-zinc-100 dark:text-zinc-900 dark:hover:from-white dark:hover:to-zinc-200"
+                      >
+                        {isSavingProfile ? (
+                          <>
+                            <Loader2 className="size-3.5 animate-spin" />
+                            Saving…
+                          </>
+                        ) : (
+                          <>
+                            <Check className="size-3.5" />
+                            Save Profile
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="pb-6 pt-2">
+                    <dl className="grid grid-cols-1 gap-x-10 gap-y-0 md:grid-cols-2">
+                      {/* Employee ID — always first */}
+                      {(() => {
+                        const empId = tableRowFromProfile(activeProfile, employeeIdMap).employeeId;
+                        if (!empId) return null;
+                        return (
+                          <motion.div
+                            key={`${activeProfile.id}-employee-id`}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.2, ease: dialogEase, delay: 0 }}
+                            className="border-b border-zinc-100 py-3.5 dark:border-zinc-800/90"
+                          >
+                            <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                              Employee ID
+                            </dt>
+                            <dd className="mt-1.5">
+                              <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2.5 py-0.5 font-mono text-sm font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                                {empId}
+                              </span>
+                            </dd>
+                          </motion.div>
+                        );
+                      })()}
+                      {activeProfile.fields.map(({ key, value }, i) => (
                         <motion.div
-                          key={`${activeProfile.id}-employee-id`}
+                          key={`${activeProfile.id}-${key}`}
                           initial={{ opacity: 0, y: 6 }}
                           animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.2, ease: dialogEase, delay: 0 }}
-                          className="border-b border-zinc-100 py-3.5 dark:border-zinc-800/90"
+                          transition={{
+                            duration: 0.2,
+                            ease: dialogEase,
+                            delay: Math.min(i * 0.01, 0.28),
+                          }}
+                          className="border-b border-zinc-100 py-3.5 last:border-transparent dark:border-zinc-800/90"
                         >
                           <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                            Employee ID
+                            {key}
                           </dt>
-                          <dd className="mt-1.5">
-                            <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2.5 py-0.5 font-mono text-sm font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
-                              {empId}
-                            </span>
+                          <dd className="mt-1.5 max-w-full whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-900 dark:text-zinc-100">
+                            {formatFieldValue(key, value)}
                           </dd>
                         </motion.div>
-                      );
-                    })()}
-                    {activeProfile.fields.map(({ key, value }, i) => (
-                      <motion.div
-                        key={`${activeProfile.id}-${key}`}
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{
-                          duration: 0.2,
-                          ease: dialogEase,
-                          delay: Math.min(i * 0.01, 0.28),
-                        }}
-                        className="border-b border-zinc-100 py-3.5 last:border-transparent dark:border-zinc-800/90"
-                      >
-                        <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                          {key}
-                        </dt>
-                        <dd className="mt-1.5 max-w-full whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-900 dark:text-zinc-100">
-                          {formatFieldValue(key, value)}
-                        </dd>
-                      </motion.div>
-                    ))}
-                  </dl>
-                </div>
+                      ))}
+                    </dl>
+                  </div>
+                )}
               </div>
             </motion.div>
           ) : null}
