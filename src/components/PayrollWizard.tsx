@@ -872,6 +872,7 @@ export default function PayrollWizard() {
           name: string | null;
           hoursDisplay: string;
           hoursDecimal: number;
+          department?: string | null;
         }>;
         error?: string | null;
       };
