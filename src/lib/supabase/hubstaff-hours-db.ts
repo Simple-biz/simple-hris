@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parseCsv } from "@/lib/csv/parse-csv";
+import { upsertAppSetting } from "@/lib/supabase/app-settings";
 import { mapHubstaffHoursRow, type PayrollHubstaffRow } from "@/lib/supabase/hubstaff-hours";
 
 function getTableName(): string {
@@ -15,6 +16,41 @@ function requireServiceRole(): SupabaseClient {
     );
   }
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+/**
+ * Deletes every row in the table. PostgREST requires a filter on `.delete()`; a single
+ * `.not('id','is',null)` can fail to remove all rows in some setups. Batching by `id`
+ * matches how a full replace is expected to behave (no leftover rows from prior uploads).
+ */
+async function deleteAllRowsInTable(supabase: SupabaseClient, table: string): Promise<void> {
+  const PAGE = 1000;
+  let safety = 0;
+  const maxIterations = 100_000;
+  while (safety < maxIterations) {
+    safety += 1;
+    const { data, error } = await supabase.from(table).select("id").limit(PAGE);
+    if (error) {
+      throw new Error(`Cannot read ${table} for clear: ${error.message}`);
+    }
+    const batch = (data ?? []) as { id: unknown }[];
+    if (batch.length === 0) return;
+
+    const ids = batch.map((r) => r.id).filter((id) => id != null) as (string | number)[];
+    if (ids.length === 0) {
+      const { error: delNull } = await supabase.from(table).delete().is("id", null);
+      if (delNull) {
+        const { error: fallback } = await supabase.from(table).delete().not("id", "is", null);
+        if (fallback) throw new Error(`Failed to clear ${table}: ${fallback.message}`);
+      }
+      continue;
+    }
+
+    const { error: delErr } = await supabase.from(table).delete().in("id", ids);
+    if (delErr) throw new Error(`Failed to clear ${table}: ${delErr.message}`);
+    if (batch.length < PAGE) return;
+  }
+  throw new Error(`Failed to fully clear ${table}: too many rows or loop limit reached`);
 }
 
 /**
@@ -352,14 +388,12 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
     );
   }
 
-  // Delete all existing rows (service_role bypasses RLS).
-  const { error: deleteError } = await supabase
-    .from(table)
-    .delete()
-    .not("id", "is", null);
-
-  if (deleteError) {
-    throw new Error(`Failed to clear ${table}: ${deleteError.message}`);
+  // Remove prior upload completely, then clear saved daily fallback so reloads do not
+  // merge old week columns with the new file.
+  await deleteAllRowsInTable(supabase, table);
+  const { error: settingsErr } = await upsertAppSetting("hubstaff_daily_breakdown", "");
+  if (settingsErr) {
+    console.warn("[hubstaff_hours] could not clear hubstaff_daily_breakdown:", settingsErr);
   }
 
   // Batch insert

@@ -29,6 +29,10 @@ import {
   roundWorkedHoursForPay,
   splitRegularOvertimeSeconds,
 } from '@/lib/payroll/money-php';
+import {
+  groupDateColumnsByCalendarDay,
+  pickPreferredHubstaffColumn,
+} from '@/lib/hubstaff/calendar-column-dedupe';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -331,16 +335,22 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     };
   }, [email]);
 
-  // Compute daily hours breakdown
+  // Compute daily hours breakdown (one bar per calendar day — dedupe ISO vs Mon 3/24 vs monday…)
   const dailyHours = useMemo<DayHours[]>(() => {
     if (!row) return [];
     const dateCols = columns.filter(isDateCol);
-    return dateCols
-      .map((col) => {
-        const raw =
-          getFieldFromRow(row, [col]) ??
-          (Object.prototype.hasOwnProperty.call(row, col) ? row[col] : undefined);
-        const seconds = parseHMS(raw);
+    const groups = groupDateColumnsByCalendarDay(dateCols, columns);
+    return groups
+      .map((group) => {
+        const col = pickPreferredHubstaffColumn(group);
+        const seconds = Math.max(
+          ...group.map((c) => {
+            const raw =
+              getFieldFromRow(row, [c]) ??
+              (Object.prototype.hasOwnProperty.call(row, c) ? row[c] : undefined);
+            return parseHMS(raw);
+          }),
+        );
         const prefix = colDayPrefix(col);
         if (prefix) {
           return { col, label: prefix.label, seconds, weekday: prefix.weekday, order: prefix.order };

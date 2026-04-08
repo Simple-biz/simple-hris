@@ -67,6 +67,8 @@ export default function Overview() {
   const [page, setPage] = useState(1);
   const [totalPayout, setTotalPayout] = useState<number | null>(null);
   const [payoutLoading, setPayoutLoading] = useState(true);
+  /** Normalized emails from hubstaff_hours payroll rows; null if not loaded or fetch failed. */
+  const [payrollEmailsNorm, setPayrollEmailsNorm] = useState<Set<string> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,6 +110,7 @@ export default function Overview() {
         ]);
         const hoursJson = (await hoursRes.json()) as {
           payrollRows?: Array<{ email: string | null; hoursDecimal: number }> | null;
+          error?: string | null;
         };
         const ratesJson = (await ratesRes.json()) as {
           rows: EmployeeHourlyRateRow[];
@@ -115,6 +118,17 @@ export default function Overview() {
 
         const ratesByEmail = indexHourlyRatesByEmail(ratesJson.rows ?? []);
         const payrollRows = hoursJson.payrollRows ?? [];
+
+        if (hoursRes.ok && !hoursJson.error) {
+          const paySet = new Set<string>();
+          for (const row of payrollRows) {
+            const em = normEmail(row.email);
+            if (em) paySet.add(em);
+          }
+          setPayrollEmailsNorm(paySet);
+        } else {
+          setPayrollEmailsNorm(null);
+        }
 
         let sum = 0;
         let hasAnyPay = false;
@@ -153,7 +167,10 @@ export default function Overview() {
           setTotalPayout(hasAnyPay ? sum : null);
         }
       } catch {
-        if (!cancelled) setTotalPayout(null);
+        if (!cancelled) {
+          setTotalPayout(null);
+          setPayrollEmailsNorm(null);
+        }
       } finally {
         if (!cancelled) setPayoutLoading(false);
       }
@@ -205,6 +222,29 @@ export default function Overview() {
     return filteredEmployees.slice(start, start + PAGE_SIZE);
   }, [filteredEmployees, safePage]);
 
+  const { inPayrollNotMaster, inMasterNotPayroll } = useMemo(() => {
+    const masterSet = new Set<string>();
+    for (const e of employees) {
+      const em = normEmail(e.personal_email);
+      if (em) masterSet.add(em);
+    }
+    if (payrollEmailsNorm === null) {
+      return { inPayrollNotMaster: null as number | null, inMasterNotPayroll: null as number | null };
+    }
+    let inPayrollNotMasterCount = 0;
+    for (const em of payrollEmailsNorm) {
+      if (!masterSet.has(em)) inPayrollNotMasterCount++;
+    }
+    let inMasterNotPayrollCount = 0;
+    for (const em of masterSet) {
+      if (!payrollEmailsNorm.has(em)) inMasterNotPayrollCount++;
+    }
+    return {
+      inPayrollNotMaster: inPayrollNotMasterCount,
+      inMasterNotPayroll: inMasterNotPayrollCount,
+    };
+  }, [employees, payrollEmailsNorm]);
+
   const stats = [
     {
       label: 'Total Payout',
@@ -227,36 +267,30 @@ export default function Overview() {
       isLive: true,
     },
     {
-      label: 'Employees with Rates',
-      value: employeesError
-        ? '—'
-        : loading
-          ? '…'
-          : String(employees.filter((e) => e.hourlyRate != null && !Number.isNaN(e.hourlyRate)).length),
+      label: 'Employees in Payroll but not in Master list',
+      value:
+        employeesError
+          ? '—'
+          : loading || payoutLoading
+            ? '…'
+            : inPayrollNotMaster == null
+              ? '—'
+              : String(inPayrollNotMaster),
       change: '+0%',
       trend: 'up' as const,
       icon: DollarSign,
       isLive: true,
     },
     {
-      label: 'Employees with Profiles',
-      value: employeesError
-        ? '—'
-        : loading
-          ? '…'
-          : String(
-              employees.filter((e) => {
-                const b = e.bankInfo;
-                const a = e.address;
-                const bankOk =
-                  b &&
-                  [b.accountName, b.accountNumber, b.bankName].some((x) => (x ?? '').toString().trim() !== '');
-                const addrOk =
-                  a &&
-                  [a.street, a.city, a.state, a.zip, a.country].some((x) => (x ?? '').toString().trim() !== '');
-                return Boolean(bankOk && addrOk);
-              }).length,
-            ),
+      label: 'Employees in Masterlist but not in Payroll',
+      value:
+        employeesError
+          ? '—'
+          : loading || payoutLoading
+            ? '…'
+            : inMasterNotPayroll == null
+              ? '—'
+              : String(inMasterNotPayroll),
       change: '+0%',
       trend: 'up' as const,
       icon: Users,
@@ -299,7 +333,11 @@ export default function Overview() {
                 <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-600">
                   {stat.label === 'Total Payout'
                     ? 'Sum of initial pay · Payroll Wizard'
-                    : 'From global_master_list'}
+                    : stat.label === 'Employees in Payroll but not in Master list'
+                      ? 'Distinct emails in hubstaff_hours not in global_master_list'
+                      : stat.label === 'Employees in Masterlist but not in Payroll'
+                        ? 'Distinct emails in global_master_list not in hubstaff_hours'
+                        : 'From global_master_list'}
                 </p>
               ) : (
                 <div className="mt-1 flex items-center gap-1">

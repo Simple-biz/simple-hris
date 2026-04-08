@@ -30,6 +30,10 @@ import { toast } from 'sonner';
 import { MOCK_USERS, MOCK_TIME_RECORDS, MOCK_PAYMENTS } from '@/constants';
 import { User, TimeRecord, PaymentLineItem, HubstaffRow, ReconciliationIssue } from '@/types';
 import { parseHoursToDecimal } from '@/lib/supabase/hubstaff-hours';
+import {
+  groupDateColumnsByCalendarDay,
+  pickPreferredHubstaffColumn,
+} from '@/lib/hubstaff/calendar-column-dedupe';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { parseCsv } from '@/lib/csv/parse-csv';
 import {
@@ -406,6 +410,23 @@ function dayLetter(col: string): string {
 }
 
 /**
+ * Groups Mon–Fri column names that refer to the same calendar day (ISO + Hubstaff labels
+ * + monday…friday DB columns). Uses shared calendar keys with EmployeeDashboard.
+ */
+function groupWeekdayColumnsByDate(cols: string[]): string[][] {
+  const weekdayCols = cols.filter(colIsWeekday);
+  return groupDateColumnsByCalendarDay(weekdayCols, cols);
+}
+
+function maxSecondsAcrossWeekdayGroup(row: Record<string, unknown>, group: string[]): number {
+  let maxS = 0;
+  for (const col of group) {
+    maxS = Math.max(maxS, rawValueToTotalSeconds(row[col]));
+  }
+  return maxS;
+}
+
+/**
  * Lead Gen appointment-based bonus:
  *   1–9  appointments → ₱250 per appointment
  *   10+  appointments → ₱500 per appointment
@@ -775,6 +796,12 @@ export default function PayrollWizard() {
     [hourlyRateRows],
   );
 
+  /** One group per calendar weekday — dedupes ISO + Hubstaff labels for the same day. */
+  const weekdayColumnGroups = useMemo(
+    () => (hubstaffDisplayColumns?.length ? groupWeekdayColumnsByDate(hubstaffDisplayColumns) : []),
+    [hubstaffDisplayColumns],
+  );
+
   /**
    * True when the Hubstaff data has weekday columns but every value is null/empty.
    * This means the daily breakdown was never stored (column-name mismatch during upload)
@@ -782,16 +809,17 @@ export default function PayrollWizard() {
    */
   const dailyDataMissing = useMemo<boolean>(() => {
     if (!hubstaffDisplayColumns || !hubstaffDisplayRows || hubstaffDisplayRows.length === 0) return false;
-    const weekdayCols = hubstaffDisplayColumns.filter(colIsWeekday);
-    if (weekdayCols.length === 0) return false;
-    // Check if EVERY weekday cell across ALL rows is null/empty
+    if (weekdayColumnGroups.length === 0) return false;
+    // Check if EVERY cell for every deduped weekday group is null/empty across ALL rows
     return hubstaffDisplayRows.every(row =>
-      weekdayCols.every(col => {
-        const v = row[col];
-        return v == null || String(v).trim() === '';
-      }),
+      weekdayColumnGroups.every(group =>
+        group.every(col => {
+          const v = row[col];
+          return v == null || String(v).trim() === '';
+        }),
+      ),
     );
-  }, [hubstaffDisplayColumns, hubstaffDisplayRows]);
+  }, [hubstaffDisplayColumns, hubstaffDisplayRows, weekdayColumnGroups]);
 
   /**
    * Computes which employees qualify for Perfect Attendance by scanning the
@@ -800,11 +828,10 @@ export default function PayrollWizard() {
    */
   const perfectAttendanceEligible = useMemo<Set<string>>(() => {
     if (dailyDataMissing) return new Set(); // can't compute — all daily values are null
-    if (!hubstaffDisplayColumns || !hubstaffDisplayRows || hubstaffDisplayRows.length === 0) {
+    if (!hubstaffDisplayRows || hubstaffDisplayRows.length === 0) {
       return new Set();
     }
-    const weekdayCols = hubstaffDisplayColumns.filter(colIsWeekday);
-    if (weekdayCols.length === 0) return new Set();
+    if (weekdayColumnGroups.length === 0) return new Set();
 
     const eligible = new Set<string>();
     for (const row of hubstaffDisplayRows) {
@@ -813,8 +840,8 @@ export default function PayrollWizard() {
       if (!email) continue;
 
       let perfect = true;
-      for (const col of weekdayCols) {
-        if (rawValueToTotalSeconds(row[col]) < 7 * 3600) {
+      for (const group of weekdayColumnGroups) {
+        if (maxSecondsAcrossWeekdayGroup(row, group) < 7 * 3600) {
           perfect = false;
           break;
         }
@@ -822,7 +849,7 @@ export default function PayrollWizard() {
       if (perfect) eligible.add(email);
     }
     return eligible;
-  }, [hubstaffDisplayColumns, hubstaffDisplayRows, dailyDataMissing]);
+  }, [hubstaffDisplayRows, dailyDataMissing, weekdayColumnGroups]);
 
   /**
    * Per-employee weekday breakdown: maps normalized email → array of
@@ -832,14 +859,10 @@ export default function PayrollWizard() {
   const employeeWeekdayHours = useMemo<
     Map<string, { col: string; seconds: number; passes: boolean }[]>
   >(() => {
-    if (!hubstaffDisplayColumns || !hubstaffDisplayRows || hubstaffDisplayRows.length === 0) {
+    if (!hubstaffDisplayRows || hubstaffDisplayRows.length === 0) {
       return new Map();
     }
-    // Sort weekday cols Mon→Fri by actual day-of-week order
-    const weekdayCols = hubstaffDisplayColumns
-      .filter(colIsWeekday)
-      .sort((a, b) => colDayOrder(a) - colDayOrder(b));
-    if (weekdayCols.length === 0) return new Map();
+    if (weekdayColumnGroups.length === 0) return new Map();
 
     const map = new Map<string, { col: string; seconds: number; passes: boolean }[]>();
     for (const row of hubstaffDisplayRows) {
@@ -848,14 +871,15 @@ export default function PayrollWizard() {
       if (!email) continue;
       map.set(
         email,
-        weekdayCols.map(col => {
-          const seconds = rawValueToTotalSeconds(row[col]);
+        weekdayColumnGroups.map(group => {
+          const col = pickPreferredHubstaffColumn(group);
+          const seconds = maxSecondsAcrossWeekdayGroup(row, group);
           return { col, seconds, passes: seconds >= 7 * 3600 };
         }),
       );
     }
     return map;
-  }, [hubstaffDisplayColumns, hubstaffDisplayRows]);
+  }, [hubstaffDisplayRows, weekdayColumnGroups]);
 
   /**
    * Auto-apply / remove perfect_attendance toggle whenever eligibility is
