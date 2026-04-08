@@ -693,6 +693,7 @@ export default function PayrollWizard() {
   const [usdToPhpRate, setUsdToPhpRate] = useState<number>(DEFAULT_USD_TO_PHP);
   const [usdToPhpInput, setUsdToPhpInput] = useState<string>(String(DEFAULT_USD_TO_PHP));
   const [usdToPhpSaving, setUsdToPhpSaving] = useState(false);
+  const [usdToPhpEditing, setUsdToPhpEditing] = useState(false);
 
   const [activeDeptTab, setActiveDeptTab] = useState('accounting');
   const [employeeDepts, setEmployeeDepts] = useState<Record<string, string>>({});
@@ -755,8 +756,10 @@ export default function PayrollWizard() {
   }, []);
 
   useEffect(() => {
-    void loadEmployeeHourlyRates();
-  }, [loadEmployeeHourlyRates]);
+    if (currentStep === 2) {
+      void loadEmployeeHourlyRates();
+    }
+  }, [currentStep, loadEmployeeHourlyRates]);
 
   const ratesByEmail = useMemo(
     () => indexHourlyRatesByEmail(hourlyRateRows),
@@ -1640,9 +1643,10 @@ export default function PayrollWizard() {
                     min="1"
                     step="0.01"
                     value={usdToPhpInput}
+                    readOnly={!usdToPhpEditing}
                     onChange={(e) => setUsdToPhpInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
+                      if (e.key === 'Enter' && usdToPhpEditing) {
                         const parsed = parseFloat(usdToPhpInput);
                         if (Number.isFinite(parsed) && parsed > 0) {
                           setUsdToPhpRate(parsed);
@@ -1656,47 +1660,60 @@ export default function PayrollWizard() {
                               const json = await res.json() as { error: string | null };
                               if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
                               toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
+                              setUsdToPhpEditing(false);
                             })
                             .catch((err: unknown) => toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`))
                             .finally(() => setUsdToPhpSaving(false));
                         }
                       }
                     }}
-                    className="h-8 w-28 border-blue-300 bg-white pl-6 pr-2 font-mono text-sm tabular-nums dark:border-blue-700 dark:bg-zinc-950"
+                    className={`h-8 w-28 border-blue-300 pl-6 pr-2 font-mono text-sm tabular-nums dark:border-blue-700 ${usdToPhpEditing ? 'bg-white dark:bg-zinc-950' : 'cursor-default bg-blue-50 dark:bg-blue-950/40'}`}
                   />
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={usdToPhpSaving}
-                  className="h-8 bg-blue-600 px-3 text-xs hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600"
-                  onClick={() => {
-                    const parsed = parseFloat(usdToPhpInput);
-                    if (!Number.isFinite(parsed) || parsed <= 0) {
-                      toast.error('Enter a valid positive rate');
-                      return;
-                    }
-                    setUsdToPhpRate(parsed);
-                    setUsdToPhpSaving(true);
-                    fetch('/api/app-settings', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ key: 'usd_to_php_rate', value: String(parsed) }),
-                    })
-                      .then(async (res) => {
-                        const json = await res.json() as { error: string | null };
-                        if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
-                        toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
+                {!usdToPhpEditing ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8 bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400 dark:text-white"
+                    onClick={() => setUsdToPhpEditing(true)}
+                  >
+                    Edit Conversion Rate
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={usdToPhpSaving}
+                    className="h-8 bg-green-600 px-3 text-xs font-semibold text-white hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-400 dark:text-white"
+                    onClick={() => {
+                      const parsed = parseFloat(usdToPhpInput);
+                      if (!Number.isFinite(parsed) || parsed <= 0) {
+                        toast.error('Enter a valid positive rate');
+                        return;
+                      }
+                      setUsdToPhpRate(parsed);
+                      setUsdToPhpSaving(true);
+                      fetch('/api/app-settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: 'usd_to_php_rate', value: String(parsed) }),
                       })
-                      .catch((err: unknown) => toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`))
-                      .finally(() => setUsdToPhpSaving(false));
-                  }}
-                >
-                  {usdToPhpSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Apply & Save'}
-                </Button>
+                        .then(async (res) => {
+                          const json = await res.json() as { error: string | null };
+                          if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+                          toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
+                          setUsdToPhpEditing(false);
+                        })
+                        .catch((err: unknown) => toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`))
+                        .finally(() => setUsdToPhpSaving(false));
+                    }}
+                  >
+                    {usdToPhpSaving ? <Loader2 className="h-3 w-3 animate-spin text-white" /> : 'Apply & Save'}
+                  </Button>
+                )}
               </div>
               <p className="w-full text-xs text-blue-700/60 dark:text-blue-400/60">
-                Divides PHP Initial Pay by this rate to show the USD equivalent. Current: <span className="font-mono font-semibold">₱{usdToPhpRate.toFixed(2)}</span> = $1 USD. Press <kbd className="rounded border border-blue-300 bg-blue-100 px-1 py-0.5 font-mono text-[10px] dark:border-blue-700 dark:bg-blue-900">Enter</kbd> or click Apply &amp; Save to update all rows.
+                Divides PHP Initial Pay by this rate to show the USD equivalent. Current: <span className="font-mono font-semibold">₱{usdToPhpRate.toFixed(2)}</span> = $1 USD.{usdToPhpEditing && <> Press <kbd className="rounded border border-blue-300 bg-blue-100 px-1 py-0.5 font-mono text-[10px] dark:border-blue-700 dark:bg-blue-900">Enter</kbd> or click Apply &amp; Save to confirm.</>}
               </p>
             </div>
 
@@ -1707,7 +1724,92 @@ export default function PayrollWizard() {
               </div>
             )}
 
-            {calcResults.length === 0 ? (
+            {hourlyRatesLoading ? (
+              <div className="min-h-0 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+                <div className="max-h-[min(70vh,calc(100dvh-13rem))] overflow-auto">
+                  <Table className="w-full min-w-[1100px] table-fixed">
+                    <colgroup>
+                      <col className="w-[10%]" />
+                      <col className="w-[18%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[8%]" />
+                      <col className="w-[8%]" />
+                      <col className="w-[9%]" />
+                      <col className="w-[9%]" />
+                      <col className="w-[9%]" />
+                    </colgroup>
+                    <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
+                      <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
+                        <TableHead className="px-2 text-left text-xs font-medium text-zinc-600 dark:text-zinc-400">Member</TableHead>
+                        <TableHead className="px-2 text-left text-xs font-medium text-zinc-600 dark:text-zinc-400">Work Email</TableHead>
+                        <TableHead className="px-2 text-right text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">Total Hrs</TableHead>
+                        <TableHead className="px-2 text-right text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">Reg Hrs</TableHead>
+                        <TableHead className="px-2 text-right text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">OT Hrs</TableHead>
+                        <TableHead className="px-2 text-right text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">Reg Rate</TableHead>
+                        <TableHead className="px-2 text-right text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">OT Rate</TableHead>
+                        <TableHead className="px-2 text-right text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">Reg Pay</TableHead>
+                        <TableHead className="px-2 text-right text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">OT Pay</TableHead>
+                        <TableHead className="px-2 text-right text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-400">
+                          <div>Initial Pay</div>
+                          <div className="text-[10px] font-normal text-blue-500 dark:text-blue-400">≈ USD</div>
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <TableRow key={i} className="animate-pulse border-zinc-200 dark:border-zinc-800">
+                          {/* Member */}
+                          <TableCell className="px-2 py-3 align-middle">
+                            <div className="h-3 w-20 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                          </TableCell>
+                          {/* Work Email */}
+                          <TableCell className="px-2 py-3 align-middle">
+                            <div className="h-3 rounded-full bg-zinc-200 dark:bg-zinc-700" style={{ width: `${60 + (i % 4) * 10}%` }} />
+                          </TableCell>
+                          {/* Total Hrs */}
+                          <TableCell className="px-2 py-3 align-middle">
+                            <div className="ml-auto h-3 w-10 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                          </TableCell>
+                          {/* Reg Hrs */}
+                          <TableCell className="px-2 py-3 align-middle">
+                            <div className="ml-auto h-3 w-10 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                          </TableCell>
+                          {/* OT Hrs */}
+                          <TableCell className="px-2 py-3 align-middle">
+                            <div className="ml-auto h-3 w-8 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                          </TableCell>
+                          {/* Reg Rate */}
+                          <TableCell className="px-2 py-3 align-middle">
+                            <div className="ml-auto h-3 w-14 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                          </TableCell>
+                          {/* OT Rate */}
+                          <TableCell className="px-2 py-3 align-middle">
+                            <div className="ml-auto h-3 w-14 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                          </TableCell>
+                          {/* Reg Pay */}
+                          <TableCell className="px-2 py-3 align-middle">
+                            <div className="ml-auto h-3 w-16 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                          </TableCell>
+                          {/* OT Pay */}
+                          <TableCell className="px-2 py-3 align-middle">
+                            <div className="ml-auto h-3 w-16 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                          </TableCell>
+                          {/* Initial Pay (two lines) */}
+                          <TableCell className="px-2 py-3 align-middle">
+                            <div className="flex flex-col items-end gap-1.5">
+                              <div className="h-3 w-20 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                              <div className="h-2.5 w-14 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            ) : calcResults.length === 0 ? (
               <div className="flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-3 text-sm text-zinc-500 dark:border-zinc-800">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
                 No Hubstaff hours data found. Go back to step 1 and upload a weekly report first.
