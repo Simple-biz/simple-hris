@@ -131,7 +131,6 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
   const dataRows = grid.slice(1).filter((row) => row.some((cell) => cell.trim() !== ""));
 
   // Determine which CSV columns map to DB columns.
-  // Fetch DB columns from the OpenAPI spec; fall back to CSV headers if spec is unavailable.
   const dbColumns = await getTableColumnsFromSpec(table);
 
   const insertCols: { csvIdx: number; dbCol: string }[] = [];
@@ -189,7 +188,6 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
   }
 
   // Delete all existing rows (service_role bypasses RLS).
-  // Filter `.not('id', 'is', null)` covers every row since id is a non-null PK.
   const { error: deleteError } = await supabase
     .from(table)
     .delete()

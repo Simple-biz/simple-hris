@@ -10,7 +10,12 @@
       "Bash(npx next:*)",
       "Bash(node:*)",
       "Bash(grep -E \"\\\\.\\(sql|ts\\)$\")",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(xargs wc:*)",
+      "Bash(curl -s http://localhost:3099)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(curl -s http://localhost:3000/_next/static/chunks/src_index_0n~82ls.css)",
+      "Bash(npx tailwindcss:*)"
     ]
   }
 }

@@ -1047,11 +1047,52 @@ export default function PayrollWizard() {
       }
       if (json.columns?.length && json.rows) {
         console.log('[hubstaff_hours] actual column names:', json.columns);
-        setHubstaffDisplayColumns(json.columns);
-        setHubstaffDisplayRows(json.rows);
+        let cols = json.columns as string[];
+        let rows = json.rows as Record<string, unknown>[];
+
+        // Check if weekday columns from Supabase actually have data.
+        // If the table schema has stale date columns from a previous week,
+        // daily values will be null. Fall back to the saved daily breakdown.
+        const weekdayCols = cols.filter(colIsWeekday);
+        const allDailyEmpty = weekdayCols.length === 0 || rows.every(row =>
+          weekdayCols.every(col => {
+            const v = row[col];
+            return v == null || String(v).trim() === '';
+          }),
+        );
+        if (allDailyEmpty) {
+          try {
+            const fbRes = await fetch('/api/app-settings?key=hubstaff_daily_breakdown', { cache: 'no-store' });
+            const fbJson = (await fbRes.json()) as { value: string | null };
+            if (fbJson.value) {
+              const { dateCols, daily } = JSON.parse(fbJson.value) as {
+                dateCols: string[];
+                daily: Record<string, Record<string, string | null>>;
+              };
+              if (dateCols?.length && daily) {
+                // Merge saved daily columns into the Supabase data
+                const existingColSet = new Set(cols);
+                const newCols = dateCols.filter(c => !existingColSet.has(c));
+                cols = [...cols, ...newCols];
+                rows = rows.map(row => {
+                  const email = normEmail(String(row['Email'] ?? row['email'] ?? '')) ?? '';
+                  const dayData = daily[email];
+                  if (!dayData) return row;
+                  return { ...row, ...dayData };
+                });
+                console.log('[hubstaff_hours] merged saved daily breakdown for PA detection:', dateCols);
+              }
+            }
+          } catch {
+            // saved breakdown unavailable — PA detection will show warning banner
+          }
+        }
+
+        setHubstaffDisplayColumns(cols);
+        setHubstaffDisplayRows(rows);
         setHubstaffPage(1);
         setHubstaffSearch('');
-        if (json.rows.length > 0) setHubstaffTableLocked(true);
+        if (rows.length > 0) setHubstaffTableLocked(true);
       } else {
         setHubstaffDisplayColumns(null);
         setHubstaffDisplayRows(null);
@@ -1260,6 +1301,28 @@ export default function PayrollWizard() {
         setHubstaffDisplayRows(csvRows);
         setHubstaffPage(1);
         setHubstaffSearch('');
+
+        // Persist daily breakdown to app_settings so PA detection survives page reload.
+        // Supabase may not store daily columns if the table schema has stale date columns
+        // from a previous week, so we save the parsed data as a fallback.
+        const dateCols = headers.filter(colIsWeekday);
+        if (dateCols.length > 0) {
+          const daily: Record<string, Record<string, string | null>> = {};
+          for (const r of csvRows) {
+            const email = normEmail(String(r['Email'] ?? r['email'] ?? '')) ?? '';
+            if (!email) continue;
+            const dayData: Record<string, string | null> = {};
+            for (const col of dateCols) {
+              dayData[col] = r[col] != null ? String(r[col]) : null;
+            }
+            daily[email] = dayData;
+          }
+          fetch('/api/app-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: 'hubstaff_daily_breakdown', value: JSON.stringify({ dateCols, daily }) }),
+          }).catch(() => {}); // fire and forget
+        }
 
         // Also build hubstaffData from the CSV so Step 2 calc has fresh data
         const hd = buildHubstaffDataFromParsedGrid(cleanGrid);

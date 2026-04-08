@@ -6,6 +6,14 @@ export type EmployeeIdRow = {
   name: string;
   work_email: string | null;
   personal_email: string | null;
+  bank_name: string | null;
+  account_holder_name: string | null;
+  account_number: string | null;
+  routing_number: string | null;
+  alt_bank_name: string | null;
+  alt_account_holder_name: string | null;
+  alt_account_number: string | null;
+  alt_routing_number: string | null;
 };
 
 export async function getEmployeeIds(): Promise<{
@@ -19,7 +27,7 @@ export async function getEmployeeIds(): Promise<{
 
   const { data, error } = await supabase
     .from("employee_ids")
-    .select("employee_id, name, work_email, personal_email")
+    .select("employee_id, name, work_email, personal_email, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number")
     .order("employee_id");
 
   if (error) return { rows: [], error: error.message };
