@@ -28,6 +28,7 @@ import {
   type EmployeeHourlyRateRow,
 } from '@/lib/supabase/employee-hourly-rates';
 import { normEmail } from '@/lib/email/norm-email';
+import { phpHourlyPayFromSeconds, splitRegularOvertimeSeconds } from '@/lib/payroll/money-php';
 
 const PAGE_SIZE = 5;
 
@@ -120,8 +121,7 @@ export default function Overview() {
 
         for (const row of payrollRows) {
           const totalH = row.hoursDecimal;
-          const otHours = Math.max(0, totalH - 40);
-          const regularHours = totalH - otHours;
+          const { regularSec, otSec } = splitRegularOvertimeSeconds(totalH);
 
           const em = normEmail(row.email);
           const rateRow = em ? ratesByEmail.get(em) : undefined;
@@ -134,9 +134,14 @@ export default function Overview() {
 
           const regularRate = parseRate(rateRow?.regular_rate);
           const otRate = parseRate(rateRow?.ot_rate);
-          const regularPay = regularRate != null ? regularRate * regularHours : null;
-          const otPay = otHours > 0 ? (otRate != null ? otRate * otHours : null) : 0;
-          const initialPay = regularPay != null && otPay != null ? regularPay + otPay : null;
+          const regularPay =
+            regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
+          const otPay =
+            otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
+          const initialPay =
+            regularPay != null && otPay != null
+              ? Math.round((regularPay + otPay) * 100) / 100
+              : null;
 
           if (initialPay != null) {
             sum += initialPay;

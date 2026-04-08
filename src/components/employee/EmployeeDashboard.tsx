@@ -9,11 +9,26 @@ import {
   CalendarDays,
   Award,
   Loader2,
+  CheckCircle2,
+  XCircle,
+  Info,
+  Laptop,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import {
+  OFFICIAL_USD_TO_PHP_RATE,
+  PHILIPPINE_PESO_OFFICIAL,
+  USD_TO_PHP_DECIMAL_SHIFT,
+  effectiveUsdToPhpRateFromStored,
+} from '@/lib/fx/usd-php';
+import {
+  phpHourlyPayFromSeconds,
+  roundWorkedHoursForPay,
+  splitRegularOvertimeSeconds,
+} from '@/lib/payroll/money-php';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -41,6 +56,10 @@ function formatPHP(n: number): string {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** Matches PayrollWizard COMMON_BONUSES / BUSINESS_LOGIC.md */
+const PERFECT_ATTENDANCE_BONUS_PHP = 5000;
+const TECHNOLOGY_BONUS_PHP = 1850;
+
 const DAY_NAMES: Record<string, { label: string; order: number; weekday: boolean }> = {
   mon: { label: 'Mon', order: 1, weekday: true },
   tue: { label: 'Tue', order: 2, weekday: true },
@@ -52,17 +71,48 @@ const DAY_NAMES: Record<string, { label: string; order: number; weekday: boolean
 };
 
 const NON_DATE_COLS = new Set([
-  'id', 'email', 'member', 'total worked', 'activity', 'organization', 'time zone', 'job type', 'job title',
+  'id',
+  'email',
+  'member',
+  'total worked',
+  'activity',
+  'organization',
+  'time zone',
+  'job type',
+  'job title',
+  'work email',
+  'personal email',
+  'employee id',
+  'tax info',
+  'location',
+  'date added',
+  'spent total',
+  'currency',
 ]);
 
+/** Stable weekday columns from Supabase (matches hubstaff-hours-db Pass 3). */
+const CANONICAL_WEEKDAY_COLS: Record<string, { label: string; order: number; weekday: boolean }> = {
+  sunday: { label: 'Sun', order: 0, weekday: false },
+  monday: { label: 'Mon', order: 1, weekday: true },
+  tuesday: { label: 'Tue', order: 2, weekday: true },
+  wednesday: { label: 'Wed', order: 3, weekday: true },
+  thursday: { label: 'Thu', order: 4, weekday: true },
+  friday: { label: 'Fri', order: 5, weekday: true },
+  saturday: { label: 'Sat', order: 6, weekday: false },
+};
+
 function colDayPrefix(col: string): { label: string; order: number; weekday: boolean } | null {
-  const m = /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/i.exec(col.trim());
+  const trimmed = col.trim();
+  const canon = CANONICAL_WEEKDAY_COLS[trimmed.toLowerCase()];
+  if (canon) return canon;
+  const m = /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/i.exec(trimmed);
   return m ? DAY_NAMES[m[1].toLowerCase()] ?? null : null;
 }
 
 function isDateCol(col: string): boolean {
   const lower = col.trim().toLowerCase();
   if (NON_DATE_COLS.has(lower)) return false;
+  if (CANONICAL_WEEKDAY_COLS[lower]) return true;
   if (colDayPrefix(col)) return true;
   return /^\d{4}-\d{2}-\d{2}$/.test(col.trim());
 }
@@ -83,6 +133,83 @@ interface EmployeeDashboardProps {
   employeeEmail: string;
 }
 
+/** Align with mapHubstaffHoursRow / PayrollWizard so rows match after Supabase sync. */
+const HUBSTAFF_EMAIL_KEYS = [
+  'Email',
+  'email',
+  'Work Email',
+  'work_email',
+  'user_email',
+] as const;
+
+function collectHubstaffRowEmails(r: Record<string, unknown>): string[] {
+  const seen = new Set<string>();
+  const add = (s: string | null | undefined) => {
+    const t = s?.trim();
+    if (t) seen.add(t);
+  };
+  for (const k of HUBSTAFF_EMAIL_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(r, k)) add(String(r[k]));
+  }
+  const lower = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(r)) {
+    lower.set(k.toLowerCase(), v);
+  }
+  for (const alias of ['work email', 'personal email', 'work_email', 'personal_email']) {
+    const v = lower.get(alias);
+    if (v != null) add(String(v));
+  }
+  return [...seen];
+}
+
+function hubstaffRowMatchesEmployee(r: Record<string, unknown>, employeeNorm: string): boolean {
+  return collectHubstaffRowEmails(r).some((e) => normEmail(e) === employeeNorm);
+}
+
+function getFieldFromRow(row: Record<string, unknown>, keys: string[]): unknown {
+  for (const k of keys) {
+    if (Object.prototype.hasOwnProperty.call(row, k)) {
+      const v = row[k];
+      if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+    }
+  }
+  const lowerToKey = new Map<string, string>();
+  for (const rk of Object.keys(row)) {
+    lowerToKey.set(rk.toLowerCase(), rk);
+  }
+  for (const k of keys) {
+    const rk = lowerToKey.get(k.toLowerCase());
+    if (rk) {
+      const v = row[rk];
+      if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+    }
+  }
+  return undefined;
+}
+
+function getTotalWorkedRaw(row: Record<string, unknown>): unknown {
+  return getFieldFromRow(row, [
+    'Total worked',
+    'total worked',
+    'total_worked',
+    'Hours',
+    'hours',
+    'decimal_hours',
+  ]);
+}
+
+/** ISO YYYY-MM-DD → Sun=0 … Sat=6 in UTC (matches Hubstaff / hubstaff-hours-db). */
+function isoDateToUtcDow(iso: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10) - 1;
+  const d = parseInt(m[3], 10);
+  const dt = new Date(Date.UTC(y, mo, d));
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt.getUTCDay();
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -92,7 +219,8 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   const [columns, setColumns] = useState<string[]>([]);
   const [row, setRow] = useState<Record<string, unknown> | null>(null);
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
-  const [usdRate, setUsdRate] = useState(56);
+  const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const email = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
 
@@ -100,6 +228,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setDataError(null);
       try {
         const [hoursRes, ratesRes, fxRes] = await Promise.all([
           fetch('/api/hubstaff-hours', { cache: 'no-store' }),
@@ -108,33 +237,41 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         ]);
 
         const hoursJson = (await hoursRes.json()) as {
-          columns?: string[];
-          rows?: Record<string, unknown>[];
+          columns?: string[] | null;
+          rows?: Record<string, unknown>[] | null;
+          error?: string | null;
         };
-        const ratesJson = (await ratesRes.json()) as { rows: EmployeeHourlyRateRow[] };
+        const ratesJson = (await ratesRes.json()) as {
+          rows?: EmployeeHourlyRateRow[];
+          error?: string | null;
+        };
         const fxJson = (await fxRes.json()) as { value: string | null };
-
         if (cancelled) return;
 
-        // Find this employee's row
-        if (hoursJson.columns && hoursJson.rows) {
+        setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
+
+        if (!hoursRes.ok || hoursJson.error) {
+          setDataError(hoursJson.error ?? `Hours request failed (${hoursRes.status})`);
+          setRow(null);
+        } else if (hoursJson.columns && hoursJson.rows) {
           setColumns(hoursJson.columns);
-          const myRow = hoursJson.rows.find((r) => {
-            const rowEmail = normEmail(String(r['Email'] ?? r['email'] ?? ''));
-            return rowEmail === email;
-          });
+          const myRow = hoursJson.rows.find((r) => hubstaffRowMatchesEmployee(r, email));
 
           // If Supabase daily columns are empty, try the saved daily breakdown
           if (myRow) {
             const dateCols = hoursJson.columns.filter(isDateCol);
-            const allEmpty = dateCols.length === 0 || dateCols.every(c => {
-              const v = myRow[c];
-              return v == null || String(v).trim() === '';
-            });
+            const allEmpty =
+              dateCols.length === 0 ||
+              dateCols.every((c) => {
+                const v = myRow[c];
+                return v == null || String(v).trim() === '';
+              });
 
             if (allEmpty) {
               try {
-                const fbRes = await fetch('/api/app-settings?key=hubstaff_daily_breakdown', { cache: 'no-store' });
+                const fbRes = await fetch('/api/app-settings?key=hubstaff_daily_breakdown', {
+                  cache: 'no-store',
+                });
                 const fbJson = (await fbRes.json()) as { value: string | null };
                 if (fbJson.value) {
                   const { dateCols: savedCols, daily } = JSON.parse(fbJson.value) as {
@@ -159,7 +296,17 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             } else {
               setRow(myRow);
             }
+          } else {
+            setRow(null);
           }
+        } else {
+          setRow(null);
+        }
+
+        if (ratesJson.error) {
+          setDataError((prev) =>
+            prev ? `${prev} ${ratesJson.error}` : ratesJson.error ?? null,
+          );
         }
 
         // Find rate
@@ -170,19 +317,18 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           return we === email || pe === email;
         });
         if (myRate) setRate(myRate);
-
-        // Exchange rate
-        if (fxJson.value) {
-          const parsed = parseFloat(fxJson.value);
-          if (Number.isFinite(parsed) && parsed > 0) setUsdRate(parsed);
+      } catch (e) {
+        if (!cancelled) {
+          setDataError(e instanceof Error ? e.message : 'Failed to load dashboard data');
+          setRow(null);
         }
-      } catch {
-        // silently degrade
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [email]);
 
   // Compute daily hours breakdown
@@ -191,17 +337,26 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     const dateCols = columns.filter(isDateCol);
     return dateCols
       .map((col) => {
+        const raw =
+          getFieldFromRow(row, [col]) ??
+          (Object.prototype.hasOwnProperty.call(row, col) ? row[col] : undefined);
+        const seconds = parseHMS(raw);
         const prefix = colDayPrefix(col);
-        const seconds = parseHMS(row[col]);
         if (prefix) {
           return { col, label: prefix.label, seconds, weekday: prefix.weekday, order: prefix.order };
         }
-        // ISO date fallback
-        const d = new Date(col);
-        if (!isNaN(d.getTime())) {
-          const dow = d.getDay();
+        const iso = col.trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+          const dow = isoDateToUtcDow(iso);
+          if (dow === null) return null;
           const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-          return { col, label: labels[dow], seconds, weekday: dow >= 1 && dow <= 5, order: dow === 0 ? 7 : dow };
+          return {
+            col,
+            label: labels[dow],
+            seconds,
+            weekday: dow >= 1 && dow <= 5,
+            order: dow,
+          };
         }
         return null;
       })
@@ -212,14 +367,15 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   // Compute pay
   const totalSeconds = useMemo(() => {
     if (!row) return 0;
-    const tw = row['Total worked'] ?? row['total worked'] ?? row['total_worked'];
-    if (tw) return parseHMS(tw);
+    const tw = getTotalWorkedRaw(row);
+    if (tw != null && String(tw).trim() !== '') return parseHMS(tw);
     return dailyHours.reduce((s, d) => s + d.seconds, 0);
   }, [row, dailyHours]);
 
-  const totalHours = totalSeconds / 3600;
-  const regularHours = Math.min(totalHours, 40);
-  const otHours = Math.max(0, totalHours - 40);
+  const totalHours = roundWorkedHoursForPay(totalSeconds / 3600);
+  const { regularSec, otSec } = splitRegularOvertimeSeconds(totalHours);
+  const regularHours = regularSec / 3600;
+  const otHours = otSec / 3600;
 
   const parseRate = (v: string | null | undefined): number | null => {
     if (v == null) return null;
@@ -229,13 +385,25 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   const regularRate = parseRate(rate?.regular_rate);
   const otRate = parseRate(rate?.ot_rate);
-  const regularPay = regularRate != null ? regularRate * regularHours : null;
-  const otPay = otHours > 0 && otRate != null ? otRate * otHours : otHours > 0 ? null : 0;
-  const totalPay = regularPay != null && otPay != null ? regularPay + otPay : null;
+  const regularPay =
+    regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
+  const otPay =
+    otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
+  const totalPay =
+    regularPay != null && otPay != null
+      ? Math.round((regularPay + otPay) * 100) / 100
+      : null;
 
-  // PA check
+  /** Same rule as PayrollWizard `perfectAttendanceEligible`: every Mon–Fri column ≥ 7h. */
   const weekdayHours = dailyHours.filter((d) => d.weekday);
   const isPAEligible = weekdayHours.length > 0 && weekdayHours.every((d) => d.seconds >= 7 * 3600);
+
+  const perfectAttendanceBonusStatus = useMemo<'eligible' | 'not_eligible' | 'unknown'>(() => {
+    if (!row) return 'unknown';
+    const wh = dailyHours.filter((d) => d.weekday);
+    if (wh.length === 0) return 'unknown';
+    return wh.every((d) => d.seconds >= 7 * 3600) ? 'eligible' : 'not_eligible';
+  }, [row, dailyHours]);
 
   const maxBarSeconds = Math.max(...dailyHours.map((d) => d.seconds), 8 * 3600);
 
@@ -261,14 +429,42 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             Weekly hours, pay breakdown, and attendance
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {isPAEligible && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {row && perfectAttendanceBonusStatus === 'eligible' && (
             <Badge
               variant="outline"
               className="gap-1 border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-emerald-700 dark:border-emerald-500/30 dark:text-emerald-400"
             >
               <Award className="h-3 w-3" />
-              Perfect Attendance
+              PA bonus eligible
+            </Badge>
+          )}
+          {row && perfectAttendanceBonusStatus === 'not_eligible' && (
+            <Badge
+              variant="outline"
+              className="gap-1 border-amber-500/30 bg-amber-500/10 px-3 py-1 text-amber-800 dark:border-amber-500/30 dark:text-amber-400"
+            >
+              <XCircle className="h-3 w-3" />
+              PA bonus not met
+            </Badge>
+          )}
+          {row && perfectAttendanceBonusStatus === 'unknown' && (
+            <Badge
+              variant="outline"
+              className="gap-1 border-zinc-300 bg-zinc-100/80 px-3 py-1 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-400"
+            >
+              <Info className="h-3 w-3" />
+              PA can&apos;t be assessed
+            </Badge>
+          )}
+          {row && (
+            <Badge
+              variant="outline"
+              className="gap-1 border-sky-500/25 bg-sky-500/10 px-3 py-1 text-sky-800 dark:border-sky-500/30 dark:text-sky-300"
+              title="Technology Bonus is enabled by payroll each cycle; not calculated from hours here."
+            >
+              <Laptop className="h-3 w-3" />
+              Tech bonus ({formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')})
             </Badge>
           )}
           <Badge
@@ -281,18 +477,122 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         </div>
       </div>
 
-      {!row ? (
+      {dataError && (
+        <Card className="border-red-200 bg-red-50/50 dark:border-red-500/20 dark:bg-red-950/20">
+          <CardContent className="flex items-center gap-3 py-4">
+            <AlertCircle className="h-5 w-5 shrink-0 text-red-500" />
+            <p className="text-sm text-red-800 dark:text-red-300">{dataError}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {!row && !dataError ? (
         <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-500/20 dark:bg-amber-950/20">
           <CardContent className="flex items-center gap-3 py-6">
             <AlertCircle className="h-5 w-5 text-amber-500" />
             <p className="text-sm text-amber-800 dark:text-amber-300">
               No hours data found for <span className="font-mono font-medium">{email}</span>. Your hours will appear
-              here once your manager uploads the weekly Hubstaff report.
+              here once your manager uploads the weekly Hubstaff report. Use the same work email as in Hubstaff, or
+              ensure your email is listed under Work Email or Personal Email in hourly rates.
             </p>
           </CardContent>
         </Card>
-      ) : (
+      ) : !row ? null : (
         <>
+          <Card className="border-indigo-200/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm dark:border-indigo-950/50 dark:from-indigo-950/15 dark:to-indigo-950/5">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">
+                Payroll bonus indicators
+              </CardTitle>
+              <p className="text-xs font-normal text-zinc-500 dark:text-zinc-400">
+                Estimates from this week&apos;s Hubstaff data. Final bonuses are confirmed when payroll runs.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-0">
+              <div className="flex flex-col gap-3 rounded-lg border border-zinc-200/90 bg-white/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+                <div className="flex min-w-0 flex-1 gap-3">
+                  <div
+                    className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                      perfectAttendanceBonusStatus === 'eligible'
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                        : perfectAttendanceBonusStatus === 'not_eligible'
+                          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                          : 'bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+                    }`}
+                  >
+                    {perfectAttendanceBonusStatus === 'eligible' ? (
+                      <CheckCircle2 className="h-5 w-5" />
+                    ) : perfectAttendanceBonusStatus === 'not_eligible' ? (
+                      <XCircle className="h-5 w-5" />
+                    ) : (
+                      <Info className="h-5 w-5" />
+                    )}
+                  </div>
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-sm font-medium text-zinc-900 dark:text-white">
+                      Perfect Attendance Bonus · {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}
+                    </p>
+                    {perfectAttendanceBonusStatus === 'eligible' && (
+                      <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                        Eligible: Monday–Friday each show at least 7 hours logged this week (same rule as payroll).
+                      </p>
+                    )}
+                    {perfectAttendanceBonusStatus === 'not_eligible' && (
+                      <p className="text-xs text-amber-800 dark:text-amber-300">
+                        Not eligible: at least one weekday is under 7 hours. See the breakdown below.
+                      </p>
+                    )}
+                    {perfectAttendanceBonusStatus === 'unknown' && (
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                        Can&apos;t evaluate: need Mon–Fri daily hours in the uploaded report. If this persists, ask your
+                        team to re-upload the Hubstaff CSV.
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <Badge
+                  variant="outline"
+                  className={
+                    perfectAttendanceBonusStatus === 'eligible'
+                      ? 'shrink-0 border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+                      : perfectAttendanceBonusStatus === 'not_eligible'
+                        ? 'shrink-0 border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-300'
+                        : 'shrink-0 border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
+                  }
+                >
+                  {perfectAttendanceBonusStatus === 'eligible'
+                    ? 'Eligible'
+                    : perfectAttendanceBonusStatus === 'not_eligible'
+                      ? 'Not eligible'
+                      : 'Unknown'}
+                </Badge>
+              </div>
+
+              <div className="flex flex-col gap-3 rounded-lg border border-zinc-200/90 bg-white/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+                <div className="flex min-w-0 flex-1 gap-3">
+                  <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-400">
+                    <Laptop className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-sm font-medium text-zinc-900 dark:text-white">
+                      Technology Bonus · {formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')}
+                    </p>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                      This bonus isn&apos;t calculated from your hours here. Payroll applies it per cycle when your row is
+                      selected—ask your coordinator if you expect this addition.
+                    </p>
+                  </div>
+                </div>
+                <Badge
+                  variant="outline"
+                  className="shrink-0 border-sky-500/35 bg-sky-500/10 text-sky-900 dark:border-sky-500/30 dark:text-sky-300"
+                >
+                  Payroll discretion
+                </Badge>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Stats Row */}
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
             {/* Total Hours */}
@@ -367,7 +667,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                 </div>
                 <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-600">
                   {totalPay != null
-                    ? `≈ $${(totalPay / usdRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`
+                    ? `≈ $${(totalPay / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`
                     : 'Pending rate assignment'}
                 </p>
               </CardContent>
@@ -494,7 +794,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-emerald-600 dark:text-emerald-400">PA Bonus</span>
                       <span className="font-mono text-sm font-medium text-emerald-600 dark:text-emerald-400">
-                        {formatPHP(5000)}
+                        {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP)}
                       </span>
                     </div>
                   )}
@@ -502,12 +802,14 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-zinc-900 dark:text-white">Total</span>
                     <span className="font-mono text-lg font-bold text-emerald-700 dark:text-emerald-400">
-                      {totalPay != null ? formatPHP(totalPay + (isPAEligible ? 5000 : 0)) : '—'}
+                      {totalPay != null
+                        ? formatPHP(totalPay + (isPAEligible ? PERFECT_ATTENDANCE_BONUS_PHP : 0))
+                        : '—'}
                     </span>
                   </div>
                   {totalPay != null && (
                     <p className="text-right font-mono text-[10px] text-blue-500 dark:text-blue-400">
-                      ≈ ${((totalPay + (isPAEligible ? 5000 : 0)) / usdRate).toLocaleString('en-US', {
+                      ≈ ${((totalPay + (isPAEligible ? PERFECT_ATTENDANCE_BONUS_PHP : 0)) / usdToPhpRate).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}{' '}
@@ -518,7 +820,9 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
                 <div className="rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
                   <p className="text-[10px] text-zinc-500 dark:text-zinc-500">
-                    Exchange rate: <span className="font-mono font-medium">{formatPHP(usdRate)}</span> = $1 USD.
+                    Exchange rate: <span className="font-mono font-medium">{formatPHP(usdToPhpRate)}</span> = $1 USD (default from policy: ₱
+                    {PHILIPPINE_PESO_OFFICIAL.toLocaleString('en-PH')}
+                    {` ÷ 10^${USD_TO_PHP_DECIMAL_SHIFT}`}).
                     Bonuses are applied during payroll processing and may vary.
                   </p>
                 </div>

@@ -38,6 +38,17 @@ import {
 } from '@/lib/supabase/employee-hourly-rates';
 import { normEmail } from '@/lib/email/norm-email';
 import { comparePayrollToMaster } from '@/lib/payroll/compare-to-master';
+import {
+  phpHourlyPayFromSeconds,
+  roundWorkedHoursForPay,
+  splitRegularOvertimeSeconds,
+} from '@/lib/payroll/money-php';
+import {
+  OFFICIAL_USD_TO_PHP_RATE,
+  PHILIPPINE_PESO_OFFICIAL,
+  USD_TO_PHP_DECIMAL_SHIFT,
+  effectiveUsdToPhpRateFromStored,
+} from '@/lib/fx/usd-php';
 import { sha256Hex } from '@/lib/hash';
 import {
   Dialog,
@@ -688,10 +699,9 @@ export default function PayrollWizard() {
   const [hourlyRatesLoading, setHourlyRatesLoading] = useState(false);
   const [hourlyRatesError, setHourlyRatesError] = useState<string | null>(null);
 
-  /** USD → PHP exchange rate. Stored in app_settings (key: usd_to_php_rate). Default 56. */
-  const DEFAULT_USD_TO_PHP = 56;
-  const [usdToPhpRate, setUsdToPhpRate] = useState<number>(DEFAULT_USD_TO_PHP);
-  const [usdToPhpInput, setUsdToPhpInput] = useState<string>(String(DEFAULT_USD_TO_PHP));
+  /** USD → PHP (PHP per $1). Saved in app_settings `usd_to_php_rate`; default is the official ₱100,000 ÷ 10⁵ rate. */
+  const [usdToPhpRate, setUsdToPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
+  const [usdToPhpInput, setUsdToPhpInput] = useState<string>(String(OFFICIAL_USD_TO_PHP_RATE));
   const [usdToPhpSaving, setUsdToPhpSaving] = useState(false);
   const [usdToPhpEditing, setUsdToPhpEditing] = useState(false);
 
@@ -726,18 +736,17 @@ export default function PayrollWizard() {
       try {
         const res = await fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' });
         const json = (await res.json()) as { value: string | null; error: string | null };
-        if (!cancelled && json.value) {
-          const parsed = parseFloat(json.value);
-          if (Number.isFinite(parsed) && parsed > 0) {
-            setUsdToPhpRate(parsed);
-            setUsdToPhpInput(String(parsed));
-          }
-        }
+        if (cancelled) return;
+        const rate = effectiveUsdToPhpRateFromStored(json.value);
+        setUsdToPhpRate(rate);
+        setUsdToPhpInput(String(rate));
       } catch {
-        // fall back to default
+        // keep defaults
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const loadEmployeeHourlyRates = React.useCallback(async () => {
@@ -921,13 +930,15 @@ export default function PayrollWizard() {
 
   /**
    * Match Hubstaff Email to employee_hourly_rates Work Email (or Personal Email).
-   * Reg Pay = Reg Rate × min(Total Hrs, 40), OT Pay = OT Rate × OT Hrs, Initial Pay = sum.
+   * Reg Pay = Reg Rate × Reg Hrs, OT Pay = OT Rate × OT Hrs (Reg Hrs = min(Total, 40), OT = rest).
+   * Total hours rounded to 2dp (Hubstaff-style) before split; pay uses whole seconds + centavo rounding.
    */
   const calcResults = useMemo<CalcRow[]>(() => {
     return hubstaffData.map((row) => {
-      const totalH = row.decimalHours;
-      const otHours = Math.max(0, totalH - 40);
-      const regularHours = totalH - otHours;
+      const totalH = roundWorkedHoursForPay(row.decimalHours);
+      const { regularSec, otSec } = splitRegularOvertimeSeconds(totalH);
+      const regularHours = regularSec / 3600;
+      const otHours = otSec / 3600;
 
       const em = normEmail(row.email);
       const rateRow = em ? ratesByEmail.get(em) : undefined;
@@ -936,10 +947,14 @@ export default function PayrollWizard() {
       const regularRate = parseRateField(rateRow?.regular_rate);
       const otRate = parseRateField(rateRow?.ot_rate);
 
-      const regularPay = regularRate != null ? regularRate * regularHours : null;
-      const otPay = otHours > 0 ? (otRate != null ? otRate * otHours : null) : 0;
+      const regularPay =
+        regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
+      const otPay =
+        otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
       const initialPay =
-        regularPay != null && otPay != null ? regularPay + otPay : null;
+        regularPay != null && otPay != null
+          ? Math.round((regularPay + otPay) * 100) / 100
+          : null;
 
       return {
         email: row.email,
@@ -1685,16 +1700,12 @@ export default function PayrollWizard() {
               </Button>
             </div>
 
-            {/* USD → PHP Exchange Rate */}
+            {/* USD → PHP exchange rate */}
             <div className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50/60 px-4 py-3 dark:border-blue-800/50 dark:bg-blue-950/30">
               <DollarSign className="h-4 w-4 shrink-0 text-blue-500" />
               <div className="flex flex-1 flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-blue-900 dark:text-blue-200">
-                  USD → PHP Rate
-                </span>
-                <span className="text-xs text-blue-700/70 dark:text-blue-400/70">
-                  (1 USD =)
-                </span>
+                <span className="text-sm font-medium text-blue-900 dark:text-blue-200">USD → PHP Rate</span>
+                <span className="text-xs text-blue-700/70 dark:text-blue-400/70">(1 USD =)</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="relative">
@@ -1703,8 +1714,8 @@ export default function PayrollWizard() {
                   </span>
                   <Input
                     type="number"
-                    min="1"
-                    step="0.01"
+                    min="0.00001"
+                    step="0.00001"
                     value={usdToPhpInput}
                     readOnly={!usdToPhpEditing}
                     onChange={(e) => setUsdToPhpInput(e.target.value)}
@@ -1720,17 +1731,19 @@ export default function PayrollWizard() {
                             body: JSON.stringify({ key: 'usd_to_php_rate', value: String(parsed) }),
                           })
                             .then(async (res) => {
-                              const json = await res.json() as { error: string | null };
+                              const json = (await res.json()) as { error: string | null };
                               if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
                               toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
                               setUsdToPhpEditing(false);
                             })
-                            .catch((err: unknown) => toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`))
+                            .catch((err: unknown) =>
+                              toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`),
+                            )
                             .finally(() => setUsdToPhpSaving(false));
                         }
                       }
                     }}
-                    className={`h-8 w-28 border-blue-300 pl-6 pr-2 font-mono text-sm tabular-nums dark:border-blue-700 ${usdToPhpEditing ? 'bg-white dark:bg-zinc-950' : 'cursor-default bg-blue-50 dark:bg-blue-950/40'}`}
+                    className={`h-8 min-w-[7rem] border-blue-300 pl-6 pr-2 font-mono text-sm tabular-nums dark:border-blue-700 ${usdToPhpEditing ? 'bg-white dark:bg-zinc-950' : 'cursor-default bg-blue-50 dark:bg-blue-950/40'}`}
                   />
                 </div>
                 {!usdToPhpEditing ? (
@@ -1740,7 +1753,7 @@ export default function PayrollWizard() {
                     className="h-8 bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400 dark:text-white"
                     onClick={() => setUsdToPhpEditing(true)}
                   >
-                    Edit Conversion Rate
+                    Edit rate
                   </Button>
                 ) : (
                   <Button
@@ -1762,12 +1775,14 @@ export default function PayrollWizard() {
                         body: JSON.stringify({ key: 'usd_to_php_rate', value: String(parsed) }),
                       })
                         .then(async (res) => {
-                          const json = await res.json() as { error: string | null };
+                          const json = (await res.json()) as { error: string | null };
                           if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
                           toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
                           setUsdToPhpEditing(false);
                         })
-                        .catch((err: unknown) => toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`))
+                        .catch((err: unknown) =>
+                          toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`),
+                        )
                         .finally(() => setUsdToPhpSaving(false));
                     }}
                   >
@@ -1776,7 +1791,20 @@ export default function PayrollWizard() {
                 )}
               </div>
               <p className="w-full text-xs text-blue-700/60 dark:text-blue-400/60">
-                Divides PHP Initial Pay by this rate to show the USD equivalent. Current: <span className="font-mono font-semibold">₱{usdToPhpRate.toFixed(2)}</span> = $1 USD.{usdToPhpEditing && <> Press <kbd className="rounded border border-blue-300 bg-blue-100 px-1 py-0.5 font-mono text-[10px] dark:border-blue-700 dark:bg-blue-900">Enter</kbd> or click Apply &amp; Save to confirm.</>}
+                Divides PHP Initial Pay by this rate for the USD column. Default official rate: ₱
+                {OFFICIAL_USD_TO_PHP_RATE.toFixed(USD_TO_PHP_DECIMAL_SHIFT)} per $1 (₱
+                {PHILIPPINE_PESO_OFFICIAL.toLocaleString('en-PH')} ÷ 10^{USD_TO_PHP_DECIMAL_SHIFT}). Current:{' '}
+                <span className="font-mono font-semibold">₱{usdToPhpRate.toFixed(5)}</span> = $1 USD.
+                {usdToPhpEditing && (
+                  <>
+                    {' '}
+                    Press{' '}
+                    <kbd className="rounded border border-blue-300 bg-blue-100 px-1 py-0.5 font-mono text-[10px] dark:border-blue-700 dark:bg-blue-900">
+                      Enter
+                    </kbd>{' '}
+                    or Apply &amp; Save to confirm.
+                  </>
+                )}
               </p>
             </div>
 

@@ -76,6 +76,139 @@ function csvColToIsoDate(col: string): string | null {
   return null;
 }
 
+/** Canonical weekday keys (UTC), used for stable DB columns `monday`…`sunday`. */
+const CANONICAL_WEEKDAYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+] as const;
+
+/**
+ * Maps a hubstaff_hours column name to a canonical weekday (e.g. `mon`, `Monday` → `monday`).
+ * Returns null for non–day columns (Email, Total worked, ISO dates, etc.).
+ */
+function dbColumnToWeekdayKey(dbCol: string): string | null {
+  const n = dbCol.toLowerCase().trim();
+  const map: Record<string, string> = {
+    sun: "sunday",
+    sunday: "sunday",
+    mon: "monday",
+    monday: "monday",
+    tue: "tuesday",
+    tues: "tuesday",
+    tuesday: "tuesday",
+    wed: "wednesday",
+    weds: "wednesday",
+    wednesday: "wednesday",
+    thu: "thursday",
+    thur: "thursday",
+    thurs: "thursday",
+    thursday: "thursday",
+    fri: "friday",
+    friday: "friday",
+    sat: "saturday",
+    saturday: "saturday",
+  };
+  return map[n] ?? null;
+}
+
+/** ISO calendar date → canonical weekday key (uses UTC date parts to avoid TZ shifts). */
+function isoDateToWeekdayKey(iso: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10) - 1;
+  const d = parseInt(m[3], 10);
+  const dt = new Date(Date.UTC(y, mo, d));
+  if (Number.isNaN(dt.getTime())) return null;
+  return CANONICAL_WEEKDAYS[dt.getUTCDay()] ?? null;
+}
+
+/**
+ * Hubstaff weekly exports list days Sunday → Saturday (e.g. ISO columns 2026-03-22 … 2026-03-28).
+ * Stable DB columns are sunday…saturday. This index matches that order (0 = Sun … 6 = Sat).
+ */
+function weekSortIndexForColumn(col: string): number | null {
+  const trimmed = col.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const wk = isoDateToWeekdayKey(trimmed);
+    if (wk) return CANONICAL_WEEKDAYS.indexOf(wk as (typeof CANONICAL_WEEKDAYS)[number]);
+    return null;
+  }
+  const named = dbColumnToWeekdayKey(trimmed);
+  if (named) return CANONICAL_WEEKDAYS.indexOf(named as (typeof CANONICAL_WEEKDAYS)[number]);
+  return null;
+}
+
+/** Matches Hubstaff daily report column order (reference CSV). */
+const HUBSTAFF_LEADING_COLS = [
+  "Organization",
+  "Time Zone",
+  "Member",
+  "Email",
+  "Job title",
+  "Job type",
+  "Employee ID",
+  "Tax info",
+  "Location",
+  "Time zone",
+  "Date added",
+] as const;
+
+const HUBSTAFF_TRAILING_COLS = ["Total worked", "Activity", "Spent total", "Currency"] as const;
+
+function leadingColOrder(col: string): number | null {
+  const lower = col.toLowerCase();
+  const i = HUBSTAFF_LEADING_COLS.findIndex((k) => k.toLowerCase() === lower);
+  return i >= 0 ? i : null;
+}
+
+function trailingColOrder(col: string): number | null {
+  const lower = col.toLowerCase();
+  const i = HUBSTAFF_TRAILING_COLS.findIndex((k) => k.toLowerCase() === lower);
+  return i >= 0 ? i : null;
+}
+
+/**
+ * Column order for API/UI: `id` (if present) → Hubstaff metadata → Sunday…Saturday → totals → other.
+ * Matches Hubstaff CSV order when headers are ISO dates or named weekdays.
+ */
+export function sortHubstaffColumnsForDisplay(columns: string[]): string[] {
+  const group = (col: string): number => {
+    if (col.toLowerCase() === "id") return -1;
+    if (leadingColOrder(col) !== null) return 0;
+    if (weekSortIndexForColumn(col) !== null) return 1;
+    if (trailingColOrder(col) !== null) return 2;
+    return 3;
+  };
+
+  return [...columns].sort((a, b) => {
+    const ga = group(a);
+    const gb = group(b);
+    if (ga !== gb) return ga - gb;
+
+    if (ga === -1) return 0;
+
+    const la = leadingColOrder(a);
+    const lb = leadingColOrder(b);
+    if (la !== null && lb !== null && la !== lb) return la - lb;
+
+    const wa = weekSortIndexForColumn(a);
+    const wb = weekSortIndexForColumn(b);
+    if (wa !== null && wb !== null && wa !== wb) return wa - wb;
+
+    const ta = trailingColOrder(a);
+    const tb = trailingColOrder(b);
+    if (ta !== null && tb !== null && ta !== tb) return ta - tb;
+
+    return a.localeCompare(b, undefined, { sensitivity: "base" });
+  });
+}
+
 /** Fetches ALL rows from hubstaff_hours (paginated, no hard cap), drops rows that are empty in every preview column. */
 export async function fetchHubstaffRowsOrdered(): Promise<{
   columns: string[];
@@ -103,12 +236,14 @@ export async function fetchHubstaffRowsOrdered(): Promise<{
   // Drop rows where every preview column is null / empty string
   const rows = allRows.filter((r) => !rowIsEmpty(r));
 
-  const columns =
+  let columns =
     rows.length > 0
       ? Object.keys(rows[0])
       : allRows.length > 0
         ? Object.keys(allRows[0])
         : await getTableColumnsFromSpec(table);
+
+  columns = sortHubstaffColumnsForDisplay(columns);
 
   return { columns, rows };
 }
@@ -168,6 +303,36 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
       });
       for (const dbCol of unmatchedDbDateCols) {
         const csvIdx = csvDateMap.get(dbCol); // dbCol is already ISO
+        if (csvIdx !== undefined) {
+          insertCols.push({ csvIdx, dbCol });
+          usedCsvIdx.add(csvIdx);
+        }
+      }
+    }
+
+    // ── Pass 3: stable weekday columns (monday…sunday) ↔ any CSV date column ──
+    // Weekly CSVs use changing dates ("Mon 4/7"); DB columns stay fixed. Parse each
+    // CSV header to an ISO date, derive Mon–Sun, and map to the matching DB column.
+    const unmatchedWeekdayCols = dbColumns.filter(
+      (c) =>
+        c !== "id" &&
+        !insertCols.some((ic) => ic.dbCol === c) &&
+        dbColumnToWeekdayKey(c) !== null,
+    );
+    if (unmatchedWeekdayCols.length > 0) {
+      const weekdayKeyToCsvIdx = new Map<string, number>();
+      csvHeaders.forEach((h, i) => {
+        if (usedCsvIdx.has(i)) return;
+        const iso = csvColToIsoDate(h);
+        if (!iso) return;
+        const wk = isoDateToWeekdayKey(iso);
+        if (!wk) return;
+        weekdayKeyToCsvIdx.set(wk, i);
+      });
+      for (const dbCol of unmatchedWeekdayCols) {
+        const wk = dbColumnToWeekdayKey(dbCol);
+        if (!wk) continue;
+        const csvIdx = weekdayKeyToCsvIdx.get(wk);
         if (csvIdx !== undefined) {
           insertCols.push({ csvIdx, dbCol });
           usedCsvIdx.add(csvIdx);

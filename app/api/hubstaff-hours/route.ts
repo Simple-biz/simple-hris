@@ -4,6 +4,7 @@ import {
   fetchHubstaffRowsOrdered,
   replaceHubstaffHoursFromCsvText,
   rowsToPayrollRows,
+  sortHubstaffColumnsForDisplay,
 } from "@/lib/supabase/hubstaff-hours-db";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -34,7 +35,8 @@ export async function GET() {
     const rawRows = ((data ?? []) as Record<string, unknown>[]).filter((r) =>
       Object.values(r).some((v) => v != null && String(v).trim() !== ""),
     );
-    const columns = rawRows.length > 0 ? Object.keys(rawRows[0]) : [];
+    const columns =
+      rawRows.length > 0 ? sortHubstaffColumnsForDisplay(Object.keys(rawRows[0])) : [];
     const payrollRows = rawRows.map((r) => mapHubstaffHoursRow(r));
     return NextResponse.json({ columns, rows: rawRows, payrollRows, error: null });
   } catch (e) {
