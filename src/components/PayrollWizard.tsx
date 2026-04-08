@@ -1652,8 +1652,12 @@ export default function PayrollWizard() {
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ key: 'usd_to_php_rate', value: String(parsed) }),
                           })
-                            .then(() => toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`))
-                            .catch(() => toast.error('Failed to save rate'))
+                            .then(async (res) => {
+                              const json = await res.json() as { error: string | null };
+                              if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+                              toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
+                            })
+                            .catch((err: unknown) => toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`))
                             .finally(() => setUsdToPhpSaving(false));
                         }
                       }
@@ -1679,8 +1683,12 @@ export default function PayrollWizard() {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ key: 'usd_to_php_rate', value: String(parsed) }),
                     })
-                      .then(() => toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`))
-                      .catch(() => toast.error('Failed to save rate'))
+                      .then(async (res) => {
+                        const json = await res.json() as { error: string | null };
+                        if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+                        toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
+                      })
+                      .catch((err: unknown) => toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`))
                       .finally(() => setUsdToPhpSaving(false));
                   }}
                 >
