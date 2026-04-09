@@ -285,25 +285,13 @@ export async function fetchHubstaffRowsOrdered(): Promise<{
 }
 
 /**
- * Replaces all rows in `public.hubstaff_hours` with data from the Hubstaff weekly CSV.
- * Uses SUPABASE_SERVICE_ROLE_KEY (bypasses RLS); works over HTTPS — no direct Postgres needed.
+ * Resolves CSV → DB column mappings for the hubstaff_hours table.
  */
-export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<{ rowCount: number }> {
-  const supabase = requireServiceRole();
-  const table = getTableName();
-
-  const grid = parseCsv(csvText);
-  if (grid.length < 2) {
-    throw new Error("CSV must include a header row and at least one data row.");
-  }
-
-  const csvHeaders = grid[0].map((h) => h.trim());
-  // Drop rows where every cell is empty or whitespace-only
-  const dataRows = grid.slice(1).filter((row) => row.some((cell) => cell.trim() !== ""));
-
-  // Determine which CSV columns map to DB columns.
+async function resolveColumnMapping(
+  csvHeaders: string[],
+  table: string,
+): Promise<{ csvIdx: number; dbCol: string }[]> {
   const dbColumns = await getTableColumnsFromSpec(table);
-
   const insertCols: { csvIdx: number; dbCol: string }[] = [];
 
   if (dbColumns.length > 0) {
@@ -322,8 +310,6 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
     }
 
     // ── Pass 2: date-aware match ──
-    // The DB may have ISO date columns ("2026-03-24") while the CSV uses
-    // Hubstaff-format names ("Mon 3/24"). Parse both to ISO and match.
     const unmatchedDbDateCols = dbColumns.filter(
       (c) =>
         c !== "id" &&
@@ -338,7 +324,7 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
         if (iso) csvDateMap.set(iso, i);
       });
       for (const dbCol of unmatchedDbDateCols) {
-        const csvIdx = csvDateMap.get(dbCol); // dbCol is already ISO
+        const csvIdx = csvDateMap.get(dbCol);
         if (csvIdx !== undefined) {
           insertCols.push({ csvIdx, dbCol });
           usedCsvIdx.add(csvIdx);
@@ -347,8 +333,6 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
     }
 
     // ── Pass 3: stable weekday columns (monday…sunday) ↔ any CSV date column ──
-    // Weekly CSVs use changing dates ("Mon 4/7"); DB columns stay fixed. Parse each
-    // CSV header to an ISO date, derive Mon–Sun, and map to the matching DB column.
     const unmatchedWeekdayCols = dbColumns.filter(
       (c) =>
         c !== "id" &&
@@ -382,6 +366,62 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
     });
   }
 
+  return insertCols;
+}
+
+/**
+ * Batch-inserts parsed CSV rows into the hubstaff_hours table.
+ * If sourceFile is provided, it is written to the `source_file` column on every row.
+ */
+async function batchInsertRows(
+  supabase: SupabaseClient,
+  table: string,
+  dataRows: string[][],
+  insertCols: { csvIdx: number; dbCol: string }[],
+  sourceFile?: string,
+): Promise<number> {
+  const batchSize = 50;
+  let rowCount = 0;
+
+  for (let start = 0; start < dataRows.length; start += batchSize) {
+    const batch = dataRows.slice(start, start + batchSize);
+    const rows = batch.map((row) => {
+      const obj: Record<string, string | null> = {};
+      for (const { csvIdx, dbCol } of insertCols) {
+        const val = row[csvIdx] ?? "";
+        obj[dbCol] = val === "" ? null : String(val);
+      }
+      if (sourceFile) {
+        obj["source_file"] = sourceFile;
+      }
+      return obj;
+    });
+
+    const { error } = await supabase.from(table).insert(rows);
+    if (error) throw new Error(`Insert failed (batch ${start}–${start + batch.length}): ${error.message}`);
+    rowCount += batch.length;
+  }
+
+  return rowCount;
+}
+
+/**
+ * Replaces all rows in `public.hubstaff_hours` with data from the Hubstaff weekly CSV.
+ * Uses SUPABASE_SERVICE_ROLE_KEY (bypasses RLS); works over HTTPS — no direct Postgres needed.
+ */
+export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<{ rowCount: number }> {
+  const supabase = requireServiceRole();
+  const table = getTableName();
+
+  const grid = parseCsv(csvText);
+  if (grid.length < 2) {
+    throw new Error("CSV must include a header row and at least one data row.");
+  }
+
+  const csvHeaders = grid[0].map((h) => h.trim());
+  const dataRows = grid.slice(1).filter((row) => row.some((cell) => cell.trim() !== ""));
+
+  const insertCols = await resolveColumnMapping(csvHeaders, table);
   if (insertCols.length === 0) {
     throw new Error(
       "No CSV columns match public.hubstaff_hours. Ensure CSV column names match your Supabase table (case-insensitive).",
@@ -396,27 +436,161 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
     console.warn("[hubstaff_hours] could not clear hubstaff_daily_breakdown:", settingsErr);
   }
 
-  // Batch insert
-  const batchSize = 50;
-  let rowCount = 0;
+  const rowCount = await batchInsertRows(supabase, table, dataRows, insertCols);
+  return { rowCount };
+}
 
-  for (let start = 0; start < dataRows.length; start += batchSize) {
-    const batch = dataRows.slice(start, start + batchSize);
-    const rows = batch.map((row) => {
-      const obj: Record<string, string | null> = {};
-      for (const { csvIdx, dbCol } of insertCols) {
-        const val = row[csvIdx] ?? "";
-        obj[dbCol] = val === "" ? null : String(val);
-      }
-      return obj;
-    });
-
-    const { error } = await supabase.from(table).insert(rows);
-    if (error) throw new Error(`Insert failed (batch ${start}–${start + batch.length}): ${error.message}`);
-    rowCount += batch.length;
+/**
+ * Deletes all rows whose `source_file` matches (for removing one uploaded CSV batch).
+ */
+export async function deleteHubstaffRowsBySourceFile(sourceFile: string): Promise<{ deleted: number }> {
+  const supabase = requireServiceRole();
+  const table = getTableName();
+  const specCols = await getTableColumnsFromSpec(table);
+  if (!specCols.includes("source_file")) {
+    throw new Error(
+      "public.hubstaff_hours has no source_file column. Add a text column `source_file` in Supabase to track and delete uploads.",
+    );
   }
 
+  const { count: nMatch, error: countErr } = await supabase
+    .from(table)
+    .select("*", { count: "exact", head: true })
+    .eq("source_file", sourceFile);
+  if (countErr) throw new Error(countErr.message);
+  const toDelete = nMatch ?? 0;
+  if (toDelete === 0) {
+    return { deleted: 0 };
+  }
+
+  const { error: delErr } = await supabase.from(table).delete().eq("source_file", sourceFile);
+  if (delErr) throw new Error(delErr.message);
+  return { deleted: toDelete };
+}
+
+/**
+ * Appends rows from the Hubstaff CSV to `public.hubstaff_hours` WITHOUT deleting existing data.
+ * This allows continuously uploading weekly CSV files without overwriting previous uploads.
+ * Stores the original filename in the `source_file` column for tracking.
+ */
+export async function appendHubstaffHoursFromCsvText(
+  csvText: string,
+  sourceFile?: string,
+): Promise<{ rowCount: number }> {
+  const supabase = requireServiceRole();
+  const table = getTableName();
+
+  const grid = parseCsv(csvText);
+  if (grid.length < 2) {
+    throw new Error("CSV must include a header row and at least one data row.");
+  }
+
+  const csvHeaders = grid[0].map((h) => h.trim());
+  const dataRows = grid.slice(1).filter((row) => row.some((cell) => cell.trim() !== ""));
+
+  const insertCols = await resolveColumnMapping(csvHeaders, table);
+  if (insertCols.length === 0) {
+    throw new Error(
+      "No CSV columns match public.hubstaff_hours. Ensure CSV column names match your Supabase table (case-insensitive).",
+    );
+  }
+
+  const specCols = await getTableColumnsFromSpec(table);
+  const canStoreSourceFile = specCols.includes("source_file");
+  const rowCount = await batchInsertRows(
+    supabase,
+    table,
+    dataRows,
+    insertCols,
+    canStoreSourceFile ? sourceFile : undefined,
+  );
   return { rowCount };
+}
+
+/**
+ * Returns distinct source_file values from the hubstaff_hours table, ordered by filename.
+ */
+export async function getUploadedSourceFiles(): Promise<string[]> {
+  const supabase = requireServiceRole();
+  const table = getTableName();
+
+  const specCols = await getTableColumnsFromSpec(table);
+  if (!specCols.includes("source_file")) {
+    return [];
+  }
+
+  // Paginate through all rows to collect every distinct source_file value.
+  // PostgREST defaults to 1000 rows per request, which can miss files when
+  // the table has more rows than that limit.
+  const PAGE = 1000;
+  const allSourceFiles = new Set<string>();
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("source_file")
+      .not("source_file", "is", null)
+      .order("source_file")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const page = (data ?? []) as { source_file: string }[];
+    for (const r of page) {
+      if (r.source_file && r.source_file.trim() !== "") {
+        allSourceFiles.add(r.source_file);
+      }
+    }
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+
+  return [...allSourceFiles].sort();
+}
+
+/**
+ * Fetches rows from hubstaff_hours filtered by source_file.
+ */
+export async function fetchHubstaffRowsBySourceFile(sourceFile: string): Promise<{
+  columns: string[];
+  rows: Record<string, unknown>[];
+}> {
+  const supabase = requireServiceRole();
+  const table = getTableName();
+
+  const specCols = await getTableColumnsFromSpec(table);
+  if (!specCols.includes("source_file")) {
+    return { columns: [], rows: [] };
+  }
+
+  const PAGE = 1000;
+  const allRows: Record<string, unknown>[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("source_file", sourceFile)
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const page = (data ?? []) as Record<string, unknown>[];
+    allRows.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+
+  const rows = allRows.filter((r) => !rowIsEmpty(r));
+
+  let columns =
+    rows.length > 0
+      ? Object.keys(rows[0])
+      : allRows.length > 0
+        ? Object.keys(allRows[0])
+        : await getTableColumnsFromSpec(table);
+
+  columns = sortHubstaffColumnsForDisplay(columns);
+
+  return { columns, rows };
 }
 
 export function rowsToPayrollRows(rows: Record<string, unknown>[]): PayrollHubstaffRow[] {

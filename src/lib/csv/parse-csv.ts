@@ -9,7 +9,8 @@ export function parseCsv(text: string): string[][] {
     bom: true,
     skip_empty_lines: true,
     trim: false,
-    relax_column_count: false,
+    // Hubstaff / Excel exports sometimes pad short rows differently; strict mode rejects valid files.
+    relax_column_count: true,
     cast: false,
   }) as string[][];
 }

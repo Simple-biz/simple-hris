@@ -15,6 +15,8 @@ import {
   Trash2,
   Loader2,
   DollarSign,
+  FileText,
+  ChevronRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -53,7 +55,6 @@ import {
   USD_TO_PHP_DECIMAL_SHIFT,
   effectiveUsdToPhpRateFromStored,
 } from '@/lib/fx/usd-php';
-import { sha256Hex } from '@/lib/hash';
 import {
   Dialog,
   DialogContent,
@@ -75,28 +76,78 @@ function findHeaderColumn(header: string[], ...labels: string[]): number {
 function buildHubstaffDataFromParsedGrid(grid: string[][]): HubstaffRow[] {
   if (grid.length < 2) return [];
   const header = grid[0].map((h) => h.trim());
-  const emailIdx = findHeaderColumn(header, 'Email');
-  const totalIdx = findHeaderColumn(header, 'Total worked');
-  if (emailIdx < 0 || totalIdx < 0) return [];
+  const emailIdx = findHeaderColumn(header, 'Email', 'Work email', 'Work Email');
+  const totalIdx = findHeaderColumn(
+    header,
+    'Total worked',
+    'Total Worked',
+    'Worked time',
+    'Time worked',
+    'Total hours',
+    'Total Hours',
+  );
   const memberIdx = findHeaderColumn(header, 'Member');
+  const totalHoursIdx = findHeaderColumn(header, 'Total hours', 'Total Hours');
   // "Job type" is the Hubstaff column that holds the department/team name
   const jobTypeIdx = findHeaderColumn(header, 'Job type', 'Job Type', 'job_type', 'Department', 'department');
+  const projectIdx = findHeaderColumn(header, 'Project');
+
+  // Weekly summary format: has Email + Total worked
+  const isWeeklyFormat = emailIdx >= 0 && totalIdx >= 0;
+  // Daily report format: has Member + Total hours (no Email column)
+  const isDailyFormat = memberIdx >= 0 && totalHoursIdx >= 0;
+
+  if (!isWeeklyFormat && !isDailyFormat) return [];
+
   const parsedData: HubstaffRow[] = [];
-  for (let r = 1; r < grid.length; r++) {
-    const row = grid[r];
-    const email = (row[emailIdx] ?? '').trim();
-    if (!email) continue;
-    const totalCell = row[totalIdx] ?? '';
-    const member = memberIdx >= 0 ? (row[memberIdx] ?? '').trim() : '';
-    const jobType = jobTypeIdx >= 0 ? (row[jobTypeIdx] ?? '').trim() || null : null;
-    parsedData.push({
-      name: member || email,
-      email,
-      hours: String(totalCell).trim(),
-      decimalHours: parseHoursToDecimal(totalCell),
-      department: jobType,
-    });
+
+  if (isWeeklyFormat) {
+    for (let r = 1; r < grid.length; r++) {
+      const row = grid[r];
+      const email = (row[emailIdx] ?? '').trim();
+      if (!email) continue;
+      const totalCell = row[totalIdx] ?? '';
+      const member = memberIdx >= 0 ? (row[memberIdx] ?? '').trim() : '';
+      const jobType = jobTypeIdx >= 0 ? (row[jobTypeIdx] ?? '').trim() || null : null;
+      parsedData.push({
+        name: member || email,
+        email,
+        hours: String(totalCell).trim(),
+        decimalHours: parseHoursToDecimal(totalCell),
+        department: jobType,
+      });
+    }
+  } else {
+    // Daily format: aggregate total hours per member (member name is the key)
+    const memberTotals = new Map<string, { hours: number; dept: string | null }>();
+    for (let r = 1; r < grid.length; r++) {
+      const row = grid[r];
+      const member = (row[memberIdx] ?? '').trim();
+      if (!member) continue;
+      const totalCell = row[totalHoursIdx] ?? '';
+      const hours = parseHoursToDecimal(totalCell);
+      const dept = projectIdx >= 0 ? (row[projectIdx] ?? '').trim() || null : null;
+      const existing = memberTotals.get(member);
+      if (existing) {
+        existing.hours += hours;
+        if (!existing.dept && dept) existing.dept = dept;
+      } else {
+        memberTotals.set(member, { hours, dept });
+      }
+    }
+    for (const [member, data] of memberTotals) {
+      const h = Math.floor(data.hours);
+      const m = Math.round((data.hours - h) * 60);
+      parsedData.push({
+        name: member,
+        email: '',
+        hours: `${h}:${String(m).padStart(2, '0')}`,
+        decimalHours: data.hours,
+        department: data.dept,
+      });
+    }
   }
+
   return parsedData;
 }
 
@@ -184,6 +235,9 @@ const HUBSTAFF_PREFERRED_COLS: { key: string; label: string }[] = [
 
 const MAX_PREVIEW_COLS = 8;
 
+/** Internal DB columns that shouldn't be shown to the user in data tables. */
+const HIDDEN_COLS = new Set(['id', 'source_file']);
+
 /** Build preview columns from the actual Supabase column list, preferring known-useful ones first. */
 function buildPreviewCols(allCols: string[]): { key: string; label: string }[] {
   const colSet = new Set(allCols);
@@ -203,10 +257,39 @@ function buildPreviewCols(allCols: string[]): { key: string; label: string }[] {
   if (result.length < MAX_PREVIEW_COLS) {
     const used = new Set(result.map((c) => c.key));
     for (const col of allCols) {
-      if (!used.has(col)) {
+      if (!used.has(col) && !HIDDEN_COLS.has(col)) {
         result.push({ key: col, label: col });
         if (result.length >= MAX_PREVIEW_COLS) break;
       }
+    }
+  }
+  return result;
+}
+
+/**
+ * Build ALL columns for the uploaded file detail view (no column limit).
+ * Hides internal DB columns (id, source_file) and puts preferred columns first,
+ * followed by remaining columns in their original order.
+ */
+function buildFullCols(allCols: string[]): { key: string; label: string }[] {
+  const colSet = new Set(allCols);
+  const result: { key: string; label: string }[] = [];
+  const used = new Set<string>();
+
+  // Preferred columns first (in priority order)
+  const hasTotalWorked = colSet.has('Total worked');
+  for (const pref of HUBSTAFF_PREFERRED_COLS) {
+    if (pref.key === '__overtime__') {
+      if (hasTotalWorked) { result.push(pref); used.add(pref.key); }
+    } else if (colSet.has(pref.key)) {
+      result.push(pref); used.add(pref.key);
+    }
+  }
+
+  // All remaining columns (preserving original order), excluding hidden + already used
+  for (const col of allCols) {
+    if (!used.has(col) && !HIDDEN_COLS.has(col)) {
+      result.push({ key: col, label: col });
     }
   }
   return result;
@@ -702,19 +785,31 @@ export default function PayrollWizard() {
   const [weeklyUploadLoading, setWeeklyUploadLoading] = useState(false);
   const [hubstaffPage, setHubstaffPage] = useState(1);
   const HUBSTAFF_PAGE_SIZE = 15;
-  /** True while data exists in the table — locks the upload button until user explicitly unlocks. */
-  const [hubstaffTableLocked, setHubstaffTableLocked] = useState(false);
+  const SOURCE_FILE_PAGE_SIZE = 25;
   const [hubstaffSearch, setHubstaffSearch] = useState('');
   const [initialCalcSearch, setInitialCalcSearch] = useState('');
-  /** After a successful weekly upload; blocks re-upload of identical file bytes. */
-  const [lastSuccessfulWeeklyCsvHash, setLastSuccessfulWeeklyCsvHash] = useState<string | null>(null);
-  const [duplicateCsvDialogOpen, setDuplicateCsvDialogOpen] = useState(false);
   const [approveUploadDialogOpen, setApproveUploadDialogOpen] = useState(false);
   const [pendingWeekly, setPendingWeekly] = useState<{
     text: string;
     fileName: string;
-    hash: string;
   } | null>(null);
+
+  // ── Uploaded-files browser tab state ──
+  const [hubstaffActiveTab, setHubstaffActiveTab] = useState<'files' | 'upload'>('upload');
+  const [uploadedSourceFiles, setUploadedSourceFiles] = useState<string[]>([]);
+  const [sourceFilesLoading, setSourceFilesLoading] = useState(false);
+  const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(null);
+  const [sourceFileRows, setSourceFileRows] = useState<Record<string, unknown>[] | null>(null);
+  const [sourceFileCols, setSourceFileCols] = useState<string[] | null>(null);
+  const [sourceFileLoading, setSourceFileLoading] = useState(false);
+  const [sourceFilePage, setSourceFilePage] = useState(1);
+  const [sourceFileSearch, setSourceFileSearch] = useState('');
+  const [deleteSourceFilePending, setDeleteSourceFilePending] = useState<string | null>(null);
+  const [deleteSourceFileLoading, setDeleteSourceFileLoading] = useState(false);
+
+  /** Source file selected for Initial Calculation (step 2). Defaults to latest uploaded file. */
+  const [calcSourceFile, setCalcSourceFile] = useState<string | null>(null);
+  const [calcSourceFileLoading, setCalcSourceFileLoading] = useState(false);
 
   const [hourlyRateRows, setHourlyRateRows] = useState<EmployeeHourlyRateRow[]>([]);
   const [hourlyRatesLoading, setHourlyRatesLoading] = useState(false);
@@ -727,6 +822,8 @@ export default function PayrollWizard() {
   const [usdToPhpEditing, setUsdToPhpEditing] = useState(false);
 
   const [activeDeptTab, setActiveDeptTab] = useState('accounting');
+  const [additionsSearch, setAdditionsSearch] = useState('');
+  const [validationSearch, setValidationSearch] = useState('');
   const [employeeDepts, setEmployeeDepts] = useState<Record<string, string>>({});
   const [employeeBonuses, setEmployeeBonuses] = useState<Record<string, Record<string, boolean>>>({});
   /** Per-employee numeric metrics: email → { metric → value }. Used by formula-based departments. */
@@ -790,6 +887,67 @@ export default function PayrollWizard() {
       void loadEmployeeHourlyRates();
     }
   }, [currentStep, loadEmployeeHourlyRates]);
+
+  // Auto-select latest uploaded source file as soon as the list is available
+  useEffect(() => {
+    if (uploadedSourceFiles.length > 0 && !calcSourceFile) {
+      const latest = uploadedSourceFiles[uploadedSourceFiles.length - 1];
+      setCalcSourceFile(latest);
+    }
+  }, [uploadedSourceFiles, calcSourceFile]);
+
+  // Load hubstaff data filtered by the selected source file for Initial Calculation
+  const loadCalcSourceFileData = React.useCallback(async (file: string) => {
+    setCalcSourceFileLoading(true);
+    try {
+      const res = await fetch(
+        `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
+        { cache: 'no-store' },
+      );
+      const json = (await res.json()) as {
+        columns?: string[] | null;
+        rows?: Record<string, unknown>[] | null;
+        payrollRows?: Array<{
+          email: string | null;
+          name: string | null;
+          hoursDisplay: string;
+          hoursDecimal: number;
+          department?: string | null;
+        }>;
+        error?: string | null;
+      };
+      if (json.error) {
+        console.warn('[calc source file]', json.error);
+      }
+      if (json.columns?.length && json.rows) {
+        setHubstaffDisplayColumns(json.columns);
+        setHubstaffDisplayRows(json.rows);
+        setHubstaffPage(1);
+        setHubstaffSearch('');
+      }
+      if (json.payrollRows?.length) {
+        const hd: HubstaffRow[] = json.payrollRows.map((p) => ({
+          name: p.name ?? p.email ?? '',
+          email: p.email ?? '',
+          hours: p.hoursDisplay,
+          decimalHours: p.hoursDecimal,
+          department: p.department ?? null,
+        }));
+        setHubstaffData(hd);
+        setIssues(buildReconciliationIssues(hd, users));
+      }
+    } catch (e) {
+      console.error('[calc source file]', e);
+    } finally {
+      setCalcSourceFileLoading(false);
+    }
+  }, [users]);
+
+  useEffect(() => {
+    if (calcSourceFile) {
+      void loadCalcSourceFileData(calcSourceFile);
+    }
+  }, [calcSourceFile, loadCalcSourceFileData]);
 
   const ratesByEmail = useMemo(
     () => indexHourlyRatesByEmail(hourlyRateRows),
@@ -965,7 +1123,34 @@ export default function PayrollWizard() {
       const otHours = otSec / 3600;
 
       const em = normEmail(row.email);
-      const rateRow = em ? ratesByEmail.get(em) : undefined;
+      let rateRow = em ? ratesByEmail.get(em) : undefined;
+
+      // Fallback: match via masterEmployees when direct email lookup fails.
+      // Hubstaff email → master (by work_email) → personal_email → ratesByEmail,
+      // or Hubstaff name → master (by name) → personal_email / work_email → ratesByEmail.
+      if (!rateRow && masterEmployees.length > 0) {
+        let master: typeof masterEmployees[number] | undefined;
+
+        // Try work_email match first
+        if (em) {
+          master = masterEmployees.find(e => normEmail(e.work_email) === em);
+        }
+
+        // Try name match
+        if (!master && row.name) {
+          const nameLower = row.name.trim().toLowerCase();
+          master = masterEmployees.find(
+            e => (e.name ?? '').trim().toLowerCase() === nameLower,
+          );
+        }
+
+        if (master) {
+          const pe = normEmail(master.personal_email);
+          const we = normEmail(master.work_email);
+          rateRow = (pe ? ratesByEmail.get(pe) : undefined)
+                 ?? (we ? ratesByEmail.get(we) : undefined);
+        }
+      }
 
       // Rates stored in PHP; compute pay in PHP then derive USD equivalent
       const regularRate = parseRateField(rateRow?.regular_rate);
@@ -993,7 +1178,7 @@ export default function PayrollWizard() {
         initialPay,
       };
     });
-  }, [hubstaffData, ratesByEmail]);
+  }, [hubstaffData, ratesByEmail, masterEmployees]);
 
   const bonusTotals = useMemo(() => {
     const result: Record<string, number> = {};
@@ -1068,7 +1253,7 @@ export default function PayrollWizard() {
     setHubstaffPreviewLoading(true);
     setHubstaffPreviewError(null);
     try {
-      const res = await fetch('/api/hubstaff-hours', { cache: 'no-store' });
+      const res = await fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' });
       const json = (await res.json()) as {
         columns?: string[] | null;
         rows?: Record<string, unknown>[] | null;
@@ -1131,15 +1316,16 @@ export default function PayrollWizard() {
         setHubstaffDisplayRows(rows);
         setHubstaffPage(1);
         setHubstaffSearch('');
-        if (rows.length > 0) setHubstaffTableLocked(true);
       } else {
         setHubstaffDisplayColumns(null);
         setHubstaffDisplayRows(null);
         setHubstaffPage(1);
         setHubstaffSearch('');
-        setHubstaffTableLocked(false);
       }
-      if (json.payrollRows?.length) {
+      // Only set hubstaffData from the full preview when no source file filter is active.
+      // When calcSourceFile is set, loadCalcSourceFileData handles hubstaffData
+      // so that calculations use only the selected CSV's rows.
+      if (json.payrollRows?.length && !calcSourceFile) {
         const hd: HubstaffRow[] = json.payrollRows.map((p) => ({
           name: p.name ?? p.email ?? '',
           email: p.email ?? '',
@@ -1158,11 +1344,97 @@ export default function PayrollWizard() {
     } finally {
       setHubstaffPreviewLoading(false);
     }
-  }, [users]);
+  }, [users, calcSourceFile]);
 
   useEffect(() => {
     void loadHubstaffPreview();
   }, [loadHubstaffPreview]);
+
+  // ── Load list of uploaded source files ──
+  const loadUploadedSourceFiles = React.useCallback(async (): Promise<string[]> => {
+    setSourceFilesLoading(true);
+    try {
+      const res = await fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, { cache: 'no-store' });
+      const json = (await res.json()) as { files?: string[]; error?: string | null };
+      const files = json.files ?? [];
+      setUploadedSourceFiles(files);
+      return files;
+    } catch {
+      setUploadedSourceFiles([]);
+      return [];
+    } finally {
+      setSourceFilesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadUploadedSourceFiles();
+  }, [loadUploadedSourceFiles]);
+
+  const confirmDeleteSourceFile = React.useCallback(async () => {
+    if (!deleteSourceFilePending) return;
+    setDeleteSourceFileLoading(true);
+    try {
+      const res = await fetch(
+        `/api/hubstaff-hours?source_file=${encodeURIComponent(deleteSourceFilePending)}&_=${Date.now()}`,
+        { method: 'DELETE', cache: 'no-store' },
+      );
+      const json = (await res.json()) as { success?: boolean; error?: string; deleted?: number };
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Delete failed');
+      }
+      const removed = json.deleted ?? 0;
+      const label = deleteSourceFilePending;
+      if (removed === 0) {
+        toast.warning('Nothing removed in Supabase', {
+          description: `No rows with source_file "${label}" were found. Older rows may lack source_file; add the column and re-upload, or remove rows in Supabase directly.`,
+        });
+      } else {
+        toast.success('Removed from Supabase', {
+          description: `${removed} row(s) deleted for ${label} in public.hubstaff_hours.`,
+        });
+      }
+      if (selectedSourceFile === deleteSourceFilePending) {
+        setSelectedSourceFile(null);
+        setSourceFileRows(null);
+        setSourceFileCols(null);
+      }
+      setDeleteSourceFilePending(null);
+      await loadUploadedSourceFiles();
+      await loadHubstaffPreview();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Delete failed';
+      toast.error('Could not delete upload', { description: msg });
+    } finally {
+      setDeleteSourceFileLoading(false);
+    }
+  }, [deleteSourceFilePending, selectedSourceFile, loadUploadedSourceFiles, loadHubstaffPreview]);
+
+  // ── Load rows for a specific source file ──
+  const loadSourceFileRows = React.useCallback(async (file: string) => {
+    setSelectedSourceFile(file);
+    setSourceFileLoading(true);
+    setSourceFilePage(1);
+    setSourceFileSearch('');
+    try {
+      const res = await fetch(
+        `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
+        { cache: 'no-store' },
+      );
+      const json = (await res.json()) as {
+        columns?: string[] | null;
+        rows?: Record<string, unknown>[] | null;
+        error?: string | null;
+      };
+      setSourceFileCols(json.columns ?? null);
+      setSourceFileRows(json.rows ?? null);
+    } catch {
+      setSourceFileCols(null);
+      setSourceFileRows(null);
+    } finally {
+      setSourceFileLoading(false);
+    }
+  }, []);
 
   /**
    * Auto-populate employeeDepts whenever calcResults, masterEmployees, or
@@ -1261,15 +1533,17 @@ export default function PayrollWizard() {
     if (!file) return;
 
     const buffer = await file.arrayBuffer();
-    const contentHash = await sha256Hex(buffer);
-
-    if (lastSuccessfulWeeklyCsvHash !== null && contentHash === lastSuccessfulWeeklyCsvHash) {
-      setDuplicateCsvDialogOpen(true);
+    const text = new TextDecoder('utf-8').decode(buffer);
+    let rawGrid: string[][];
+    try {
+      rawGrid = parseCsv(text);
+    } catch (parseErr) {
+      toast.error('Could not parse CSV', {
+        description:
+          parseErr instanceof Error ? parseErr.message : 'The file may be corrupted or not valid CSV text.',
+      });
       return;
     }
-
-    const text = new TextDecoder('utf-8').decode(buffer);
-    const rawGrid = parseCsv(text);
     // Remove fully-empty rows before any validation
     const grid = [
       rawGrid[0],
@@ -1281,16 +1555,30 @@ export default function PayrollWizard() {
     }
 
     const header = grid[0].map((h) => h.trim());
-    const emailIdx = findHeaderColumn(header, 'Email');
-    const totalIdx = findHeaderColumn(header, 'Total worked');
-    if (emailIdx < 0 || totalIdx < 0) {
-      toast.error('Not a Hubstaff weekly report', {
-        description: 'Expected columns including Email and Total worked (Hubstaff export format).',
+    // Accept both weekly summary (Email + total) and daily report (Member + Total hours)
+    const emailIdx = findHeaderColumn(header, 'Email', 'Work email', 'Work Email');
+    const memberIdx = findHeaderColumn(header, 'Member');
+    const totalHoursIdx = findHeaderColumn(header, 'Total hours', 'Total Hours');
+    const totalForWeeklyIdx = findHeaderColumn(
+      header,
+      'Total worked',
+      'Total Worked',
+      'Worked time',
+      'Time worked',
+      'Total hours',
+      'Total Hours',
+    );
+    const isWeeklyFormat = emailIdx >= 0 && totalForWeeklyIdx >= 0;
+    const isDailyFormat = memberIdx >= 0 && totalHoursIdx >= 0;
+    if (!isWeeklyFormat && !isDailyFormat) {
+      toast.error('Not a Hubstaff report', {
+        description:
+          'Expected columns: Email plus Total worked / Total hours (weekly summary), or Member + Total hours (daily export).',
       });
       return;
     }
 
-    setPendingWeekly({ text, fileName: file.name, hash: contentHash });
+    setPendingWeekly({ text, fileName: file.name });
     setApproveUploadDialogOpen(true);
   };
 
@@ -1300,6 +1588,7 @@ export default function PayrollWizard() {
     try {
       // ── 1. Save CSV text before clearing pendingWeekly ──
       const csvText = pendingWeekly.text;
+      const uploadedFileName = pendingWeekly.fileName;
 
       const form = new FormData();
       form.append('file', new Blob([csvText], { type: 'text/csv' }), pendingWeekly.fileName);
@@ -1311,20 +1600,21 @@ export default function PayrollWizard() {
         throw new Error(json.error || 'Upload failed');
       }
 
-      setLastSuccessfulWeeklyCsvHash(pendingWeekly.hash);
       setPendingWeekly(null);
       setApproveUploadDialogOpen(false);
-      setHubstaffTableLocked(true);
 
-      // ── 2. Parse CSV client-side so daily column data is available ──
-      // Supabase may not store daily columns if its schema has different
-      // date column names (e.g. ISO "2026-03-24" vs Hubstaff "Mon 3/24").
-      // Parsing client-side guarantees the PA detection has real values.
-      const rawGrid = parseCsv(csvText);
-      const cleanGrid = [
-        rawGrid[0],
-        ...rawGrid.slice(1).filter((row) => row.some((cell) => cell.trim() !== '')),
-      ];
+      // Persist daily breakdown for PA detection, then reload full table from Supabase
+      // so the preview reflects every appended batch (not only the last file).
+      let cleanGrid: string[][] = [];
+      try {
+        const rawGrid = parseCsv(csvText);
+        cleanGrid = [
+          rawGrid[0],
+          ...rawGrid.slice(1).filter((row) => row.some((cell) => cell.trim() !== '')),
+        ];
+      } catch {
+        // Rows are already in Supabase; preview will still refresh below.
+      }
 
       if (cleanGrid.length >= 2) {
         const headers = cleanGrid[0].map((h) => h.trim());
@@ -1336,14 +1626,6 @@ export default function PayrollWizard() {
           });
           return obj;
         });
-        setHubstaffDisplayColumns(headers);
-        setHubstaffDisplayRows(csvRows);
-        setHubstaffPage(1);
-        setHubstaffSearch('');
-
-        // Persist daily breakdown to app_settings so PA detection survives page reload.
-        // Supabase may not store daily columns if the table schema has stale date columns
-        // from a previous week, so we save the parsed data as a fallback.
         const dateCols = headers.filter(colIsWeekday);
         if (dateCols.length > 0) {
           const daily: Record<string, Record<string, string | null>> = {};
@@ -1356,24 +1638,28 @@ export default function PayrollWizard() {
             }
             daily[email] = dayData;
           }
-          fetch('/api/app-settings', {
+          await fetch('/api/app-settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ key: 'hubstaff_daily_breakdown', value: JSON.stringify({ dateCols, daily }) }),
-          }).catch(() => {}); // fire and forget
+          }).catch(() => {});
         }
+      }
 
-        // Also build hubstaffData from the CSV so Step 2 calc has fresh data
-        const hd = buildHubstaffDataFromParsedGrid(cleanGrid);
-        setHubstaffData(hd);
-        setIssues(buildReconciliationIssues(hd, users));
-      } else {
-        // Fallback: re-fetch from Supabase (daily cols may be null)
-        await loadHubstaffPreview();
+      await loadHubstaffPreview();
+
+      // Refresh source-file list (retry once so PostgREST read sees the new rows), then open that file
+      let files = await loadUploadedSourceFiles();
+      if (uploadedFileName && !files.includes(uploadedFileName)) {
+        await new Promise((r) => setTimeout(r, 400));
+        files = await loadUploadedSourceFiles();
+      }
+      if (uploadedFileName && files.includes(uploadedFileName)) {
+        await loadSourceFileRows(uploadedFileName);
       }
 
       toast.success('Saved to hubstaff_hours', {
-        description: `${json.rowCount ?? 0} rows replaced in public.hubstaff_hours.`,
+        description: `${json.rowCount ?? 0} rows appended to public.hubstaff_hours.`,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Upload failed';
@@ -1388,44 +1674,295 @@ export default function PayrollWizard() {
       case 1:
         return (
           <div className="space-y-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Upload Hubstaff weekly report</h3>
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  Choose your Hubstaff export CSV (same columns as the daily report: Organization, Email, Total worked,
-                  etc.). After you confirm, all rows are written to the{' '}
-                  <span className="font-mono text-zinc-500">public.hubstaff_hours</span> table in Supabase (replacing
-                  existing data). Requires <span className="font-mono">SUPABASE_SERVICE_ROLE_KEY</span> in{' '}
-                  <span className="font-mono">.env</span>.
-                </p>
-              </div>
-              <div className="flex shrink-0 flex-col items-stretch gap-3 sm:flex-row sm:items-center">
-                <div className="flex items-center space-x-2 rounded-full border border-zinc-200 bg-zinc-100 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900">
-                  <Label htmlFor="hogan-switch" className="text-xs text-zinc-400">
-                    Hogan cycle
-                  </Label>
-                  <Switch id="hogan-switch" checked={isHoganCycle} onCheckedChange={setIsHoganCycle} />
+            {/* ── Tab switcher: Uploaded Files | Upload CSV ── */}
+            <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
+              <button
+                type="button"
+                className={cn(
+                  'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                  hubstaffActiveTab === 'files'
+                    ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white'
+                    : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+                )}
+                onClick={() => {
+                  setHubstaffActiveTab('files');
+                  void loadUploadedSourceFiles().then((files) => {
+                    // Auto-select the latest uploaded file
+                    if (files.length > 0 && !selectedSourceFile) {
+                      void loadSourceFileRows(files[files.length - 1]);
+                    }
+                  });
+                }}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                Uploaded Files
+                {uploadedSourceFiles.length > 0 && (
+                  <Badge variant="secondary" className="ml-1 h-5 min-w-[20px] justify-center px-1.5 text-[10px]">
+                    {uploadedSourceFiles.length}
+                  </Badge>
+                )}
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                  hubstaffActiveTab === 'upload'
+                    ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white'
+                    : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+                )}
+                onClick={() => setHubstaffActiveTab('upload')}
+              >
+                <Upload className="h-3.5 w-3.5" />
+                Upload CSV
+              </button>
+            </div>
+
+            {/* ── TAB: Uploaded Files ── */}
+            {hubstaffActiveTab === 'files' && (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Uploaded Files</h3>
+                  <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                    Browse uploads tracked by filename in the <span className="font-mono">source_file</span> column.
+                    Delete removes only that batch; other files stay in{' '}
+                    <span className="font-mono">hubstaff_hours</span>.
+                  </p>
                 </div>
 
-                {hubstaffTableLocked ? (
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                      <Lock className="h-3.5 w-3.5" />
-                      Data locked
+                {sourceFilesLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-16 text-zinc-500">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                    <span>Loading uploaded files…</span>
+                  </div>
+                ) : uploadedSourceFiles.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center space-y-3 rounded-xl border-2 border-dashed border-zinc-300 p-12 text-center dark:border-zinc-800">
+                    <FileText className="h-10 w-10 text-zinc-300 dark:text-zinc-700" />
+                    <div>
+                      <p className="font-medium text-zinc-600 dark:text-zinc-400">No uploaded files yet</p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Switch to the <span className="font-medium">Upload CSV</span> tab to add Hubstaff data.
+                      </p>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5 border-amber-500/40 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:border-amber-500/30 dark:text-amber-400 dark:hover:bg-amber-500/10"
-                      onClick={() => setHubstaffTableLocked(false)}
-                    >
-                      <Upload className="h-3.5 w-3.5" />
-                      Replace data
-                    </Button>
                   </div>
                 ) : (
-                  <>
+                  <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+                    {/* File list sidebar */}
+                    <div className="space-y-1 rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950">
+                      <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                        Source Files ({uploadedSourceFiles.length})
+                      </p>
+                      <div className="max-h-[400px] overflow-y-auto">
+                        {uploadedSourceFiles.map((file) => (
+                          <div key={file} className="flex items-stretch gap-0.5">
+                            <button
+                              type="button"
+                              className={cn(
+                                'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors',
+                                selectedSourceFile === file
+                                  ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400'
+                                  : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900',
+                              )}
+                              onClick={() => void loadSourceFileRows(file)}
+                            >
+                              <FileText
+                                className={cn(
+                                  'h-3.5 w-3.5 shrink-0',
+                                  selectedSourceFile === file
+                                    ? 'text-indigo-500 dark:text-indigo-400'
+                                    : 'text-zinc-400',
+                                )}
+                              />
+                              <span className="truncate font-mono">{file}</span>
+                              {selectedSourceFile === file && (
+                                <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-indigo-400" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-md px-1.5 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                              title="Delete this upload from Supabase"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteSourceFilePending(file);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* File data display */}
+                    <div className="min-w-0">
+                      {!selectedSourceFile ? (
+                        <div className="flex flex-col items-center justify-center rounded-lg border border-zinc-200 py-16 text-center dark:border-zinc-800">
+                          <FileText className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
+                          <p className="mt-2 text-sm text-zinc-500">Select a file to view its data</p>
+                        </div>
+                      ) : sourceFileLoading ? (
+                        <div className="flex items-center justify-center gap-2 py-16 text-zinc-500">
+                          <Loader2 className="h-6 w-6 animate-spin" />
+                          <span>Loading data…</span>
+                        </div>
+                      ) : sourceFileRows && sourceFileRows.length > 0 ? (
+                        (() => {
+                          const activeCols = buildFullCols(sourceFileCols ?? Object.keys(sourceFileRows[0] ?? {}));
+                          const needle = sourceFileSearch.toLowerCase().trim();
+                          const filtered = needle
+                            ? sourceFileRows.filter((row) =>
+                                activeCols.some(({ key }) =>
+                                  pickPreviewValue(row, key).toLowerCase().includes(needle),
+                                ),
+                              )
+                            : sourceFileRows;
+                          const totalPages = Math.max(1, Math.ceil(filtered.length / SOURCE_FILE_PAGE_SIZE));
+                          const safePage = Math.min(sourceFilePage, totalPages);
+                          const pageRows = filtered.slice(
+                            (safePage - 1) * SOURCE_FILE_PAGE_SIZE,
+                            safePage * SOURCE_FILE_PAGE_SIZE,
+                          );
+                          return (
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+                                  <Check className="h-4 w-4 shrink-0" />
+                                  {needle ? (
+                                    <>{filtered.length} of {sourceFileRows.length} rows</>
+                                  ) : (
+                                    <>{sourceFileRows.length} rows · {activeCols.length} columns in <span className="font-mono text-xs">{selectedSourceFile}</span></>
+                                  )}
+                                </div>
+                                <span className="text-xs text-zinc-500">
+                                  Page {safePage} of {totalPages}
+                                </span>
+                              </div>
+
+                              <div className="relative">
+                                <svg
+                                  className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 pointer-events-none"
+                                  fill="none" stroke="currentColor" strokeWidth="2"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+                                </svg>
+                                <Input
+                                  placeholder="Search rows…"
+                                  value={sourceFileSearch}
+                                  onChange={(e) => { setSourceFileSearch(e.target.value); setSourceFilePage(1); }}
+                                  className="h-8 pl-8 text-xs border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950"
+                                />
+                                {sourceFileSearch && (
+                                  <button
+                                    type="button"
+                                    onClick={() => { setSourceFileSearch(''); setSourceFilePage(1); }}
+                                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800" style={{ maxHeight: 'min(60vh, calc(100dvh - 20rem))' }}>
+                                <Table className="min-w-max">
+                                  <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
+                                    <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
+                                      {activeCols.map(({ key, label }) => (
+                                        <TableHead key={key} className="whitespace-nowrap px-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                                          {label}
+                                        </TableHead>
+                                      ))}
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {pageRows.map((row, ri) => (
+                                      <TableRow
+                                        key={ri}
+                                        className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
+                                      >
+                                        {activeCols.map(({ key }) => {
+                                          if (key === '__overtime__') {
+                                            const totalSec = rawValueToTotalSeconds(row['Total worked']);
+                                            const otSec = Math.max(0, totalSec - 40 * 3600);
+                                            const otDisplay = otSec > 0 ? (otSec / 3600).toFixed(2) : '—';
+                                            return (
+                                              <TableCell key={key} className="whitespace-nowrap px-3 font-mono text-xs">
+                                                <span className={otSec > 0 ? 'text-indigo-600 dark:text-indigo-400 font-semibold' : 'text-zinc-400'}>
+                                                  {otDisplay}
+                                                </span>
+                                              </TableCell>
+                                            );
+                                          }
+                                          return (
+                                            <TableCell key={key} className="whitespace-nowrap px-3 font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                                              {pickPreviewValue(row, key)}
+                                            </TableCell>
+                                          );
+                                        })}
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+
+                              <div className="flex items-center justify-between pt-1">
+                                <span className="text-xs text-zinc-400">
+                                  {filtered.length === 0 ? 'No results' : (
+                                    <>
+                                      Showing {(safePage - 1) * SOURCE_FILE_PAGE_SIZE + 1}–
+                                      {Math.min(safePage * SOURCE_FILE_PAGE_SIZE, filtered.length)} of{' '}
+                                      {filtered.length}{needle ? ` (filtered from ${sourceFileRows.length})` : ''}
+                                    </>
+                                  )}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <Button type="button" variant="outline" size="sm" className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800" disabled={safePage === 1} onClick={() => setSourceFilePage(1)}>«</Button>
+                                  <Button type="button" variant="outline" size="sm" className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800" disabled={safePage === 1} onClick={() => setSourceFilePage((p) => Math.max(1, p - 1))}>‹</Button>
+                                  {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                                    const page = totalPages <= 5 ? i + 1 : safePage <= 3 ? i + 1 : safePage >= totalPages - 2 ? totalPages - 4 + i : safePage - 2 + i;
+                                    return (
+                                      <Button key={page} type="button" variant={safePage === page ? 'default' : 'outline'} size="sm" className={cn('h-7 w-7 p-0 text-xs', safePage === page ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'border-zinc-200 dark:border-zinc-800')} onClick={() => setSourceFilePage(page)}>{page}</Button>
+                                    );
+                                  })}
+                                  <Button type="button" variant="outline" size="sm" className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800" disabled={safePage === totalPages} onClick={() => setSourceFilePage((p) => Math.min(totalPages, p + 1))}>›</Button>
+                                  <Button type="button" variant="outline" size="sm" className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800" disabled={safePage === totalPages} onClick={() => setSourceFilePage(totalPages)}>»</Button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        <div className="flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-3 text-sm text-zinc-500 dark:border-zinc-800">
+                          No data found for this file.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── TAB: Upload CSV (original content) ── */}
+            {hubstaffActiveTab === 'upload' && (
+              <div className="space-y-6">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Upload Hubstaff weekly report</h3>
+                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                      Choose your Hubstaff export CSV. After you confirm, the rows are appended to the{' '}
+                      <span className="font-mono text-zinc-500">public.hubstaff_hours</span> table in Supabase (existing
+                      data is preserved). Requires <span className="font-mono">SUPABASE_SERVICE_ROLE_KEY</span> in{' '}
+                      <span className="font-mono">.env</span>.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+                    <div className="flex items-center space-x-2 rounded-full border border-zinc-200 bg-zinc-100 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900">
+                      <Label htmlFor="hogan-switch" className="text-xs text-zinc-400">
+                        Hogan cycle
+                      </Label>
+                      <Switch id="hogan-switch" checked={isHoganCycle} onCheckedChange={setIsHoganCycle} />
+                    </div>
+
                     <Button
                       type="button"
                       disabled={weeklyUploadLoading}
@@ -1435,258 +1972,276 @@ export default function PayrollWizard() {
                       {weeklyUploadLoading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <Lock className="h-4 w-4" />
+                        <Upload className="h-4 w-4" />
                       )}
                       Upload Hubstaff Weekly Report
                     </Button>
-                    {hubstaffDisplayRows && hubstaffDisplayRows.length > 0 && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-xs text-zinc-400 hover:text-zinc-600"
-                        onClick={() => setHubstaffTableLocked(true)}
-                      >
-                        Cancel
-                      </Button>
-                    )}
-                  </>
+
+                    <input
+                      type="file"
+                      ref={fileInputWeeklyRef}
+                      onChange={(ev) => void handleWeeklyFileChosen(ev)}
+                      accept=".csv,.CSV,text/csv,application/csv,text/plain"
+                      className="hidden"
+                    />
+                  </div>
+                </div>
+
+                <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm text-zinc-800 dark:text-zinc-200">Supabase target</CardTitle>
+                    <CardDescription className="text-xs text-zinc-600 dark:text-zinc-400">
+                      Table <span className="font-mono">public.hubstaff_hours</span> — new uploads are appended without
+                      overwriting existing data.
+                    </CardDescription>
+                  </CardHeader>
+                </Card>
+
+                {uploadedSourceFiles.length > 0 && (
+                  <div className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Uploaded batches (delete removes rows in Supabase)
+                    </p>
+                    <ul className="max-h-[200px] space-y-1 overflow-y-auto">
+                      {uploadedSourceFiles.map((file) => (
+                        <li
+                          key={file}
+                          className="flex items-center gap-2 rounded-md border border-zinc-100 bg-zinc-50/80 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/50"
+                        >
+                          <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                          <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                            {file}
+                          </span>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                            title="Delete this batch from Supabase"
+                            onClick={() => setDeleteSourceFilePending(file)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
 
-                <input
-                  type="file"
-                  ref={fileInputWeeklyRef}
-                  onChange={(ev) => void handleWeeklyFileChosen(ev)}
-                  accept=".csv,text/csv"
-                  className="hidden"
-                />
-              </div>
-            </div>
+                {hubstaffPreviewError && (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{hubstaffPreviewError}</span>
+                  </div>
+                )}
 
-            <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-zinc-800 dark:text-zinc-200">Supabase target</CardTitle>
-                <CardDescription className="text-xs text-zinc-600 dark:text-zinc-400">
-                  Table <span className="font-mono">public.hubstaff_hours</span> — column order in the preview matches your
-                  database (via <span className="font-mono">SUPABASE_SERVICE_ROLE_KEY</span>).
-                </CardDescription>
-              </CardHeader>
-            </Card>
+                {hubstaffPreviewLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-16 text-zinc-500">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                    <span>Loading hubstaff_hours…</span>
+                  </div>
+                ) : hubstaffDisplayRows && hubstaffDisplayRows.length > 0 ? (
+                  (() => {
+                    const activeCols = buildPreviewCols(hubstaffDisplayColumns ?? Object.keys(hubstaffDisplayRows[0] ?? {}));
+                    const needle = hubstaffSearch.toLowerCase().trim();
+                    const filtered = needle
+                      ? hubstaffDisplayRows.filter((row) =>
+                          activeCols.some(({ key }) =>
+                            pickPreviewValue(row, key).toLowerCase().includes(needle),
+                          ),
+                        )
+                      : hubstaffDisplayRows;
+                    const totalPages = Math.max(1, Math.ceil(filtered.length / HUBSTAFF_PAGE_SIZE));
+                    const safePage = Math.min(hubstaffPage, totalPages);
+                    const pageRows = filtered.slice(
+                      (safePage - 1) * HUBSTAFF_PAGE_SIZE,
+                      safePage * HUBSTAFF_PAGE_SIZE,
+                    );
+                    return (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+                            <Check className="h-4 w-4 shrink-0" />
+                            {needle ? (
+                              <>{filtered.length} of {hubstaffDisplayRows.length} rows</>
+                            ) : (
+                              <>{hubstaffDisplayRows.length} rows in <span className="font-mono">public.hubstaff_hours</span></>
+                            )}
+                          </div>
+                          <span className="text-xs text-zinc-500">
+                            Page {safePage} of {totalPages}
+                          </span>
+                        </div>
 
-            {hubstaffPreviewError && (
-              <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{hubstaffPreviewError}</span>
-              </div>
-            )}
-
-            {hubstaffPreviewLoading ? (
-              <div className="flex items-center justify-center gap-2 py-16 text-zinc-500">
-                <Loader2 className="h-6 w-6 animate-spin" />
-                <span>Loading hubstaff_hours…</span>
-              </div>
-            ) : hubstaffDisplayRows && hubstaffDisplayRows.length > 0 ? (
-              (() => {
-                const activeCols = buildPreviewCols(hubstaffDisplayColumns ?? Object.keys(hubstaffDisplayRows[0] ?? {}));
-                const needle = hubstaffSearch.toLowerCase().trim();
-                const filtered = needle
-                  ? hubstaffDisplayRows.filter((row) =>
-                      activeCols.some(({ key }) =>
-                        pickPreviewValue(row, key).toLowerCase().includes(needle),
-                      ),
-                    )
-                  : hubstaffDisplayRows;
-                const totalPages = Math.max(1, Math.ceil(filtered.length / HUBSTAFF_PAGE_SIZE));
-                const safePage = Math.min(hubstaffPage, totalPages);
-                const pageRows = filtered.slice(
-                  (safePage - 1) * HUBSTAFF_PAGE_SIZE,
-                  safePage * HUBSTAFF_PAGE_SIZE,
-                );
-                return (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
-                        <Check className="h-4 w-4 shrink-0" />
-                        {needle ? (
-                          <>{filtered.length} of {hubstaffDisplayRows.length} rows</>
-                        ) : (
-                          <>{hubstaffDisplayRows.length} rows in <span className="font-mono">public.hubstaff_hours</span></>
-                        )}
-                      </div>
-                      <span className="text-xs text-zinc-500">
-                        Page {safePage} of {totalPages}
-                      </span>
-                    </div>
-
-                    <div className="relative">
-                      <svg
-                        className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 pointer-events-none"
-                        fill="none" stroke="currentColor" strokeWidth="2"
-                        viewBox="0 0 24 24"
-                      >
-                        <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-                      </svg>
-                      <Input
-                        placeholder="Search member, email, hours…"
-                        value={hubstaffSearch}
-                        onChange={(e) => { setHubstaffSearch(e.target.value); setHubstaffPage(1); }}
-                        className="h-8 pl-8 text-xs border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950"
-                      />
-                      {hubstaffSearch && (
-                        <button
-                          type="button"
-                          onClick={() => { setHubstaffSearch(''); setHubstaffPage(1); }}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-
-                    <Table>
-                      <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
-                        <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
-                          {activeCols.map(({ key, label }) => (
-                            <TableHead key={key} className="whitespace-nowrap text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                              {label}
-                            </TableHead>
-                          ))}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {pageRows.map((row, ri) => (
-                          <TableRow
-                            key={ri}
-                            className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
+                        <div className="relative">
+                          <svg
+                            className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 pointer-events-none"
+                            fill="none" stroke="currentColor" strokeWidth="2"
+                            viewBox="0 0 24 24"
                           >
-                            {activeCols.map(({ key }) => {
-                              if (key === '__overtime__') {
-                                const totalSec = rawValueToTotalSeconds(row['Total worked']);
-                                const otSec = Math.max(0, totalSec - 40 * 3600);
-                                const otDisplay = otSec > 0
-                                  ? (otSec / 3600).toFixed(2)
-                                  : '—';
-                                return (
-                                  <TableCell key={key} className="max-w-[200px] truncate font-mono text-xs">
-                                    <span className={otSec > 0 ? 'text-indigo-600 dark:text-indigo-400 font-semibold' : 'text-zinc-400'}>
-                                      {otDisplay}
-                                    </span>
-                                  </TableCell>
-                                );
-                              }
+                            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+                          </svg>
+                          <Input
+                            placeholder="Search member, email, hours…"
+                            value={hubstaffSearch}
+                            onChange={(e) => { setHubstaffSearch(e.target.value); setHubstaffPage(1); }}
+                            className="h-8 pl-8 text-xs border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950"
+                          />
+                          {hubstaffSearch && (
+                            <button
+                              type="button"
+                              onClick={() => { setHubstaffSearch(''); setHubstaffPage(1); }}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+
+                        <Table>
+                          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
+                            <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
+                              {activeCols.map(({ key, label }) => (
+                                <TableHead key={key} className="whitespace-nowrap text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                                  {label}
+                                </TableHead>
+                              ))}
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {pageRows.map((row, ri) => (
+                              <TableRow
+                                key={ri}
+                                className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
+                              >
+                                {activeCols.map(({ key }) => {
+                                  if (key === '__overtime__') {
+                                    const totalSec = rawValueToTotalSeconds(row['Total worked']);
+                                    const otSec = Math.max(0, totalSec - 40 * 3600);
+                                    const otDisplay = otSec > 0
+                                      ? (otSec / 3600).toFixed(2)
+                                      : '—';
+                                    return (
+                                      <TableCell key={key} className="max-w-[200px] truncate font-mono text-xs">
+                                        <span className={otSec > 0 ? 'text-indigo-600 dark:text-indigo-400 font-semibold' : 'text-zinc-400'}>
+                                          {otDisplay}
+                                        </span>
+                                      </TableCell>
+                                    );
+                                  }
+                                  return (
+                                    <TableCell key={key} className="max-w-[200px] truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                                      {pickPreviewValue(row, key)}
+                                    </TableCell>
+                                  );
+                                })}
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-xs text-zinc-400">
+                            {filtered.length === 0 ? 'No results' : (
+                              <>
+                                Showing {(safePage - 1) * HUBSTAFF_PAGE_SIZE + 1}–
+                                {Math.min(safePage * HUBSTAFF_PAGE_SIZE, filtered.length)} of{' '}
+                                {filtered.length}{needle ? ` (filtered from ${hubstaffDisplayRows.length})` : ''}
+                              </>
+                            )}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800"
+                              disabled={safePage === 1}
+                              onClick={() => setHubstaffPage(1)}
+                            >
+                              «
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800"
+                              disabled={safePage === 1}
+                              onClick={() => setHubstaffPage((p) => Math.max(1, p - 1))}
+                            >
+                              ‹
+                            </Button>
+                            {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                              const page = totalPages <= 5
+                                ? i + 1
+                                : safePage <= 3
+                                  ? i + 1
+                                  : safePage >= totalPages - 2
+                                    ? totalPages - 4 + i
+                                    : safePage - 2 + i;
                               return (
-                                <TableCell key={key} className="max-w-[200px] truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                                  {pickPreviewValue(row, key)}
-                                </TableCell>
+                                <Button
+                                  key={page}
+                                  type="button"
+                                  variant={safePage === page ? 'default' : 'outline'}
+                                  size="sm"
+                                  className={cn(
+                                    'h-7 w-7 p-0 text-xs',
+                                    safePage === page
+                                      ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                                      : 'border-zinc-200 dark:border-zinc-800',
+                                  )}
+                                  onClick={() => setHubstaffPage(page)}
+                                >
+                                  {page}
+                                </Button>
                               );
                             })}
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-
-                    <div className="flex items-center justify-between pt-1">
-                      <span className="text-xs text-zinc-400">
-                        {filtered.length === 0 ? 'No results' : (
-                          <>
-                            Showing {(safePage - 1) * HUBSTAFF_PAGE_SIZE + 1}–
-                            {Math.min(safePage * HUBSTAFF_PAGE_SIZE, filtered.length)} of{' '}
-                            {filtered.length}{needle ? ` (filtered from ${hubstaffDisplayRows.length})` : ''}
-                          </>
-                        )}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800"
-                          disabled={safePage === 1}
-                          onClick={() => setHubstaffPage(1)}
-                        >
-                          «
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800"
-                          disabled={safePage === 1}
-                          onClick={() => setHubstaffPage((p) => Math.max(1, p - 1))}
-                        >
-                          ‹
-                        </Button>
-                        {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
-                          const page = totalPages <= 5
-                            ? i + 1
-                            : safePage <= 3
-                              ? i + 1
-                              : safePage >= totalPages - 2
-                                ? totalPages - 4 + i
-                                : safePage - 2 + i;
-                          return (
                             <Button
-                              key={page}
                               type="button"
-                              variant={safePage === page ? 'default' : 'outline'}
+                              variant="outline"
                               size="sm"
-                              className={cn(
-                                'h-7 w-7 p-0 text-xs',
-                                safePage === page
-                                  ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                                  : 'border-zinc-200 dark:border-zinc-800',
-                              )}
-                              onClick={() => setHubstaffPage(page)}
+                              className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800"
+                              disabled={safePage === totalPages}
+                              onClick={() => setHubstaffPage((p) => Math.min(totalPages, p + 1))}
                             >
-                              {page}
+                              ›
                             </Button>
-                          );
-                        })}
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800"
-                          disabled={safePage === totalPages}
-                          onClick={() => setHubstaffPage((p) => Math.min(totalPages, p + 1))}
-                        >
-                          ›
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800"
-                          disabled={safePage === totalPages}
-                          onClick={() => setHubstaffPage(totalPages)}
-                        >
-                          »
-                        </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800"
+                              disabled={safePage === totalPages}
+                              onClick={() => setHubstaffPage(totalPages)}
+                            >
+                              »
+                            </Button>
+                          </div>
+                        </div>
                       </div>
+                    );
+                  })()
+                ) : hubstaffDisplayRows && hubstaffDisplayRows.length === 0 ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-3 text-sm text-zinc-500 dark:border-zinc-800">
+                    <Check className="h-4 w-4 shrink-0 text-emerald-500" />
+                    Table is empty — upload a weekly CSV to populate{' '}
+                    <span className="font-mono text-zinc-700 dark:text-zinc-300">public.hubstaff_hours</span>.
+                  </div>
+                ) : (
+                  <div
+                    className="flex cursor-pointer flex-col items-center justify-center space-y-4 rounded-xl border-2 border-dashed border-zinc-300 p-12 text-center transition-colors hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-700"
+                    onClick={() => fileInputWeeklyRef.current?.click()}
+                  >
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-zinc-200 dark:bg-zinc-900">
+                      <Upload className="h-6 w-6 text-zinc-500" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-zinc-700 dark:text-zinc-300">Upload Hubstaff weekly report CSV</p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Rows will be appended to existing data — previous uploads are preserved.
+                      </p>
                     </div>
                   </div>
-                );
-              })()
-            ) : hubstaffDisplayRows && hubstaffDisplayRows.length === 0 ? (
-              <div className="flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-3 text-sm text-zinc-500 dark:border-zinc-800">
-                <Check className="h-4 w-4 shrink-0 text-emerald-500" />
-                Table is empty — upload a weekly CSV to populate{' '}
-                <span className="font-mono text-zinc-700 dark:text-zinc-300">public.hubstaff_hours</span>.
-              </div>
-            ) : (
-              <div
-                className="flex cursor-pointer flex-col items-center justify-center space-y-4 rounded-xl border-2 border-dashed border-zinc-300 p-12 text-center transition-colors hover:border-zinc-400 dark:border-zinc-800 dark:hover:border-zinc-700"
-                onClick={() => fileInputWeeklyRef.current?.click()}
-              >
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-zinc-200 dark:bg-zinc-900">
-                  <Lock className="h-6 w-6 text-zinc-500" />
-                </div>
-                <div>
-                  <p className="font-medium text-zinc-700 dark:text-zinc-300">Upload Hubstaff weekly report CSV</p>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    Same columns as your Hubstaff export (Organization, Email, Total worked, daily date columns, …)
-                  </p>
-                </div>
+                )}
               </div>
             )}
           </div>
@@ -1697,6 +2252,12 @@ export default function PayrollWizard() {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Initial Calculation</h3>
+                {calcSourceFile && (
+                  <div className="mt-1 flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400">
+                    <FileText className="h-3 w-3 shrink-0" />
+                    <span className="font-mono">{calcSourceFile}</span>
+                  </div>
+                )}
                 <p className="text-sm text-zinc-600 dark:text-zinc-400">
                   <span className="font-mono">Reg Hrs</span> = min(Total Hrs, 40),{' '}
                   <span className="font-mono">OT Hrs</span> = max(0, Total Hrs − 40). Hours from{' '}
@@ -1723,6 +2284,29 @@ export default function PayrollWizard() {
                 Refresh rates
               </Button>
             </div>
+
+            {/* Source file selector */}
+            {uploadedSourceFiles.length > 0 && (
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 dark:border-indigo-800/50 dark:bg-indigo-950/30">
+                <FileText className="h-4 w-4 shrink-0 text-indigo-500" />
+                <div className="flex flex-1 flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-indigo-900 dark:text-indigo-200">Source CSV</span>
+                  <span className="text-xs text-indigo-700/70 dark:text-indigo-400/70">(latest uploaded file selected by default)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={calcSourceFile ?? ''}
+                    onChange={(e) => setCalcSourceFile(e.target.value || null)}
+                    className="h-8 rounded-md border border-indigo-300 bg-white px-2 pr-7 font-mono text-xs dark:border-indigo-700 dark:bg-zinc-950 dark:text-zinc-200"
+                  >
+                    {uploadedSourceFiles.map((file) => (
+                      <option key={file} value={file}>{file}</option>
+                    ))}
+                  </select>
+                  {calcSourceFileLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />}
+                </div>
+              </div>
+            )}
 
             {/* USD → PHP exchange rate */}
             <div className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50/60 px-4 py-3 dark:border-blue-800/50 dark:bg-blue-950/30">
@@ -1839,6 +2423,24 @@ export default function PayrollWizard() {
               </div>
             )}
 
+            {/* Warning banner for employees missing rates */}
+            {(() => {
+              const missingCount = calcResults.filter(r => r.regularRate == null).length;
+              if (missingCount === 0 || calcResults.length === 0) return null;
+              return (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  <div>
+                    <span className="font-semibold">{missingCount} of {calcResults.length} employees</span>{' '}
+                    have no matching rate in <span className="font-mono text-xs">employee_hourly_rates</span>.
+                    Their Hubstaff email was not found as a <span className="font-mono text-xs">Work Email</span> or{' '}
+                    <span className="font-mono text-xs">Personal Email</span> in the rates table.
+                    Add their rates in Supabase to calculate pay.
+                  </div>
+                </div>
+              );
+            })()}
+
             {hourlyRatesLoading ? (
               <div className="min-h-0 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
                 <div className="max-h-[min(70vh,calc(100dvh-13rem))] overflow-auto">
@@ -1940,7 +2542,22 @@ export default function PayrollWizard() {
                         {calcResults.length} rows
                       </>
                     ) : (
-                      <>{calcResults.length} {calcResults.length === 1 ? 'row' : 'rows'}</>
+                      <>
+                        {calcResults.length} {calcResults.length === 1 ? 'row' : 'rows'}
+                        {(() => {
+                          const matched = calcResults.filter(r => r.regularRate != null).length;
+                          const missing = calcResults.length - matched;
+                          if (missing === 0) return (
+                            <span className="ml-2 text-emerald-600 dark:text-emerald-400">— all matched</span>
+                          );
+                          return (
+                            <>
+                              <span className="ml-2 text-emerald-600 dark:text-emerald-400">{matched} matched</span>
+                              <span className="ml-1 text-amber-600 dark:text-amber-400">· {missing} missing rate</span>
+                            </>
+                          );
+                        })()}
+                      </>
                     )}
                   </div>
                   <div className="relative w-full sm:max-w-sm">
@@ -2038,7 +2655,12 @@ export default function PayrollWizard() {
                         filteredCalcResults.map((row, i) => (
                         <TableRow
                           key={`${row.email}-${i}`}
-                          className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
+                          className={cn(
+                            "border-zinc-200 dark:border-zinc-800",
+                            row.regularRate == null
+                              ? "bg-amber-50/60 hover:bg-amber-50 dark:bg-amber-950/20 dark:hover:bg-amber-950/30"
+                              : "hover:bg-zinc-50 dark:hover:bg-zinc-900/30",
+                          )}
                         >
                           <TableCell className="px-2 align-middle text-xs font-medium text-zinc-800 dark:text-zinc-200">
                             <span className="block truncate" title={row.name || undefined}>
@@ -2066,13 +2688,19 @@ export default function PayrollWizard() {
                             )}
                           </TableCell>
                           <TableCell className="px-2 text-right align-middle font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
-                            {row.regularRate != null ? formatPHP(row.regularRate) : '—'}
+                            {row.regularRate != null ? formatPHP(row.regularRate) : (
+                              <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">No rate</span>
+                            )}
                           </TableCell>
                           <TableCell className="px-2 text-right align-middle font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
-                            {row.otRate != null ? formatPHP(row.otRate) : '—'}
+                            {row.otRate != null ? formatPHP(row.otRate) : (
+                              <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">No rate</span>
+                            )}
                           </TableCell>
                           <TableCell className="px-2 text-right align-middle font-mono text-xs tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {row.regularPay != null ? formatPHP(row.regularPay) : '—'}
+                            {row.regularPay != null ? formatPHP(row.regularPay) : (
+                              <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="px-2 text-right align-middle font-mono text-xs tabular-nums">
                             {row.otHours > 0 ? (
@@ -2097,7 +2725,9 @@ export default function PayrollWizard() {
                                   ≈&nbsp;${(row.initialPay / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </span>
                               </div>
-                            ) : '—'}
+                            ) : (
+                              <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">Missing rate</span>
+                            )}
                           </TableCell>
                         </TableRow>
                         ))
@@ -2139,13 +2769,20 @@ export default function PayrollWizard() {
           : 0;
 
         return (
-          <div className="space-y-6">
+          <div className="flex min-w-0 flex-col gap-5">
             {/* Header */}
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex flex-col gap-4 rounded-xl border border-zinc-200/90 bg-gradient-to-br from-white via-zinc-50/80 to-indigo-50/30 p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:from-zinc-950/50 dark:via-zinc-900/40 dark:to-indigo-950/20">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">
                   Additions — Department Bonuses
                 </h3>
+                {calcSourceFile && (
+                  <div className="mt-1 flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400">
+                    <FileText className="h-3 w-3 shrink-0" />
+                    <span className="font-mono">{calcSourceFile}</span>
+                  </div>
+                )}
                 <p className="text-sm text-zinc-600 dark:text-zinc-400">
                   Assign employees to departments and apply bonuses. All 12 departments share a{' '}
                   <span className="font-semibold text-indigo-600 dark:text-indigo-400">
@@ -2188,17 +2825,18 @@ export default function PayrollWizard() {
                   </div>
                 )}
               </div>
+              </div>
             </div>
 
             {/* Department Tabs */}
-            <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+            <div className="flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
               {DEPARTMENTS.map(dept => {
                 const count = calcResults.filter(r => employeeDepts[r.email] === dept.key).length;
                 return (
                   <button
                     key={dept.key}
                     type="button"
-                    onClick={() => setActiveDeptTab(dept.key)}
+                    onClick={() => { setActiveDeptTab(dept.key); setAdditionsSearch(''); }}
                     className={cn(
                       'flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
                       activeDeptTab === dept.key
@@ -2224,12 +2862,12 @@ export default function PayrollWizard() {
               })}
             </div>
 
-            {/* Main layout */}
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            {/* Main layout — single page scroll (wizard ScrollArea); no nested scroll here */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)] lg:items-start lg:gap-6">
               {/* Left column: Bonus config + Assign panel */}
-              <div className="space-y-4 lg:col-span-1">
+              <div className="min-w-0 space-y-4">
                 {/* Common Bonuses */}
-                <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <Card className="border-zinc-200 bg-zinc-50/80 shadow-sm ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                   <CardHeader className="pb-3 pt-4">
                     <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-indigo-100 dark:bg-indigo-950">
@@ -2304,7 +2942,7 @@ export default function PayrollWizard() {
 
                 {/* Dept-specific Bonus Panel — formula descriptions or toggle buttons */}
                 {activeDeptTab === 'lead_gen' ? (
-                  <Card className="border-amber-200/60 bg-amber-50/60 dark:border-amber-800/40 dark:bg-amber-950/20">
+                  <Card className="border-amber-200/60 bg-amber-50/60 ring-0 dark:border-amber-800/40 dark:bg-amber-950/20">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-amber-100 dark:bg-amber-900">
@@ -2318,7 +2956,7 @@ export default function PayrollWizard() {
                     </CardHeader>
                   </Card>
                 ) : activeDeptTab === 'accounting' ? (
-                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
@@ -2338,7 +2976,7 @@ export default function PayrollWizard() {
                     </CardContent>
                   </Card>
                 ) : activeDeptTab === 'edit' ? (
-                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
@@ -2355,7 +2993,7 @@ export default function PayrollWizard() {
                     </CardContent>
                   </Card>
                 ) : activeDeptTab === 'devs' ? (
-                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
@@ -2382,7 +3020,7 @@ export default function PayrollWizard() {
                     </CardContent>
                   </Card>
                 ) : activeDeptTab === 'callback' ? (
-                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
@@ -2410,7 +3048,7 @@ export default function PayrollWizard() {
                     </CardContent>
                   </Card>
                 ) : activeDeptTab === 'qc' ? (
-                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
@@ -2458,7 +3096,7 @@ export default function PayrollWizard() {
                     </CardContent>
                   </Card>
                 ) : activeDeptTab === 'discovery' ? (
-                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
@@ -2475,7 +3113,7 @@ export default function PayrollWizard() {
                     </CardContent>
                   </Card>
                 ) : activeDeptTab === 'hr' ? (
-                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
@@ -2519,7 +3157,7 @@ export default function PayrollWizard() {
                     </CardContent>
                   </Card>
                 ) : activeDeptTab === 'sales_assistant' ? (
-                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
@@ -2536,7 +3174,7 @@ export default function PayrollWizard() {
                     </CardContent>
                   </Card>
                 ) : activeDeptTab === 'smart_staff' ? (
-                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
@@ -2554,7 +3192,7 @@ export default function PayrollWizard() {
                   </Card>
                 ) : (
                   /* Toggle-based departments: US Manager Bonus, Hogan Smith Law */
-                  <Card className="border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
                       <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
@@ -2613,9 +3251,9 @@ export default function PayrollWizard() {
               </div>
 
               {/* Right column: Employee bonus table */}
-              <div className="lg:col-span-2">
+              <div className="flex min-w-0 flex-col gap-2">
                 {deptEmployees.length === 0 ? (
-                  <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-zinc-200 text-center dark:border-zinc-800">
+                  <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-zinc-200 bg-zinc-50/50 text-center dark:border-zinc-800 dark:bg-zinc-950/30">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-900">
                       <Calculator className="h-5 w-5 text-zinc-400" />
                     </div>
@@ -2628,11 +3266,49 @@ export default function PayrollWizard() {
                       </div>
                     </div>
                   </div>
-                ) : (
-                  <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
-                    <div className="overflow-x-auto">
+                ) : (() => {
+                  const additionsNeedle = additionsSearch.toLowerCase().trim();
+                  const filteredDeptEmployees = additionsNeedle
+                    ? deptEmployees.filter(emp => {
+                        const haystack = [emp.name, emp.email, emp.initialPay != null ? emp.initialPay.toString() : ''].join(' ').toLowerCase();
+                        return haystack.includes(additionsNeedle);
+                      })
+                    : deptEmployees;
+                  return (
+                  <div className="flex flex-col gap-2">
+                    {/* Search bar */}
+                    <div className="relative">
+                      <svg
+                        className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
+                        fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+                      >
+                        <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+                      </svg>
+                      <Input
+                        placeholder="Search employee name or email…"
+                        value={additionsSearch}
+                        onChange={(e) => setAdditionsSearch(e.target.value)}
+                        className="h-9 rounded-lg border-zinc-200 bg-white pl-8 pr-8 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+                      />
+                      {additionsSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setAdditionsSearch('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                          aria-label="Clear search"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white/50 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25">
+                    <div
+                      className="overflow-auto [-ms-overflow-style:none] [scrollbar-gutter:stable]"
+                      style={{ maxHeight: 'min(62vh, calc(100dvh - 17rem))' }}
+                    >
                       <Table className="w-full">
-                        <TableHeader className="[&_th]:bg-zinc-100/95 dark:[&_th]:bg-zinc-900/95">
+                        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
                           <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
                             <TableHead className="min-w-[140px] px-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">
                               Employee
@@ -2730,7 +3406,13 @@ export default function PayrollWizard() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {deptEmployees.map((emp, i) => {
+                          {filteredDeptEmployees.length === 0 ? (
+                            <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
+                              <TableCell colSpan={20} className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                                No employees match &quot;{additionsSearch.trim()}&quot;
+                              </TableCell>
+                            </TableRow>
+                          ) : filteredDeptEmployees.map((emp, i) => {
                             const bonusTotal = bonusTotals[emp.email] ?? 0;
                             const finalPay = (emp.initialPay ?? 0) + bonusTotal;
                             const empM = employeeMetrics[emp.email] ?? {};
@@ -3052,10 +3734,12 @@ export default function PayrollWizard() {
                     </div>
 
                     {/* Dept footer totals */}
-                    <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50/80 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <div className="flex flex-wrap items-center justify-between border-t border-zinc-200 bg-zinc-50/80 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
                       <span className="text-xs text-zinc-500">
-                        {deptEmployees.length} employee{deptEmployees.length !== 1 ? 's' : ''} in{' '}
-                        {activeDept.name}
+                        {additionsNeedle
+                          ? <>{filteredDeptEmployees.length} of {deptEmployees.length} shown</>
+                          : <>{deptEmployees.length} employee{deptEmployees.length !== 1 ? 's' : ''} in {activeDept.name}</>
+                        }
                       </span>
                       <div className="flex items-center gap-4">
                         <span className="text-xs text-zinc-500">
@@ -3080,7 +3764,9 @@ export default function PayrollWizard() {
                       </div>
                     </div>
                   </div>
-                )}
+                  </div>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -3103,14 +3789,21 @@ export default function PayrollWizard() {
         const unassignedCount = finalPayRows.filter(r => !r.deptKey).length;
 
         return (
-          <div className="space-y-6">
+          <div className="flex min-w-0 flex-col gap-5">
             {/* Header */}
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-white via-zinc-50/80 to-emerald-50/25 p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:from-zinc-950/50 dark:via-zinc-900/40 dark:to-emerald-950/15">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Pre-Flight Validation</h3>
                 <p className="text-sm text-zinc-600 dark:text-zinc-400">Final review before dispatching payments</p>
+                {calcSourceFile && (
+                  <div className="mt-1 flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400">
+                    <FileText className="h-3 w-3 shrink-0" />
+                    <span className="font-mono">{calcSourceFile}</span>
+                  </div>
+                )}
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 {unassignedCount > 0 && (
                   <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
                     {unassignedCount} unassigned
@@ -3120,11 +3813,12 @@ export default function PayrollWizard() {
                   Ready for Dispatch
                 </Badge>
               </div>
+              </div>
             </div>
 
             {/* Summary cards */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <Card className="border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900/50">
+              <Card className="border-zinc-200/90 bg-white/90 shadow-sm ring-0 dark:border-zinc-800 dark:bg-zinc-900/50">
                 <CardContent className="pt-4 pb-4">
                   <div className="text-xs text-zinc-500 dark:text-zinc-400">Total Initial Pay</div>
                   <div className="mt-1 font-mono text-xl font-bold text-zinc-900 dark:text-white">
@@ -3137,7 +3831,7 @@ export default function PayrollWizard() {
                   </div>
                 </CardContent>
               </Card>
-              <Card className="border-emerald-200/60 bg-emerald-50/60 shadow-sm dark:border-emerald-800/30 dark:bg-emerald-950/20">
+              <Card className="border-emerald-200/60 bg-emerald-50/60 shadow-sm ring-0 dark:border-emerald-800/30 dark:bg-emerald-950/20">
                 <CardContent className="pt-4 pb-4">
                   <div className="text-xs text-emerald-600 dark:text-emerald-400">Total Bonuses Added</div>
                   <div className="mt-1 font-mono text-xl font-bold text-emerald-700 dark:text-emerald-300">
@@ -3148,7 +3842,7 @@ export default function PayrollWizard() {
                   </div>
                 </CardContent>
               </Card>
-              <Card className="border-indigo-200/60 bg-indigo-50/60 shadow-sm dark:border-indigo-800/30 dark:bg-indigo-950/20">
+              <Card className="border-indigo-200/60 bg-indigo-50/60 shadow-sm ring-0 dark:border-indigo-800/30 dark:bg-indigo-950/20">
                 <CardContent className="pt-4 pb-4">
                   <div className="text-xs text-indigo-600 dark:text-indigo-400">Grand Total Payout</div>
                   <div className="mt-1 font-mono text-xl font-bold text-indigo-700 dark:text-indigo-300">
@@ -3164,14 +3858,55 @@ export default function PayrollWizard() {
             </div>
 
             {/* Final Pay Table */}
-            <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
-              <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50/80 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Final Pay Breakdown</span>
-                <span className="text-[10px] text-zinc-400">{finalPayRows.length} employees</span>
+            {(() => {
+              const vNeedle = validationSearch.toLowerCase().trim();
+              const filteredFinalRows = vNeedle
+                ? finalPayRows.filter(row => [row.name, row.email, row.deptName].join(' ').toLowerCase().includes(vNeedle))
+                : finalPayRows;
+              return (
+              <div className="space-y-3">
+                <div className="relative">
+                  <svg
+                    className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
+                    fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+                  >
+                    <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+                  </svg>
+                  <Input
+                    placeholder="Search name, email, department…"
+                    value={validationSearch}
+                    onChange={(e) => setValidationSearch(e.target.value)}
+                    className="h-9 rounded-lg border-zinc-200 bg-white pl-8 pr-8 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+                  />
+                  {validationSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setValidationSearch('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                      aria-label="Clear search"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white/50 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50/90 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                  Final Pay Breakdown
+                  {vNeedle && <span className="ml-1 font-normal text-zinc-400">— {filteredFinalRows.length} of {finalPayRows.length}</span>}
+                </span>
+                <span className="max-w-full truncate text-[10px] text-zinc-400">
+                  {finalPayRows.length} employees
+                  {calcSourceFile && <> · <span className="font-mono">{calcSourceFile}</span></>}
+                </span>
               </div>
-              <div className="overflow-x-auto">
+              <div
+                className="overflow-auto [-ms-overflow-style:none] [scrollbar-gutter:stable]"
+                style={{ maxHeight: 'min(62vh, calc(100dvh - 26rem))' }}
+              >
                 <Table>
-                  <TableHeader className="[&_th]:bg-zinc-100/95 dark:[&_th]:bg-zinc-900/95">
+                  <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
                     <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
                       <TableHead className="min-w-[140px] px-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">Employee</TableHead>
                       <TableHead className="min-w-[100px] px-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">Department</TableHead>
@@ -3182,14 +3917,14 @@ export default function PayrollWizard() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {finalPayRows.length === 0 ? (
+                    {filteredFinalRows.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={6} className="py-10 text-center text-sm text-zinc-400">
-                          No Hubstaff data. Complete Steps 1–3 first.
+                          {vNeedle ? <>No employees match &quot;{vNeedle}&quot;</> : 'No Hubstaff data. Complete Steps 1–3 first.'}
                         </TableCell>
                       </TableRow>
                     ) : (
-                      finalPayRows.map((row, i) => (
+                      filteredFinalRows.map((row, i) => (
                         <TableRow
                           key={`${row.email}-${i}`}
                           className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
@@ -3256,13 +3991,16 @@ export default function PayrollWizard() {
                 </Table>
               </div>
             </div>
+            </div>
+              );
+            })()}
 
             {/* Validation Checks */}
-            <Card className="border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900/50">
-              <CardHeader className="pb-3">
+            <Card className="border-zinc-200/90 bg-white/90 shadow-sm ring-0 dark:border-zinc-800 dark:bg-zinc-900/50">
+              <CardHeader className="pb-2 pt-4">
                 <CardTitle className="text-sm font-medium text-zinc-900 dark:text-white">Validation Checks</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3 pb-4">
+              <CardContent className="grid gap-2 pb-4 sm:grid-cols-2 sm:gap-3">
                 {[
                   { label: 'Hubstaff Hours Uploaded', pass: hubstaffData.length > 0 },
                   { label: 'Initial Calculations Complete', pass: calcResults.some(r => r.initialPay != null) },
@@ -3270,9 +4008,12 @@ export default function PayrollWizard() {
                   { label: 'Perfect Attendance Evaluated', pass: perfectAttendanceEligible.size > 0 || (hubstaffDisplayColumns?.some(colIsWeekday) === false) },
                   { label: 'Cycle Separation (Standard vs Hogan)', pass: true },
                 ].map((check, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm">
-                    <span className="text-zinc-500 dark:text-zinc-400">{check.label}</span>
-                    <div className="flex items-center gap-2">
+                  <div
+                    key={i}
+                    className="flex min-h-[2.75rem] items-center justify-between gap-3 rounded-lg border border-zinc-100 bg-zinc-50/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/40"
+                  >
+                    <span className="min-w-0 flex-1 text-sm leading-snug text-zinc-600 dark:text-zinc-400">{check.label}</span>
+                    <div className="flex shrink-0 items-center gap-2">
                       <span className={cn('text-[10px] font-bold uppercase', check.pass ? 'text-emerald-500' : 'text-amber-500')}>
                         {check.pass ? 'Pass' : 'Warn'}
                       </span>
@@ -3346,22 +4087,44 @@ export default function PayrollWizard() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-zinc-50 p-4 md:p-8 dark:bg-zinc-950">
-      <Dialog open={duplicateCsvDialogOpen} onOpenChange={setDuplicateCsvDialogOpen}>
-        <DialogContent className="sm:max-w-md border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+      <Dialog
+        open={deleteSourceFilePending !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteSourceFilePending(null);
+        }}
+      >
+        <DialogContent className="border-zinc-200 bg-white sm:max-w-md dark:border-zinc-800 dark:bg-zinc-950">
           <DialogHeader>
-            <DialogTitle className="text-zinc-900 dark:text-white">You are uploading the same CSV file</DialogTitle>
+            <DialogTitle className="text-zinc-900 dark:text-white">Delete this upload?</DialogTitle>
             <DialogDescription className="text-zinc-600 dark:text-zinc-400">
-              This file matches your last successful Hubstaff weekly upload (same contents). Choose a different file or
-              export a new report if you need to reload data.
+              This removes every row in{' '}
+              <span className="font-mono text-zinc-700 dark:text-zinc-300">public.hubstaff_hours</span> tagged with{' '}
+              <span className="font-mono">{deleteSourceFilePending ?? ''}</span>. Other CSV batches are not affected.
             </DialogDescription>
           </DialogHeader>
-          <div className="flex justify-end pt-2">
+          <div className="flex justify-end gap-2 pt-2">
             <Button
               type="button"
-              className="bg-indigo-600 text-white hover:bg-indigo-700"
-              onClick={() => setDuplicateCsvDialogOpen(false)}
+              variant="outline"
+              className="border-zinc-200 dark:border-zinc-800"
+              disabled={deleteSourceFileLoading}
+              onClick={() => setDeleteSourceFilePending(null)}
             >
-              OK
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteSourceFileLoading || !deleteSourceFilePending}
+              className="gap-2"
+              onClick={() => void confirmDeleteSourceFile()}
+            >
+              {deleteSourceFileLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              Delete from database
             </Button>
           </div>
         </DialogContent>
@@ -3381,8 +4144,8 @@ export default function PayrollWizard() {
               Confirm upload to database
             </DialogTitle>
             <DialogDescription className="text-zinc-600 dark:text-zinc-400">
-              This replaces all rows in{' '}
-              <span className="font-mono text-zinc-700 dark:text-zinc-300">public.hubstaff_hours</span> with the CSV you
+              This will append rows to{' '}
+              <span className="font-mono text-zinc-700 dark:text-zinc-300">public.hubstaff_hours</span> from the CSV you
               selected
               {pendingWeekly ? (
                 <>
@@ -3392,7 +4155,7 @@ export default function PayrollWizard() {
               ) : (
                 '.'
               )}{' '}
-              Approve only if this is the correct week&apos;s export.
+              Existing data will not be overwritten. Approve only if this is the correct week&apos;s export.
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2 pt-2">
@@ -3485,10 +4248,11 @@ export default function PayrollWizard() {
             <AnimatePresence mode="wait">
               <motion.div
                 key={currentStep}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.3 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="min-w-0 max-w-full"
               >
                 {renderStepContent()}
               </motion.div>

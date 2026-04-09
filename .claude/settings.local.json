@@ -15,7 +15,16 @@
       "Bash(curl -s http://localhost:3099)",
       "Bash(curl -s http://localhost:3000)",
       "Bash(curl -s http://localhost:3000/_next/static/chunks/src_index_0n~82ls.css)",
-      "Bash(npx tailwindcss:*)"
+      "Bash(npx tailwindcss:*)",
+      "Bash(wc:*)",
+      "Bash(ls /c/Users/Itachi/Desktop/simple-hris/references/seed_hubstaff_hours_*.sql)",
+      "Bash(find \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -type f \\\\\\( -name \"*.sql\" -o -name \"*.ts\" -o -name \"*.tsx\" \\\\\\) -exec grep -l \"hubstaff_hours.*id\" {} \\\\;)",
+      "Bash(awk -F',' '{print $4}' \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\references\\\\hubstaff_hours\\\\simple-biz_daily_report_2026-03-29_to_2026-04-04.csv\")",
+      "Bash(awk -F',' 'NR>1 {print $3}' \"C:/Users/Itachi/Desktop/simple-hris/references/rates.csv\")",
+      "Bash(awk -F',' 'NR>1 && $3==\"\" {print $1}' \"C:/Users/Itachi/Desktop/simple-hris/references/rates.csv\")",
+      "Bash(curl -s \"http://localhost:3000/api/hubstaff-hours?source_files=1\")",
+      "Bash(curl -s \"http://localhost:3000/api/hubstaff-hours\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); rows=d.get\\('rows',[]\\); print\\(f'Total rows: {len\\(rows\\)}'\\); sf=set\\(\\); [sf.add\\(r.get\\('source_file','<none>'\\)\\) for r in rows]; print\\(f'Distinct source_files: {sf}'\\)\")"
     ]
   }
 }
