@@ -3,11 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Users,
-  Clock,
   DollarSign,
-  ArrowUpRight,
-  ArrowDownRight,
-  Activity,
   Loader2,
   Search,
   ChevronLeft,
@@ -69,6 +65,10 @@ export default function Overview() {
   const [payoutLoading, setPayoutLoading] = useState(true);
   /** Normalized emails from hubstaff_hours payroll rows; null if not loaded or fetch failed. */
   const [payrollEmailsNorm, setPayrollEmailsNorm] = useState<Set<string> | null>(null);
+  /** Distinct work emails in the payroll rows used for stats (latest CSV when uploads are tracked). */
+  const [payrollWorkerCount, setPayrollWorkerCount] = useState<number | null>(null);
+  /** When hubstaff rows include `source_file`, this is the filename used for payout stats (lexicographically last = latest week for ISO-style names). */
+  const [latestSourceFile, setLatestSourceFile] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,8 +104,24 @@ export default function Overview() {
     let cancelled = false;
     (async () => {
       try {
+        let hoursUrl = '/api/hubstaff-hours';
+        let pickedSourceFile: string | null = null;
+        try {
+          const filesRes = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
+          const filesJson = (await filesRes.json()) as { files?: string[]; error?: string | null };
+          if (filesRes.ok && !filesJson.error && filesJson.files?.length) {
+            pickedSourceFile = filesJson.files[filesJson.files.length - 1] ?? null;
+            if (pickedSourceFile) {
+              hoursUrl = `/api/hubstaff-hours?source_file=${encodeURIComponent(pickedSourceFile)}`;
+            }
+          }
+        } catch {
+          /* fall back to full hubstaff_hours fetch */
+        }
+        if (!cancelled) setLatestSourceFile(pickedSourceFile);
+
         const [hoursRes, ratesRes] = await Promise.all([
-          fetch('/api/hubstaff-hours', { cache: 'no-store' }),
+          fetch(hoursUrl, { cache: 'no-store' }),
           fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
         ]);
         const hoursJson = (await hoursRes.json()) as {
@@ -126,8 +142,10 @@ export default function Overview() {
             if (em) paySet.add(em);
           }
           setPayrollEmailsNorm(paySet);
+          setPayrollWorkerCount(paySet.size);
         } else {
           setPayrollEmailsNorm(null);
+          setPayrollWorkerCount(null);
         }
 
         let sum = 0;
@@ -170,6 +188,8 @@ export default function Overview() {
         if (!cancelled) {
           setTotalPayout(null);
           setPayrollEmailsNorm(null);
+          setPayrollWorkerCount(null);
+          setLatestSourceFile(null);
         }
       } finally {
         if (!cancelled) setPayoutLoading(false);
@@ -253,18 +273,12 @@ export default function Overview() {
         : totalPayout != null
           ? '₱' + totalPayout.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
           : '—',
-      change: '+0%',
-      trend: 'up' as const,
       icon: DollarSign,
-      isLive: true,
     },
     {
       label: 'Active Workers',
-      value: employeesError ? '—' : loading ? '…' : String(employees.length),
-      change: '+12.5%',
-      trend: 'up' as const,
+      value: payoutLoading ? '…' : payrollWorkerCount != null ? String(payrollWorkerCount) : '—',
       icon: Users,
-      isLive: true,
     },
     {
       label: 'Employees in Payroll but not in Master list',
@@ -276,10 +290,7 @@ export default function Overview() {
             : inPayrollNotMaster == null
               ? '—'
               : String(inPayrollNotMaster),
-      change: '+0%',
-      trend: 'up' as const,
       icon: DollarSign,
-      isLive: true,
     },
     {
       label: 'Employees in Masterlist but not in Payroll',
@@ -291,13 +302,8 @@ export default function Overview() {
             : inMasterNotPayroll == null
               ? '—'
               : String(inMasterNotPayroll),
-      change: '+0%',
-      trend: 'up' as const,
       icon: Users,
-      isLive: true,
     },
-    { label: 'Avg. Hours', value: '38.5', change: '-1.2%', trend: 'down' as const, icon: Clock, isLive: false },
-    { label: 'Pending Hires', value: '5', change: '+1', trend: 'up' as const, icon: Activity, isLive: false },
   ];
 
   return (
@@ -310,9 +316,10 @@ export default function Overview() {
         <div className="flex items-center gap-2">
           <Badge
             variant="outline"
-            className="border-orange-500/20 bg-gradient-to-r from-orange-500/10 to-blue-500/10 px-3 py-1 text-orange-700 dark:border-orange-500/30 dark:text-orange-400"
+            title={latestSourceFile ?? undefined}
+            className="max-w-[min(100%,280px)] truncate border-orange-500/20 bg-gradient-to-r from-orange-500/10 to-blue-500/10 px-3 py-1 font-mono text-[11px] text-orange-700 dark:border-orange-500/30 dark:text-orange-400"
           >
-            Q1 2026
+            {latestSourceFile ? `CSV: ${latestSourceFile}` : 'Hubstaff data (all rows)'}
           </Badge>
         </div>
       </div>
@@ -329,34 +336,25 @@ export default function Overview() {
             </CardHeader>
             <CardContent>
               <div className="font-mono text-2xl font-bold text-zinc-900 dark:text-white">{stat.value}</div>
-              {stat.isLive ? (
-                <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-600">
-                  {stat.label === 'Total Payout'
-                    ? 'Sum of initial pay · Payroll Wizard'
+              <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-600">
+                {stat.label === 'Total Payout'
+                  ? latestSourceFile
+                    ? `Sum of initial pay · ${latestSourceFile}`
+                    : 'Sum of initial pay · latest Hubstaff data in database'
+                  : stat.label === 'Active Workers'
+                    ? latestSourceFile
+                      ? `Distinct work emails · ${latestSourceFile}`
+                      : 'Distinct work emails in Hubstaff payroll rows'
                     : stat.label === 'Employees in Payroll but not in Master list'
-                      ? 'Distinct emails in hubstaff_hours not in global_master_list'
+                      ? latestSourceFile
+                        ? `Distinct emails in ${latestSourceFile} not in global_master_list`
+                        : 'Distinct emails in Hubstaff payroll not in global_master_list'
                       : stat.label === 'Employees in Masterlist but not in Payroll'
-                        ? 'Distinct emails in global_master_list not in hubstaff_hours'
-                        : 'From global_master_list'}
-                </p>
-              ) : (
-                <div className="mt-1 flex items-center gap-1">
-                  {stat.trend === 'up' ? (
-                    <ArrowUpRight className="h-3 w-3 text-emerald-600 dark:text-emerald-500" />
-                  ) : (
-                    <ArrowDownRight className="h-3 w-3 text-red-600 dark:text-red-500" />
-                  )}
-                  <span
-                    className={cn(
-                      'text-[10px] font-bold',
-                      stat.trend === 'up' ? 'text-emerald-600 dark:text-emerald-500' : 'text-red-600 dark:text-red-500',
-                    )}
-                  >
-                    {stat.change}
-                  </span>
-                  <span className="ml-1 text-[10px] text-zinc-500 dark:text-zinc-600">vs last month</span>
-                </div>
-              )}
+                        ? latestSourceFile
+                          ? `Distinct emails in global_master_list not in ${latestSourceFile}`
+                          : 'Distinct emails in global_master_list not in Hubstaff payroll'
+                        : ''}
+              </p>
             </CardContent>
           </Card>
         ))}

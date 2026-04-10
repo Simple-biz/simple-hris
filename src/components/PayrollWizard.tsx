@@ -17,6 +17,7 @@ import {
   DollarSign,
   FileText,
   ChevronRight,
+  CalendarDays,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -35,6 +36,9 @@ import { parseHoursToDecimal } from '@/lib/supabase/hubstaff-hours';
 import {
   groupDateColumnsByCalendarDay,
   pickPreferredHubstaffColumn,
+  getPabMonthRange,
+  inferPabMonthFromColumns,
+  filterColumnGroupsByPabRange,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { parseCsv } from '@/lib/csv/parse-csv';
@@ -832,6 +836,8 @@ export default function PayrollWizard() {
   /** Source file selected for Initial Calculation (step 2). Defaults to latest uploaded file. */
   const [calcSourceFile, setCalcSourceFile] = useState<string | null>(null);
   const [calcSourceFileLoading, setCalcSourceFileLoading] = useState(false);
+  /** True while fetching unfiltered hubstaff_hours (no source_file column / replace-only uploads). */
+  const [unfilteredHubstaffLoading, setUnfilteredHubstaffLoading] = useState(false);
 
   const [hourlyRateRows, setHourlyRateRows] = useState<EmployeeHourlyRateRow[]>([]);
   const [hourlyRatesLoading, setHourlyRatesLoading] = useState(false);
@@ -927,6 +933,8 @@ export default function PayrollWizard() {
   // Fallback: if source files loaded but none exist, load all data unfiltered
   useEffect(() => {
     if (!sourceFilesLoading && uploadedSourceFiles.length === 0 && hubstaffData.length === 0) {
+      let cancelled = false;
+      setUnfilteredHubstaffLoading(true);
       (async () => {
         try {
           const res = await fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' });
@@ -936,6 +944,7 @@ export default function PayrollWizard() {
               hoursDisplay: string; hoursDecimal: number; department?: string | null;
             }>;
           };
+          if (cancelled) return;
           if (json.payrollRows?.length) {
             const hd: HubstaffRow[] = json.payrollRows.map((p) => ({
               name: p.name ?? p.email ?? '',
@@ -947,7 +956,14 @@ export default function PayrollWizard() {
             setHubstaffData(hd);
           }
         } catch { /* degrades gracefully */ }
+        finally {
+          if (!cancelled) setUnfilteredHubstaffLoading(false);
+        }
       })();
+      return () => {
+        cancelled = true;
+        setUnfilteredHubstaffLoading(false);
+      };
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceFilesLoading, uploadedSourceFiles]);
@@ -1055,11 +1071,25 @@ export default function PayrollWizard() {
     [hourlyRateRows],
   );
 
-  /** One group per calendar weekday — dedupes ISO + Hubstaff labels for the same day across ALL CSVs. */
-  const weekdayColumnGroups = useMemo(
-    () => (pabAllColumns.length ? groupWeekdayColumnsByDate(pabAllColumns) : hubstaffDisplayColumns?.length ? groupWeekdayColumnsByDate(hubstaffDisplayColumns) : []),
-    [pabAllColumns, hubstaffDisplayColumns],
-  );
+  /** Inferred PAB month + computed date range for display. */
+  const pabMonthRange = useMemo(() => {
+    const cols = pabAllColumns.length ? pabAllColumns : hubstaffDisplayColumns;
+    if (!cols?.length) return null;
+    const pabMonth = inferPabMonthFromColumns(cols);
+    if (!pabMonth) return null;
+    const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
+  }, [pabAllColumns, hubstaffDisplayColumns]);
+
+  /** One group per calendar weekday — dedupes ISO + Hubstaff labels for the same day across ALL CSVs, filtered to PAB month boundaries. */
+  const weekdayColumnGroups = useMemo(() => {
+    const cols = pabAllColumns.length ? pabAllColumns : hubstaffDisplayColumns;
+    if (!cols?.length) return [];
+    const groups = groupWeekdayColumnsByDate(cols);
+    if (!pabMonthRange) return groups;
+    return filterColumnGroupsByPabRange(groups, cols, pabMonthRange.start, pabMonthRange.end);
+  }, [pabAllColumns, hubstaffDisplayColumns, pabMonthRange]);
 
   /**
    * True when the Hubstaff data has weekday columns but every value is null/empty.
@@ -2341,7 +2371,13 @@ export default function PayrollWizard() {
             )}
           </div>
         );
-      case 2:
+      case 2: {
+        const initialCalcDataLoading =
+          hourlyRatesLoading ||
+          calcSourceFileLoading ||
+          sourceFilesLoading ||
+          unfilteredHubstaffLoading ||
+          (uploadedSourceFiles.length > 0 && calcSourceFile == null);
         return (
           <div className="space-y-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -2520,6 +2556,7 @@ export default function PayrollWizard() {
 
             {/* Warning banner for employees missing rates */}
             {(() => {
+              if (initialCalcDataLoading) return null;
               const missingCount = calcResults.filter(r => r.regularRate == null).length;
               if (missingCount === 0 || calcResults.length === 0) return null;
               return (
@@ -2536,8 +2573,14 @@ export default function PayrollWizard() {
               );
             })()}
 
-            {hourlyRatesLoading ? (
-              <div className="min-h-0 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+            {initialCalcDataLoading ? (
+              <div
+                role="status"
+                aria-busy="true"
+                aria-label="Loading initial calculation"
+                className="min-h-0 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800"
+              >
+                <span className="sr-only">Loading initial calculation…</span>
                 <div className="max-h-[min(70vh,calc(100dvh-13rem))] overflow-auto">
                   <Table className="w-full min-w-[1100px] table-fixed">
                     <colgroup>
@@ -2571,48 +2614,51 @@ export default function PayrollWizard() {
                     </TableHeader>
                     <TableBody>
                       {Array.from({ length: 8 }).map((_, i) => (
-                        <TableRow key={i} className="animate-pulse border-zinc-200 dark:border-zinc-800">
+                        <TableRow key={i} className="border-zinc-200 dark:border-zinc-800">
                           {/* Member */}
                           <TableCell className="px-2 py-3 align-middle">
-                            <div className="h-3 w-20 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                            <div className="initial-calc-skeleton-bar h-3 w-20 rounded-full" />
                           </TableCell>
                           {/* Work Email */}
                           <TableCell className="px-2 py-3 align-middle">
-                            <div className="h-3 rounded-full bg-zinc-200 dark:bg-zinc-700" style={{ width: `${60 + (i % 4) * 10}%` }} />
+                            <div
+                              className="initial-calc-skeleton-bar h-3 max-w-full rounded-full"
+                              style={{ width: `${60 + (i % 4) * 10}%` }}
+                            />
                           </TableCell>
                           {/* Total Hrs */}
                           <TableCell className="px-2 py-3 align-middle">
-                            <div className="ml-auto h-3 w-10 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                            <div className="initial-calc-skeleton-bar ml-auto h-3 w-10 rounded-full" />
                           </TableCell>
                           {/* Reg Hrs */}
                           <TableCell className="px-2 py-3 align-middle">
-                            <div className="ml-auto h-3 w-10 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                            <div className="initial-calc-skeleton-bar ml-auto h-3 w-10 rounded-full" />
                           </TableCell>
                           {/* OT Hrs */}
                           <TableCell className="px-2 py-3 align-middle">
-                            <div className="ml-auto h-3 w-8 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                            <div className="initial-calc-skeleton-bar ml-auto h-3 w-8 rounded-full" />
                           </TableCell>
                           {/* Reg Rate */}
                           <TableCell className="px-2 py-3 align-middle">
-                            <div className="ml-auto h-3 w-14 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                            <div className="initial-calc-skeleton-bar ml-auto h-3 w-14 rounded-full" />
                           </TableCell>
                           {/* OT Rate */}
                           <TableCell className="px-2 py-3 align-middle">
-                            <div className="ml-auto h-3 w-14 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                            <div className="initial-calc-skeleton-bar ml-auto h-3 w-14 rounded-full" />
                           </TableCell>
                           {/* Reg Pay */}
                           <TableCell className="px-2 py-3 align-middle">
-                            <div className="ml-auto h-3 w-16 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                            <div className="initial-calc-skeleton-bar ml-auto h-3 w-16 rounded-full" />
                           </TableCell>
                           {/* OT Pay */}
                           <TableCell className="px-2 py-3 align-middle">
-                            <div className="ml-auto h-3 w-16 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                            <div className="initial-calc-skeleton-bar ml-auto h-3 w-16 rounded-full" />
                           </TableCell>
                           {/* Initial Pay (two lines) */}
                           <TableCell className="px-2 py-3 align-middle">
                             <div className="flex flex-col items-end gap-1.5">
-                              <div className="h-3 w-20 rounded-full bg-zinc-200 dark:bg-zinc-700" />
-                              <div className="h-2.5 w-14 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+                              <div className="initial-calc-skeleton-bar h-3 w-20 rounded-full" />
+                              <div className="initial-calc-skeleton-bar h-2.5 w-14 rounded-full" />
                             </div>
                           </TableCell>
                         </TableRow>
@@ -2835,6 +2881,7 @@ export default function PayrollWizard() {
             )}
           </div>
         );
+      }
       case 3: {
         const activeDept = DEPARTMENTS.find(d => d.key === activeDeptTab) ?? DEPARTMENTS[0]!;
         const deptEmployees = calcResults.filter(r => employeeDepts[r.email] === activeDeptTab);
@@ -2888,6 +2935,18 @@ export default function PayrollWizard() {
                     Perfect Attendance Bonus (₱5,000)
                   </span>.
                 </p>
+                {pabMonthRange && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400">
+                    <CalendarDays className="h-3 w-3 shrink-0" />
+                    <span>
+                      PAB period: <span className="font-semibold">{pabMonthRange.monthName} {pabMonthRange.year}</span>
+                      {' '}({pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      {' – '}
+                      {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
+                      {' · '}{weekdayColumnGroups.length} workday{weekdayColumnGroups.length !== 1 ? 's' : ''} checked
+                    </span>
+                  </div>
+                )}
                 {dailyDataMissing && (
                   <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                     <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -3020,13 +3079,28 @@ export default function PayrollWizard() {
                             </Button>
                           </div>
                           {isPerfectAttendance && deptEmployees.length > 0 && (
-                            <div className="flex items-center gap-1.5 rounded-md bg-zinc-100 px-2 py-1 dark:bg-zinc-800/60">
-                              <Check className={cn('h-3 w-3 shrink-0', eligibleCount > 0 ? 'text-emerald-500' : 'text-zinc-400')} />
-                              <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                                <span className={cn('font-bold', eligibleCount > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-500')}>
-                                  {eligibleCount}/{deptEmployees.length}
-                                </span>{' '}eligible (7 h+ every Mon–Fri, full month)
-                              </span>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5 rounded-md bg-zinc-100 px-2 py-1 dark:bg-zinc-800/60">
+                                <Check className={cn('h-3 w-3 shrink-0', eligibleCount > 0 ? 'text-emerald-500' : 'text-zinc-400')} />
+                                <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                                  <span className={cn('font-bold', eligibleCount > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-500')}>
+                                    {eligibleCount}/{deptEmployees.length}
+                                  </span>{' '}eligible (7 h+ every Mon–Fri)
+                                </span>
+                              </div>
+                              {pabMonthRange && (
+                                <div className="flex items-center gap-1.5 rounded-md bg-indigo-50 px-2 py-1 dark:bg-indigo-950/30">
+                                  <CalendarDays className="h-3 w-3 shrink-0 text-indigo-500" />
+                                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400">
+                                    <span className="font-semibold">{pabMonthRange.monthName} {pabMonthRange.year}</span>
+                                    {' · '}
+                                    {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                    {' – '}
+                                    {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                    {' · '}{weekdayColumnGroups.length} workday{weekdayColumnGroups.length !== 1 ? 's' : ''}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -3562,21 +3636,27 @@ export default function PayrollWizard() {
                                               {paEligible ? '✓ Eligible' : '✗ Ineligible'}
                                             </span>
                                             {weekdayBreakdown && weekdayBreakdown.length > 0 && (
-                                              <div className="mt-0.5 flex gap-px">
-                                                {weekdayBreakdown.map(({ col, seconds, passes }) => (
-                                                  <span
-                                                    key={col}
-                                                    title={`${dayLabel(col)} (${col}): ${formatSeconds(seconds)} logged${passes ? ' ✓' : ' — needs 7 h'}`}
-                                                    className={cn(
-                                                      'flex h-3.5 w-3.5 cursor-default items-center justify-center rounded-sm text-[7px] font-bold leading-none select-none',
-                                                      passes
-                                                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
-                                                        : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
-                                                    )}
-                                                  >
-                                                    {dayLetter(col)}
-                                                  </span>
-                                                ))}
+                                              <div className="mt-0.5 flex flex-wrap gap-px">
+                                                {weekdayBreakdown.map(({ col, seconds, passes }) => {
+                                                  const colDate = parseColDate(col);
+                                                  const dateStr = colDate
+                                                    ? `${colDate.getMonth() + 1}/${colDate.getDate()}`
+                                                    : '';
+                                                  return (
+                                                    <span
+                                                      key={col}
+                                                      title={`${dayLabel(col)}${dateStr ? ` ${dateStr}` : ''}: ${formatSeconds(seconds)} logged${passes ? ' ✓' : ' — needs 7 h'}`}
+                                                      className={cn(
+                                                        'flex h-3.5 cursor-default items-center justify-center rounded-sm px-0.5 text-[7px] font-bold leading-none select-none',
+                                                        passes
+                                                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+                                                          : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+                                                      )}
+                                                    >
+                                                      {dayLetter(col)}
+                                                    </span>
+                                                  );
+                                                })}
                                               </div>
                                             )}
                                           </>

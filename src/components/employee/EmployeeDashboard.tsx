@@ -33,6 +33,9 @@ import {
 import {
   groupDateColumnsByCalendarDay,
   pickPreferredHubstaffColumn,
+  getPabMonthRange,
+  inferPabMonthFromColumns,
+  filterColumnGroupsByPabRange,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 
 /* ------------------------------------------------------------------ */
@@ -492,7 +495,13 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     const pabCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
     if (!pabRow) return [];
     const dateCols = pabCols.filter(isDateCol);
-    const groups = groupDateColumnsByCalendarDay(dateCols, pabCols);
+    let groups = groupDateColumnsByCalendarDay(dateCols, pabCols);
+    // Filter to PAB month range (complete weeks only)
+    const pabMonth = inferPabMonthFromColumns(pabCols);
+    if (pabMonth) {
+      const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
+      groups = filterColumnGroupsByPabRange(groups, pabCols, start, end);
+    }
     return groups
       .map((group) => {
         const col = pickPreferredHubstaffColumn(group);
@@ -521,6 +530,17 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       .sort((a, b) => a.order - b.order);
   }, [pabMergedRow, pabMergedColumns, row, columns]);
 
+  /** Inferred PAB month + computed date range for display. */
+  const pabMonthRange = useMemo(() => {
+    const pabCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
+    if (!pabCols?.length) return null;
+    const pabMonth = inferPabMonthFromColumns(pabCols);
+    if (!pabMonth) return null;
+    const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
+  }, [pabMergedColumns, columns]);
+
   /** PAB: every Mon–Fri across the FULL MONTH must be ≥ 7h. */
   const pabWeekdayHours = pabDailyHours.filter((d) => d.weekday);
   const isPAEligible = pabWeekdayHours.length > 0 && pabWeekdayHours.every((d) => d.seconds >= 7 * 3600);
@@ -536,8 +556,8 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   if (loading) {
     return (
-      <div className="min-h-full bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-8 dark:bg-none dark:bg-[#0d1117]">
-        <div className="flex items-center justify-center py-32">
+      <div className="flex h-full min-h-0 flex-col bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
+        <div className="flex flex-1 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
         </div>
       </div>
@@ -545,14 +565,14 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   }
 
   return (
-    <div className="min-h-full space-y-8 overflow-auto bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-8 dark:bg-none dark:bg-[#0d1117]">
+    <div className="box-border flex h-full min-h-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-y-contain bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-3 pb-5 sm:px-4 sm:py-4 sm:pb-6 md:px-5 dark:bg-none dark:bg-[#0d1117]">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">
+          <h2 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
             My Dashboard
           </h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-500">
+          <p className="text-xs text-zinc-600 sm:text-sm dark:text-zinc-500">
             Weekly hours, pay breakdown, and attendance
           </p>
           {/* Source file selector */}
@@ -579,18 +599,20 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             <Badge
               variant="outline"
               className="gap-1 border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-emerald-700 dark:border-emerald-500/30 dark:text-emerald-400"
+              title={pabMonthRange ? `${pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : undefined}
             >
               <Award className="h-3 w-3" />
-              PA bonus eligible
+              PA eligible{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
             </Badge>
           )}
           {row && perfectAttendanceBonusStatus === 'not_eligible' && (
             <Badge
               variant="outline"
               className="gap-1 border-amber-500/30 bg-amber-500/10 px-3 py-1 text-amber-800 dark:border-amber-500/30 dark:text-amber-400"
+              title={pabMonthRange ? `${pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : undefined}
             >
               <XCircle className="h-3 w-3" />
-              PA bonus not met
+              PA not met{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
             </Badge>
           )}
           {row && perfectAttendanceBonusStatus === 'unknown' && (
@@ -623,8 +645,8 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       </div>
 
       {dataError && (
-        <Card className="border-red-200 bg-red-50/50 dark:border-red-500/20 dark:bg-red-950/20">
-          <CardContent className="flex items-center gap-3 py-4">
+        <Card className="shrink-0 border-red-200 bg-red-50/50 dark:border-red-500/20 dark:bg-red-950/20">
+          <CardContent className="flex items-center gap-3 py-3">
             <AlertCircle className="h-5 w-5 shrink-0 text-red-500" />
             <p className="text-sm text-red-800 dark:text-red-300">{dataError}</p>
           </CardContent>
@@ -632,8 +654,8 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       )}
 
       {!row && !dataError ? (
-        <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-500/20 dark:bg-amber-950/20">
-          <CardContent className="flex items-center gap-3 py-6">
+        <Card className="min-h-0 flex-1 overflow-y-auto border-amber-200 bg-amber-50/50 dark:border-amber-500/20 dark:bg-amber-950/20">
+          <CardContent className="flex items-center gap-3 py-4 sm:py-6">
             <AlertCircle className="h-5 w-5 text-amber-500" />
             <p className="text-sm text-amber-800 dark:text-amber-300">
               No hours data found for <span className="font-mono font-medium">{email}</span>. Your hours will appear
@@ -643,21 +665,24 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           </CardContent>
         </Card>
       ) : !row ? null : (
-        <>
-          <Card className="border-indigo-200/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm dark:border-indigo-950/50 dark:from-indigo-950/15 dark:to-indigo-950/5">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <Card
+            size="sm"
+            className="shrink-0 border-indigo-200/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm dark:border-indigo-950/50 dark:from-indigo-950/15 dark:to-indigo-950/5"
+          >
+            <CardHeader className="pb-2 pt-3">
+              <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
                 Payroll bonus indicators
               </CardTitle>
-              <p className="text-xs font-normal text-zinc-500 dark:text-zinc-400">
+              <p className="text-[11px] font-normal leading-snug text-zinc-500 dark:text-zinc-400">
                 Estimates from this week&apos;s Hubstaff data. Final bonuses are confirmed when payroll runs.
               </p>
             </CardHeader>
-            <CardContent className="space-y-4 pt-0">
-              <div className="flex flex-col gap-3 rounded-lg border border-zinc-200/90 bg-white/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+            <CardContent className="space-y-2 pt-0">
+              <div className="flex flex-col gap-2 rounded-lg border border-zinc-200/90 bg-white/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                 <div className="flex min-w-0 flex-1 gap-3">
                   <div
-                    className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                    className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
                       perfectAttendanceBonusStatus === 'eligible'
                         ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                         : perfectAttendanceBonusStatus === 'not_eligible'
@@ -666,25 +691,38 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                     }`}
                   >
                     {perfectAttendanceBonusStatus === 'eligible' ? (
-                      <CheckCircle2 className="h-5 w-5" />
+                      <CheckCircle2 className="h-4 w-4" />
                     ) : perfectAttendanceBonusStatus === 'not_eligible' ? (
-                      <XCircle className="h-5 w-5" />
+                      <XCircle className="h-4 w-4" />
                     ) : (
-                      <Info className="h-5 w-5" />
+                      <Info className="h-4 w-4" />
                     )}
                   </div>
                   <div className="min-w-0 space-y-1">
-                    <p className="text-sm font-medium text-zinc-900 dark:text-white">
+                    <p className="text-xs font-medium text-zinc-900 dark:text-white">
                       Perfect Attendance Bonus · {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}
                     </p>
+                    {pabMonthRange && (
+                      <p className="flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400">
+                        <CalendarDays className="h-3 w-3 shrink-0" />
+                        <span>
+                          <span className="font-semibold">{pabMonthRange.monthName} {pabMonthRange.year}</span>
+                          {' · '}
+                          {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          {' – '}
+                          {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          {' · '}{pabWeekdayHours.length} workday{pabWeekdayHours.length !== 1 ? 's' : ''}
+                        </span>
+                      </p>
+                    )}
                     {perfectAttendanceBonusStatus === 'eligible' && (
                       <p className="text-xs text-emerald-700 dark:text-emerald-400">
-                        Eligible: Monday–Friday each show at least 7 hours logged this week (same rule as payroll).
+                        Eligible: every Mon–Fri in the PAB period shows at least 7 hours logged.
                       </p>
                     )}
                     {perfectAttendanceBonusStatus === 'not_eligible' && (
                       <p className="text-xs text-amber-800 dark:text-amber-300">
-                        Not eligible: at least one weekday is under 7 hours. See the breakdown below.
+                        Not eligible: at least one weekday in the PAB period is under 7 hours. See the breakdown below.
                       </p>
                     )}
                     {perfectAttendanceBonusStatus === 'unknown' && (
@@ -713,13 +751,13 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                 </Badge>
               </div>
 
-              <div className="flex flex-col gap-3 rounded-lg border border-zinc-200/90 bg-white/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-                <div className="flex min-w-0 flex-1 gap-3">
-                  <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-400">
-                    <Laptop className="h-5 w-5" />
+              <div className="flex flex-col gap-2 rounded-lg border border-zinc-200/90 bg-white/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <div className="flex min-w-0 flex-1 gap-2">
+                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-400">
+                    <Laptop className="h-4 w-4" />
                   </div>
-                  <div className="min-w-0 space-y-1">
-                    <p className="text-sm font-medium text-zinc-900 dark:text-white">
+                  <div className="min-w-0 space-y-0.5">
+                    <p className="text-xs font-medium text-zinc-900 dark:text-white">
                       Technology Bonus · {formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')}
                     </p>
                     <p className="text-xs text-zinc-600 dark:text-zinc-400">
@@ -738,60 +776,75 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             </CardContent>
           </Card>
 
-          {/* Stats Row */}
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+          {/* Stats — min-w-0 + responsive type so PHP amounts don’t overflow narrow cells */}
+          <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
             {/* Total Hours */}
-            <Card className="border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+            <Card
+              size="sm"
+              className="min-w-0 border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30"
+            >
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
                   Total Hours
                 </CardTitle>
-                <Clock className="h-4 w-4 text-zinc-500" />
+                <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
               </CardHeader>
-              <CardContent>
-                <div className="font-mono text-2xl font-bold text-zinc-900 dark:text-white">
+              <CardContent className="pb-3 pt-0">
+                <div className="break-words font-mono text-base font-bold tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white">
                   {totalHours.toFixed(2)}h
                 </div>
-                <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-600">
+                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
                   Reg {regularHours.toFixed(1)}h + OT {otHours.toFixed(1)}h
                 </p>
               </CardContent>
             </Card>
 
             {/* Regular Pay */}
-            <Card className="border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+            <Card
+              size="sm"
+              className="min-w-0 border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30"
+            >
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
                   Regular Pay
                 </CardTitle>
-                <DollarSign className="h-4 w-4 text-zinc-500" />
+                <DollarSign className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
               </CardHeader>
-              <CardContent>
-                <div className="font-mono text-2xl font-bold text-zinc-900 dark:text-white">
+              <CardContent className="pb-3 pt-0">
+                <div
+                  className="break-words font-mono text-base font-bold tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
+                  title={regularPay != null ? formatPHP(regularPay) : undefined}
+                >
                   {regularPay != null ? formatPHP(regularPay) : '—'}
                 </div>
-                <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-600">
-                  {regularRate != null ? `${formatPHP(regularRate)}/hr x ${regularHours.toFixed(1)}h` : 'Rate not set'}
+                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
+                  {regularRate != null ? `${formatPHP(regularRate)}/hr × ${regularHours.toFixed(1)}h` : 'Rate not set'}
                 </p>
               </CardContent>
             </Card>
 
             {/* OT Pay */}
-            <Card className="border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+            <Card
+              size="sm"
+              className="min-w-0 border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30"
+            >
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
                   Overtime Pay
                 </CardTitle>
-                <TrendingUp className="h-4 w-4 text-zinc-500" />
+                <TrendingUp className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
               </CardHeader>
-              <CardContent>
-                <div className="font-mono text-2xl font-bold text-zinc-900 dark:text-white">
+              <CardContent className="pb-3 pt-0">
+                <div
+                  className="break-words font-mono text-base font-bold tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
+                  title={otPay != null ? formatPHP(otPay) : undefined}
+                >
                   {otPay != null ? formatPHP(otPay) : otHours > 0 ? '—' : formatPHP(0)}
                 </div>
-                <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-600">
+                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
                   {otHours > 0
                     ? otRate != null
-                      ? `${formatPHP(otRate)}/hr x ${otHours.toFixed(1)}h`
+                      ? `${formatPHP(otRate)}/hr × ${otHours.toFixed(1)}h`
                       : 'OT rate not set'
                     : 'No overtime this week'}
                 </p>
@@ -799,18 +852,24 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             </Card>
 
             {/* Total Pay */}
-            <Card className="border-emerald-200/80 bg-gradient-to-br from-white to-emerald-50/30 shadow-sm transition-colors duration-300 hover:to-emerald-50/60 dark:border-emerald-950/60 dark:bg-none dark:from-emerald-950/20 dark:to-emerald-950/10 dark:hover:from-emerald-950/30">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+            <Card
+              size="sm"
+              className="min-w-0 border-emerald-200/80 bg-gradient-to-br from-white to-emerald-50/30 shadow-sm transition-colors duration-300 hover:to-emerald-50/60 dark:border-emerald-950/60 dark:bg-none dark:from-emerald-950/20 dark:to-emerald-950/10 dark:hover:from-emerald-950/30"
+            >
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
                   Initial Pay
                 </CardTitle>
-                <DollarSign className="h-4 w-4 text-emerald-500" />
+                <DollarSign className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
               </CardHeader>
-              <CardContent>
-                <div className="font-mono text-2xl font-bold text-emerald-700 dark:text-emerald-400">
+              <CardContent className="pb-3 pt-0">
+                <div
+                  className="break-words font-mono text-base font-bold tabular-nums leading-tight text-emerald-700 sm:text-lg dark:text-emerald-400"
+                  title={totalPay != null ? formatPHP(totalPay) : undefined}
+                >
                   {totalPay != null ? formatPHP(totalPay) : '—'}
                 </div>
-                <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-600">
+                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
                   {totalPay != null
                     ? `≈ $${(totalPay / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`
                     : 'Pending rate assignment'}
@@ -819,29 +878,33 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             </Card>
           </div>
 
-          {/* Daily Hours Bar Chart */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            <Card className="border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:col-span-2">
-              <CardHeader>
-                <CardTitle className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+          {/* Daily Hours + Pay Summary — flex fills height; fixed-width summary on large screens */}
+          <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-4">
+            <Card
+              size="sm"
+              className="flex min-h-[12rem] flex-1 flex-col border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:min-h-0"
+            >
+              <CardHeader className="shrink-0 pb-2 pt-3">
+                <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
                   Daily Hours Breakdown
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
                 {dailyHours.length === 0 ? (
-                  <div className="flex items-center gap-2 py-8 text-sm text-zinc-500">
+                  <div className="flex flex-1 items-center gap-2 py-6 text-sm text-zinc-500">
                     <AlertCircle className="h-4 w-4 text-amber-500" />
                     Daily breakdown not available
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="flex min-h-0 flex-1 flex-col gap-0">
+                    <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-clip pr-2">
                     {dailyHours.map((day) => {
                       const hours = day.seconds / 3600;
                       const pct = maxBarSeconds > 0 ? (day.seconds / maxBarSeconds) * 100 : 0;
                       const meetsPA = day.weekday && day.seconds >= 7 * 3600;
                       const belowPA = day.weekday && day.seconds > 0 && day.seconds < 7 * 3600;
                       return (
-                        <div key={day.col} className="flex items-center gap-3">
+                        <div key={day.col} className="flex items-center gap-2">
                           <span
                             className={`w-10 shrink-0 text-right text-xs font-medium ${
                               day.weekday
@@ -851,7 +914,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                           >
                             {day.label}
                           </span>
-                          <div className="relative h-7 flex-1 overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800/60">
+                          <div className="relative h-6 flex-1 overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800/60">
                             <div
                               className={`absolute inset-y-0 left-0 rounded-md transition-all duration-500 ${
                                 meetsPA
@@ -876,84 +939,99 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                               {hours > 0.5 ? `${hours.toFixed(1)}h` : ''}
                             </span>
                           </div>
-                          <span className="w-14 shrink-0 text-right font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                          <span className="w-12 shrink-0 text-right font-mono text-[10px] text-zinc-500 sm:w-14 sm:text-xs dark:text-zinc-400">
                             {secondsToDisplay(day.seconds)}
                           </span>
                         </div>
                       );
                     })}
-                    <div className="mt-2 flex items-center gap-4 border-t border-zinc-200 pt-3 text-[10px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-600">
-                      <span className="flex items-center gap-1">
-                        <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" /> ≥ 7h (PA eligible)
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> &lt; 7h (below threshold)
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="inline-block h-2 w-2 rounded-full bg-zinc-400 dark:bg-zinc-600" /> Weekend
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="inline-block h-1.5 w-3 bg-red-400/50" /> 7h line
-                      </span>
+                    </div>
+                    <div className="mt-2 flex shrink-0 flex-col gap-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] text-zinc-500 dark:text-zinc-600 sm:text-[10px]">
+                        <span className="flex items-center gap-1">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 sm:h-2 sm:w-2" /> ≥ 7h (PA)
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 sm:h-2 sm:w-2" /> &lt; 7h
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-600 sm:h-2 sm:w-2" /> Weekend
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="inline-block h-1 w-3 bg-red-400/50 sm:h-1.5" /> 7h
+                        </span>
+                      </div>
+                      {pabMonthRange && (
+                        <div className="flex items-center gap-1 text-[9px] text-indigo-500 dark:text-indigo-400 sm:text-[10px]">
+                          <CalendarDays className="h-3 w-3 shrink-0" />
+                          PAB period: {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          {' – '}
+                          {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          {', '}{pabMonthRange.year}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
               </CardContent>
             </Card>
 
-            {/* Pay Summary Side Card */}
-            <Card className="border-orange-100/80 bg-gradient-to-br from-white to-orange-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5">
-              <CardHeader>
-                <CardTitle className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+            {/* Pay Summary — natural height on mobile; fixed width on lg so chart gets the rest */}
+            <Card
+              size="sm"
+              className="flex w-full min-w-0 shrink-0 flex-col border-orange-100/80 bg-gradient-to-br from-white to-orange-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:h-full lg:w-[min(100%,20rem)] xl:w-[22rem]"
+            >
+              <CardHeader className="shrink-0 pb-2 pt-3">
+                <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
                   Pay Summary
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">Regular Rate</span>
-                    <span className="font-mono text-sm font-medium text-zinc-900 dark:text-white">
+              <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-clip overscroll-contain pr-2 [-webkit-overflow-scrolling:touch]">
+                <div className="min-w-0 space-y-2.5 sm:space-y-3">
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Regular Rate</span>
+                    <span className="max-w-[55%] break-words text-right font-mono text-xs font-medium text-zinc-900 sm:text-sm dark:text-white">
                       {regularRate != null ? `${formatPHP(regularRate)}/hr` : '—'}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">OT Rate</span>
-                    <span className="font-mono text-sm font-medium text-zinc-900 dark:text-white">
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">OT Rate</span>
+                    <span className="max-w-[55%] break-words text-right font-mono text-xs font-medium text-zinc-900 sm:text-sm dark:text-white">
                       {otRate != null ? `${formatPHP(otRate)}/hr` : '—'}
                     </span>
                   </div>
                   <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">Regular Pay</span>
-                    <span className="font-mono text-sm text-zinc-700 dark:text-zinc-300">
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Regular Pay</span>
+                    <span className="max-w-[58%] break-words text-right font-mono text-xs text-zinc-700 sm:text-sm dark:text-zinc-300">
                       {regularPay != null ? formatPHP(regularPay) : '—'}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">OT Pay</span>
-                    <span className="font-mono text-sm text-zinc-700 dark:text-zinc-300">
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">OT Pay</span>
+                    <span className="max-w-[58%] break-words text-right font-mono text-xs text-zinc-700 sm:text-sm dark:text-zinc-300">
                       {otPay != null ? formatPHP(otPay) : '—'}
                     </span>
                   </div>
                   {isPAEligible && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-emerald-600 dark:text-emerald-400">PA Bonus</span>
-                      <span className="font-mono text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                    <div className="flex min-w-0 items-start justify-between gap-2">
+                      <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400">PA Bonus</span>
+                      <span className="max-w-[58%] break-words text-right font-mono text-xs font-medium text-emerald-600 sm:text-sm dark:text-emerald-400">
                         {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP)}
                       </span>
                     </div>
                   )}
                   <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-zinc-900 dark:text-white">Total</span>
-                    <span className="font-mono text-lg font-bold text-emerald-700 dark:text-emerald-400">
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <span className="shrink-0 text-sm font-medium text-zinc-900 dark:text-white">Total</span>
+                    <span className="max-w-[60%] break-words text-right font-mono text-base font-bold leading-tight text-emerald-700 sm:text-lg dark:text-emerald-400">
                       {totalPay != null
                         ? formatPHP(totalPay + (isPAEligible ? PERFECT_ATTENDANCE_BONUS_PHP : 0))
                         : '—'}
                     </span>
                   </div>
                   {totalPay != null && (
-                    <p className="text-right font-mono text-[10px] text-blue-500 dark:text-blue-400">
+                    <p className="break-words text-right font-mono text-[10px] text-blue-500 dark:text-blue-400">
                       ≈ ${((totalPay + (isPAEligible ? PERFECT_ATTENDANCE_BONUS_PHP : 0)) / usdToPhpRate).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
@@ -963,8 +1041,8 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                   )}
                 </div>
 
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-                  <p className="text-[10px] text-zinc-500 dark:text-zinc-500">
+                <div className="shrink-0 rounded-lg border border-zinc-200 bg-zinc-50/80 px-2.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <p className="text-[9px] leading-snug text-zinc-500 dark:text-zinc-500 sm:text-[10px]">
                     Exchange rate: <span className="font-mono font-medium">{formatPHP(usdToPhpRate)}</span> = $1 USD (default from policy: ₱
                     {PHILIPPINE_PESO_OFFICIAL.toLocaleString('en-PH')}
                     {` ÷ 10^${USD_TO_PHP_DECIMAL_SHIFT}`}).
@@ -974,7 +1052,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               </CardContent>
             </Card>
           </div>
-        </>
+        </div>
       )}
     </div>
   );

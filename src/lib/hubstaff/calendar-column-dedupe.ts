@@ -148,3 +148,87 @@ export function groupDateColumnsByCalendarDay(dateCols: string[], allColumns: st
   }
   return Array.from(map.values()).sort((a, b) => colDayOrder(a[0]) - colDayOrder(b[0]));
 }
+
+/* ------------------------------------------------------------------ */
+/*  PAB month-boundary helpers                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Compute the PAB (Perfect Attendance Bonus) date range for a given month.
+ *
+ * The PAB month is defined by **complete work weeks** (Mon–Fri):
+ *  - **Start**: first Monday on or after the 1st of the month.
+ *  - **End**:   Friday of the last week whose Monday falls within the month.
+ *
+ * Example (March 2026, where March 1 = Sunday):
+ *   Start = March 2 (Monday)
+ *   Last Monday in March = March 30 → End = April 3 (Friday)
+ */
+export function getPabMonthRange(year: number, month: number): { start: Date; end: Date } {
+  // First Monday on or after the 1st
+  const first = new Date(year, month, 1);
+  const firstDow = first.getDay(); // 0=Sun … 6=Sat
+  const daysToMon = firstDow <= 1 ? (1 - firstDow) : (8 - firstDow);
+  const start = new Date(year, month, 1 + daysToMon);
+
+  // Last Monday that still falls within the calendar month
+  const lastDay = new Date(year, month + 1, 0); // last day of month
+  const lastDow = lastDay.getDay();
+  const daysBack = lastDow === 0 ? 6 : lastDow - 1; // distance back to Monday
+  const lastMonday = new Date(year, month, lastDay.getDate() - daysBack);
+  // Friday of that week (may spill into the next calendar month)
+  const end = new Date(lastMonday.getFullYear(), lastMonday.getMonth(), lastMonday.getDate() + 4);
+
+  return { start, end };
+}
+
+/**
+ * Infer the target PAB month from column headers by picking the month that
+ * appears most frequently among parseable date columns.
+ */
+export function inferPabMonthFromColumns(cols: string[]): { year: number; month: number } | null {
+  const isoYearHint = inferIsoYearFromColumns(cols);
+  const counts = new Map<string, { year: number; month: number; count: number }>();
+
+  for (const col of cols) {
+    const d = parseColDateForDedupe(col, isoYearHint);
+    if (!d) continue;
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    const existing = counts.get(key);
+    if (existing) existing.count++;
+    else counts.set(key, { year: d.getFullYear(), month: d.getMonth(), count: 1 });
+  }
+
+  let best: { year: number; month: number; count: number } | null = null;
+  for (const v of counts.values()) {
+    if (!best || v.count > best.count) best = v;
+  }
+  return best ? { year: best.year, month: best.month } : null;
+}
+
+/**
+ * Filter column groups to only those whose calendar date falls within
+ * the PAB month range [start, end].
+ */
+export function filterColumnGroupsByPabRange(
+  groups: string[][],
+  allCols: string[],
+  pabStart: Date,
+  pabEnd: Date,
+): string[][] {
+  const isoYearHint = inferIsoYearFromColumns(allCols);
+  const startTime = pabStart.getTime();
+  const endTime = pabEnd.getTime();
+
+  return groups.filter(group => {
+    for (const col of group) {
+      const d = parseColDateForDedupe(col, isoYearHint);
+      if (d) {
+        const t = d.getTime();
+        return t >= startTime && t <= endTime;
+      }
+    }
+    // No parseable date — keep the group (best-effort fallback)
+    return true;
+  });
+}
