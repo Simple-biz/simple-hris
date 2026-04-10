@@ -36,6 +36,7 @@ import {
   getPabMonthRange,
   inferPabMonthFromColumns,
   filterColumnGroupsByPabRange,
+  parseColDate,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 
 /* ------------------------------------------------------------------ */
@@ -62,6 +63,11 @@ function secondsToDisplay(s: number): string {
 
 function formatPHP(n: number): string {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** Full calendar date for PAB range labels (locale: en-US). */
+function formatPabCalendarDate(d: Date): string {
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /** Matches PayrollWizard COMMON_BONUSES / BUSINESS_LOGIC.md */
@@ -496,7 +502,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     if (!pabRow) return [];
     const dateCols = pabCols.filter(isDateCol);
     let groups = groupDateColumnsByCalendarDay(dateCols, pabCols);
-    // Filter to PAB month range (complete weeks only)
+    // Filter to PAB month boundaries (Mon–Fri days in range)
     const pabMonth = inferPabMonthFromColumns(pabCols);
     if (pabMonth) {
       const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
@@ -527,7 +533,13 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         return null;
       })
       .filter((x): x is DayHours => x !== null)
-      .sort((a, b) => a.order - b.order);
+      .sort((a, b) => {
+        // Sort chronologically by parsed date; fall back to day-of-week order
+        const da = parseColDate(a.col);
+        const db = parseColDate(b.col);
+        if (da && db) return da.getTime() - db.getTime();
+        return a.order - b.order;
+      });
   }, [pabMergedRow, pabMergedColumns, row, columns]);
 
   /** Inferred PAB month + computed date range for display. */
@@ -552,7 +564,9 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     return wh.every((d) => d.seconds >= 7 * 3600) ? 'eligible' : 'not_eligible';
   }, [row, pabMergedRow, pabDailyHours]);
 
-  const maxBarSeconds = Math.max(...dailyHours.map((d) => d.seconds), 8 * 3600);
+  /** Use PAB daily hours for the chart when available so the bars match the PAB evaluation. */
+  const chartDailyHours = pabDailyHours.length > 0 ? pabDailyHours : dailyHours;
+  const maxBarSeconds = Math.max(...chartDailyHours.map((d) => d.seconds), 8 * 3600);
 
   if (loading) {
     return (
@@ -573,24 +587,41 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             My Dashboard
           </h2>
           <p className="text-xs text-zinc-600 sm:text-sm dark:text-zinc-500">
-            Weekly hours, pay breakdown, and attendance
+            Hours, pay, and monthly Perfect Attendance (PAB). Pay totals follow the Hubstaff file you select; PAB uses all
+            uploads for the month.
           </p>
+          {pabMonthRange && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-snug text-indigo-800 dark:text-indigo-200">
+              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-indigo-500 dark:text-indigo-400" />
+              <span>
+                <span className="font-semibold">PAB period starts</span>{' '}
+                {formatPabCalendarDate(pabMonthRange.start)}
+                <span className="text-zinc-400 dark:text-zinc-500"> · </span>
+                <span className="font-medium">ends</span> {formatPabCalendarDate(pabMonthRange.end)}
+              </span>
+            </p>
+          )}
           {/* Source file selector */}
           {sourceFiles.length > 0 && (
-            <div className="mt-2 flex items-center gap-2">
-              <FileText className="h-3.5 w-3.5 shrink-0 text-orange-500" />
-              <select
-                value={selectedFile ?? ''}
-                onChange={(e) => setSelectedFile(e.target.value || null)}
-                className="h-7 rounded-md border border-zinc-200 bg-white px-2 pr-6 font-mono text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-              >
-                {[...sourceFiles].reverse().map((file, i) => (
-                  <option key={file} value={file}>
-                    {file}{i === 0 ? ' (latest)' : ''}
-                  </option>
-                ))}
-              </select>
-              {fileLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />}
+            <div className="mt-2 flex max-w-xl flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <FileText className="h-3.5 w-3.5 shrink-0 text-orange-500" />
+                <select
+                  value={selectedFile ?? ''}
+                  onChange={(e) => setSelectedFile(e.target.value || null)}
+                  className="h-7 rounded-md border border-zinc-200 bg-white px-2 pr-6 font-mono text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                >
+                  {[...sourceFiles].reverse().map((file, i) => (
+                    <option key={file} value={file}>
+                      {file}{i === 0 ? ' (latest)' : ''}
+                    </option>
+                  ))}
+                </select>
+                {fileLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />}
+              </div>
+              <p className="pl-5 text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">
+                Monthly PAB merges every upload—this file only drives the hours/pay preview below.
+              </p>
             </div>
           )}
         </div>
@@ -599,20 +630,20 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             <Badge
               variant="outline"
               className="gap-1 border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-emerald-700 dark:border-emerald-500/30 dark:text-emerald-400"
-              title={pabMonthRange ? `${pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : undefined}
+              title={pabMonthRange ? `${formatPabCalendarDate(pabMonthRange.start)} – ${formatPabCalendarDate(pabMonthRange.end)}` : undefined}
             >
               <Award className="h-3 w-3" />
-              PA eligible{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
+              PAB eligible{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
             </Badge>
           )}
           {row && perfectAttendanceBonusStatus === 'not_eligible' && (
             <Badge
               variant="outline"
               className="gap-1 border-amber-500/30 bg-amber-500/10 px-3 py-1 text-amber-800 dark:border-amber-500/30 dark:text-amber-400"
-              title={pabMonthRange ? `${pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : undefined}
+              title={pabMonthRange ? `${formatPabCalendarDate(pabMonthRange.start)} – ${formatPabCalendarDate(pabMonthRange.end)}` : undefined}
             >
               <XCircle className="h-3 w-3" />
-              PA not met{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
+              PAB not met{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
             </Badge>
           )}
           {row && perfectAttendanceBonusStatus === 'unknown' && (
@@ -621,7 +652,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               className="gap-1 border-zinc-300 bg-zinc-100/80 px-3 py-1 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-400"
             >
               <Info className="h-3 w-3" />
-              PA can&apos;t be assessed
+              PAB can&apos;t be assessed
             </Badge>
           )}
           {row && (
@@ -637,9 +668,12 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           <Badge
             variant="outline"
             className="border-orange-500/20 bg-gradient-to-r from-orange-500/10 to-blue-500/10 px-3 py-1 text-orange-700 dark:border-orange-500/30 dark:text-orange-400"
+            title={pabMonthRange ? `PAB: ${formatPabCalendarDate(pabMonthRange.start)} – ${formatPabCalendarDate(pabMonthRange.end)}` : undefined}
           >
             <CalendarDays className="mr-1 h-3 w-3" />
-            This Week
+            {pabMonthRange && pabDailyHours.length > 0
+              ? `PAB · starts ${formatPabCalendarDate(pabMonthRange.start)}`
+              : 'Monthly PAB'}
           </Badge>
         </div>
       </div>
@@ -659,7 +693,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             <AlertCircle className="h-5 w-5 text-amber-500" />
             <p className="text-sm text-amber-800 dark:text-amber-300">
               No hours data found for <span className="font-mono font-medium">{email}</span>. Your hours will appear
-              here once your manager uploads the weekly Hubstaff report. Use the same work email as in Hubstaff, or
+              here once your manager uploads Hubstaff data. Use the same work email as in Hubstaff, or
               ensure your email is listed under Work Email or Personal Email in hourly rates.
             </p>
           </CardContent>
@@ -672,10 +706,13 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           >
             <CardHeader className="pb-2 pt-3">
               <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
-                Payroll bonus indicators
+                Monthly PAB &amp; other bonuses
               </CardTitle>
               <p className="text-[11px] font-normal leading-snug text-zinc-500 dark:text-zinc-400">
-                Estimates from this week&apos;s Hubstaff data. Final bonuses are confirmed when payroll runs.
+                PAB uses every Mon–Fri in the PAB period below (merged Hubstaff uploads); each day must be ≥ 7 hours. If
+                the month doesn&apos;t start on a Monday, the first week is skipped and counting starts on the{' '}
+                <span className="font-medium text-zinc-600 dark:text-zinc-300">second Monday</span> (e.g. March 2026:
+                Mar 9–Apr 3). Figures here are estimates until payroll confirms them.
               </p>
             </CardHeader>
             <CardContent className="space-y-2 pt-0">
@@ -700,24 +737,26 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                   </div>
                   <div className="min-w-0 space-y-1">
                     <p className="text-xs font-medium text-zinc-900 dark:text-white">
-                      Perfect Attendance Bonus · {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}
+                      Monthly period Perfect Attendance Bonus ·{' '}
+                      {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}
                     </p>
                     {pabMonthRange && (
-                      <p className="flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400">
-                        <CalendarDays className="h-3 w-3 shrink-0" />
+                      <p className="flex items-start gap-1 text-[10px] leading-relaxed text-indigo-600 dark:text-indigo-400">
+                        <CalendarDays className="mt-0.5 h-3 w-3 shrink-0" />
                         <span>
                           <span className="font-semibold">{pabMonthRange.monthName} {pabMonthRange.year}</span>
                           {' · '}
-                          {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          {' – '}
-                          {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          {' · '}{pabWeekdayHours.length} workday{pabWeekdayHours.length !== 1 ? 's' : ''}
+                          <span className="font-medium">Start</span> {formatPabCalendarDate(pabMonthRange.start)}
+                          {' · '}
+                          <span className="font-medium">End</span> {formatPabCalendarDate(pabMonthRange.end)}
+                          {' · '}
+                          {pabWeekdayHours.length} Mon–Fri day{pabWeekdayHours.length !== 1 ? 's' : ''} in this PAB month
                         </span>
                       </p>
                     )}
                     {perfectAttendanceBonusStatus === 'eligible' && (
                       <p className="text-xs text-emerald-700 dark:text-emerald-400">
-                        Eligible: every Mon–Fri in the PAB period shows at least 7 hours logged.
+                        Eligible: each Mon–Fri in the PAB date range above is logged at 7 hours or more.
                       </p>
                     )}
                     {perfectAttendanceBonusStatus === 'not_eligible' && (
@@ -727,8 +766,8 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                     )}
                     {perfectAttendanceBonusStatus === 'unknown' && (
                       <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                        Can&apos;t evaluate: need Mon–Fri daily hours in the uploaded report. If this persists, ask your
-                        team to re-upload the Hubstaff CSV.
+                        Can&apos;t evaluate monthly PAB: need Mon–Fri daily hours in the merged Hubstaff uploads. If this
+                        persists, ask your team to re-upload the CSVs.
                       </p>
                     )}
                   </div>
@@ -846,7 +885,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                     ? otRate != null
                       ? `${formatPHP(otRate)}/hr × ${otHours.toFixed(1)}h`
                       : 'OT rate not set'
-                    : 'No overtime this week'}
+                    : 'No overtime in this file'}
                 </p>
               </CardContent>
             </Card>
@@ -885,36 +924,45 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               className="flex min-h-[12rem] flex-1 flex-col border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:min-h-0"
             >
               <CardHeader className="shrink-0 pb-2 pt-3">
-                <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                <CardTitle className="flex items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
                   Daily Hours Breakdown
+                  {pabMonthRange && pabDailyHours.length > 0 && (
+                    <span className="font-normal text-indigo-500 dark:text-indigo-400">
+                      · Start {formatPabCalendarDate(pabMonthRange.start)} – End {formatPabCalendarDate(pabMonthRange.end)}
+                    </span>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
-                {dailyHours.length === 0 ? (
+                {chartDailyHours.length === 0 ? (
                   <div className="flex flex-1 items-center gap-2 py-6 text-sm text-zinc-500">
                     <AlertCircle className="h-4 w-4 text-amber-500" />
                     Daily breakdown not available
                   </div>
                 ) : (
                   <div className="flex min-h-0 flex-1 flex-col gap-0">
-                    <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-clip pr-2">
-                    {dailyHours.map((day) => {
+                    <div className={`min-h-0 flex-1 overflow-y-auto overflow-x-clip pr-2 ${chartDailyHours.length > 7 ? 'space-y-1' : 'space-y-1.5'}`}>
+                    {chartDailyHours.map((day) => {
                       const hours = day.seconds / 3600;
                       const pct = maxBarSeconds > 0 ? (day.seconds / maxBarSeconds) * 100 : 0;
                       const meetsPA = day.weekday && day.seconds >= 7 * 3600;
                       const belowPA = day.weekday && day.seconds > 0 && day.seconds < 7 * 3600;
+                      const colDate = parseColDate(day.col);
+                      const dateStr = colDate ? `${colDate.getMonth() + 1}/${colDate.getDate()}` : '';
                       return (
                         <div key={day.col} className="flex items-center gap-2">
                           <span
-                            className={`w-10 shrink-0 text-right text-xs font-medium ${
+                            className={`shrink-0 text-right text-xs font-medium ${
+                              dateStr ? 'w-16' : 'w-10'
+                            } ${
                               day.weekday
                                 ? 'text-zinc-700 dark:text-zinc-300'
                                 : 'text-zinc-400 dark:text-zinc-600'
                             }`}
                           >
-                            {day.label}
+                            {day.label}{dateStr ? <span className="ml-1 font-normal text-zinc-400 dark:text-zinc-500">{dateStr}</span> : ''}
                           </span>
-                          <div className="relative h-6 flex-1 overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800/60">
+                          <div className={`relative flex-1 overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800/60 ${chartDailyHours.length > 7 ? 'h-5' : 'h-6'}`}>
                             <div
                               className={`absolute inset-y-0 left-0 rounded-md transition-all duration-500 ${
                                 meetsPA
@@ -932,7 +980,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                               <div
                                 className="absolute inset-y-0 w-px bg-red-400/50 dark:bg-red-500/50"
                                 style={{ left: `${(7 * 3600 / maxBarSeconds) * 100}%` }}
-                                title="7h PA threshold"
+                                title="7h PAB threshold"
                               />
                             )}
                             <span className="absolute inset-y-0 left-2 flex items-center text-[11px] font-medium text-white drop-shadow-sm">
@@ -949,7 +997,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                     <div className="mt-2 flex shrink-0 flex-col gap-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-800">
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] text-zinc-500 dark:text-zinc-600 sm:text-[10px]">
                         <span className="flex items-center gap-1">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 sm:h-2 sm:w-2" /> ≥ 7h (PA)
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 sm:h-2 sm:w-2" /> ≥ 7h (PAB)
                         </span>
                         <span className="flex items-center gap-1">
                           <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 sm:h-2 sm:w-2" /> &lt; 7h
@@ -962,12 +1010,13 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                         </span>
                       </div>
                       {pabMonthRange && (
-                        <div className="flex items-center gap-1 text-[9px] text-indigo-500 dark:text-indigo-400 sm:text-[10px]">
+                        <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[9px] text-indigo-500 dark:text-indigo-400 sm:text-[10px]">
                           <CalendarDays className="h-3 w-3 shrink-0" />
-                          PAB period: {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          {' – '}
-                          {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          {', '}{pabMonthRange.year}
+                          <span>
+                            PAB: <span className="font-medium">Start</span> {formatPabCalendarDate(pabMonthRange.start)}
+                            {' · '}
+                            <span className="font-medium">End</span> {formatPabCalendarDate(pabMonthRange.end)}
+                          </span>
                         </div>
                       )}
                     </div>
@@ -1015,7 +1064,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                   </div>
                   {isPAEligible && (
                     <div className="flex min-w-0 items-start justify-between gap-2">
-                      <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400">PA Bonus</span>
+                      <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400">PAB</span>
                       <span className="max-w-[58%] break-words text-right font-mono text-xs font-medium text-emerald-600 sm:text-sm dark:text-emerald-400">
                         {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP)}
                       </span>

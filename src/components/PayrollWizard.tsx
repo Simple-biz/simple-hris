@@ -39,6 +39,7 @@ import {
   getPabMonthRange,
   inferPabMonthFromColumns,
   filterColumnGroupsByPabRange,
+  countMonFriInclusiveInRange,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { parseCsv } from '@/lib/csv/parse-csv';
@@ -47,6 +48,7 @@ import {
   type EmployeeHourlyRateRow,
 } from '@/lib/supabase/employee-hourly-rates';
 import { normEmail } from '@/lib/email/norm-email';
+import { sortHubstaffColumnsForDisplay } from '@/lib/supabase/hubstaff-hours-db';
 import { comparePayrollToMaster } from '@/lib/payroll/compare-to-master';
 import {
   phpHourlyPayFromSeconds,
@@ -806,6 +808,8 @@ export default function PayrollWizard() {
   /** All rows across ALL uploaded CSVs — used for full-month PAB eligibility check. */
   const [pabAllRows, setPabAllRows] = useState<Record<string, unknown>[]>([]);
   const [pabAllColumns, setPabAllColumns] = useState<string[]>([]);
+  /** False until the PAB merge effect finishes (avoids single-file Hubstaff fallback during fetch). */
+  const [pabMergeLoaded, setPabMergeLoaded] = useState(false);
   const [hubstaffPreviewLoading, setHubstaffPreviewLoading] = useState(false);
   const [hubstaffPreviewError, setHubstaffPreviewError] = useState<string | null>(null);
   const [weeklyUploadLoading, setWeeklyUploadLoading] = useState(false);
@@ -1021,50 +1025,95 @@ export default function PayrollWizard() {
     }
   }, [calcSourceFile, loadCalcSourceFileData]);
 
-  // Fetch ALL rows across ALL uploaded CSVs for full-month PAB eligibility.
-  // Each source file has different date columns; we merge them per-employee
-  // so every weekday across the month can be checked.
+  // Fetch ALL rows for full-month PAB eligibility (Additions / Step 3).
+  // - When `source_file` is tracked: merge every uploaded file (each has different date columns).
+  // - When there is no file list (legacy / replace-only): merge ALL hubstaff_hours rows by email
+  //   so PAB still uses the whole month, not only the selected calc file.
   useEffect(() => {
-    if (uploadedSourceFiles.length === 0) return;
+    if (sourceFilesLoading) return;
+    setPabMergeLoaded(false);
     let cancelled = false;
     (async () => {
       try {
+        const mergeRowsInto = (
+          rows: Record<string, unknown>[],
+          rowsByEmail: Map<string, Record<string, unknown>>,
+          allCols: Set<string>,
+        ) => {
+          for (const row of rows) {
+            for (const k of Object.keys(row)) allCols.add(k);
+            const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
+            const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
+            if (!email) continue;
+            const existing = rowsByEmail.get(email) ?? {};
+            rowsByEmail.set(email, { ...existing, ...row });
+          }
+        };
+
         const allCols = new Set<string>();
         const rowsByEmail = new Map<string, Record<string, unknown>>();
 
-        for (const file of uploadedSourceFiles) {
-          const res = await fetch(
-            `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
-            { cache: 'no-store' },
-          );
+        if (uploadedSourceFiles.length > 0) {
+          for (const file of uploadedSourceFiles) {
+            const res = await fetch(
+              `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
+              { cache: 'no-store' },
+            );
+            const json = (await res.json()) as {
+              columns?: string[] | null;
+              rows?: Record<string, unknown>[] | null;
+            };
+            if (cancelled) return;
+            if (!json.columns || !json.rows) continue;
+            for (const col of json.columns) allCols.add(col);
+            mergeRowsInto(json.rows, rowsByEmail, allCols);
+          }
+        } else {
+          const res = await fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' });
           const json = (await res.json()) as {
             columns?: string[] | null;
             rows?: Record<string, unknown>[] | null;
           };
           if (cancelled) return;
-          if (!json.columns || !json.rows) continue;
-
-          for (const col of json.columns) allCols.add(col);
-
-          for (const row of json.rows) {
-            const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
-            const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
-            if (!email) continue;
-            const existing = rowsByEmail.get(email) ?? {};
-            // Merge: existing columns stay, new date columns from this file are added
-            rowsByEmail.set(email, { ...existing, ...row });
+          if (json.rows?.length) {
+            if (json.columns?.length) {
+              for (const col of json.columns) allCols.add(col);
+            }
+            mergeRowsInto(json.rows, rowsByEmail, allCols);
           }
         }
 
         if (cancelled) return;
-        setPabAllColumns([...allCols]);
+        setPabAllColumns(sortHubstaffColumnsForDisplay([...allCols]));
         setPabAllRows([...rowsByEmail.values()]);
       } catch (e) {
         console.warn('[PAB all-files fetch]', e);
+      } finally {
+        if (!cancelled) setPabMergeLoaded(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [uploadedSourceFiles]);
+  }, [uploadedSourceFiles, sourceFilesLoading]);
+
+  /**
+   * Columns/rows used only for PAB on Additions. Does **not** fall back to the Step 2 calc-file
+   * preview while merged data is loading, or when uploads are tracked by `source_file` (merge required).
+   */
+  const hubstaffColsForPab = useMemo(() => {
+    if (sourceFilesLoading) return null;
+    if (pabAllColumns.length > 0) return pabAllColumns;
+    if (!pabMergeLoaded) return null;
+    if (uploadedSourceFiles.length > 0) return null;
+    return hubstaffDisplayColumns ?? null;
+  }, [sourceFilesLoading, pabAllColumns, pabMergeLoaded, uploadedSourceFiles, hubstaffDisplayColumns]);
+
+  const hubstaffRowsForPab = useMemo(() => {
+    if (sourceFilesLoading) return null;
+    if (pabAllRows.length > 0) return pabAllRows;
+    if (!pabMergeLoaded) return null;
+    if (uploadedSourceFiles.length > 0) return null;
+    return hubstaffDisplayRows ?? null;
+  }, [sourceFilesLoading, pabAllRows, pabMergeLoaded, uploadedSourceFiles, hubstaffDisplayRows]);
 
   const ratesByEmail = useMemo(
     () => indexHourlyRatesByEmail(hourlyRateRows),
@@ -1073,31 +1122,44 @@ export default function PayrollWizard() {
 
   /** Inferred PAB month + computed date range for display. */
   const pabMonthRange = useMemo(() => {
-    const cols = pabAllColumns.length ? pabAllColumns : hubstaffDisplayColumns;
+    const cols = hubstaffColsForPab;
     if (!cols?.length) return null;
     const pabMonth = inferPabMonthFromColumns(cols);
     if (!pabMonth) return null;
     const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
-  }, [pabAllColumns, hubstaffDisplayColumns]);
+  }, [hubstaffColsForPab]);
 
   /** One group per calendar weekday — dedupes ISO + Hubstaff labels for the same day across ALL CSVs, filtered to PAB month boundaries. */
   const weekdayColumnGroups = useMemo(() => {
-    const cols = pabAllColumns.length ? pabAllColumns : hubstaffDisplayColumns;
+    const cols = hubstaffColsForPab;
     if (!cols?.length) return [];
     const groups = groupWeekdayColumnsByDate(cols);
     if (!pabMonthRange) return groups;
     return filterColumnGroupsByPabRange(groups, cols, pabMonthRange.start, pabMonthRange.end);
-  }, [pabAllColumns, hubstaffDisplayColumns, pabMonthRange]);
+  }, [hubstaffColsForPab, pabMonthRange]);
+
+  /** Mon–Fri days in the PAB window; column groups must match this count for monthly PAB. */
+  const pabExpectedMonFriCount = useMemo(() => {
+    if (!pabMonthRange) return 0;
+    return countMonFriInclusiveInRange(pabMonthRange.start, pabMonthRange.end);
+  }, [pabMonthRange]);
+
+  const pabMonthColumnCoverageComplete = useMemo(
+    () =>
+      pabExpectedMonFriCount > 0 &&
+      weekdayColumnGroups.length === pabExpectedMonFriCount,
+    [pabExpectedMonFriCount, weekdayColumnGroups.length],
+  );
 
   /**
    * True when the Hubstaff data has weekday columns but every value is null/empty.
-   * Uses the full-month merged rows (pabAllRows) when available.
+   * Uses merged PAB rows/cols when available.
    */
   const dailyDataMissing = useMemo<boolean>(() => {
-    const rows = pabAllRows.length > 0 ? pabAllRows : hubstaffDisplayRows;
-    const cols = pabAllColumns.length > 0 ? pabAllColumns : hubstaffDisplayColumns;
+    const rows = hubstaffRowsForPab;
+    const cols = hubstaffColsForPab;
     if (!cols || !rows || rows.length === 0) return false;
     if (weekdayColumnGroups.length === 0) return false;
     return rows.every(row =>
@@ -1108,16 +1170,16 @@ export default function PayrollWizard() {
         }),
       ),
     );
-  }, [pabAllRows, pabAllColumns, hubstaffDisplayColumns, hubstaffDisplayRows, weekdayColumnGroups]);
+  }, [hubstaffRowsForPab, hubstaffColsForPab, weekdayColumnGroups]);
 
   /**
-   * Computes which employees qualify for Perfect Attendance by scanning
-   * daily columns across ALL uploaded CSVs (full month). An employee qualifies
-   * only if EVERY Mon–Fri column across all weeks shows ≥ 7 hours.
+   * Computes which employees qualify for Perfect Attendance. Requires a full month of daily
+   * columns (merged uploads) covering every Mon–Fri in the PAB range, each ≥ 7 hours.
    */
   const perfectAttendanceEligible = useMemo<Set<string>>(() => {
     if (dailyDataMissing) return new Set();
-    const rows = pabAllRows.length > 0 ? pabAllRows : hubstaffDisplayRows;
+    if (!pabMonthRange || !pabMonthColumnCoverageComplete) return new Set();
+    const rows = hubstaffRowsForPab;
     if (!rows || rows.length === 0) return new Set();
     if (weekdayColumnGroups.length === 0) return new Set();
 
@@ -1137,17 +1199,15 @@ export default function PayrollWizard() {
       if (perfect) eligible.add(email);
     }
     return eligible;
-  }, [pabAllRows, hubstaffDisplayRows, dailyDataMissing, weekdayColumnGroups]);
+  }, [hubstaffRowsForPab, dailyDataMissing, pabMonthRange, pabMonthColumnCoverageComplete, weekdayColumnGroups]);
 
   /**
-   * Per-employee weekday breakdown across the full month: maps normalized email
-   * → array of { col, seconds, passes } for each Mon–Fri column across all CSVs.
-   * Used to render per-day indicators in the Perfect Attendance cell.
+   * Per-employee weekday breakdown for the PAB period (merged month). Used in the PA cell.
    */
   const employeeWeekdayHours = useMemo<
     Map<string, { col: string; seconds: number; passes: boolean }[]>
   >(() => {
-    const rows = pabAllRows.length > 0 ? pabAllRows : hubstaffDisplayRows;
+    const rows = hubstaffRowsForPab;
     if (!rows || rows.length === 0) return new Map();
     if (weekdayColumnGroups.length === 0) return new Map();
 
@@ -1166,7 +1226,7 @@ export default function PayrollWizard() {
       );
     }
     return map;
-  }, [pabAllRows, hubstaffDisplayRows, weekdayColumnGroups]);
+  }, [hubstaffRowsForPab, weekdayColumnGroups]);
 
   /**
    * Auto-apply / remove perfect_attendance toggle whenever eligibility is
@@ -2943,7 +3003,21 @@ export default function PayrollWizard() {
                       {' '}({pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                       {' – '}
                       {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})
-                      {' · '}{weekdayColumnGroups.length} workday{weekdayColumnGroups.length !== 1 ? 's' : ''} checked
+                      {' · '}
+                      {weekdayColumnGroups.length}/{pabExpectedMonFriCount} Mon–Fri day
+                      {pabExpectedMonFriCount !== 1 ? 's' : ''} in range
+                      {pabMonthColumnCoverageComplete ? ' (complete)' : ' (need full month)'}
+                    </span>
+                  </div>
+                )}
+                {pabMonthRange && hubstaffColsForPab && !pabMonthColumnCoverageComplete && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-400">
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      <strong>Monthly PAB needs all workdays in range.</strong> Hubstaff has{' '}
+                      {weekdayColumnGroups.length} of {pabExpectedMonFriCount} Mon–Fri columns merged. Append or re-upload
+                      weekly exports in <strong>Step 1</strong> until every weekday in the PAB period is present—PAB will not
+                      use the single &quot;calc file&quot; week alone.
                     </span>
                   </div>
                 )}
@@ -3085,7 +3159,8 @@ export default function PayrollWizard() {
                                 <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
                                   <span className={cn('font-bold', eligibleCount > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-500')}>
                                     {eligibleCount}/{deptEmployees.length}
-                                  </span>{' '}eligible (7 h+ every Mon–Fri)
+                                  </span>{' '}
+                                  eligible (full PAB month · 7h+ each Mon–Fri in range)
                                 </span>
                               </div>
                               {pabMonthRange && (
@@ -3097,7 +3172,8 @@ export default function PayrollWizard() {
                                     {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                                     {' – '}
                                     {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                    {' · '}{weekdayColumnGroups.length} workday{weekdayColumnGroups.length !== 1 ? 's' : ''}
+                                    {' · '}
+                                    {weekdayColumnGroups.length}/{pabExpectedMonFriCount} Mon–Fri
                                   </span>
                                 </div>
                               )}
@@ -4229,7 +4305,10 @@ export default function PayrollWizard() {
                   { label: 'Hubstaff Hours Uploaded', pass: hubstaffData.length > 0 },
                   { label: 'Initial Calculations Complete', pass: calcResults.some(r => r.initialPay != null) },
                   { label: 'All Employees Dept-Assigned', pass: unassignedCount === 0 },
-                  { label: 'Perfect Attendance Evaluated', pass: perfectAttendanceEligible.size > 0 || (hubstaffDisplayColumns?.some(colIsWeekday) === false) },
+                  {
+                    label: 'Perfect Attendance Evaluated',
+                    pass: !pabMonthRange || pabMonthColumnCoverageComplete,
+                  },
                   { label: 'Cycle Separation (Standard vs Hogan)', pass: true },
                 ].map((check, i) => (
                   <div

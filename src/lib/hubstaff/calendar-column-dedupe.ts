@@ -154,22 +154,38 @@ export function groupDateColumnsByCalendarDay(dateCols: string[], allColumns: st
 /* ------------------------------------------------------------------ */
 
 /**
- * Compute the PAB (Perfect Attendance Bonus) date range for a given month.
+ * Compute the PAB (Perfect Attendance Bonus) date range for a given calendar month.
  *
- * The PAB month is defined by **complete work weeks** (Mon–Fri):
- *  - **Start**: first Monday on or after the 1st of the month.
- *  - **End**:   Friday of the last week whose Monday falls within the month.
+ * Only **Monday–Friday** dates in `[start, end]` are evaluated (weekends excluded). Eligibility
+ * requires each such weekday to have ≥ 7 hours logged.
  *
- * Example (March 2026, where March 1 = Sunday):
- *   Start = March 2 (Monday)
- *   Last Monday in March = March 30 → End = April 3 (Friday)
+ *  - **Start**
+ *      - If the 1st is a **Monday**, PAB starts on that day.
+ *      - Otherwise the first calendar week is treated as incomplete: PAB starts on the **second**
+ *        Monday of the month (first Monday on or after the 1st, plus 7 days).
+ *  - **End**: Friday of the week that contains the **last Monday** still inside the calendar month
+ *    (may fall in the following calendar month).
+ *
+ * Example (March 2026, March 1 = Sunday):
+ *   Start = March 9 (second Monday) — not March 2, because the month did not begin on Monday.
+ *   Last Monday in March = March 30 → End = April 3 (Friday).
  */
 export function getPabMonthRange(year: number, month: number): { start: Date; end: Date } {
-  // First Monday on or after the 1st
   const first = new Date(year, month, 1);
   const firstDow = first.getDay(); // 0=Sun … 6=Sat
-  const daysToMon = firstDow <= 1 ? (1 - firstDow) : (8 - firstDow);
-  const start = new Date(year, month, 1 + daysToMon);
+
+  let start: Date;
+  if (firstDow === 1) {
+    start = new Date(year, month, 1);
+  } else {
+    const daysToMon = firstDow <= 1 ? 1 - firstDow : 8 - firstDow;
+    const firstMonday = new Date(year, month, 1 + daysToMon);
+    start = new Date(
+      firstMonday.getFullYear(),
+      firstMonday.getMonth(),
+      firstMonday.getDate() + 7,
+    );
+  }
 
   // Last Monday that still falls within the calendar month
   const lastDay = new Date(year, month + 1, 0); // last day of month
@@ -180,6 +196,19 @@ export function getPabMonthRange(year: number, month: number): { start: Date; en
   const end = new Date(lastMonday.getFullYear(), lastMonday.getMonth(), lastMonday.getDate() + 4);
 
   return { start, end };
+}
+
+/** Count Monday–Friday calendar days inclusive between two dates (local calendar). */
+export function countMonFriInclusiveInRange(start: Date, end: Date): number {
+  const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const endT = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+  let n = 0;
+  while (cur.getTime() <= endT) {
+    const w = cur.getDay();
+    if (w >= 1 && w <= 5) n++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return n;
 }
 
 /**

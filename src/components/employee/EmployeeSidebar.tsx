@@ -11,21 +11,26 @@ import {
   LogOut,
   ChevronRight,
   User,
+  UserCircle,
   Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import EmployeeAvatar from './EmployeeAvatar';
 
 interface EmployeeSidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   employeeName?: string;
   department?: string;
+  /** Used for Gravatar (same email as ?email= on /employee). */
+  employeeEmail?: string | null;
 }
 
 const navItems = [
   { id: 'dashboard', label: 'My Dashboard', icon: LayoutDashboard },
+  { id: 'profile', label: 'Profile', icon: UserCircle },
   { id: 'hours', label: 'My Hours', icon: Clock },
   { id: 'disputes', label: 'My Disputes', icon: FileText },
   { id: 'settings', label: 'Settings', icon: Settings },
@@ -36,6 +41,7 @@ export default function EmployeeSidebar({
   setActiveTab,
   employeeName = 'Employee',
   department = 'Team Member',
+  employeeEmail = null,
 }: EmployeeSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
@@ -115,9 +121,7 @@ export default function EmployeeSidebar({
           </div>
         </button>
         <div className="mb-4 flex items-center gap-3 px-3 py-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-blue-500 text-xs font-bold text-white shadow-sm">
-            {initials}
-          </div>
+          <EmployeeAvatar email={employeeEmail} initials={initials} className="h-8 w-8 text-xs" pixelSize={64} />
           <div className="flex min-w-0 flex-col overflow-hidden">
             <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">
               {employeeName}

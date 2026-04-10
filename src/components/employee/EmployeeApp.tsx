@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTheme } from 'next-themes';
 import EmployeeSidebar from './EmployeeSidebar';
 import EmployeeDashboard from './EmployeeDashboard';
+import EmployeeProfile from './EmployeeProfile';
 import EmployeeSettings from './EmployeeSettings';
 import { Toaster } from '@/components/ui/sonner';
 import { AlertCircle, FileText, Clock, Settings } from 'lucide-react';
@@ -52,6 +53,8 @@ export default function EmployeeApp() {
     switch (activeTab) {
       case 'dashboard':
         return <EmployeeDashboard employeeEmail={employeeEmail} />;
+      case 'profile':
+        return <EmployeeProfile employeeEmail={employeeEmail} />;
       case 'hours':
         return (
           <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-8 text-center dark:bg-none dark:bg-[#0d1117]">
@@ -90,6 +93,7 @@ export default function EmployeeApp() {
         setActiveTab={setActiveTab}
         employeeName={employeeEmail?.split('@')[0]?.replace(/\./g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) ?? 'Employee'}
         department="Team Member"
+        employeeEmail={employeeEmail}
       />
       <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         {renderContent()}
