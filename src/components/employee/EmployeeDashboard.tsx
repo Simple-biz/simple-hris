@@ -13,6 +13,7 @@ import {
   XCircle,
   Info,
   Laptop,
+  FileText,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -225,95 +226,40 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
   const [dataError, setDataError] = useState<string | null>(null);
+  const [sourceFiles, setSourceFiles] = useState<string[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileLoading, setFileLoading] = useState(false);
+  /** Merged row for this employee across ALL uploaded CSVs — used for full-month PAB. */
+  const [pabMergedRow, setPabMergedRow] = useState<Record<string, unknown> | null>(null);
+  const [pabMergedColumns, setPabMergedColumns] = useState<string[]>([]);
 
   const email = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
 
-  // Fetch hours, rates, and exchange rate
+  // Load rates, exchange rate, and source file list on mount
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setDataError(null);
       try {
-        const [hoursRes, ratesRes, fxRes] = await Promise.all([
-          fetch('/api/hubstaff-hours', { cache: 'no-store' }),
+        const [ratesRes, fxRes, filesRes] = await Promise.all([
           fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
           fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
+          fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, { cache: 'no-store' }),
         ]);
 
-        const hoursJson = (await hoursRes.json()) as {
-          columns?: string[] | null;
-          rows?: Record<string, unknown>[] | null;
-          error?: string | null;
-        };
         const ratesJson = (await ratesRes.json()) as {
           rows?: EmployeeHourlyRateRow[];
           error?: string | null;
         };
         const fxJson = (await fxRes.json()) as { value: string | null };
+        const filesJson = (await filesRes.json()) as { files?: string[]; error?: string | null };
         if (cancelled) return;
 
         setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
 
-        if (!hoursRes.ok || hoursJson.error) {
-          setDataError(hoursJson.error ?? `Hours request failed (${hoursRes.status})`);
-          setRow(null);
-        } else if (hoursJson.columns && hoursJson.rows) {
-          setColumns(hoursJson.columns);
-          const myRow = hoursJson.rows.find((r) => hubstaffRowMatchesEmployee(r, email));
-
-          // If Supabase daily columns are empty, try the saved daily breakdown
-          if (myRow) {
-            const dateCols = hoursJson.columns.filter(isDateCol);
-            const allEmpty =
-              dateCols.length === 0 ||
-              dateCols.every((c) => {
-                const v = myRow[c];
-                return v == null || String(v).trim() === '';
-              });
-
-            if (allEmpty) {
-              try {
-                const fbRes = await fetch('/api/app-settings?key=hubstaff_daily_breakdown', {
-                  cache: 'no-store',
-                });
-                const fbJson = (await fbRes.json()) as { value: string | null };
-                if (fbJson.value) {
-                  const { dateCols: savedCols, daily } = JSON.parse(fbJson.value) as {
-                    dateCols: string[];
-                    daily: Record<string, Record<string, string | null>>;
-                  };
-                  const dayData = daily[email];
-                  if (dayData && savedCols?.length) {
-                    const merged = { ...myRow, ...dayData };
-                    const mergedCols = [...new Set([...hoursJson.columns, ...savedCols])];
-                    setColumns(mergedCols);
-                    setRow(merged);
-                  } else {
-                    setRow(myRow);
-                  }
-                } else {
-                  setRow(myRow);
-                }
-              } catch {
-                setRow(myRow);
-              }
-            } else {
-              setRow(myRow);
-            }
-          } else {
-            setRow(null);
-          }
-        } else {
-          setRow(null);
-        }
-
         if (ratesJson.error) {
-          setDataError((prev) =>
-            prev ? `${prev} ${ratesJson.error}` : ratesJson.error ?? null,
-          );
+          setDataError(ratesJson.error);
         }
-
-        // Find rate
         const allRates = ratesJson.rows ?? [];
         const myRate = allRates.find((r) => {
           const we = normEmail(r.work_email);
@@ -321,6 +267,15 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           return we === email || pe === email;
         });
         if (myRate) setRate(myRate);
+
+        const files = filesJson.files ?? [];
+        setSourceFiles(files);
+        if (files.length > 0) {
+          setSelectedFile(files[files.length - 1]); // latest
+        } else {
+          // No source files — fall back to loading all data
+          await loadHoursData(null, cancelled);
+        }
       } catch (e) {
         if (!cancelled) {
           setDataError(e instanceof Error ? e.message : 'Failed to load dashboard data');
@@ -330,10 +285,134 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [email]);
+
+  // Load hours data for the selected source file
+  const loadHoursData = React.useCallback(async (file: string | null, cancelled?: boolean) => {
+    try {
+      const url = file
+        ? `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`
+        : `/api/hubstaff-hours?_=${Date.now()}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      const json = (await res.json()) as {
+        columns?: string[] | null;
+        rows?: Record<string, unknown>[] | null;
+        error?: string | null;
+      };
+      if (cancelled) return;
+
+      if (!res.ok || json.error) {
+        setDataError(json.error ?? `Hours request failed (${res.status})`);
+        setRow(null);
+      } else if (json.columns && json.rows) {
+        setColumns(json.columns);
+        const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, email));
+
+        if (myRow) {
+          const dateCols = json.columns.filter(isDateCol);
+          const allEmpty =
+            dateCols.length === 0 ||
+            dateCols.every((c) => {
+              const v = myRow[c];
+              return v == null || String(v).trim() === '';
+            });
+
+          if (allEmpty) {
+            try {
+              const fbRes = await fetch('/api/app-settings?key=hubstaff_daily_breakdown', {
+                cache: 'no-store',
+              });
+              const fbJson = (await fbRes.json()) as { value: string | null };
+              if (fbJson.value) {
+                const { dateCols: savedCols, daily } = JSON.parse(fbJson.value) as {
+                  dateCols: string[];
+                  daily: Record<string, Record<string, string | null>>;
+                };
+                const dayData = daily[email];
+                if (dayData && savedCols?.length) {
+                  const merged = { ...myRow, ...dayData };
+                  const mergedCols = [...new Set([...json.columns, ...savedCols])];
+                  setColumns(mergedCols);
+                  setRow(merged);
+                } else {
+                  setRow(myRow);
+                }
+              } else {
+                setRow(myRow);
+              }
+            } catch {
+              setRow(myRow);
+            }
+          } else {
+            setRow(myRow);
+          }
+        } else {
+          setRow(null);
+        }
+      } else {
+        setRow(null);
+      }
+    } catch (e) {
+      if (!cancelled) {
+        setDataError(e instanceof Error ? e.message : 'Failed to load hours');
+        setRow(null);
+      }
+    }
+  }, [email]);
+
+  // Reload hours when the selected file changes
+  useEffect(() => {
+    if (selectedFile === null) return;
+    let cancelled = false;
+    setFileLoading(true);
+    setDataError(null);
+    loadHoursData(selectedFile, false).finally(() => {
+      if (!cancelled) setFileLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [selectedFile, loadHoursData]);
+
+  // Fetch ALL source files and merge this employee's daily columns for full-month PAB
+  useEffect(() => {
+    if (sourceFiles.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const allCols = new Set<string>();
+        let merged: Record<string, unknown> = {};
+        let found = false;
+
+        for (const file of sourceFiles) {
+          const res = await fetch(
+            `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
+            { cache: 'no-store' },
+          );
+          const json = (await res.json()) as {
+            columns?: string[] | null;
+            rows?: Record<string, unknown>[] | null;
+          };
+          if (cancelled) return;
+          if (!json.columns || !json.rows) continue;
+
+          for (const col of json.columns) allCols.add(col);
+          const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, email));
+          if (myRow) {
+            found = true;
+            merged = { ...merged, ...myRow };
+          }
+        }
+
+        if (cancelled) return;
+        setPabMergedColumns([...allCols]);
+        setPabMergedRow(found ? merged : null);
+      } catch {
+        // PAB degrades gracefully — falls back to single-file check
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sourceFiles, email]);
 
   // Compute daily hours breakdown (one bar per calendar day — dedupe ISO vs Mon 3/24 vs monday…)
   const dailyHours = useMemo<DayHours[]>(() => {
@@ -404,16 +483,54 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       ? Math.round((regularPay + otPay) * 100) / 100
       : null;
 
-  /** Same rule as PayrollWizard `perfectAttendanceEligible`: every Mon–Fri column ≥ 7h. */
-  const weekdayHours = dailyHours.filter((d) => d.weekday);
-  const isPAEligible = weekdayHours.length > 0 && weekdayHours.every((d) => d.seconds >= 7 * 3600);
+  /**
+   * Full-month daily hours for PAB: uses merged data from ALL uploaded CSVs.
+   * Falls back to single-file dailyHours if merged data isn't available.
+   */
+  const pabDailyHours = useMemo<DayHours[]>(() => {
+    const pabRow = pabMergedRow ?? row;
+    const pabCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
+    if (!pabRow) return [];
+    const dateCols = pabCols.filter(isDateCol);
+    const groups = groupDateColumnsByCalendarDay(dateCols, pabCols);
+    return groups
+      .map((group) => {
+        const col = pickPreferredHubstaffColumn(group);
+        const seconds = Math.max(
+          ...group.map((c) => {
+            const raw =
+              getFieldFromRow(pabRow, [c]) ??
+              (Object.prototype.hasOwnProperty.call(pabRow, c) ? pabRow[c] : undefined);
+            return parseHMS(raw);
+          }),
+        );
+        const prefix = colDayPrefix(col);
+        if (prefix) {
+          return { col, label: prefix.label, seconds, weekday: prefix.weekday, order: prefix.order };
+        }
+        const iso = col.trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+          const dow = isoDateToUtcDow(iso);
+          if (dow === null) return null;
+          const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          return { col, label: labels[dow], seconds, weekday: dow >= 1 && dow <= 5, order: dow };
+        }
+        return null;
+      })
+      .filter((x): x is DayHours => x !== null)
+      .sort((a, b) => a.order - b.order);
+  }, [pabMergedRow, pabMergedColumns, row, columns]);
+
+  /** PAB: every Mon–Fri across the FULL MONTH must be ≥ 7h. */
+  const pabWeekdayHours = pabDailyHours.filter((d) => d.weekday);
+  const isPAEligible = pabWeekdayHours.length > 0 && pabWeekdayHours.every((d) => d.seconds >= 7 * 3600);
 
   const perfectAttendanceBonusStatus = useMemo<'eligible' | 'not_eligible' | 'unknown'>(() => {
-    if (!row) return 'unknown';
-    const wh = dailyHours.filter((d) => d.weekday);
+    if (!row && !pabMergedRow) return 'unknown';
+    const wh = pabDailyHours.filter((d) => d.weekday);
     if (wh.length === 0) return 'unknown';
     return wh.every((d) => d.seconds >= 7 * 3600) ? 'eligible' : 'not_eligible';
-  }, [row, dailyHours]);
+  }, [row, pabMergedRow, pabDailyHours]);
 
   const maxBarSeconds = Math.max(...dailyHours.map((d) => d.seconds), 8 * 3600);
 
@@ -430,7 +547,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   return (
     <div className="min-h-full space-y-8 overflow-auto bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-8 dark:bg-none dark:bg-[#0d1117]">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">
             My Dashboard
@@ -438,6 +555,24 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           <p className="text-sm text-zinc-600 dark:text-zinc-500">
             Weekly hours, pay breakdown, and attendance
           </p>
+          {/* Source file selector */}
+          {sourceFiles.length > 0 && (
+            <div className="mt-2 flex items-center gap-2">
+              <FileText className="h-3.5 w-3.5 shrink-0 text-orange-500" />
+              <select
+                value={selectedFile ?? ''}
+                onChange={(e) => setSelectedFile(e.target.value || null)}
+                className="h-7 rounded-md border border-zinc-200 bg-white px-2 pr-6 font-mono text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+              >
+                {[...sourceFiles].reverse().map((file, i) => (
+                  <option key={file} value={file}>
+                    {file}{i === 0 ? ' (latest)' : ''}
+                  </option>
+                ))}
+              </select>
+              {fileLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {row && perfectAttendanceBonusStatus === 'eligible' && (

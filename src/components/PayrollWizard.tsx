@@ -295,6 +295,22 @@ function buildFullCols(allCols: string[]): { key: string; label: string }[] {
   return result;
 }
 
+/**
+ * Normalize a name for comparison by extracting unique alphabetic tokens, sorting,
+ * and joining. Handles "Last, First" vs "First Last" vs 'Last, First "Nick"'.
+ * e.g. 'Arrieta, Ace "Ace"' → 'ace arrieta'  |  'Ace Arrieta' → 'ace arrieta'
+ */
+function normalizeNameTokens(name: string): string {
+  const tokens = name
+    .toLowerCase()
+    .replace(/["'()]/g, '')
+    .replace(/,/g, ' ')
+    .split(/\s+/)
+    .map(t => t.trim())
+    .filter(t => t.length > 0);
+  return [...new Set(tokens)].sort().join(' ');
+}
+
 function pickPreviewValue(row: Record<string, unknown>, key: string): string {
   // Try exact key first, then case-insensitive
   if (Object.prototype.hasOwnProperty.call(row, key)) return formatHubstaffCell(row[key]);
@@ -371,6 +387,9 @@ const DEPARTMENTS: {
   { key: 'client_va',        name: 'Client VA',          bonuses: [] },
   { key: 'site_building',    name: 'Site Building',      bonuses: [] },
 ];
+
+/** Rows per page in Additions step employee table */
+const ADDITIONS_ROWS_PER_PAGE = 5;
 
 /** Known non-date Hubstaff column names (lowercase). Used as a quick-reject before date parsing. */
 const HUBSTAFF_NON_DATE_COLS = new Set([
@@ -780,6 +799,9 @@ export default function PayrollWizard() {
   const [masterEmployees, setMasterEmployees] = useState<EmployeeRow[]>([]);
   const [hubstaffDisplayColumns, setHubstaffDisplayColumns] = useState<string[] | null>(null);
   const [hubstaffDisplayRows, setHubstaffDisplayRows] = useState<Record<string, unknown>[] | null>(null);
+  /** All rows across ALL uploaded CSVs — used for full-month PAB eligibility check. */
+  const [pabAllRows, setPabAllRows] = useState<Record<string, unknown>[]>([]);
+  const [pabAllColumns, setPabAllColumns] = useState<string[]>([]);
   const [hubstaffPreviewLoading, setHubstaffPreviewLoading] = useState(false);
   const [hubstaffPreviewError, setHubstaffPreviewError] = useState<string | null>(null);
   const [weeklyUploadLoading, setWeeklyUploadLoading] = useState(false);
@@ -823,6 +845,7 @@ export default function PayrollWizard() {
 
   const [activeDeptTab, setActiveDeptTab] = useState('accounting');
   const [additionsSearch, setAdditionsSearch] = useState('');
+  const [additionsTablePage, setAdditionsTablePage] = useState(1);
   const [validationSearch, setValidationSearch] = useState('');
   const [employeeDepts, setEmployeeDepts] = useState<Record<string, string>>({});
   const [employeeBonuses, setEmployeeBonuses] = useState<Record<string, Record<string, boolean>>>({});
@@ -832,6 +855,10 @@ export default function PayrollWizard() {
   const [deptMetrics, setDeptMetrics] = useState<Record<string, Record<string, number>>>({});
 
   const fileInputWeeklyRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setAdditionsTablePage(1);
+  }, [activeDeptTab, additionsSearch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -888,13 +915,42 @@ export default function PayrollWizard() {
     }
   }, [currentStep, loadEmployeeHourlyRates]);
 
-  // Auto-select latest uploaded source file as soon as the list is available
+  // Auto-select latest uploaded source file as soon as the list is available.
+  // If no source files exist, fall back to loading all rows.
   useEffect(() => {
     if (uploadedSourceFiles.length > 0 && !calcSourceFile) {
       const latest = uploadedSourceFiles[uploadedSourceFiles.length - 1];
       setCalcSourceFile(latest);
     }
   }, [uploadedSourceFiles, calcSourceFile]);
+
+  // Fallback: if source files loaded but none exist, load all data unfiltered
+  useEffect(() => {
+    if (!sourceFilesLoading && uploadedSourceFiles.length === 0 && hubstaffData.length === 0) {
+      (async () => {
+        try {
+          const res = await fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' });
+          const json = (await res.json()) as {
+            payrollRows?: Array<{
+              email: string | null; name: string | null;
+              hoursDisplay: string; hoursDecimal: number; department?: string | null;
+            }>;
+          };
+          if (json.payrollRows?.length) {
+            const hd: HubstaffRow[] = json.payrollRows.map((p) => ({
+              name: p.name ?? p.email ?? '',
+              email: p.email ?? '',
+              hours: p.hoursDisplay,
+              decimalHours: p.hoursDecimal,
+              department: p.department ?? null,
+            }));
+            setHubstaffData(hd);
+          }
+        } catch { /* degrades gracefully */ }
+      })();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceFilesLoading, uploadedSourceFiles]);
 
   // Load hubstaff data filtered by the selected source file for Initial Calculation
   const loadCalcSourceFileData = React.useCallback(async (file: string) => {
@@ -949,27 +1005,72 @@ export default function PayrollWizard() {
     }
   }, [calcSourceFile, loadCalcSourceFileData]);
 
+  // Fetch ALL rows across ALL uploaded CSVs for full-month PAB eligibility.
+  // Each source file has different date columns; we merge them per-employee
+  // so every weekday across the month can be checked.
+  useEffect(() => {
+    if (uploadedSourceFiles.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const allCols = new Set<string>();
+        const rowsByEmail = new Map<string, Record<string, unknown>>();
+
+        for (const file of uploadedSourceFiles) {
+          const res = await fetch(
+            `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
+            { cache: 'no-store' },
+          );
+          const json = (await res.json()) as {
+            columns?: string[] | null;
+            rows?: Record<string, unknown>[] | null;
+          };
+          if (cancelled) return;
+          if (!json.columns || !json.rows) continue;
+
+          for (const col of json.columns) allCols.add(col);
+
+          for (const row of json.rows) {
+            const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
+            const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
+            if (!email) continue;
+            const existing = rowsByEmail.get(email) ?? {};
+            // Merge: existing columns stay, new date columns from this file are added
+            rowsByEmail.set(email, { ...existing, ...row });
+          }
+        }
+
+        if (cancelled) return;
+        setPabAllColumns([...allCols]);
+        setPabAllRows([...rowsByEmail.values()]);
+      } catch (e) {
+        console.warn('[PAB all-files fetch]', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [uploadedSourceFiles]);
+
   const ratesByEmail = useMemo(
     () => indexHourlyRatesByEmail(hourlyRateRows),
     [hourlyRateRows],
   );
 
-  /** One group per calendar weekday — dedupes ISO + Hubstaff labels for the same day. */
+  /** One group per calendar weekday — dedupes ISO + Hubstaff labels for the same day across ALL CSVs. */
   const weekdayColumnGroups = useMemo(
-    () => (hubstaffDisplayColumns?.length ? groupWeekdayColumnsByDate(hubstaffDisplayColumns) : []),
-    [hubstaffDisplayColumns],
+    () => (pabAllColumns.length ? groupWeekdayColumnsByDate(pabAllColumns) : hubstaffDisplayColumns?.length ? groupWeekdayColumnsByDate(hubstaffDisplayColumns) : []),
+    [pabAllColumns, hubstaffDisplayColumns],
   );
 
   /**
    * True when the Hubstaff data has weekday columns but every value is null/empty.
-   * This means the daily breakdown was never stored (column-name mismatch during upload)
-   * and the user needs to re-upload the CSV for PA detection to work.
+   * Uses the full-month merged rows (pabAllRows) when available.
    */
   const dailyDataMissing = useMemo<boolean>(() => {
-    if (!hubstaffDisplayColumns || !hubstaffDisplayRows || hubstaffDisplayRows.length === 0) return false;
+    const rows = pabAllRows.length > 0 ? pabAllRows : hubstaffDisplayRows;
+    const cols = pabAllColumns.length > 0 ? pabAllColumns : hubstaffDisplayColumns;
+    if (!cols || !rows || rows.length === 0) return false;
     if (weekdayColumnGroups.length === 0) return false;
-    // Check if EVERY cell for every deduped weekday group is null/empty across ALL rows
-    return hubstaffDisplayRows.every(row =>
+    return rows.every(row =>
       weekdayColumnGroups.every(group =>
         group.every(col => {
           const v = row[col];
@@ -977,22 +1078,21 @@ export default function PayrollWizard() {
         }),
       ),
     );
-  }, [hubstaffDisplayColumns, hubstaffDisplayRows, weekdayColumnGroups]);
+  }, [pabAllRows, pabAllColumns, hubstaffDisplayColumns, hubstaffDisplayRows, weekdayColumnGroups]);
 
   /**
-   * Computes which employees qualify for Perfect Attendance by scanning the
-   * raw Hubstaff daily columns. An employee qualifies if every Mon–Fri column
-   * in the dataset shows ≥ 7 hours (25 200 seconds).
+   * Computes which employees qualify for Perfect Attendance by scanning
+   * daily columns across ALL uploaded CSVs (full month). An employee qualifies
+   * only if EVERY Mon–Fri column across all weeks shows ≥ 7 hours.
    */
   const perfectAttendanceEligible = useMemo<Set<string>>(() => {
-    if (dailyDataMissing) return new Set(); // can't compute — all daily values are null
-    if (!hubstaffDisplayRows || hubstaffDisplayRows.length === 0) {
-      return new Set();
-    }
+    if (dailyDataMissing) return new Set();
+    const rows = pabAllRows.length > 0 ? pabAllRows : hubstaffDisplayRows;
+    if (!rows || rows.length === 0) return new Set();
     if (weekdayColumnGroups.length === 0) return new Set();
 
     const eligible = new Set<string>();
-    for (const row of hubstaffDisplayRows) {
+    for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
@@ -1007,23 +1107,22 @@ export default function PayrollWizard() {
       if (perfect) eligible.add(email);
     }
     return eligible;
-  }, [hubstaffDisplayRows, dailyDataMissing, weekdayColumnGroups]);
+  }, [pabAllRows, hubstaffDisplayRows, dailyDataMissing, weekdayColumnGroups]);
 
   /**
-   * Per-employee weekday breakdown: maps normalized email → array of
-   * { col, seconds, passes } for each Mon–Fri column in the Hubstaff data.
+   * Per-employee weekday breakdown across the full month: maps normalized email
+   * → array of { col, seconds, passes } for each Mon–Fri column across all CSVs.
    * Used to render per-day indicators in the Perfect Attendance cell.
    */
   const employeeWeekdayHours = useMemo<
     Map<string, { col: string; seconds: number; passes: boolean }[]>
   >(() => {
-    if (!hubstaffDisplayRows || hubstaffDisplayRows.length === 0) {
-      return new Map();
-    }
+    const rows = pabAllRows.length > 0 ? pabAllRows : hubstaffDisplayRows;
+    if (!rows || rows.length === 0) return new Map();
     if (weekdayColumnGroups.length === 0) return new Map();
 
     const map = new Map<string, { col: string; seconds: number; passes: boolean }[]>();
-    for (const row of hubstaffDisplayRows) {
+    for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
@@ -1037,7 +1136,7 @@ export default function PayrollWizard() {
       );
     }
     return map;
-  }, [hubstaffDisplayRows, weekdayColumnGroups]);
+  }, [pabAllRows, hubstaffDisplayRows, weekdayColumnGroups]);
 
   /**
    * Auto-apply / remove perfect_attendance toggle whenever eligibility is
@@ -1136,12 +1235,14 @@ export default function PayrollWizard() {
           master = masterEmployees.find(e => normEmail(e.work_email) === em);
         }
 
-        // Try name match
+        // Try name match (normalized: handles "First Last" vs "Last, First" vs nicknames)
         if (!master && row.name) {
-          const nameLower = row.name.trim().toLowerCase();
-          master = masterEmployees.find(
-            e => (e.name ?? '').trim().toLowerCase() === nameLower,
-          );
+          const hubstaffTokens = normalizeNameTokens(row.name);
+          if (hubstaffTokens) {
+            master = masterEmployees.find(
+              e => e.name ? normalizeNameTokens(e.name) === hubstaffTokens : false,
+            );
+          }
         }
 
         if (master) {
@@ -1322,21 +1423,8 @@ export default function PayrollWizard() {
         setHubstaffPage(1);
         setHubstaffSearch('');
       }
-      // Only set hubstaffData from the full preview when no source file filter is active.
-      // When calcSourceFile is set, loadCalcSourceFileData handles hubstaffData
-      // so that calculations use only the selected CSV's rows.
-      if (json.payrollRows?.length && !calcSourceFile) {
-        const hd: HubstaffRow[] = json.payrollRows.map((p) => ({
-          name: p.name ?? p.email ?? '',
-          email: p.email ?? '',
-          hours: p.hoursDisplay,
-          decimalHours: p.hoursDecimal,
-          // Carry the Hubstaff "Job type" column through as a dept fallback
-          department: p.department ?? null,
-        }));
-        setHubstaffData(hd);
-        setIssues(buildReconciliationIssues(hd, users));
-      }
+      // hubstaffData is set exclusively by loadCalcSourceFileData (filtered by source file).
+      // loadHubstaffPreview only sets display columns/rows for the step 1 preview table.
     } catch (e) {
       setHubstaffPreviewError(e instanceof Error ? e.message : 'Failed to load hubstaff_hours');
       setHubstaffDisplayColumns(null);
@@ -1344,7 +1432,7 @@ export default function PayrollWizard() {
     } finally {
       setHubstaffPreviewLoading(false);
     }
-  }, [users, calcSourceFile]);
+  }, [users]);
 
   useEffect(() => {
     void loadHubstaffPreview();
@@ -1481,11 +1569,13 @@ export default function PayrollWizard() {
 
         // ── Tier 2: name match → global_master_list ─────────────────────────
         if (!deptRaw && calcRow.name) {
-          const nameLower = calcRow.name.trim().toLowerCase();
-          const master = masterEmployees.find(
-            e => (e.name ?? '').trim().toLowerCase() === nameLower,
-          );
-          deptRaw = master?.department ?? null;
+          const tokens = normalizeNameTokens(calcRow.name);
+          if (tokens) {
+            const master = masterEmployees.find(
+              e => e.name ? normalizeNameTokens(e.name) === tokens : false,
+            );
+            deptRaw = master?.department ?? null;
+          }
         }
 
         // ── Tier 3: direct work email → global_master_list "Work Email" ────
@@ -1656,6 +1746,11 @@ export default function PayrollWizard() {
       }
       if (uploadedFileName && files.includes(uploadedFileName)) {
         await loadSourceFileRows(uploadedFileName);
+      }
+
+      // Update calcSourceFile to the latest uploaded file so steps 2–4 use the new data
+      if (files.length > 0) {
+        setCalcSourceFile(files[files.length - 1]);
       }
 
       toast.success('Saved to hubstaff_hours', {
@@ -2798,7 +2893,7 @@ export default function PayrollWizard() {
                     <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <span>
                       <strong>Perfect Attendance cannot be detected.</strong> The daily hours breakdown (Mon–Fri columns) is empty in Supabase.
-                      Go back to <strong>Step 1</strong> and <strong>re-upload the Hubstaff CSV</strong> — daily data will be stored correctly this time.
+                      PAB is evaluated monthly (all uploaded CSVs). Go back to <strong>Step 1</strong> and <strong>re-upload the Hubstaff CSVs</strong> — daily data will be stored correctly.
                     </span>
                   </div>
                 )}
@@ -2930,7 +3025,7 @@ export default function PayrollWizard() {
                               <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
                                 <span className={cn('font-bold', eligibleCount > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-500')}>
                                   {eligibleCount}/{deptEmployees.length}
-                                </span>{' '}eligible (7 h+ every Mon–Fri)
+                                </span>{' '}eligible (7 h+ every Mon–Fri, full month)
                               </span>
                             </div>
                           )}
@@ -3274,6 +3369,15 @@ export default function PayrollWizard() {
                         return haystack.includes(additionsNeedle);
                       })
                     : deptEmployees;
+                  const totalFiltered = filteredDeptEmployees.length;
+                  const totalAdditionsPages = Math.max(1, Math.ceil(totalFiltered / ADDITIONS_ROWS_PER_PAGE));
+                  const safeAdditionsPage = Math.min(Math.max(1, additionsTablePage), totalAdditionsPages);
+                  const additionsPageStart = (safeAdditionsPage - 1) * ADDITIONS_ROWS_PER_PAGE;
+                  const pagedDeptEmployees = filteredDeptEmployees.slice(
+                    additionsPageStart,
+                    additionsPageStart + ADDITIONS_ROWS_PER_PAGE,
+                  );
+                  const additionsRowEnd = Math.min(additionsPageStart + ADDITIONS_ROWS_PER_PAGE, totalFiltered);
                   return (
                   <div className="flex flex-col gap-2">
                     {/* Search bar */}
@@ -3412,14 +3516,14 @@ export default function PayrollWizard() {
                                 No employees match &quot;{additionsSearch.trim()}&quot;
                               </TableCell>
                             </TableRow>
-                          ) : filteredDeptEmployees.map((emp, i) => {
+                          ) : pagedDeptEmployees.map((emp, i) => {
                             const bonusTotal = bonusTotals[emp.email] ?? 0;
                             const finalPay = (emp.initialPay ?? 0) + bonusTotal;
                             const empM = employeeMetrics[emp.email] ?? {};
                             const isJerome = isJeromeRosero(emp.name);
                             return (
                               <TableRow
-                                key={`${emp.email}-${i}`}
+                                key={`${emp.email}-${additionsPageStart + i}`}
                                 className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
                               >
                                 <TableCell className="px-3 py-2.5">
@@ -3734,14 +3838,54 @@ export default function PayrollWizard() {
                     </div>
 
                     {/* Dept footer totals */}
-                    <div className="flex flex-wrap items-center justify-between border-t border-zinc-200 bg-zinc-50/80 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-                      <span className="text-xs text-zinc-500">
-                        {additionsNeedle
-                          ? <>{filteredDeptEmployees.length} of {deptEmployees.length} shown</>
-                          : <>{deptEmployees.length} employee{deptEmployees.length !== 1 ? 's' : ''} in {activeDept.name}</>
-                        }
-                      </span>
-                      <div className="flex items-center gap-4">
+                    <div className="flex flex-col gap-2 border-t border-zinc-200 bg-zinc-50/80 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+                        <span className="text-xs text-zinc-500">
+                          {additionsNeedle
+                            ? <>{totalFiltered} of {deptEmployees.length} match</>
+                            : <>{deptEmployees.length} employee{deptEmployees.length !== 1 ? 's' : ''} in {activeDept.name}</>
+                          }
+                          {totalFiltered > 0 && (
+                            <span className="text-zinc-400">
+                              {' · '}
+                              Rows {additionsPageStart + 1}
+                              {totalFiltered > 1 ? `–${additionsRowEnd}` : ''} of {totalFiltered}
+                              {totalAdditionsPages > 1 && (
+                                <span className="tabular-nums">
+                                  {' '}(page {safeAdditionsPage}/{totalAdditionsPages})
+                                </span>
+                              )}
+                            </span>
+                          )}
+                        </span>
+                        {totalFiltered > ADDITIONS_ROWS_PER_PAGE && (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 border-zinc-200 px-2 text-[10px] dark:border-zinc-700"
+                              disabled={safeAdditionsPage <= 1}
+                              onClick={() => setAdditionsTablePage(p => Math.max(1, p - 1))}
+                              aria-label="Previous page"
+                            >
+                              <ArrowLeft className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 border-zinc-200 px-2 text-[10px] dark:border-zinc-700"
+                              disabled={safeAdditionsPage >= totalAdditionsPages}
+                              onClick={() => setAdditionsTablePage(p => Math.min(totalAdditionsPages, p + 1))}
+                              aria-label="Next page"
+                            >
+                              <ArrowRight className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-4">
                         <span className="text-xs text-zinc-500">
                           Dept Bonuses:{' '}
                           <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
