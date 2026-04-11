@@ -26,6 +26,8 @@ interface EmployeeSidebarProps {
   department?: string;
   /** Used for Gravatar (same email as ?email= on /employee). */
   employeeEmail?: string | null;
+  /** Supabase profile photo URL when set. */
+  profilePhotoUrl?: string | null;
 }
 
 const navItems = [
@@ -42,6 +44,7 @@ export default function EmployeeSidebar({
   employeeName = 'Employee',
   department = 'Team Member',
   employeeEmail = null,
+  profilePhotoUrl = null,
 }: EmployeeSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
@@ -121,7 +124,13 @@ export default function EmployeeSidebar({
           </div>
         </button>
         <div className="mb-4 flex items-center gap-3 px-3 py-2">
-          <EmployeeAvatar email={employeeEmail} initials={initials} className="h-8 w-8 text-xs" pixelSize={64} />
+          <EmployeeAvatar
+            photoUrl={profilePhotoUrl}
+            email={employeeEmail}
+            initials={initials}
+            className="h-8 w-8 text-xs"
+            pixelSize={64}
+          />
           <div className="flex min-w-0 flex-col overflow-hidden">
             <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">
               {employeeName}

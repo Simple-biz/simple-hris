@@ -24,6 +24,8 @@ export type EmployeeRow = {
     zip: string | null;
     country: string | null;
   } | null;
+  /** Public URL from Supabase Storage when set (see references/supabase_employee_profile_photos.sql). */
+  profile_photo_url?: string | null;
 };
 
 type RawRow = Record<string, unknown>;
@@ -124,6 +126,12 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
     "StartDate",
     "start date",
   ]);
+  const profile_photo_url = pick(row, [
+    "Profile Photo URL",
+    "profile_photo_url",
+    "Profile_Photo_URL",
+    "profile photo url",
+  ]);
 
   return {
     employee_id: null, // populated later by generateEmployeeIds
@@ -135,6 +143,8 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
     hourlyRate: null,
     bankInfo: null,
     address: null,
+    profile_photo_url:
+      profile_photo_url != null ? String(profile_photo_url).trim() || null : null,
   };
 }
 
@@ -144,11 +154,13 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
  * - Name
  * - Personal Email
  * - Start Date
+ * - Profile Photo URL (optional; add via references/supabase_employee_profile_photos.sql)
  *
  * Extended fields (Hourly Rate, bank info, address) live in separate tables
  * and are NOT selected here to avoid PostgREST "column does not exist" errors.
  */
-const GLOBAL_MASTER_SELECT = 'Department,Name,"Personal Email","Work Email","Start Date"';
+const GLOBAL_MASTER_SELECT =
+  'Department,Name,"Personal Email","Work Email","Start Date","Profile Photo URL"';
 
 /** True when every field is null, empty, or whitespace-only. */
 function isRowEmptyOrWhitespace(row: EmployeeRow): boolean {

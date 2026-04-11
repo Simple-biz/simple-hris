@@ -21,12 +21,36 @@ export default function EmployeeApp() {
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [employeeEmail, setEmployeeEmail] = useState<string | null>(null);
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
     const params = new URLSearchParams(window.location.search);
     setEmployeeEmail(params.get('email'));
   }, []);
+
+  useEffect(() => {
+    if (!employeeEmail) {
+      setProfilePhotoUrl(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          `/api/employee-profile-photo?email=${encodeURIComponent(employeeEmail)}`,
+          { cache: 'no-store' },
+        );
+        const j = (await r.json()) as { profilePhotoUrl?: string | null };
+        if (!cancelled) setProfilePhotoUrl(j.profilePhotoUrl?.trim() || null);
+      } catch {
+        if (!cancelled) setProfilePhotoUrl(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [employeeEmail]);
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
@@ -54,7 +78,13 @@ export default function EmployeeApp() {
       case 'dashboard':
         return <EmployeeDashboard employeeEmail={employeeEmail} />;
       case 'profile':
-        return <EmployeeProfile employeeEmail={employeeEmail} />;
+        return (
+          <EmployeeProfile
+            employeeEmail={employeeEmail}
+            profilePhotoUrl={profilePhotoUrl}
+            onProfilePhotoUpdated={(url) => setProfilePhotoUrl(url)}
+          />
+        );
       case 'hours':
         return (
           <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-8 text-center dark:bg-none dark:bg-[#0d1117]">
@@ -94,6 +124,7 @@ export default function EmployeeApp() {
         employeeName={employeeEmail?.split('@')[0]?.replace(/\./g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) ?? 'Employee'}
         department="Team Member"
         employeeEmail={employeeEmail}
+        profilePhotoUrl={profilePhotoUrl}
       />
       <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         {renderContent()}

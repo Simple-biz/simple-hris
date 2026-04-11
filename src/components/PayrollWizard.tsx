@@ -40,6 +40,8 @@ import {
   inferPabMonthFromColumns,
   filterColumnGroupsByPabRange,
   countMonFriInclusiveInRange,
+  resolveCanonicalColumnsToIso,
+  columnsAreAllCanonical,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { parseCsv } from '@/lib/csv/parse-csv';
@@ -1039,8 +1041,13 @@ export default function PayrollWizard() {
           rows: Record<string, unknown>[],
           rowsByEmail: Map<string, Record<string, unknown>>,
           allCols: Set<string>,
+          sourceFile?: string,
         ) => {
-          for (const row of rows) {
+          for (let row of rows) {
+            // Resolve canonical day columns to ISO dates when a source file is provided
+            if (sourceFile && columnsAreAllCanonical(Object.keys(row))) {
+              row = resolveCanonicalColumnsToIso(row, sourceFile);
+            }
             for (const k of Object.keys(row)) allCols.add(k);
             const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
             const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
@@ -1066,7 +1073,7 @@ export default function PayrollWizard() {
             if (cancelled) return;
             if (!json.columns || !json.rows) continue;
             for (const col of json.columns) allCols.add(col);
-            mergeRowsInto(json.rows, rowsByEmail, allCols);
+            mergeRowsInto(json.rows, rowsByEmail, allCols, file);
           }
         } else {
           const res = await fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' });

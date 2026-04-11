@@ -29,7 +29,9 @@
       "Bash(python3 -c ':*)",
       "Bash(curl -s \"http://localhost:3000/api/employee-hourly-rates\")",
       "Bash(python3:*)",
-      "Bash(echo \"EXIT: $?\")"
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(npx tsx:*)",
+      "Bash(curl -s \"http://localhost:3000/api/hubstaff-hours?source_file=simple-biz_daily_report_2026-03-01_to_2026-03-07.csv\")"
     ]
   }
 }

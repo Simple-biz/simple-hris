@@ -156,41 +156,35 @@ export function groupDateColumnsByCalendarDay(dateCols: string[], allColumns: st
 /**
  * Compute the PAB (Perfect Attendance Bonus) date range for a given calendar month.
  *
- * Only **Monday–Friday** dates in `[start, end]` are evaluated (weekends excluded). Eligibility
- * requires each such weekday to have ≥ 7 hours logged.
+ * A week "belongs to" the month that contains its **Monday**.
  *
- *  - **Start**
- *      - If the 1st is a **Monday**, PAB starts on that day.
- *      - Otherwise the first calendar week is treated as incomplete: PAB starts on the **second**
- *        Monday of the month (first Monday on or after the 1st, plus 7 days).
- *  - **End**: Friday of the week that contains the **last Monday** still inside the calendar month
- *    (may fall in the following calendar month).
+ *  - **Start**: first Monday on or after the 1st of the month.
+ *    If the 1st is not a Monday the preceding days (Tue–Sun) belong to the
+ *    previous month's last week, so the PAB period begins on the next Monday.
+ *
+ *  - **End**: Friday of the last week whose Monday still falls within the
+ *    calendar month. This Friday **may fall in the next calendar month**
+ *    (e.g. April 3 for March 2026) — the whole Mon–Fri week is "owned" by
+ *    the month that contains the Monday.
  *
  * Example (March 2026, March 1 = Sunday):
- *   Start = March 9 (second Monday) — not March 2, because the month did not begin on Monday.
- *   Last Monday in March = March 30 → End = April 3 (Friday).
+ *   Start = March 2  (first Monday on or after the 1st)
+ *   End   = April 3  (last Monday in March = Mar 30 → Fri = Apr 3)
+ *   → 5 full weeks
  */
 export function getPabMonthRange(year: number, month: number): { start: Date; end: Date } {
+  /* ---------- START ---------- */
   const first = new Date(year, month, 1);
   const firstDow = first.getDay(); // 0=Sun … 6=Sat
+  // Days to add to reach Monday: Sun(0)→1, Mon(1)→0, Tue(2)→6, Wed(3)→5, …
+  const daysToMon = firstDow <= 1 ? (1 - firstDow) : (8 - firstDow);
+  const start = new Date(year, month, 1 + daysToMon);
 
-  let start: Date;
-  if (firstDow === 1) {
-    start = new Date(year, month, 1);
-  } else {
-    const daysToMon = firstDow <= 1 ? 1 - firstDow : 8 - firstDow;
-    const firstMonday = new Date(year, month, 1 + daysToMon);
-    start = new Date(
-      firstMonday.getFullYear(),
-      firstMonday.getMonth(),
-      firstMonday.getDate() + 7,
-    );
-  }
-
-  // Last Monday that still falls within the calendar month
-  const lastDay = new Date(year, month + 1, 0); // last day of month
+  /* ---------- END ---------- */
+  const lastDay = new Date(year, month + 1, 0); // last calendar day
   const lastDow = lastDay.getDay();
-  const daysBack = lastDow === 0 ? 6 : lastDow - 1; // distance back to Monday
+  // Days to go back from lastDay to reach the last Monday in the month
+  const daysBack = lastDow === 0 ? 6 : lastDow - 1;
   const lastMonday = new Date(year, month, lastDay.getDate() - daysBack);
   // Friday of that week (may spill into the next calendar month)
   const end = new Date(lastMonday.getFullYear(), lastMonday.getMonth(), lastMonday.getDate() + 4);
@@ -260,4 +254,140 @@ export function filterColumnGroupsByPabRange(
     // No parseable date — keep the group (best-effort fallback)
     return true;
   });
+}
+
+/* ------------------------------------------------------------------ */
+/*  PAB calendar grid                                                  */
+/* ------------------------------------------------------------------ */
+
+export interface PabCalendarDay {
+  date: Date;
+  /** Short date string, e.g. "3/9" */
+  dateStr: string;
+  /** Day label, e.g. "Mon" */
+  dayLabel: string;
+  /** Seconds worked */
+  seconds: number;
+  /** Whether ≥ 7 h */
+  passes: boolean;
+  /** Whether we found data for this date */
+  hasData: boolean;
+}
+
+/**
+ * Generate the full PAB calendar grid: one row per Mon–Fri work week within
+ * the PAB range. Each cell maps to actual hours data when available.
+ *
+ * @param pabStart  First Monday of the PAB period
+ * @param pabEnd    Last Friday of the PAB period
+ * @param hoursByDateKey  Map of `"YYYY-M-D"` → seconds worked (use {@link pabDateKey})
+ */
+export function buildPabCalendarWeeks(
+  pabStart: Date,
+  pabEnd: Date,
+  hoursByDateKey: Map<string, number>,
+): PabCalendarDay[][] {
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const weeks: PabCalendarDay[][] = [];
+  let currentWeek: PabCalendarDay[] = [];
+  const cur = new Date(pabStart.getFullYear(), pabStart.getMonth(), pabStart.getDate());
+  const endTime = pabEnd.getTime();
+
+  while (cur.getTime() <= endTime) {
+    const dow = cur.getDay();
+    if (dow >= 1 && dow <= 5) {
+      const key = pabDateKey(cur);
+      const seconds = hoursByDateKey.get(key) ?? 0;
+      currentWeek.push({
+        date: new Date(cur),
+        dateStr: `${cur.getMonth() + 1}/${cur.getDate()}`,
+        dayLabel: dayNames[dow],
+        seconds,
+        passes: seconds >= 7 * 3600,
+        hasData: hoursByDateKey.has(key),
+      });
+      if (dow === 5) {
+        weeks.push(currentWeek);
+        currentWeek = [];
+      }
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  if (currentWeek.length > 0) weeks.push(currentWeek);
+  return weeks;
+}
+
+/** Stable key for a Date used in PAB lookup maps: `"YYYY-M-D"` (no zero-padding). */
+export function pabDateKey(d: Date): string {
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Canonical-column → ISO-date resolution for source files            */
+/* ------------------------------------------------------------------ */
+
+const CANONICAL_DOW_MAP: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+  thursday: 4, friday: 5, saturday: 6,
+};
+
+/**
+ * Parse the date range embedded in a Hubstaff source filename.
+ * E.g. `"simple-biz_daily_report_2026-03-01_to_2026-03-07.csv"` → { start, end }.
+ */
+export function parseDateRangeFromFilename(filename: string): { start: Date; end: Date } | null {
+  const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(filename);
+  if (!m) return null;
+  const start = new Date(+m[1], +m[2] - 1, +m[3]);
+  const end = new Date(+m[4], +m[5] - 1, +m[6]);
+  return isNaN(start.getTime()) || isNaN(end.getTime()) ? null : { start, end };
+}
+
+/**
+ * Given a row whose day columns are canonical names (`monday`, `tuesday`, …) and a
+ * source filename that contains a date range, return a new row where each canonical
+ * column is replaced by its ISO date (`2026-03-02`).
+ *
+ * Non-day columns (Email, Total worked, etc.) are kept as-is.
+ */
+export function resolveCanonicalColumnsToIso(
+  row: Record<string, unknown>,
+  filename: string,
+): Record<string, unknown> {
+  const range = parseDateRangeFromFilename(filename);
+  if (!range) return row;
+
+  // Map day-of-week → ISO date string for the file's week
+  const datesByDow: Record<number, string> = {};
+  const cur = new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate());
+  const endT = range.end.getTime();
+  while (cur.getTime() <= endT) {
+    datesByDow[cur.getDay()] = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  const mapped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    const dow = CANONICAL_DOW_MAP[key.toLowerCase()];
+    if (dow !== undefined) {
+      const iso = datesByDow[dow];
+      if (iso) { mapped[iso] = value; continue; }
+    }
+    mapped[key] = value;
+  }
+  return mapped;
+}
+
+/**
+ * Returns true when every day column in the columns array is a canonical weekday
+ * name (`monday`, `tuesday`, …) with no parseable dates.
+ */
+export function columnsAreAllCanonical(cols: string[]): boolean {
+  let hasDayCol = false;
+  for (const c of cols) {
+    const lower = c.trim().toLowerCase();
+    if (CANONICAL_DOW_MAP[lower] !== undefined) { hasDayCol = true; continue; }
+    if (parseColDate(c) !== null) return false; // has a real date → not all canonical
+  }
+  return hasDayCol;
 }

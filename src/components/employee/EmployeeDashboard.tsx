@@ -37,7 +37,12 @@ import {
   inferPabMonthFromColumns,
   filterColumnGroupsByPabRange,
   parseColDate,
+  buildPabCalendarWeeks,
+  pabDateKey,
+  resolveCanonicalColumnsToIso,
+  columnsAreAllCanonical,
 } from '@/lib/hubstaff/calendar-column-dedupe';
+import type { PabCalendarDay } from '@/lib/hubstaff/calendar-column-dedupe';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -241,6 +246,11 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   /** Merged row for this employee across ALL uploaded CSVs — used for full-month PAB. */
   const [pabMergedRow, setPabMergedRow] = useState<Record<string, unknown> | null>(null);
   const [pabMergedColumns, setPabMergedColumns] = useState<string[]>([]);
+  const [pabMergeLoading, setPabMergeLoading] = useState(false);
+  /** Accumulated pay breakdown across every source file for this employee. */
+  const [allTimeTotalSeconds, setAllTimeTotalSeconds] = useState(0);
+  const [allTimeRegularSec, setAllTimeRegularSec] = useState(0);
+  const [allTimeOtSec, setAllTimeOtSec] = useState(0);
 
   const email = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
 
@@ -371,9 +381,9 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     }
   }, [email]);
 
-  // Reload hours when the selected file changes
+  // Reload hours when the selected file changes (skip for "All Time")
   useEffect(() => {
-    if (selectedFile === null) return;
+    if (selectedFile === null || selectedFile === '__all__') return;
     let cancelled = false;
     setFileLoading(true);
     setDataError(null);
@@ -383,15 +393,21 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     return () => { cancelled = true; };
   }, [selectedFile, loadHoursData]);
 
-  // Fetch ALL source files and merge this employee's daily columns for full-month PAB
+  // Fetch ALL source files and merge this employee's daily columns for full-month PAB.
+  // When columns are canonical (`monday`, `tuesday`, …) we resolve them to ISO dates
+  // using the date range embedded in each source filename so weeks don't overwrite each other.
   useEffect(() => {
     if (sourceFiles.length === 0) return;
     let cancelled = false;
+    setPabMergeLoading(true);
     (async () => {
       try {
         const allCols = new Set<string>();
         let merged: Record<string, unknown> = {};
         let found = false;
+        let cumulativeSeconds = 0;
+        let cumulativeRegSec = 0;
+        let cumulativeOtSec = 0;
 
         for (const file of sourceFiles) {
           const res = await fetch(
@@ -405,19 +421,39 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           if (cancelled) return;
           if (!json.columns || !json.rows) continue;
 
-          for (const col of json.columns) allCols.add(col);
           const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, email));
-          if (myRow) {
-            found = true;
-            merged = { ...merged, ...myRow };
+          if (!myRow) continue;
+          found = true;
+
+          // Accumulate per-file hours, split into regular/OT independently per file
+          const tw = getTotalWorkedRaw(myRow);
+          if (tw != null && String(tw).trim() !== '') {
+            const fileSec = parseHMS(tw);
+            cumulativeSeconds += fileSec;
+            const fileHrs = roundWorkedHoursForPay(fileSec / 3600);
+            const split = splitRegularOvertimeSeconds(fileHrs);
+            cumulativeRegSec += split.regularSec;
+            cumulativeOtSec += split.otSec;
           }
+
+          // Resolve canonical day columns to ISO dates using the source filename
+          const needsResolve = columnsAreAllCanonical(json.columns);
+          const resolved = needsResolve ? resolveCanonicalColumnsToIso(myRow, file) : myRow;
+
+          for (const col of (needsResolve ? Object.keys(resolved) : json.columns)) allCols.add(col);
+          merged = { ...merged, ...resolved };
         }
 
         if (cancelled) return;
         setPabMergedColumns([...allCols]);
         setPabMergedRow(found ? merged : null);
+        setAllTimeTotalSeconds(cumulativeSeconds);
+        setAllTimeRegularSec(cumulativeRegSec);
+        setAllTimeOtSec(cumulativeOtSec);
       } catch {
         // PAB degrades gracefully — falls back to single-file check
+      } finally {
+        if (!cancelled) setPabMergeLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -462,18 +498,15 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       .sort((a, b) => a.order - b.order);
   }, [row, columns]);
 
-  // Compute pay
-  const totalSeconds = useMemo(() => {
+  const isAllTime = selectedFile === '__all__';
+
+  // Compute pay — per-file values
+  const fileSeconds = useMemo(() => {
     if (!row) return 0;
     const tw = getTotalWorkedRaw(row);
     if (tw != null && String(tw).trim() !== '') return parseHMS(tw);
     return dailyHours.reduce((s, d) => s + d.seconds, 0);
   }, [row, dailyHours]);
-
-  const totalHours = roundWorkedHoursForPay(totalSeconds / 3600);
-  const { regularSec, otSec } = splitRegularOvertimeSeconds(totalHours);
-  const regularHours = regularSec / 3600;
-  const otHours = otSec / 3600;
 
   const parseRate = (v: string | null | undefined): number | null => {
     if (v == null) return null;
@@ -483,6 +516,16 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   const regularRate = parseRate(rate?.regular_rate);
   const otRate = parseRate(rate?.ot_rate);
+
+  // Switch between per-file and all-time totals.
+  // All-time uses pre-split regular/OT (each file split independently at 40h).
+  const totalSeconds = isAllTime ? allTimeTotalSeconds : fileSeconds;
+  const totalHours = roundWorkedHoursForPay(totalSeconds / 3600);
+  const regularSec = isAllTime ? allTimeRegularSec : splitRegularOvertimeSeconds(roundWorkedHoursForPay(fileSeconds / 3600)).regularSec;
+  const otSec = isAllTime ? allTimeOtSec : splitRegularOvertimeSeconds(roundWorkedHoursForPay(fileSeconds / 3600)).otSec;
+  const regularHours = regularSec / 3600;
+  const otHours = otSec / 3600;
+
   const regularPay =
     regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
   const otPay =
@@ -553,26 +596,136 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
   }, [pabMergedColumns, columns]);
 
-  /** PAB: every Mon–Fri across the FULL MONTH must be ≥ 7h. */
+  /** PAB calendar grid: one row per Mon–Fri work week in the PAB range. */
+  const pabCalendar = useMemo<PabCalendarDay[][] | null>(() => {
+    if (!pabMonthRange) return null;
+    const pabRow = pabMergedRow ?? row;
+    const pabCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
+    if (!pabRow || !pabCols.length) return null;
+
+    // Build date → seconds lookup directly from grouped columns + raw row data.
+    // We try ALL columns in each group so that canonical names ("monday") get
+    // resolved via their calendar-day key even if parseColDate doesn't recognise them.
+    const hoursByDateKey = new Map<string, number>();
+    const dateCols = pabCols.filter(isDateCol);
+    const groups = groupDateColumnsByCalendarDay(dateCols, pabCols);
+    for (const group of groups) {
+      // Find a parseable date from any column in the group
+      let d: Date | null = null;
+      for (const c of group) {
+        d = parseColDate(c);
+        if (d) break;
+      }
+      if (!d) continue;
+      // Max seconds across the group
+      let maxS = 0;
+      for (const c of group) {
+        const raw = getFieldFromRow(pabRow, [c])
+          ?? (Object.prototype.hasOwnProperty.call(pabRow, c) ? pabRow[c] : undefined);
+        maxS = Math.max(maxS, parseHMS(raw));
+      }
+      const key = pabDateKey(d);
+      hoursByDateKey.set(key, Math.max(hoursByDateKey.get(key) ?? 0, maxS));
+    }
+    return buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, hoursByDateKey);
+  }, [pabMonthRange, pabMergedRow, pabMergedColumns, row, columns]);
+
+  /** PAB: every expected weekday in the PAB period must be ≥ 7 h. */
   const pabWeekdayHours = pabDailyHours.filter((d) => d.weekday);
-  const isPAEligible = pabWeekdayHours.length > 0 && pabWeekdayHours.every((d) => d.seconds >= 7 * 3600);
+  const allPabDays = pabCalendar?.flat() ?? [];
+  const isPAEligible = allPabDays.length > 0 && allPabDays.every((d) => d.passes);
 
   const perfectAttendanceBonusStatus = useMemo<'eligible' | 'not_eligible' | 'unknown'>(() => {
     if (!row && !pabMergedRow) return 'unknown';
-    const wh = pabDailyHours.filter((d) => d.weekday);
-    if (wh.length === 0) return 'unknown';
-    return wh.every((d) => d.seconds >= 7 * 3600) ? 'eligible' : 'not_eligible';
-  }, [row, pabMergedRow, pabDailyHours]);
+    const days = pabCalendar?.flat();
+    if (!days || days.length === 0) return 'unknown';
+    return days.every((d) => d.passes) ? 'eligible' : 'not_eligible';
+  }, [row, pabMergedRow, pabCalendar]);
 
-  /** Use PAB daily hours for the chart when available so the bars match the PAB evaluation. */
-  const chartDailyHours = pabDailyHours.length > 0 ? pabDailyHours : dailyHours;
-  const maxBarSeconds = Math.max(...chartDailyHours.map((d) => d.seconds), 8 * 3600);
+  /** Number of PAB-eligible months (currently 1 month evaluated). */
+  const pabEligibleCount = isPAEligible ? 1 : 0;
+  /** Total PAB bonus in PHP. For "All Time" this sums across all eligible months. */
+  const pabBonusAmount = pabEligibleCount * PERFECT_ATTENDANCE_BONUS_PHP;
+
+  const maxBarSeconds = Math.max(...dailyHours.map((d) => d.seconds), 8 * 3600);
 
   if (loading) {
     return (
-      <div className="flex h-full min-h-0 flex-col bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
-        <div className="flex flex-1 items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
+      <div className="box-border flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-3 sm:px-4 sm:py-4 md:px-5 dark:bg-none dark:bg-[#0d1117]">
+        {/* Header skeleton */}
+        <div className="flex shrink-0 flex-col gap-2">
+          <div className="h-7 w-40 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+          <div className="h-4 w-72 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+          <div className="h-3.5 w-48 animate-pulse rounded bg-zinc-200/50 dark:bg-zinc-800/50" />
+        </div>
+        {/* Bonus indicators skeleton */}
+        <div className="shrink-0 rounded-xl border border-zinc-200/80 bg-white/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/30">
+          <div className="mb-3 h-4 w-44 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-3 rounded-lg border border-zinc-200/60 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3.5 w-52 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-3 w-80 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+              </div>
+              <div className="h-6 w-16 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+            </div>
+            <div className="flex items-center gap-3 rounded-lg border border-zinc-200/60 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3.5 w-40 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-3 w-64 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+              </div>
+              <div className="h-6 w-24 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+            </div>
+          </div>
+        </div>
+        {/* Stats cards skeleton */}
+        <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-5 md:gap-3">
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} className="rounded-xl border border-zinc-200/60 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/30">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-3.5 w-3.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+              </div>
+              <div className="h-6 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" style={{ animationDelay: `${i * 100}ms` }} />
+              <div className="mt-1.5 h-2.5 w-32 animate-pulse rounded bg-zinc-200/50 dark:bg-zinc-800/50" />
+            </div>
+          ))}
+        </div>
+        {/* Chart + Calendar + Summary skeleton */}
+        <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:gap-4">
+          <div className="flex min-h-[10rem] flex-1 flex-col rounded-xl border border-zinc-200/60 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/30 lg:min-h-0">
+            <div className="mb-3 h-3.5 w-36 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+            <div className="flex-1 space-y-2">
+              {Array.from({ length: 5 }, (_, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <div className="h-3 w-8 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="h-5 flex-1 animate-pulse rounded-md bg-zinc-200/70 dark:bg-zinc-800/70" style={{ animationDelay: `${i * 80}ms` }} />
+                  <div className="h-3 w-10 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="flex min-h-[10rem] flex-1 flex-col rounded-xl border border-zinc-200/60 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/30 lg:min-h-0">
+            <div className="mb-3 h-3.5 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+            <div className="grid flex-1 grid-cols-5 gap-1">
+              {Array.from({ length: 25 }, (_, i) => (
+                <div key={i} className="h-8 animate-pulse rounded-md bg-zinc-200/60 dark:bg-zinc-800/60" style={{ animationDelay: `${i * 30}ms` }} />
+              ))}
+            </div>
+          </div>
+          <div className="flex w-full flex-col rounded-xl border border-zinc-200/60 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/30 lg:w-[20rem]">
+            <div className="mb-3 h-3.5 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+            <div className="space-y-3">
+              {Array.from({ length: 5 }, (_, i) => (
+                <div key={i} className="flex items-center justify-between">
+                  <div className="h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="h-3.5 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" style={{ animationDelay: `${i * 60}ms` }} />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -611,6 +764,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                   onChange={(e) => setSelectedFile(e.target.value || null)}
                   className="h-7 rounded-md border border-zinc-200 bg-white px-2 pr-6 font-mono text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
                 >
+                  <option value="__all__">All Time (all uploads combined)</option>
                   {[...sourceFiles].reverse().map((file, i) => (
                     <option key={file} value={file}>
                       {file}{i === 0 ? ' (latest)' : ''}
@@ -620,7 +774,9 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                 {fileLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />}
               </div>
               <p className="pl-5 text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">
-                Monthly PAB merges every upload—this file only drives the hours/pay preview below.
+                {isAllTime
+                  ? 'Showing combined totals across all uploaded files. PAB calendar is unaffected.'
+                  : 'Monthly PAB merges every upload — this file only drives the hours/pay cards below.'}
               </p>
             </div>
           )}
@@ -816,7 +972,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           </Card>
 
           {/* Stats — min-w-0 + responsive type so PHP amounts don’t overflow narrow cells */}
-          <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
+          <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-5 md:gap-3">
             {/* Total Hours */}
             <Card
               size="sm"
@@ -885,7 +1041,44 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                     ? otRate != null
                       ? `${formatPHP(otRate)}/hr × ${otHours.toFixed(1)}h`
                       : 'OT rate not set'
-                    : 'No overtime in this file'}
+                    : isAllTime ? 'No overtime across all files' : 'No overtime in this file'}
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Perfect Attendance Bonus */}
+            <Card
+              size="sm"
+              className={`min-w-0 shadow-sm transition-colors duration-300 ${
+                isPAEligible
+                  ? 'border-indigo-200/80 bg-gradient-to-br from-white to-indigo-50/30 hover:to-indigo-50/60 dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/10 dark:hover:from-indigo-950/30'
+                  : 'border-zinc-200/80 bg-gradient-to-br from-white to-zinc-50/30 dark:border-zinc-800/60 dark:bg-none dark:from-zinc-900/20 dark:to-zinc-900/10'
+              }`}
+            >
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
+                  PAB
+                </CardTitle>
+                <Award className={`h-3.5 w-3.5 shrink-0 ${isPAEligible ? 'text-indigo-500' : 'text-zinc-400'}`} />
+              </CardHeader>
+              <CardContent className="pb-3 pt-0">
+                <div
+                  className={`break-words font-mono text-base font-bold tabular-nums leading-tight sm:text-lg ${
+                    pabBonusAmount > 0 ? 'text-indigo-700 dark:text-indigo-400' : 'text-zinc-400 dark:text-zinc-500'
+                  }`}
+                >
+                  {pabBonusAmount > 0 ? formatPHP(pabBonusAmount) : formatPHP(0)}
+                </div>
+                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
+                  {isAllTime
+                    ? pabEligibleCount > 0
+                      ? `${pabEligibleCount} month${pabEligibleCount !== 1 ? 's' : ''} eligible × ${formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}`
+                      : 'Not eligible this period'
+                    : isPAEligible
+                      ? 'Eligible this month'
+                      : perfectAttendanceBonusStatus === 'unknown'
+                        ? 'Pending data'
+                        : 'Not eligible'}
                 </p>
               </CardContent>
             </Card>
@@ -917,52 +1110,44 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             </Card>
           </div>
 
-          {/* Daily Hours + Pay Summary — flex fills height; fixed-width summary on large screens */}
+          {/* Daily Hours + PAB Calendar + Pay Summary */}
           <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-4">
+            {/* Daily Hours Bar Chart — always visible */}
             <Card
               size="sm"
               className="flex min-h-[12rem] flex-1 flex-col border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:min-h-0"
             >
               <CardHeader className="shrink-0 pb-2 pt-3">
-                <CardTitle className="flex items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
                   Daily Hours Breakdown
-                  {pabMonthRange && pabDailyHours.length > 0 && (
-                    <span className="font-normal text-indigo-500 dark:text-indigo-400">
-                      · Start {formatPabCalendarDate(pabMonthRange.start)} – End {formatPabCalendarDate(pabMonthRange.end)}
-                    </span>
-                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
-                {chartDailyHours.length === 0 ? (
+                {dailyHours.length === 0 ? (
                   <div className="flex flex-1 items-center gap-2 py-6 text-sm text-zinc-500">
                     <AlertCircle className="h-4 w-4 text-amber-500" />
                     Daily breakdown not available
                   </div>
                 ) : (
                   <div className="flex min-h-0 flex-1 flex-col gap-0">
-                    <div className={`min-h-0 flex-1 overflow-y-auto overflow-x-clip pr-2 ${chartDailyHours.length > 7 ? 'space-y-1' : 'space-y-1.5'}`}>
-                    {chartDailyHours.map((day) => {
+                    <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-clip pr-2">
+                    {dailyHours.map((day) => {
                       const hours = day.seconds / 3600;
                       const pct = maxBarSeconds > 0 ? (day.seconds / maxBarSeconds) * 100 : 0;
                       const meetsPA = day.weekday && day.seconds >= 7 * 3600;
                       const belowPA = day.weekday && day.seconds > 0 && day.seconds < 7 * 3600;
-                      const colDate = parseColDate(day.col);
-                      const dateStr = colDate ? `${colDate.getMonth() + 1}/${colDate.getDate()}` : '';
                       return (
                         <div key={day.col} className="flex items-center gap-2">
                           <span
-                            className={`shrink-0 text-right text-xs font-medium ${
-                              dateStr ? 'w-16' : 'w-10'
-                            } ${
+                            className={`w-10 shrink-0 text-right text-xs font-medium ${
                               day.weekday
                                 ? 'text-zinc-700 dark:text-zinc-300'
                                 : 'text-zinc-400 dark:text-zinc-600'
                             }`}
                           >
-                            {day.label}{dateStr ? <span className="ml-1 font-normal text-zinc-400 dark:text-zinc-500">{dateStr}</span> : ''}
+                            {day.label}
                           </span>
-                          <div className={`relative flex-1 overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800/60 ${chartDailyHours.length > 7 ? 'h-5' : 'h-6'}`}>
+                          <div className="relative h-6 flex-1 overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800/60">
                             <div
                               className={`absolute inset-y-0 left-0 rounded-md transition-all duration-500 ${
                                 meetsPA
@@ -975,7 +1160,6 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                               }`}
                               style={{ width: `${Math.max(pct, day.seconds > 0 ? 2 : 0)}%` }}
                             />
-                            {/* 7h threshold marker for weekdays */}
                             {day.weekday && (
                               <div
                                 className="absolute inset-y-0 w-px bg-red-400/50 dark:bg-red-500/50"
@@ -994,38 +1178,184 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                       );
                     })}
                     </div>
-                    <div className="mt-2 flex shrink-0 flex-col gap-1.5 border-t border-zinc-200 pt-2 dark:border-zinc-800">
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] text-zinc-500 dark:text-zinc-600 sm:text-[10px]">
-                        <span className="flex items-center gap-1">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 sm:h-2 sm:w-2" /> ≥ 7h (PAB)
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 sm:h-2 sm:w-2" /> &lt; 7h
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-600 sm:h-2 sm:w-2" /> Weekend
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <span className="inline-block h-1 w-3 bg-red-400/50 sm:h-1.5" /> 7h
-                        </span>
-                      </div>
-                      {pabMonthRange && (
-                        <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[9px] text-indigo-500 dark:text-indigo-400 sm:text-[10px]">
-                          <CalendarDays className="h-3 w-3 shrink-0" />
-                          <span>
-                            PAB: <span className="font-medium">Start</span> {formatPabCalendarDate(pabMonthRange.start)}
-                            {' · '}
-                            <span className="font-medium">End</span> {formatPabCalendarDate(pabMonthRange.end)}
-                          </span>
-                        </div>
-                      )}
+                    <div className="mt-2 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-200 pt-2 text-[9px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-600 sm:text-[10px]">
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 sm:h-2 sm:w-2" /> ≥ 7h (PA)
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 sm:h-2 sm:w-2" /> &lt; 7h
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-600 sm:h-2 sm:w-2" /> Weekend
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1 w-3 bg-red-400/50 sm:h-1.5" /> 7h line
+                      </span>
                     </div>
                   </div>
                 )}
               </CardContent>
             </Card>
 
-            {/* Pay Summary — natural height on mobile; fixed width on lg so chart gets the rest */}
+            {/* PAB Calendar — beside Daily Hours */}
+            <Card
+              size="sm"
+              className="flex min-h-[12rem] flex-1 flex-col border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 lg:min-h-0"
+            >
+              <CardHeader className="shrink-0 pb-2 pt-3">
+                <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                  PAB Calendar
+                </CardTitle>
+                {pabMonthRange ? (
+                  <p className="mt-0.5 flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400">
+                    <CalendarDays className="h-3 w-3 shrink-0" />
+                    <span>
+                      <span className="font-semibold">{pabMonthRange.monthName} {pabMonthRange.year}</span>
+                      {' · '}
+                      {formatPabCalendarDate(pabMonthRange.start)} – {formatPabCalendarDate(pabMonthRange.end)}
+                    </span>
+                  </p>
+                ) : (
+                  <div className="mt-1 h-3 w-40 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                )}
+              </CardHeader>
+              <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
+                {pabMergeLoading || (!pabCalendar && sourceFiles.length > 0) ? (
+                  /* -------- Skeleton loading state -------- */
+                  <div className="flex flex-1 flex-col gap-0">
+                    {/* Skeleton header row */}
+                    <div className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1">
+                      <div />
+                      {Array.from({ length: 5 }, (_, i) => (
+                        <div key={i} className="mx-auto h-2 w-4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                      ))}
+                    </div>
+                    {/* Skeleton week rows */}
+                    {Array.from({ length: 5 }, (_, wi) => (
+                      <div key={wi} className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1">
+                        <div className="flex items-center justify-end">
+                          <div className="h-2 w-3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                        </div>
+                        {Array.from({ length: 5 }, (_, di) => (
+                          <div
+                            key={di}
+                            className="h-10 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/30"
+                            style={{ animationDelay: `${(wi * 5 + di) * 50}ms` }}
+                          />
+                        ))}
+                      </div>
+                    ))}
+                    <div className="mt-auto flex items-center justify-center gap-2 pt-2 text-[10px] text-zinc-400">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Loading PAB data…
+                    </div>
+                  </div>
+                ) : pabCalendar && pabCalendar.length > 0 ? (
+                  /* -------- PAB Calendar Grid -------- */
+                  <div className="flex min-h-0 flex-1 flex-col gap-0">
+                    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-clip">
+                      {/* Column headers */}
+                      <div className="sticky top-0 z-10 mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
+                        <div />
+                        {['M', 'T', 'W', 'T', 'F'].map((d, i) => (
+                          <div key={i} className="text-center text-[8px] font-semibold text-zinc-400 dark:text-zinc-500">
+                            {d}
+                          </div>
+                        ))}
+                      </div>
+                      {/* Week rows */}
+                      {pabCalendar.map((week, wi) => (
+                        <div
+                          key={wi}
+                          className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] items-stretch gap-1"
+                          style={{ animation: `pab-row-in 0.35s ease-out ${wi * 80}ms both` }}
+                        >
+                          <div className="flex items-center justify-end text-[8px] font-medium text-zinc-400 dark:text-zinc-500">
+                            {wi + 1}
+                          </div>
+                          {Array.from({ length: 5 }, (_, di) => {
+                            const day: PabCalendarDay | undefined = week.find(
+                              d => d.date.getDay() === di + 1,
+                            );
+                            if (!day) {
+                              return (
+                                <div
+                                  key={di}
+                                  className="flex h-10 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/20"
+                                >
+                                  <span className="text-[7px] text-zinc-300 dark:text-zinc-700">—</span>
+                                </div>
+                              );
+                            }
+                            const hours = day.seconds / 3600;
+                            return (
+                              <div
+                                key={di}
+                                className={`flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-300 ${
+                                  day.passes
+                                    ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30'
+                                    : day.hasData
+                                      ? 'border-red-300 bg-red-50 dark:border-red-800/60 dark:bg-red-950/30'
+                                      : 'border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900/40'
+                                }`}
+                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${day.passes ? ' ✓' : day.hasData ? ' ✗ needs 7h' : ' — no data'}`}
+                                style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
+                              >
+                                <span className="text-[7px] leading-none text-zinc-400 dark:text-zinc-500">
+                                  {day.dateStr}
+                                </span>
+                                <span
+                                  className={`font-mono text-[10px] font-bold leading-none ${
+                                    day.passes
+                                      ? 'text-emerald-700 dark:text-emerald-400'
+                                      : day.hasData
+                                        ? 'text-red-600 dark:text-red-400'
+                                        : 'text-zinc-400 dark:text-zinc-500'
+                                  }`}
+                                >
+                                  {day.hasData ? `${hours.toFixed(1)}` : '—'}
+                                </span>
+                                {day.passes ? (
+                                  <CheckCircle2 className="h-2 w-2 text-emerald-500" />
+                                ) : day.hasData ? (
+                                  <XCircle className="h-2 w-2 text-red-400" />
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                    {/* Legend + status */}
+                    <div className="mt-auto flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-200 pt-2 text-[9px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-600 sm:text-[10px]">
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 sm:h-2 sm:w-2" /> ≥ 7h
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-400 sm:h-2 sm:w-2" /> &lt; 7h
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-300 dark:bg-zinc-600 sm:h-2 sm:w-2" /> N/A
+                      </span>
+                      <span className="ml-auto font-medium">
+                        {isPAEligible
+                          ? <span className="text-emerald-600 dark:text-emerald-400">PAB Eligible</span>
+                          : <span className="text-red-500 dark:text-red-400">PAB Not Met</span>}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6 text-center">
+                    <CalendarDays className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
+                    <p className="text-xs text-zinc-400 dark:text-zinc-500">
+                      PAB calendar will appear once<br />Hubstaff data is uploaded
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Pay Summary — fixed width on lg */}
             <Card
               size="sm"
               className="flex w-full min-w-0 shrink-0 flex-col border-orange-100/80 bg-gradient-to-br from-white to-orange-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:h-full lg:w-[min(100%,20rem)] xl:w-[22rem]"
@@ -1062,26 +1392,26 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                       {otPay != null ? formatPHP(otPay) : '—'}
                     </span>
                   </div>
-                  {isPAEligible && (
-                    <div className="flex min-w-0 items-start justify-between gap-2">
-                      <span className="shrink-0 text-xs text-emerald-600 dark:text-emerald-400">PAB</span>
-                      <span className="max-w-[58%] break-words text-right font-mono text-xs font-medium text-emerald-600 sm:text-sm dark:text-emerald-400">
-                        {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP)}
-                      </span>
-                    </div>
-                  )}
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <span className={`shrink-0 text-xs ${pabBonusAmount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                      PAB{isAllTime && pabEligibleCount > 0 ? ` (${pabEligibleCount}×)` : ''}
+                    </span>
+                    <span className={`max-w-[58%] break-words text-right font-mono text-xs sm:text-sm ${pabBonusAmount > 0 ? 'font-medium text-indigo-600 dark:text-indigo-400' : 'text-zinc-400 dark:text-zinc-500'}`}>
+                      {pabBonusAmount > 0 ? `+${formatPHP(pabBonusAmount)}` : formatPHP(0)}
+                    </span>
+                  </div>
                   <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
                   <div className="flex min-w-0 items-start justify-between gap-2">
                     <span className="shrink-0 text-sm font-medium text-zinc-900 dark:text-white">Total</span>
                     <span className="max-w-[60%] break-words text-right font-mono text-base font-bold leading-tight text-emerald-700 sm:text-lg dark:text-emerald-400">
                       {totalPay != null
-                        ? formatPHP(totalPay + (isPAEligible ? PERFECT_ATTENDANCE_BONUS_PHP : 0))
+                        ? formatPHP(totalPay + pabBonusAmount)
                         : '—'}
                     </span>
                   </div>
                   {totalPay != null && (
                     <p className="break-words text-right font-mono text-[10px] text-blue-500 dark:text-blue-400">
-                      ≈ ${((totalPay + (isPAEligible ? PERFECT_ATTENDANCE_BONUS_PHP : 0)) / usdToPhpRate).toLocaleString('en-US', {
+                      ≈ ${((totalPay + pabBonusAmount) / usdToPhpRate).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}{' '}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Loader2,
   AlertCircle,
@@ -9,15 +9,21 @@ import {
   BadgeCheck,
   Banknote,
   Briefcase,
+  Camera,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import EmployeeAvatar from './EmployeeAvatar';
 import { normEmail } from '@/lib/email/norm-email';
+import { compressProfilePhotoForUpload } from '@/lib/images/compress-profile-photo';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 
 interface EmployeeProfileProps {
   employeeEmail: string;
+  profilePhotoUrl: string | null;
+  onProfilePhotoUpdated: (url: string) => void;
 }
 
 function formatPHP(n: number): string {
@@ -111,8 +117,14 @@ function ProfilePanel({
   );
 }
 
-export default function EmployeeProfile({ employeeEmail }: EmployeeProfileProps) {
+export default function EmployeeProfile({
+  employeeEmail,
+  profilePhotoUrl,
+  onProfilePhotoUpdated,
+}: EmployeeProfileProps) {
   const norm = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -220,6 +232,32 @@ export default function EmployeeProfile({ employeeEmail }: EmployeeProfileProps)
   const avatarEmail =
     master?.work_email?.trim() || rate?.work_email?.trim() || employeeEmail.trim() || null;
 
+  const displayProfilePhotoUrl =
+    profilePhotoUrl?.trim() || master?.profile_photo_url?.trim() || null;
+
+  const onAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploadingPhoto(true);
+    try {
+      const blob = await compressProfilePhotoForUpload(file);
+      const fd = new FormData();
+      fd.append('email', employeeEmail);
+      fd.append('file', blob, 'avatar.jpg');
+      const res = await fetch('/api/employee-profile-photo', { method: 'POST', body: fd });
+      const json = (await res.json()) as { profilePhotoUrl?: string; error?: string };
+      if (!res.ok) throw new Error(json.error || 'Upload failed');
+      if (!json.profilePhotoUrl) throw new Error('No photo URL returned');
+      onProfilePhotoUpdated(json.profilePhotoUrl);
+      toast.success('Profile photo updated');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not upload photo');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   const avatarInitials = useMemo(() => {
     const n = displayName.replace(/—/g, '').trim();
     if (n) {
@@ -244,19 +282,49 @@ export default function EmployeeProfile({ employeeEmail }: EmployeeProfileProps)
       {/* Header — compact */}
       <div className="shrink-0 px-3 pb-2 pt-3 sm:px-4 sm:pb-3 sm:pt-4 md:px-5">
         <div className="flex items-start gap-3">
-          <EmployeeAvatar
-            email={avatarEmail}
-            initials={avatarInitials}
-            className="h-11 w-11 text-sm"
-            pixelSize={88}
-          />
+          <div className="relative shrink-0">
+            <EmployeeAvatar
+              photoUrl={displayProfilePhotoUrl}
+              email={avatarEmail}
+              initials={avatarInitials}
+              className="h-11 w-11 text-sm"
+              pixelSize={88}
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="sr-only"
+              aria-label="Upload profile photo"
+              onChange={onAvatarFileChange}
+              disabled={uploadingPhoto}
+            />
+          </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-lg font-bold tracking-tight text-zinc-900 sm:text-xl dark:text-white">Profile</h2>
             <p className="mt-0.5 text-[11px] leading-snug text-zinc-600 sm:text-xs dark:text-zinc-500">
               HR directory &amp; payroll (Supabase). Contact HR to update official records.
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-[11px]"
+                disabled={uploadingPhoto}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {uploadingPhoto ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Camera className="h-3.5 w-3.5" />
+                )}
+                {uploadingPhoto ? 'Uploading…' : 'Photo'}
+              </Button>
+            </div>
             <p className="mt-1 text-[10px] leading-snug text-zinc-400 dark:text-zinc-600">
-              Avatar uses Gravatar for your work email when you&apos;ve set one there; otherwise initials.
+              Uploaded photo is stored in Supabase (max 5 MB; larger images are resized). Otherwise Gravatar for
+              your work email, then initials.
             </p>
           </div>
         </div>

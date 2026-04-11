@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 type EmployeeAvatarProps = {
+  /** Supabase Storage URL when set — shown first. */
+  photoUrl?: string | null | undefined;
   /** Work or personal email — used for Gravatar (MD5). */
   email: string | null | undefined;
   /** Shown when email missing or image fails to load. */
@@ -15,19 +17,29 @@ type EmployeeAvatarProps = {
 };
 
 /**
- * Tries Gravatar for the email (many users register work emails there).
- * On missing image (`d=404`) or error, shows initials in a gradient circle.
+ * Order: uploaded photo → Gravatar → initials.
  */
 export default function EmployeeAvatar({
+  photoUrl,
   email,
   initials,
   className = 'h-8 w-8',
   pixelSize = 64,
 }: EmployeeAvatarProps) {
-  const [failed, setFailed] = useState(false);
+  const [failedUploaded, setFailedUploaded] = useState(false);
+  const [failedGravatar, setFailedGravatar] = useState(false);
   const trimmed = email?.trim();
+  const uploaded = photoUrl?.trim();
 
-  if (!trimmed || failed) {
+  useEffect(() => {
+    setFailedUploaded(false);
+    setFailedGravatar(false);
+  }, [uploaded, trimmed]);
+
+  const showInitials =
+    (!uploaded || failedUploaded) && (!trimmed || failedGravatar);
+
+  if (showInitials) {
     return (
       <div
         className={cn(
@@ -41,7 +53,19 @@ export default function EmployeeAvatar({
     );
   }
 
-  const src = `/api/avatar?email=${encodeURIComponent(trimmed)}&s=${pixelSize}&d=404`;
+  if (uploaded && !failedUploaded) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- Supabase public URL
+      <img
+        src={uploaded}
+        alt=""
+        className={cn('shrink-0 rounded-full object-cover', className)}
+        onError={() => setFailedUploaded(true)}
+      />
+    );
+  }
+
+  const src = `/api/avatar?email=${encodeURIComponent(trimmed!)}&s=${pixelSize}&d=404`;
 
   return (
     // eslint-disable-next-line @next/next/no-img-element -- same-origin /api/avatar → Gravatar redirect
@@ -49,7 +73,7 @@ export default function EmployeeAvatar({
       src={src}
       alt=""
       className={cn('shrink-0 rounded-full object-cover', className)}
-      onError={() => setFailed(true)}
+      onError={() => setFailedGravatar(true)}
     />
   );
 }
