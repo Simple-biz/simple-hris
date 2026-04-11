@@ -10,20 +10,32 @@ import {
   Banknote,
   Briefcase,
   Camera,
+  Building2,
+  Calendar,
+  Hash,
+  MapPin,
+  Landmark,
+  Pencil,
+  ArrowRight,
+  CreditCard,
+  ShieldCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import EmployeeAvatar from './EmployeeAvatar';
 import { normEmail } from '@/lib/email/norm-email';
 import { compressProfilePhotoForUpload } from '@/lib/images/compress-profile-photo';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 
 interface EmployeeProfileProps {
   employeeEmail: string;
   profilePhotoUrl: string | null;
   onProfilePhotoUpdated: (url: string) => void;
+  onNavigateToSettings?: () => void;
 }
 
 function formatPHP(n: number): string {
@@ -48,6 +60,13 @@ function pickRow(row: Record<string, unknown>, aliases: string[]): string | null
     }
   }
   return null;
+}
+
+function maskAccountNumber(num: string | null): string | null {
+  if (!num?.trim()) return null;
+  const s = num.trim();
+  if (s.length <= 4) return s;
+  return '••••' + s.slice(-4);
 }
 
 function formatStartDate(raw: string | null): string | null {
@@ -77,42 +96,94 @@ function hubstaffRowMatchesEmail(row: Record<string, unknown>, n: string): boole
   return emails.some((e) => normEmail(e) === n);
 }
 
-type ProfileField = { label: string; value: string | null; mono?: boolean };
-
-function FieldRow({ label, value, mono }: { label: string; value: string | null; mono?: boolean }) {
-  if (!value) return null;
+/* ---------- Skeleton ---------- */
+function ProfileSkeleton() {
   return (
-    <div className="grid grid-cols-[minmax(0,7.5rem)_1fr] items-start gap-x-2 gap-y-0.5 text-[11px] leading-snug sm:grid-cols-[9rem_1fr] sm:text-xs">
-      <span className="font-medium text-zinc-500 dark:text-zinc-400">{label}</span>
-      <span className={`text-zinc-900 dark:text-zinc-100 ${mono ? 'break-all font-mono text-[10px] sm:text-xs' : ''}`}>
-        {value}
-      </span>
+    <div className="box-border flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
+      {/* Hero skeleton */}
+      <div className="shrink-0 border-b border-zinc-200/60 bg-gradient-to-r from-orange-50/60 via-white to-blue-50/40 px-4 py-6 sm:px-6 dark:border-zinc-800 dark:from-zinc-900/60 dark:via-zinc-950 dark:to-zinc-900/60">
+        <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-5">
+          <div className="h-20 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800 sm:h-24 sm:w-24" />
+          <div className="flex flex-1 flex-col items-center gap-2 sm:items-start">
+            <div className="h-6 w-48 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+            <div className="h-4 w-36 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+            <div className="mt-1 flex gap-2">
+              <div className="h-6 w-16 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+              <div className="h-6 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+            </div>
+          </div>
+        </div>
+      </div>
+      {/* Cards skeleton */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="rounded-xl border border-zinc-200/60 bg-white/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <div className="mb-3 flex items-center gap-2">
+                <div className="h-4 w-4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-3.5 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+              </div>
+              <div className="space-y-2.5">
+                {Array.from({ length: 2 + (i % 2) }, (_, j) => (
+                  <div key={j} className="flex gap-3">
+                    <div className="h-3 w-20 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+                    <div className="h-3 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" style={{ animationDelay: `${j * 100}ms` }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
 
+/* ---------- Field row ---------- */
+function FieldRow({
+  icon: Icon,
+  label,
+  value,
+  mono,
+}: {
+  icon?: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string | null;
+  mono?: boolean;
+}) {
+  if (!value) return null;
+  return (
+    <div className="flex items-start gap-2.5 py-1.5">
+      {Icon && <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />}
+      <div className="min-w-0 flex-1">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</div>
+        <div className={`mt-0.5 text-xs text-zinc-900 dark:text-zinc-100 ${mono ? 'break-all font-mono text-[11px]' : ''}`}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Panel ---------- */
 function ProfilePanel({
   title,
   icon: Icon,
-  fields,
+  children,
   className,
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
-  fields: ProfileField[];
+  children: React.ReactNode;
   className?: string;
 }) {
-  const rows = fields.filter((f) => f.value);
-  if (rows.length === 0) return null;
   return (
     <div
-      className={`flex min-h-0 flex-col rounded-xl border border-zinc-200/90 bg-white/90 p-3 shadow-sm dark:border-zinc-700/80 dark:bg-zinc-900/50 ${className ?? ''}`}
+      className={`flex min-h-0 flex-col rounded-xl border border-zinc-200/90 bg-white/90 shadow-sm transition-shadow hover:shadow-md dark:border-zinc-700/80 dark:bg-zinc-900/50 ${className ?? ''}`}
     >
-      <div className="mb-2.5 flex items-center gap-2 border-b border-zinc-100 pb-2 dark:border-zinc-800">
-        <Icon className="h-3.5 w-3.5 shrink-0 text-orange-500 dark:text-orange-400" />
+      <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+        <Icon className="h-4 w-4 shrink-0 text-orange-500 dark:text-orange-400" />
         <span className="text-xs font-semibold tracking-tight text-zinc-900 dark:text-white">{title}</span>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-2">{rows.map((f) => <FieldRow key={f.label} {...f} />)}</div>
+      <div className="flex min-h-0 flex-1 flex-col gap-0 px-4 py-2">{children}</div>
     </div>
   );
 }
@@ -121,6 +192,7 @@ export default function EmployeeProfile({
   employeeEmail,
   profilePhotoUrl,
   onProfilePhotoUpdated,
+  onNavigateToSettings,
 }: EmployeeProfileProps) {
   const norm = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -130,6 +202,7 @@ export default function EmployeeProfile({
   const [error, setError] = useState<string | null>(null);
   const [master, setMaster] = useState<EmployeeRow | null>(null);
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
+  const [bankInfo, setBankInfo] = useState<EmployeeIdRow | null>(null);
   const [hubMeta, setHubMeta] = useState<{
     memberName: string | null;
     jobType: string | null;
@@ -143,10 +216,11 @@ export default function EmployeeProfile({
       setError(null);
       setLoading(true);
       try {
-        const [empRes, rateRes, hubRes] = await Promise.all([
+        const [empRes, rateRes, hubRes, idsRes] = await Promise.all([
           fetch('/api/employees', { cache: 'no-store' }),
           fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
           fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' }),
+          fetch('/api/employee-ids', { cache: 'no-store' }),
         ]);
 
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[]; error?: string | null };
@@ -155,6 +229,7 @@ export default function EmployeeProfile({
           rows?: Record<string, unknown>[] | null;
           error?: string | null;
         };
+        const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[]; error?: string | null };
 
         if (cancelled) return;
 
@@ -185,6 +260,14 @@ export default function EmployeeProfile({
         } else {
           setHubMeta(null);
         }
+
+        const idRows = idsJson.rows ?? [];
+        const myId = idRows.find((r) => {
+          const we = normEmail(r.work_email ?? '');
+          const pe = normEmail(r.personal_email ?? '');
+          return we === norm || pe === norm;
+        });
+        setBankInfo(myId ?? null);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load profile');
       } finally {
@@ -203,31 +286,8 @@ export default function EmployeeProfile({
     '—';
 
   const department = rate?.department?.trim() || master?.department?.trim() || null;
-
-  const identity: ProfileField[] = [
-    { label: 'Full name', value: displayName === '—' ? null : displayName },
-    { label: 'Employee ID', value: master?.employee_id ?? null, mono: true },
-  ];
-
-  const contact: ProfileField[] = [
-    { label: 'Work email', value: master?.work_email?.trim() || rate?.work_email?.trim() || null, mono: true },
-    { label: 'Personal email', value: master?.personal_email?.trim() || rate?.personal_email?.trim() || null, mono: true },
-  ];
-
-  const employment: ProfileField[] = [
-    { label: 'Department', value: department },
-    { label: 'Job type', value: hubMeta?.jobType },
-    { label: 'Job title', value: hubMeta?.jobTitle },
-    { label: 'Organization', value: hubMeta?.organization },
-    { label: 'Start date', value: formatStartDate(master?.start_date ?? null) },
-  ];
-
   const reg = parseRate(rate?.regular_rate ?? null);
   const ot = parseRate(rate?.ot_rate ?? null);
-  const pay: ProfileField[] = [
-    { label: 'Regular rate', value: reg != null ? `${formatPHP(reg)} / hr` : null },
-    { label: 'Overtime rate', value: ot != null ? `${formatPHP(ot)} / hr` : null },
-  ];
 
   const avatarEmail =
     master?.work_email?.trim() || rate?.work_email?.trim() || employeeEmail.trim() || null;
@@ -269,27 +329,25 @@ export default function EmployeeProfile({
     return employeeEmail.slice(0, 2).toUpperCase();
   }, [displayName, employeeEmail]);
 
-  if (loading) {
-    return (
-      <div className="flex h-full min-h-0 flex-1 items-center justify-center bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
-        <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
-      </div>
-    );
-  }
+  if (loading) return <ProfileSkeleton />;
 
   return (
     <div className="box-border flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
-      {/* Header — compact */}
-      <div className="shrink-0 px-3 pb-2 pt-3 sm:px-4 sm:pb-3 sm:pt-4 md:px-5">
-        <div className="flex items-start gap-3">
-          <div className="relative shrink-0">
-            <EmployeeAvatar
-              photoUrl={displayProfilePhotoUrl}
-              email={avatarEmail}
-              initials={avatarInitials}
-              className="h-11 w-11 text-sm"
-              pixelSize={88}
-            />
+      {/* ── Hero header ── */}
+      <div className="shrink-0 border-b border-zinc-200/60 bg-gradient-to-r from-orange-50/60 via-white to-blue-50/40 px-4 py-5 sm:px-6 sm:py-6 dark:border-zinc-800 dark:from-zinc-900/60 dark:via-zinc-950 dark:to-zinc-900/60">
+        <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:gap-5">
+          {/* Avatar — large */}
+          <div className="group relative shrink-0">
+            <div className="rounded-full ring-4 ring-white/80 dark:ring-zinc-900/80">
+              <EmployeeAvatar
+                photoUrl={displayProfilePhotoUrl}
+                email={avatarEmail}
+                initials={avatarInitials}
+                className="h-20 w-20 text-2xl sm:h-24 sm:w-24 sm:text-3xl"
+                pixelSize={192}
+              />
+            </div>
+            {/* Camera overlay */}
             <input
               ref={fileInputRef}
               type="file"
@@ -299,119 +357,272 @@ export default function EmployeeProfile({
               onChange={onAvatarFileChange}
               disabled={uploadingPhoto}
             />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingPhoto}
+              className="absolute inset-0 flex items-center justify-center rounded-full bg-black/0 opacity-0 transition-all duration-200 hover:bg-black/40 group-hover:opacity-100"
+              aria-label="Change photo"
+            >
+              {uploadingPhoto ? (
+                <Loader2 className="h-6 w-6 animate-spin text-white" />
+              ) : (
+                <Camera className="h-6 w-6 text-white drop-shadow-lg" />
+              )}
+            </button>
           </div>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-bold tracking-tight text-zinc-900 sm:text-xl dark:text-white">Profile</h2>
-            <p className="mt-0.5 text-[11px] leading-snug text-zinc-600 sm:text-xs dark:text-zinc-500">
-              HR directory &amp; payroll (Supabase). Contact HR to update official records.
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 text-[11px]"
-                disabled={uploadingPhoto}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                {uploadingPhoto ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Camera className="h-3.5 w-3.5" />
-                )}
-                {uploadingPhoto ? 'Uploading…' : 'Photo'}
-              </Button>
+
+          {/* Name & meta */}
+          <div className="flex flex-1 flex-col items-center gap-1.5 sm:items-start">
+            <h2 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
+              {displayName}
+            </h2>
+            <p className="font-mono text-xs text-zinc-500 dark:text-zinc-400">{employeeEmail}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              {department && (
+                <Badge variant="outline" className="gap-1 border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-400">
+                  <Building2 className="h-3 w-3" />
+                  {department}
+                </Badge>
+              )}
+              {hubMeta?.jobTitle && (
+                <Badge variant="outline" className="gap-1 border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-400">
+                  <Briefcase className="h-3 w-3" />
+                  {hubMeta.jobTitle}
+                </Badge>
+              )}
+              {master?.employee_id && (
+                <Badge variant="outline" className="gap-1 border-zinc-200 bg-zinc-50 font-mono text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
+                  <Hash className="h-3 w-3" />
+                  {master.employee_id}
+                </Badge>
+              )}
             </div>
-            <p className="mt-1 text-[10px] leading-snug text-zinc-400 dark:text-zinc-600">
-              Uploaded photo is stored in Supabase (max 5 MB; larger images are resized). Otherwise Gravatar for
-              your work email, then initials.
-            </p>
           </div>
+
+          {/* Upload button — visible on mobile */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-[11px] sm:hidden"
+            disabled={uploadingPhoto}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {uploadingPhoto ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+            {uploadingPhoto ? 'Uploading…' : 'Change Photo'}
+          </Button>
         </div>
       </div>
 
-      {/* Single viewport: scroll only if needed on very small screens */}
-      <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 sm:px-4 md:px-5">
-        <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-zinc-200/90 bg-white/95 shadow-md dark:border-zinc-800 dark:bg-zinc-950/80">
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 sm:p-4">
-            {error && (
-              <div className="flex shrink-0 items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/40">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                <p className="text-[11px] leading-snug text-amber-950 dark:text-amber-200">{error}</p>
-              </div>
-            )}
+      {/* ── Content ── */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-6">
+        {error && (
+          <div className="mb-3 flex shrink-0 items-start gap-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 dark:border-amber-900/50 dark:bg-amber-950/40">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <p className="text-[11px] leading-snug text-amber-950 dark:text-amber-200">{error}</p>
+          </div>
+        )}
 
-            {!master && !error && (
-              <div className="flex shrink-0 items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/50">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
-                <p className="text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">
-                  {rate || hubMeta ? (
-                    <>
-                      No <span className="font-mono">global_master_list</span> row for{' '}
-                      <span className="font-mono font-medium">{employeeEmail}</span> — Hubstaff / rates only. Ask HR to add
-                      your record for full directory info.
-                    </>
-                  ) : (
-                    <>
-                      No directory or payroll row for <span className="font-mono font-medium">{employeeEmail}</span>.
-                      Match <span className="font-mono">global_master_list</span> or{' '}
-                      <span className="font-mono">employee_hourly_rates</span>.
-                    </>
-                  )}
-                </p>
-              </div>
-            )}
+        {!master && !error && (
+          <div className="mb-3 flex shrink-0 items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/50">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
+            <p className="text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">
+              {rate || hubMeta ? (
+                <>
+                  No <span className="font-mono">global_master_list</span> row for{' '}
+                  <span className="font-mono font-medium">{employeeEmail}</span> — Hubstaff / rates only.
+                </>
+              ) : (
+                <>
+                  No directory or payroll row for <span className="font-mono font-medium">{employeeEmail}</span>.
+                </>
+              )}
+            </p>
+          </div>
+        )}
 
-            {master && !rate && !error && (
-              <p className="shrink-0 text-[10px] text-zinc-500 dark:text-zinc-400">
-                No hourly rates in <span className="font-mono">employee_hourly_rates</span> for this email yet.
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2">
+          {/* Identity */}
+          <ProfilePanel title="Identity" icon={User}>
+            <FieldRow icon={User} label="Full Name" value={displayName === '—' ? null : displayName} />
+            <FieldRow icon={Hash} label="Employee ID" value={master?.employee_id ?? null} mono />
+          </ProfilePanel>
+
+          {/* Contact */}
+          <ProfilePanel title="Contact" icon={Mail}>
+            <FieldRow icon={Mail} label="Work Email" value={master?.work_email?.trim() || rate?.work_email?.trim() || null} mono />
+            <FieldRow icon={Mail} label="Personal Email" value={master?.personal_email?.trim() || rate?.personal_email?.trim() || null} mono />
+          </ProfilePanel>
+
+          {/* Employment */}
+          <ProfilePanel title="Employment" icon={Briefcase}>
+            <FieldRow icon={Building2} label="Department" value={department} />
+            <FieldRow icon={Briefcase} label="Job Type" value={hubMeta?.jobType} />
+            <FieldRow icon={Briefcase} label="Job Title" value={hubMeta?.jobTitle} />
+            <FieldRow icon={MapPin} label="Organization" value={hubMeta?.organization} />
+            <FieldRow icon={Calendar} label="Start Date" value={formatStartDate(master?.start_date ?? null)} />
+          </ProfilePanel>
+
+          {/* Compensation */}
+          <ProfilePanel title="Compensation" icon={Banknote}>
+            <FieldRow icon={Banknote} label="Regular Rate" value={reg != null ? `${formatPHP(reg)} / hr` : null} />
+            <FieldRow icon={Banknote} label="Overtime Rate" value={ot != null ? `${formatPHP(ot)} / hr` : null} />
+            {!reg && !ot && (
+              <p className="py-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+                No hourly rates set yet. Contact HR.
               </p>
             )}
+          </ProfilePanel>
 
-            {/* Main grid: 2×2 + footer row */}
-            <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3 lg:grid-cols-12 lg:gap-3">
-              <div className="min-h-0 sm:col-span-1 lg:col-span-6">
-                <ProfilePanel title="Identity" icon={User} fields={identity} className="h-full" />
+          {/* Bank Information */}
+          <div className="col-span-1 sm:col-span-2">
+            <div className="flex min-h-0 flex-col rounded-xl border border-zinc-200/90 bg-white/90 shadow-sm transition-shadow hover:shadow-md dark:border-zinc-700/80 dark:bg-zinc-900/50">
+              <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+                <div className="flex items-center gap-2">
+                  <Landmark className="h-4 w-4 shrink-0 text-orange-500 dark:text-orange-400" />
+                  <span className="text-xs font-semibold tracking-tight text-zinc-900 dark:text-white">Bank Information</span>
+                </div>
+                {onNavigateToSettings && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 text-[10px]"
+                    onClick={onNavigateToSettings}
+                  >
+                    <Pencil className="h-3 w-3" />
+                    Edit
+                    <ArrowRight className="h-3 w-3" />
+                  </Button>
+                )}
               </div>
-              <div className="min-h-0 sm:col-span-1 lg:col-span-6">
-                <ProfilePanel title="Contact" icon={Mail} fields={contact} className="h-full" />
+              <div className="px-4 py-3">
+                {bankInfo && (bankInfo.bank_name || bankInfo.account_number || bankInfo.alt_bank_name) ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {/* Primary Account */}
+                    <div className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <CreditCard className="h-3.5 w-3.5 text-zinc-500" />
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Primary Account</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {bankInfo.bank_name && (
+                          <div>
+                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Bank</div>
+                            <div className="text-xs font-medium text-zinc-900 dark:text-zinc-100">{bankInfo.bank_name}</div>
+                          </div>
+                        )}
+                        {bankInfo.account_holder_name && (
+                          <div>
+                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Account Holder</div>
+                            <div className="text-xs text-zinc-900 dark:text-zinc-100">{bankInfo.account_holder_name}</div>
+                          </div>
+                        )}
+                        {bankInfo.account_number && (
+                          <div>
+                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Account Number</div>
+                            <div className="font-mono text-xs text-zinc-900 dark:text-zinc-100">{maskAccountNumber(bankInfo.account_number)}</div>
+                          </div>
+                        )}
+                        {bankInfo.routing_number && (
+                          <div>
+                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Routing Number</div>
+                            <div className="font-mono text-xs text-zinc-900 dark:text-zinc-100">{bankInfo.routing_number}</div>
+                          </div>
+                        )}
+                        {!bankInfo.bank_name && !bankInfo.account_number && (
+                          <p className="text-[10px] text-zinc-400">Not set</p>
+                        )}
+                      </div>
+                    </div>
+                    {/* Alternative Account */}
+                    <div className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <ShieldCheck className="h-3.5 w-3.5 text-zinc-500" />
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Alternative Account</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {bankInfo.alt_bank_name && (
+                          <div>
+                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Bank</div>
+                            <div className="text-xs font-medium text-zinc-900 dark:text-zinc-100">{bankInfo.alt_bank_name}</div>
+                          </div>
+                        )}
+                        {bankInfo.alt_account_holder_name && (
+                          <div>
+                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Account Holder</div>
+                            <div className="text-xs text-zinc-900 dark:text-zinc-100">{bankInfo.alt_account_holder_name}</div>
+                          </div>
+                        )}
+                        {bankInfo.alt_account_number && (
+                          <div>
+                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Account Number</div>
+                            <div className="font-mono text-xs text-zinc-900 dark:text-zinc-100">{maskAccountNumber(bankInfo.alt_account_number)}</div>
+                          </div>
+                        )}
+                        {bankInfo.alt_routing_number && (
+                          <div>
+                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Routing Number</div>
+                            <div className="font-mono text-xs text-zinc-900 dark:text-zinc-100">{bankInfo.alt_routing_number}</div>
+                          </div>
+                        )}
+                        {!bankInfo.alt_bank_name && !bankInfo.alt_account_number && (
+                          <p className="text-[10px] text-zinc-400">Not set</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-2 py-4 text-center">
+                    <Landmark className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">No bank information on file</p>
+                    {onNavigateToSettings && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-1 h-8 gap-1.5 text-[11px]"
+                        onClick={onNavigateToSettings}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Add Bank Details in Settings
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="min-h-0 sm:col-span-1 lg:col-span-6">
-                <ProfilePanel title="Employment" icon={Briefcase} fields={employment} className="h-full" />
-              </div>
-              <div className="min-h-0 sm:col-span-1 lg:col-span-6">
-                <ProfilePanel title="Compensation" icon={Banknote} fields={pay} className="h-full" />
-              </div>
+            </div>
+          </div>
 
-              <div className="col-span-1 min-h-0 sm:col-span-2 lg:col-span-12">
-                <div className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-emerald-50/40 to-zinc-50/30 p-3 dark:border-zinc-700/80 dark:from-emerald-950/20 dark:to-zinc-950/40">
-                  <div className="mb-2 flex items-center gap-2">
-                    <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                    <span className="text-xs font-semibold text-zinc-900 dark:text-white">Data sources</span>
-                  </div>
-                  <p className="mb-2 text-[10px] leading-relaxed text-zinc-600 dark:text-zinc-400 sm:text-[11px]">
-                    Job type, title, and organization come from the latest <span className="font-mono">hubstaff_hours</span>{' '}
-                    row when present. Department may be overridden by <span className="font-mono">employee_hourly_rates</span>.
-                  </p>
-                  <div className="grid grid-cols-1 gap-2 text-[10px] text-zinc-600 sm:grid-cols-3 sm:gap-3 sm:text-[11px] dark:text-zinc-400">
-                    <div className="rounded-md border border-white/60 bg-white/50 px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-900/40">
-                      <span className="font-mono text-zinc-800 dark:text-zinc-200">global_master_list</span>
-                      <p className="mt-0.5 leading-snug">Name, emails, start date, employee ID</p>
-                    </div>
-                    <div className="rounded-md border border-white/60 bg-white/50 px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-900/40">
-                      <span className="font-mono text-zinc-800 dark:text-zinc-200">employee_hourly_rates</span>
-                      <p className="mt-0.5 leading-snug">Department, regular &amp; OT rates</p>
-                    </div>
-                    <div className="rounded-md border border-white/60 bg-white/50 px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-900/40">
-                      <span className="font-mono text-zinc-800 dark:text-zinc-200">hubstaff_hours</span>
-                      <p className="mt-0.5 leading-snug">Job type, title, organization</p>
-                    </div>
-                  </div>
+          {/* Data Sources */}
+          <div className="col-span-1 sm:col-span-2">
+            <div className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-emerald-50/40 to-zinc-50/30 p-4 shadow-sm dark:border-zinc-700/80 dark:from-emerald-950/20 dark:to-zinc-950/40">
+              <div className="mb-2.5 flex items-center gap-2">
+                <BadgeCheck className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-xs font-semibold text-zinc-900 dark:text-white">Data Sources</span>
+              </div>
+              <p className="mb-3 text-[10px] leading-relaxed text-zinc-600 sm:text-[11px] dark:text-zinc-400">
+                Profile data is assembled from three Supabase tables. Contact HR to update official records.
+              </p>
+              <div className="grid grid-cols-1 gap-2 text-[10px] sm:grid-cols-3 sm:gap-3 sm:text-[11px]">
+                <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
+                  <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">global_master_list</span>
+                  <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">Name, emails, start date, employee ID</p>
+                </div>
+                <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
+                  <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">employee_hourly_rates</span>
+                  <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">Department, regular &amp; OT rates</p>
+                </div>
+                <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
+                  <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">hubstaff_hours</span>
+                  <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">Job type, title, organization</p>
                 </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
     </div>
   );

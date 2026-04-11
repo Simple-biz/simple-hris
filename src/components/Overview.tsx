@@ -10,6 +10,13 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  FileText,
+  Award,
+  Laptop,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Clock,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -25,6 +32,16 @@ import {
 } from '@/lib/supabase/employee-hourly-rates';
 import { normEmail } from '@/lib/email/norm-email';
 import { phpHourlyPayFromSeconds, splitRegularOvertimeSeconds } from '@/lib/payroll/money-php';
+import {
+  getPabMonthRange,
+  inferPabMonthFromColumns,
+  resolveCanonicalColumnsToIso,
+  columnsAreAllCanonical,
+  buildPabCalendarWeeks,
+  pabDateKey,
+  parseColDate,
+  groupDateColumnsByCalendarDay,
+} from '@/lib/hubstaff/calendar-column-dedupe';
 
 const PAGE_SIZE = 5;
 
@@ -63,12 +80,23 @@ export default function Overview() {
   const [page, setPage] = useState(1);
   const [totalPayout, setTotalPayout] = useState<number | null>(null);
   const [payoutLoading, setPayoutLoading] = useState(true);
-  /** Normalized emails from hubstaff_hours payroll rows; null if not loaded or fetch failed. */
   const [payrollEmailsNorm, setPayrollEmailsNorm] = useState<Set<string> | null>(null);
-  /** Distinct work emails in the payroll rows used for stats (latest CSV when uploads are tracked). */
   const [payrollWorkerCount, setPayrollWorkerCount] = useState<number | null>(null);
-  /** When hubstaff rows include `source_file`, this is the filename used for payout stats (lexicographically last = latest week for ISO-style names). */
-  const [latestSourceFile, setLatestSourceFile] = useState<string | null>(null);
+  /** All available source files from the API. */
+  const [sourceFiles, setSourceFiles] = useState<string[]>([]);
+  /** Currently selected source file: null = latest (default), '__all__' = all time, or a specific filename. */
+  const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(null);
+  /** The actual file being displayed (resolved from selection). */
+  const [activeSourceFile, setActiveSourceFile] = useState<string | null>(null);
+
+  /** PAB metrics — computed from all source files. */
+  const [pabMetrics, setPabMetrics] = useState<{
+    loading: boolean;
+    totalEmployees: number;
+    eligible: number;
+    notEligible: number;
+    monthLabel: string | null;
+  }>({ loading: true, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null });
 
   useEffect(() => {
     let cancelled = false;
@@ -100,88 +128,130 @@ export default function Overview() {
     };
   }, []);
 
+  // Load source file list once on mount, default to latest
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        let hoursUrl = '/api/hubstaff-hours';
-        let pickedSourceFile: string | null = null;
-        try {
-          const filesRes = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
-          const filesJson = (await filesRes.json()) as { files?: string[]; error?: string | null };
-          if (filesRes.ok && !filesJson.error && filesJson.files?.length) {
-            pickedSourceFile = filesJson.files[filesJson.files.length - 1] ?? null;
-            if (pickedSourceFile) {
-              hoursUrl = `/api/hubstaff-hours?source_file=${encodeURIComponent(pickedSourceFile)}`;
-            }
-          }
-        } catch {
-          /* fall back to full hubstaff_hours fetch */
+        const res = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
+        const json = (await res.json()) as { files?: string[]; error?: string | null };
+        if (cancelled) return;
+        const files = json.files ?? [];
+        setSourceFiles(files);
+        // Default to latest file
+        if (files.length > 0) {
+          setSelectedSourceFile(files[files.length - 1]);
         }
-        if (!cancelled) setLatestSourceFile(pickedSourceFile);
+      } catch {
+        /* no source files — will fall back to full fetch */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
-        const [hoursRes, ratesRes] = await Promise.all([
-          fetch(hoursUrl, { cache: 'no-store' }),
-          fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
-        ]);
-        const hoursJson = (await hoursRes.json()) as {
-          payrollRows?: Array<{ email: string | null; hoursDecimal: number }> | null;
-          error?: string | null;
-        };
-        const ratesJson = (await ratesRes.json()) as {
-          rows: EmployeeHourlyRateRow[];
-        };
+  // Compute stats whenever the selected file changes
+  useEffect(() => {
+    // Wait for initial source file list to load (selectedSourceFile starts null)
+    if (selectedSourceFile === null && sourceFiles.length === 0) {
+      // First mount, source files not loaded yet — the above effect will set selectedSourceFile
+    }
+    let cancelled = false;
+    setPayoutLoading(true);
+    (async () => {
+      try {
+        const isAllTime = selectedSourceFile === '__all__';
 
-        const ratesByEmail = indexHourlyRatesByEmail(ratesJson.rows ?? []);
-        const payrollRows = hoursJson.payrollRows ?? [];
-
-        if (hoursRes.ok && !hoursJson.error) {
-          const paySet = new Set<string>();
-          for (const row of payrollRows) {
-            const em = normEmail(row.email);
-            if (em) paySet.add(em);
-          }
-          setPayrollEmailsNorm(paySet);
-          setPayrollWorkerCount(paySet.size);
+        // Build fetch URLs
+        let hoursUrls: string[];
+        let displayFile: string | null;
+        if (isAllTime) {
+          // Fetch every source file individually and sum
+          hoursUrls = sourceFiles.map(f => `/api/hubstaff-hours?source_file=${encodeURIComponent(f)}`);
+          displayFile = null;
+        } else if (selectedSourceFile) {
+          hoursUrls = [`/api/hubstaff-hours?source_file=${encodeURIComponent(selectedSourceFile)}`];
+          displayFile = selectedSourceFile;
         } else {
-          setPayrollEmailsNorm(null);
-          setPayrollWorkerCount(null);
+          hoursUrls = ['/api/hubstaff-hours'];
+          displayFile = null;
+        }
+        setActiveSourceFile(displayFile);
+
+        const ratesRes = await fetch('/api/employee-hourly-rates', { cache: 'no-store' });
+        const ratesJson = (await ratesRes.json()) as { rows: EmployeeHourlyRateRow[] };
+        const ratesByEmail = indexHourlyRatesByEmail(ratesJson.rows ?? []);
+
+        // Accumulate payroll rows across all fetched files
+        const allPayrollRows: Array<{ email: string | null; hoursDecimal: number }> = [];
+        for (const url of hoursUrls) {
+          const res = await fetch(url, { cache: 'no-store' });
+          const json = (await res.json()) as {
+            payrollRows?: Array<{ email: string | null; hoursDecimal: number }> | null;
+            error?: string | null;
+          };
+          if (cancelled) return;
+          if (res.ok && !json.error && json.payrollRows) {
+            allPayrollRows.push(...json.payrollRows);
+          }
         }
 
+        if (cancelled) return;
+
+        // For All Time, aggregate hours per employee then compute pay
+        const paySet = new Set<string>();
         let sum = 0;
         let hasAnyPay = false;
 
-        for (const row of payrollRows) {
-          const totalH = row.hoursDecimal;
-          const { regularSec, otSec } = splitRegularOvertimeSeconds(totalH);
-
-          const em = normEmail(row.email);
-          const rateRow = em ? ratesByEmail.get(em) : undefined;
-
-          const parseRate = (v: string | null | undefined): number | null => {
-            if (v == null) return null;
-            const n = parseFloat(String(v).trim().replace(/,/g, ''));
-            return Number.isFinite(n) ? n : null;
-          };
-
-          const regularRate = parseRate(rateRow?.regular_rate);
-          const otRate = parseRate(rateRow?.ot_rate);
-          const regularPay =
-            regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
-          const otPay =
-            otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
-          const initialPay =
-            regularPay != null && otPay != null
-              ? Math.round((regularPay + otPay) * 100) / 100
-              : null;
-
-          if (initialPay != null) {
-            sum += initialPay;
-            hasAnyPay = true;
+        if (isAllTime) {
+          // Sum hours per employee across all files, split regular/OT per file
+          const perEmployee = new Map<string, { regularSec: number; otSec: number }>();
+          for (const row of allPayrollRows) {
+            const em = normEmail(row.email);
+            if (!em) continue;
+            paySet.add(em);
+            const { regularSec, otSec } = splitRegularOvertimeSeconds(row.hoursDecimal);
+            const existing = perEmployee.get(em) ?? { regularSec: 0, otSec: 0 };
+            existing.regularSec += regularSec;
+            existing.otSec += otSec;
+            perEmployee.set(em, existing);
+          }
+          for (const [em, { regularSec, otSec }] of perEmployee) {
+            const rateRow = ratesByEmail.get(em);
+            const parseRate = (v: string | null | undefined): number | null => {
+              if (v == null) return null;
+              const n = parseFloat(String(v).trim().replace(/,/g, ''));
+              return Number.isFinite(n) ? n : null;
+            };
+            const regularRate = parseRate(rateRow?.regular_rate);
+            const otRate = parseRate(rateRow?.ot_rate);
+            const regularPay = regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
+            const otPay = otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
+            const initialPay = regularPay != null && otPay != null ? Math.round((regularPay + otPay) * 100) / 100 : null;
+            if (initialPay != null) { sum += initialPay; hasAnyPay = true; }
+          }
+        } else {
+          for (const row of allPayrollRows) {
+            const em = normEmail(row.email);
+            if (em) paySet.add(em);
+            const { regularSec, otSec } = splitRegularOvertimeSeconds(row.hoursDecimal);
+            const rateRow = em ? ratesByEmail.get(em) : undefined;
+            const parseRate = (v: string | null | undefined): number | null => {
+              if (v == null) return null;
+              const n = parseFloat(String(v).trim().replace(/,/g, ''));
+              return Number.isFinite(n) ? n : null;
+            };
+            const regularRate = parseRate(rateRow?.regular_rate);
+            const otRate = parseRate(rateRow?.ot_rate);
+            const regularPay = regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
+            const otPay = otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
+            const initialPay = regularPay != null && otPay != null ? Math.round((regularPay + otPay) * 100) / 100 : null;
+            if (initialPay != null) { sum += initialPay; hasAnyPay = true; }
           }
         }
 
         if (!cancelled) {
+          setPayrollEmailsNorm(paySet.size > 0 ? paySet : null);
+          setPayrollWorkerCount(paySet.size > 0 ? paySet.size : null);
           setTotalPayout(hasAnyPay ? sum : null);
         }
       } catch {
@@ -189,16 +259,109 @@ export default function Overview() {
           setTotalPayout(null);
           setPayrollEmailsNorm(null);
           setPayrollWorkerCount(null);
-          setLatestSourceFile(null);
+          setActiveSourceFile(null);
         }
       } finally {
         if (!cancelled) setPayoutLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    return () => { cancelled = true; };
+  }, [selectedSourceFile, sourceFiles]);
+
+  // Compute PAB eligibility across all source files (full month merge)
+  useEffect(() => {
+    if (sourceFiles.length === 0) return;
+    let cancelled = false;
+    setPabMetrics(prev => ({ ...prev, loading: true }));
+    (async () => {
+      try {
+        const allCols = new Set<string>();
+        const rowsByEmail = new Map<string, Record<string, unknown>>();
+
+        for (const file of sourceFiles) {
+          const res = await fetch(
+            `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
+            { cache: 'no-store' },
+          );
+          const json = (await res.json()) as {
+            columns?: string[] | null;
+            rows?: Record<string, unknown>[] | null;
+          };
+          if (cancelled) return;
+          if (!json.columns || !json.rows) continue;
+
+          for (const row of json.rows) {
+            const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
+            const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
+            if (!email) continue;
+
+            const needsResolve = columnsAreAllCanonical(json.columns);
+            const resolved = needsResolve ? resolveCanonicalColumnsToIso(row, file) : row;
+            for (const col of (needsResolve ? Object.keys(resolved) : json.columns)) allCols.add(col);
+
+            const existing = rowsByEmail.get(email) ?? {};
+            rowsByEmail.set(email, { ...existing, ...resolved });
+          }
+        }
+
+        if (cancelled) return;
+
+        const cols = [...allCols];
+        const pabMonth = inferPabMonthFromColumns(cols);
+        if (!pabMonth) {
+          setPabMetrics({ loading: false, totalEmployees: rowsByEmail.size, eligible: 0, notEligible: rowsByEmail.size, monthLabel: null });
+          return;
+        }
+
+        const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const monthLabel = `${monthNames[pabMonth.month]} ${pabMonth.year}`;
+
+        let eligible = 0;
+        let notEligible = 0;
+
+        for (const [, mergedRow] of rowsByEmail) {
+          // Build date → seconds lookup
+          const hoursByDateKey = new Map<string, number>();
+          const isDateCol = (c: string): boolean => parseColDate(c) !== null;
+          const dateCols = Object.keys(mergedRow).filter(isDateCol);
+          const groups = groupDateColumnsByCalendarDay(dateCols, cols);
+          for (const group of groups) {
+            let d: Date | null = null;
+            for (const c of group) { d = parseColDate(c); if (d) break; }
+            if (!d) continue;
+            let maxS = 0;
+            for (const c of group) {
+              const v = mergedRow[c];
+              if (v == null) continue;
+              const s = String(v).trim();
+              if (!s) continue;
+              const hms = /^(\d+):(\d{2}):(\d{2})$/.exec(s);
+              if (hms) { maxS = Math.max(maxS, +hms[1] * 3600 + +hms[2] * 60 + +hms[3]); continue; }
+              const dec = parseFloat(s);
+              if (Number.isFinite(dec)) maxS = Math.max(maxS, Math.round(dec * 3600));
+            }
+            hoursByDateKey.set(pabDateKey(d), Math.max(hoursByDateKey.get(pabDateKey(d)) ?? 0, maxS));
+          }
+
+          const weeks = buildPabCalendarWeeks(start, end, hoursByDateKey);
+          const allDays = weeks.flat();
+          if (allDays.length > 0 && allDays.every(d => d.passes)) {
+            eligible++;
+          } else {
+            notEligible++;
+          }
+        }
+
+        if (!cancelled) {
+          setPabMetrics({ loading: false, totalEmployees: rowsByEmail.size, eligible, notEligible, monthLabel });
+        }
+      } catch {
+        if (!cancelled) setPabMetrics({ loading: false, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sourceFiles]);
 
   const departmentOptions = useMemo(() => {
     const set = new Set<string>();
@@ -314,13 +477,20 @@ export default function Overview() {
           <p className="text-sm text-zinc-600 dark:text-zinc-500">Real-time HRIS and Payroll analytics</p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge
-            variant="outline"
-            title={latestSourceFile ?? undefined}
-            className="max-w-[min(100%,280px)] truncate border-orange-500/20 bg-gradient-to-r from-orange-500/10 to-blue-500/10 px-3 py-1 font-mono text-[11px] text-orange-700 dark:border-orange-500/30 dark:text-orange-400"
+          <FileText className="h-4 w-4 shrink-0 text-orange-500" />
+          <select
+            value={selectedSourceFile ?? ''}
+            onChange={(e) => setSelectedSourceFile(e.target.value || null)}
+            className="h-8 max-w-[min(100%,340px)] truncate rounded-md border border-zinc-200 bg-white px-2 pr-7 font-mono text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
           >
-            {latestSourceFile ? `CSV: ${latestSourceFile}` : 'Hubstaff data (all rows)'}
-          </Badge>
+            <option value="__all__">All Time (all uploads combined)</option>
+            {[...sourceFiles].reverse().map((file, i) => (
+              <option key={file} value={file}>
+                {file}{i === 0 ? ' (latest)' : ''}
+              </option>
+            ))}
+          </select>
+          {payoutLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />}
         </div>
       </div>
 
@@ -337,23 +507,19 @@ export default function Overview() {
             <CardContent>
               <div className="font-mono text-2xl font-bold text-zinc-900 dark:text-white">{stat.value}</div>
               <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-600">
-                {stat.label === 'Total Payout'
-                  ? latestSourceFile
-                    ? `Sum of initial pay · ${latestSourceFile}`
-                    : 'Sum of initial pay · latest Hubstaff data in database'
-                  : stat.label === 'Active Workers'
-                    ? latestSourceFile
-                      ? `Distinct work emails · ${latestSourceFile}`
-                      : 'Distinct work emails in Hubstaff payroll rows'
-                    : stat.label === 'Employees in Payroll but not in Master list'
-                      ? latestSourceFile
-                        ? `Distinct emails in ${latestSourceFile} not in global_master_list`
-                        : 'Distinct emails in Hubstaff payroll not in global_master_list'
-                      : stat.label === 'Employees in Masterlist but not in Payroll'
-                        ? latestSourceFile
-                          ? `Distinct emails in global_master_list not in ${latestSourceFile}`
-                          : 'Distinct emails in global_master_list not in Hubstaff payroll'
-                        : ''}
+                {(() => {
+                  const isAll = selectedSourceFile === '__all__';
+                  const src = activeSourceFile
+                    ? activeSourceFile
+                    : isAll ? 'all uploads combined' : 'latest Hubstaff data';
+                  if (stat.label === 'Total Payout') return `Sum of initial pay · ${src}`;
+                  if (stat.label === 'Active Workers') return `Distinct work emails · ${src}`;
+                  if (stat.label === 'Employees in Payroll but not in Master list')
+                    return `Emails in ${isAll ? 'all payroll files' : src} not in global_master_list`;
+                  if (stat.label === 'Employees in Masterlist but not in Payroll')
+                    return `Emails in global_master_list not in ${isAll ? 'any payroll file' : src}`;
+                  return '';
+                })()}
               </p>
             </CardContent>
           </Card>
@@ -592,34 +758,118 @@ export default function Overview() {
 
         <Card className="border-orange-100/80 bg-gradient-to-br from-white to-orange-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5">
           <CardHeader>
-            <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">System Health</CardTitle>
+            <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Bonus & Status</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs">
-                <span className="text-zinc-600 dark:text-zinc-400">Hubstaff API Sync</span>
-                <span className="font-bold text-emerald-600 dark:text-emerald-500">Stable</span>
+          <CardContent className="space-y-5">
+            {/* PAB Eligibility */}
+            <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <div className="mb-2.5 flex items-center gap-2">
+                <Award className="h-4 w-4 text-indigo-500" />
+                <span className="text-xs font-semibold text-zinc-900 dark:text-white">Perfect Attendance Bonus</span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                <div className="h-full w-[98%] bg-emerald-500" />
+              {pabMetrics.loading ? (
+                <div className="flex items-center gap-2 py-2 text-[11px] text-zinc-400">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Computing PAB eligibility…
+                </div>
+              ) : (
+                <>
+                  {pabMetrics.monthLabel && (
+                    <p className="mb-2 text-[10px] text-indigo-600 dark:text-indigo-400">
+                      PAB period: <span className="font-semibold">{pabMetrics.monthLabel}</span>
+                    </p>
+                  )}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                        Eligible
+                      </div>
+                      <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                        {pabMetrics.eligible}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                        <XCircle className="h-3.5 w-3.5 text-red-400" />
+                        Not Eligible
+                      </div>
+                      <span className="font-mono text-sm font-bold text-red-500 dark:text-red-400">
+                        {pabMetrics.notEligible}
+                      </span>
+                    </div>
+                    {pabMetrics.totalEmployees > 0 && (
+                      <div className="mt-1.5">
+                        <div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-500"
+                            style={{ width: `${(pabMetrics.eligible / pabMetrics.totalEmployees) * 100}%` }}
+                          />
+                        </div>
+                        <p className="mt-1 text-right text-[10px] text-zinc-400">
+                          {Math.round((pabMetrics.eligible / pabMetrics.totalEmployees) * 100)}% eligible of {pabMetrics.totalEmployees}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Technology Bonus */}
+            <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <div className="mb-2.5 flex items-center gap-2">
+                <Laptop className="h-4 w-4 text-sky-500" />
+                <span className="text-xs font-semibold text-zinc-900 dark:text-white">Technology Bonus</span>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-zinc-600 dark:text-zinc-400">Amount per employee</span>
+                  <span className="font-mono text-sm font-bold text-sky-600 dark:text-sky-400">₱1,850</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-zinc-600 dark:text-zinc-400">Status</span>
+                  <Badge variant="outline" className="gap-1 border-sky-200 bg-sky-50 text-[10px] text-sky-700 dark:border-sky-800/50 dark:bg-sky-950/30 dark:text-sky-400">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Payroll Discretion
+                  </Badge>
+                </div>
+                <p className="mt-1 text-[10px] leading-snug text-zinc-400 dark:text-zinc-500">
+                  Applied manually by payroll operator per cycle. Not auto-computed from hours data.
+                </p>
               </div>
             </div>
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs">
-                <span className="text-zinc-600 dark:text-zinc-400">Payroll Calculation Engine</span>
-                <span className="font-bold text-emerald-600 dark:text-emerald-500">Stable</span>
+
+            {/* Dispute Requests */}
+            <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <div className="mb-2.5 flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-500" />
+                <span className="text-xs font-semibold text-zinc-900 dark:text-white">Dispute Requests</span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                <div className="h-full w-[100%] bg-emerald-500" />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs">
-                <span className="text-zinc-600 dark:text-zinc-400">Recruitment DB Pipeline</span>
-                <span className="font-bold text-amber-600 dark:text-amber-500">Degraded</span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                <div className="h-full w-[75%] bg-amber-500" />
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    <Clock className="h-3.5 w-3.5 text-amber-500" />
+                    Pending
+                  </div>
+                  <span className="font-mono text-sm font-bold text-amber-600 dark:text-amber-400">0</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                    Resolved
+                  </div>
+                  <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">0</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    <XCircle className="h-3.5 w-3.5 text-red-400" />
+                    Rejected
+                  </div>
+                  <span className="font-mono text-sm font-bold text-red-500 dark:text-red-400">0</span>
+                </div>
+                <p className="mt-1 text-[10px] leading-snug text-zinc-400 dark:text-zinc-500">
+                  Dispute system is planned. Counts will populate once the disputes feature is live.
+                </p>
               </div>
             </div>
           </CardContent>

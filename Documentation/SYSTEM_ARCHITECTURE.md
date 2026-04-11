@@ -82,10 +82,10 @@ simple-hris/
 
 `app/layout.tsx` loads the fonts (Inter, JetBrains Mono via Google Fonts), wraps the app in `<ThemeProvider>`, and sets metadata. `app/page.tsx` renders `<AppShell />`.
 
-`src/App.tsx` owns a single `activeTab` state string. The sidebar sets it; the main content area renders the corresponding view. There is **no URL-based routing** — this is intentional for a single-user internal tool where deep-linking is unnecessary.
+`src/App.tsx` owns a single `activeTab` state string. The sidebar sets it; the main content area renders the corresponding view. There is **no URL-based routing** for the admin side — this is intentional for a single-user internal tool where deep-linking is unnecessary.
 
 ```
-activeTab values:
+Admin activeTab values (src/App.tsx):
   "overview"       → <Overview />
   "rates"          → <Rates />
   "payroll-wizard" → <PayrollWizard />
@@ -93,6 +93,26 @@ activeTab values:
   "disputes"       → placeholder card
   "settings"       → placeholder card
 ```
+
+### Employee Portal
+
+The employee-facing portal lives at `/employee?email=...` (`app/employee/page.tsx` → `EmployeeApp.tsx`). It uses URL-based email identification and has its own tab-based navigation:
+
+```
+Employee activeTab values (src/components/employee/EmployeeApp.tsx):
+  "dashboard"  → <EmployeeDashboard />   — Hours, pay, PAB calendar
+  "profile"    → <EmployeeProfile />     — Directory info, bank details
+  "hours"      → placeholder
+  "disputes"   → placeholder
+  "settings"   → <EmployeeSettings />   — Bank info editing
+```
+
+Key differences from the admin shell:
+- **PAB Calendar**: Full-month calendar grid showing Mon–Fri pass/fail per day, with skeleton loading and staggered animations
+- **All Time mode**: File selector includes "All Time" option that aggregates pay across all source files
+- **Canonical column resolution**: Weekly source files with `monday`/`tuesday` columns are resolved to ISO dates during merge
+- **Profile hero**: Large avatar with hover camera overlay, department/job/ID badges
+- **Bank info**: Displayed in profile, editable via Settings tab redirect
 
 ---
 

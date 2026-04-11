@@ -264,3 +264,45 @@ Pre-Flight Validation (Step 4)
 ## Email Normalization
 
 `src/lib/email/norm-email.ts` applies `s?.trim().toLowerCase() || null` to every email before it is used as a lookup key. This single-line function is called consistently across all matching logic (rate lookup, master list join, profile merge, employee ID map) to prevent case and whitespace mismatches.
+
+---
+
+## PAB Data Flow: Canonical Column Resolution
+
+Hubstaff source files are uploaded as weekly CSVs with names like `simple-biz_daily_report_2026-03-01_to_2026-03-07.csv`. When stored in Supabase, the daily hour columns use **canonical names** (`monday`, `tuesday`, etc.) rather than dated column headers.
+
+This creates a problem for full-month PAB evaluation: merging multiple weekly source files naively causes each file's `monday` value to overwrite the previous one.
+
+### Resolution logic (`src/lib/hubstaff/calendar-column-dedupe.ts`)
+
+1. **`parseDateRangeFromFilename(filename)`** — Extracts the start/end dates from the source filename (regex: `YYYY-MM-DD_to_YYYY-MM-DD`).
+
+2. **`columnsAreAllCanonical(cols)`** — Returns `true` if all day-type columns are canonical names (`monday`, `tuesday`, etc.) with no parseable ISO or Hubstaff-format dates.
+
+3. **`resolveCanonicalColumnsToIso(row, filename)`** — When canonical columns are detected, maps each day name to its actual ISO date within the file's date range:
+   - Iterates from `start` to `end`, building a `day-of-week → ISO date` map
+   - Replaces `monday` → `2026-03-02`, `tuesday` → `2026-03-03`, etc.
+   - Non-day columns (`Email`, `Total worked`, etc.) pass through unchanged
+
+4. **Merge across files** — Each source file's row is resolved independently before merging. The merged row accumulates ISO-date columns across all weeks without collision:
+   ```
+   File 1 (Mar 1–7):  monday → 2026-03-02, tuesday → 2026-03-03, ...
+   File 2 (Mar 8–14): monday → 2026-03-09, tuesday → 2026-03-10, ...
+   Merged: { "2026-03-02": "8:30:00", "2026-03-03": "7:15:00", ..., "2026-03-09": "8:00:00", ... }
+   ```
+
+5. **`inferPabMonthFromColumns(cols)`** — Now successfully identifies the target month from the resolved ISO columns, enabling `getPabMonthRange()` to compute the PAB period.
+
+This resolution happens in both `EmployeeDashboard.tsx` (PAB merge `useEffect`) and `PayrollWizard.tsx` (`mergeRowsInto` function).
+
+---
+
+## Employee Dashboard: All Time Accumulation
+
+When the "All Time" file selector option is chosen, the dashboard aggregates data from all uploaded source files:
+
+1. **Total seconds**: Sum of each file's `Total worked` value.
+2. **Regular/OT split**: Each file's hours are split at the 40h threshold independently, then the regular and OT seconds are summed separately. This prevents a re-split of the combined total from incorrectly allocating hours (e.g., two 42h files = 80h regular + 4h OT, not 40h regular + 40h OT).
+3. **PAB bonus**: `pabEligibleCount` (currently single-month) × ₱5,000.
+4. **Pay Summary**: Total = Regular Pay + OT Pay + PAB bonus.
+5. **Daily Hours & PAB Calendar**: Show the latest file / full month respectively (unaffected by All Time).

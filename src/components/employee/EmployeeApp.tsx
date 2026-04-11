@@ -8,6 +8,9 @@ import EmployeeProfile from './EmployeeProfile';
 import EmployeeSettings from './EmployeeSettings';
 import { Toaster } from '@/components/ui/sonner';
 import { AlertCircle, FileText, Clock, Settings } from 'lucide-react';
+import { normEmail } from '@/lib/email/norm-email';
+import type { EmployeeRow } from '@/lib/supabase/employees';
+import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 
 /**
  * Employee-facing app shell — rendered at /employee.
@@ -22,6 +25,9 @@ export default function EmployeeApp() {
   const [mounted, setMounted] = useState(false);
   const [employeeEmail, setEmployeeEmail] = useState<string | null>(null);
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
+  const [employeeName, setEmployeeName] = useState<string | null>(null);
+  const [employeeDepartment, setEmployeeDepartment] = useState<string | null>(null);
+  const [employeeId, setEmployeeId] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -29,20 +35,45 @@ export default function EmployeeApp() {
     setEmployeeEmail(params.get('email'));
   }, []);
 
+  // Fetch profile photo, name, department, and employee ID
   useEffect(() => {
     if (!employeeEmail) {
       setProfilePhotoUrl(null);
+      setEmployeeName(null);
+      setEmployeeDepartment(null);
+      setEmployeeId(null);
       return;
     }
+    const norm = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch(
-          `/api/employee-profile-photo?email=${encodeURIComponent(employeeEmail)}`,
-          { cache: 'no-store' },
-        );
-        const j = (await r.json()) as { profilePhotoUrl?: string | null };
-        if (!cancelled) setProfilePhotoUrl(j.profilePhotoUrl?.trim() || null);
+        const [photoRes, empRes, rateRes] = await Promise.all([
+          fetch(`/api/employee-profile-photo?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' }),
+          fetch('/api/employees', { cache: 'no-store' }),
+          fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
+        ]);
+        const photoJson = (await photoRes.json()) as { profilePhotoUrl?: string | null };
+        const empJson = (await empRes.json()) as { employees?: EmployeeRow[] };
+        const rateJson = (await rateRes.json()) as { rows?: EmployeeHourlyRateRow[] };
+        if (cancelled) return;
+
+        setProfilePhotoUrl(photoJson.profilePhotoUrl?.trim() || null);
+
+        const master = (empJson.employees ?? []).find((e) => {
+          const we = normEmail(e.work_email ?? '');
+          const pe = normEmail(e.personal_email ?? '');
+          return we === norm || pe === norm;
+        });
+        const rate = (rateJson.rows ?? []).find((r) => {
+          const we = normEmail(r.work_email ?? '');
+          const pe = normEmail(r.personal_email ?? '');
+          return we === norm || pe === norm;
+        });
+
+        setEmployeeName(master?.name?.trim() || null);
+        setEmployeeDepartment(rate?.department?.trim() || master?.department?.trim() || null);
+        setEmployeeId(master?.employee_id?.trim() || null);
       } catch {
         if (!cancelled) setProfilePhotoUrl(null);
       }
@@ -83,6 +114,7 @@ export default function EmployeeApp() {
             employeeEmail={employeeEmail}
             profilePhotoUrl={profilePhotoUrl}
             onProfilePhotoUpdated={(url) => setProfilePhotoUrl(url)}
+            onNavigateToSettings={() => setActiveTab('settings')}
           />
         );
       case 'hours':
@@ -121,8 +153,9 @@ export default function EmployeeApp() {
       <EmployeeSidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        employeeName={employeeEmail?.split('@')[0]?.replace(/\./g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) ?? 'Employee'}
-        department="Team Member"
+        employeeName={employeeName || employeeEmail?.split('@')[0]?.replace(/\./g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || 'Employee'}
+        department={employeeDepartment || undefined}
+        employeeId={employeeId || undefined}
         employeeEmail={employeeEmail}
         profilePhotoUrl={profilePhotoUrl}
       />

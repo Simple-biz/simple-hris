@@ -37,18 +37,25 @@ Placeholder `<div>` cards are rendered for `hogan-suite`, `disputes`, and `setti
 
 The dashboard view. Loaded when `activeTab === "overview"`.
 
-### Stat Cards (top row — 6 cards, responsive grid)
+### CSV Source Selector
+
+A `<select>` dropdown in the header allows switching between:
+- **All Time** (`__all__`): fetches every source file individually, accumulates payroll rows, splits regular/OT per file per employee (same per-file split logic as the Employee Dashboard), then sums.
+- **Specific file**: fetches that single file's data.
+- **Default**: the latest file (lexicographically last, which corresponds to the most recent week for ISO-style filenames).
+
+A loading spinner appears beside the dropdown while stats are recomputing.
+
+### Stat Cards (top row — 4 cards, responsive grid)
 
 | Card | Value Source | Notes |
 |---|---|---|
-| Total Payout | Computed live from Hubstaff rows + rate map | Sum of all `initialPay` values |
-| Active Workers | `GET /api/employees` count | Filtered to `status !== DISABLED` |
-| Employees with Rates | `GET /api/employee-hourly-rates` count | Row count from rates table |
-| Employees with Profiles | Checks bank + address fields | Counts rows where both fields are non-null |
-| Avg. Hours | Static `38.5` | Placeholder — not computed |
-| Pending Hires | Static `5` | Placeholder |
+| Total Payout | Computed live from selected Hubstaff file + rate map | Sum of all `initialPay` values; reacts to CSV selector |
+| Active Workers | Distinct work emails in selected payroll data | Count of unique employees in the selected file(s) |
+| In Payroll not in Master | Cross-reference payroll emails vs master list | Potential unregistered contractors |
+| In Master not in Payroll | Cross-reference master list vs payroll emails | Employees missing from Hubstaff this period |
 
-**Total Payout computation** runs in-browser after both `/api/hubstaff-hours` and `/api/employee-hourly-rates` resolve. For each Hubstaff row, it finds the matching rate by normalized email and calculates `regularPay + otPay`. Sums all results.
+**Total Payout computation** runs in-browser after both Hubstaff data and rates resolve. For "All Time", hours are accumulated per employee across files with per-file regular/OT split, then pay is computed from the summed seconds. Stat card subtexts adapt to show the source (filename or "all uploads combined").
 
 ### Employee Table (middle-left, spans 2/3 of second row)
 
@@ -58,14 +65,23 @@ The dashboard view. Loaded when `activeTab === "overview"`.
 - **Department filter**: Dropdown that extracts unique department values from the data.
 - Employee IDs are assigned by `generateEmployeeIds()` from `src/lib/supabase/employees.ts` — format `YYMM-NNNN`, grouped by start-date month, sorted by first name within group.
 
-### System Health Panel (middle-right, 1/3 of row)
+### Bonus & Status Panel (middle-right, 1/3 of row)
 
-Three static health indicators with progress bars:
-- Hubstaff API Sync: 98%, "Stable"
-- Payroll Calculation Engine: 100%, "Stable"
-- Recruitment DB Pipeline: 75%, "Degraded" (orange)
+Three real metric sections replacing the old hardcoded "System Health" panel:
 
-These are hardcoded. They serve as a visual dashboard placeholder until real monitoring is wired up.
+**Perfect Attendance Bonus**
+- Fetches all source files on mount, merges per-employee data with canonical-to-ISO column resolution (same `resolveCanonicalColumnsToIso()` logic as the Employee Dashboard), then evaluates PAB eligibility for every employee using `buildPabCalendarWeeks()`.
+- Shows: PAB period label (e.g., "Mar 2026"), eligible count (green), not eligible count (red), progress bar with percentage (eligible / total).
+- Loading state with spinner while computing across all files.
+
+**Technology Bonus**
+- Fixed ₱1,850 per employee per cycle.
+- "Payroll Discretion" badge — applied manually by the operator, not auto-computed from hours.
+
+**Dispute Requests**
+- Pending / Resolved / Rejected counts with color-coded icons.
+- Currently shows 0 for all with a note that the dispute system is planned.
+- Ready to wire up once the `hour_disputes` table and dispute API are implemented.
 
 ---
 
@@ -84,7 +100,8 @@ If the profile response includes merge errors (a `mergeNotes` field), a yellow b
 ### Table View
 
 - `PAGE_SIZE = 12`
-- Columns: Employee ID, Name, Work Email, Regular Rate, OT Rate, View (eye icon), Delete (trash icon)
+- Columns: Employee ID, Name (with avatar), Department, Organization, Work Email, Regular Rate, OT Rate, View (eye icon), Delete (trash icon)
+- **Employee Avatar**: Each row shows an `<EmployeeAvatar>` beside the name — displays uploaded photo, Gravatar, or initials. Photo URL and email extracted from the profile fields via `getAvatarInfoFromProfile()`.
 - Search: filters across name, emails, department, employee ID
 - Rates formatted as `₱X,XXX.XX` using `en-PH` locale
 - Employee ID shown if found in the ID map; otherwise `—`
@@ -93,14 +110,16 @@ If the profile response includes merge errors (a `mergeNotes` field), a yellow b
 
 **`buildNormFieldMap()`**: Iterates all profile fields, normalizes each key with `normFieldKey()` (lowercases, replaces spaces with underscores), and indexes them. This lets the table work regardless of whether columns come from a table using `"Work Email"` or `work_email`.
 
+**Hidden fields**: Fields with keys matching `profile_photo_url`, `photo_url`, `avatar_url` (and variants) are filtered from the displayed field list via `isHiddenField()`. The photo is shown visually via the avatar instead of as a raw URL string.
+
 ### View Profile Modal
 
 Triggered by the eye icon. Opens a `<Dialog>` up to 1,200px wide.
 
 **Sections**:
-1. Header: display name + subtitle (collapsed emails) + department badge
-2. **Quick Rate Editor**: Shows current regular and OT rates. "Edit" button opens inline inputs. "Save" calls `POST /api/update-employee-rates`. "Cancel" restores original values.
-3. **All Fields**: Rendered as a `<dl>` grid. Each field is a `<motion.div>` with staggered fade-in (`delay: i * 0.01`, capped at 0.28s). Date fields (keys containing `date` or `start`) are auto-formatted to "January 1, 2025" using `Date` constructor.
+1. **Header**: Large avatar (h-14 w-14) on the upper left with ring border, display name + employee ID badge to the right, department + organization badges below, email subtitle.
+2. **Quick Rate Editor**: Shows current regular and OT rates. "Edit" button opens inline inputs. "Save" calls `POST /api/update-employee-rates`. "Cancel" restores original values. "Edit Profile" button opens inline form for name, department, emails, start date.
+3. **All Fields**: Rendered as a `<dl>` grid. Each field is a `<motion.div>` with staggered fade-in (`delay: i * 0.01`, capped at 0.28s). Date fields (keys containing `date` or `start`) are auto-formatted to "January 1, 2025" using `Date` constructor. Photo URL fields are filtered out (shown as avatar in header instead).
 
 ### Add Employee Modal
 
@@ -299,6 +318,85 @@ For each department tab, shows a table of that department's employees:
 - "Confirm & Dispatch" → `toast.success("Payroll dispatched")` + resets wizard to Step 1 (placeholder — no actual payment API call)
 
 **Design note**: The large centered circle animation signals "this is a significant action." The indigo accent (distinct from the global orange/blue) is used throughout the wizard as a visual cue that you are inside a specific workflow, not the general app.
+
+---
+
+## Employee Portal (`src/components/employee/`)
+
+### `EmployeeApp.tsx` — Employee Shell
+
+Top-level employee-side shell. Manages `activeTab` state (`'dashboard'` | `'profile'` | `'hours'` | `'disputes'` | `'settings'`), renders `<EmployeeSidebar>` and switches content via `renderContent()`. Resolves employee email from URL query params.
+
+### `EmployeeSidebar.tsx` — Employee Navigation
+
+Fixed sidebar with 5 nav items: My Dashboard, Profile, My Hours, My Disputes, Settings. Shows employee name, avatar, and dark mode toggle.
+
+### `EmployeeDashboard.tsx` — My Dashboard
+
+The primary employee-facing view. Shows weekly hours, pay calculations, and PAB status.
+
+**Sections:**
+- **Header**: Employee name, PAB period badge, CSV source file selector (includes "All Time" option)
+- **Bonus Indicators Card**: PAB eligibility status with month/date range info, Technology Bonus info
+- **Stats Cards** (5-column grid): Total Hours, Regular Pay, Overtime Pay, PAB, Initial Pay
+- **Daily Hours Breakdown** (bar chart): Per-day bars with 7h threshold line, color-coded (green ≥7h, amber <7h, gray weekend)
+- **PAB Calendar** (grid): Mon–Fri calendar for the full PAB month period with pass/fail per day, skeleton loading, staggered animations
+- **Pay Summary**: Rate breakdown, Regular/OT/PAB line items, total with USD conversion
+
+**Key features:**
+- **All Time mode**: Aggregates totals across all uploaded source files. Regular/OT split computed per-file independently at the 40h threshold, then summed. PAB shows accumulated eligible months × ₱5,000.
+- **Canonical column resolution**: Source files with `monday`/`tuesday` columns are resolved to ISO dates using filename date ranges so weekly data doesn't overwrite during merge.
+- **PAB Calendar**: Built via `buildPabCalendarWeeks()` — generates expected weekdays in the PAB range, maps actual hours, renders a grid with date/hours/status per cell.
+- **Skeleton loading**: Full-page skeleton (header, bonus cards, stats grid, chart/calendar/summary) shown during initial data load. PAB calendar has its own skeleton with staggered pulse.
+
+### `EmployeeProfile.tsx` — Profile
+
+Employee profile information view with hero header and info panels.
+
+**Sections:**
+- **Hero Header**: Large avatar (80×80 / 96×96) with ring border and hover camera overlay for photo upload, employee name, email, department/job title/employee ID badges
+- **Identity Panel**: Full name, Employee ID
+- **Contact Panel**: Work email, Personal email
+- **Employment Panel**: Department, Job type, Job title, Organization, Start date (with icons per field)
+- **Compensation Panel**: Regular rate, OT rate (₱/hr)
+- **Bank Information Card** (full-width): Primary and alternative bank accounts (bank name, account holder, masked account number showing last 4 digits, routing number). "Edit" button navigates to Settings tab. Empty state shows "Add Bank Details in Settings" button.
+- **Data Sources Panel**: Shows the three Supabase tables that provide profile data
+
+**Data sources**: Fetches from `/api/employees`, `/api/employee-hourly-rates`, `/api/hubstaff-hours`, and `/api/employee-ids` in parallel. Bank info comes from `employee_ids` table.
+
+**Skeleton**: Full-page skeleton matching the hero + cards layout during initial load.
+
+### `EmployeeSettings.tsx` — Settings
+
+Employee self-service settings for personal email and bank information.
+
+**Sections:**
+- Personal email editor
+- Primary bank account (account holder name, bank name, account number, routing number)
+- Alternative bank account (same 4 fields)
+- Save button with toast notifications
+
+Updates via POST to `/api/update-employee-ids`.
+
+### `EmployeeAvatar.tsx` — Avatar Component
+
+Displays employee photo with fallback chain: uploaded photo (Supabase Storage) → Gravatar → initials (orange-to-blue gradient circle).
+
+---
+
+## `src/lib/hubstaff/calendar-column-dedupe.ts` — PAB Helpers
+
+Shared module for PAB (Perfect Attendance Bonus) date logic, used by both PayrollWizard and EmployeeDashboard.
+
+**Key exports:**
+- `getPabMonthRange(year, month)` — Computes PAB start/end dates for a month (first Monday on/after 1st → Friday of last week with Monday in month)
+- `inferPabMonthFromColumns(cols)` — Identifies target month from column date headers
+- `filterColumnGroupsByPabRange(groups, cols, start, end)` — Filters column groups to PAB date range
+- `buildPabCalendarWeeks(start, end, hoursByDateKey)` — Generates calendar grid (weeks × days) with hours data mapped
+- `resolveCanonicalColumnsToIso(row, filename)` — Maps `monday`/`tuesday` columns to ISO dates using source filename date range
+- `columnsAreAllCanonical(cols)` — Detects whether columns need resolution
+- `pabDateKey(date)` — Stable date key for lookup maps
+- `countMonFriInclusiveInRange(start, end)` — Counts weekdays in a range
 
 ---
 

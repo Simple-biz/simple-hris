@@ -24,6 +24,7 @@ interface EmployeeSidebarProps {
   setActiveTab: (tab: string) => void;
   employeeName?: string;
   department?: string;
+  employeeId?: string;
   /** Used for Gravatar (same email as ?email= on /employee). */
   employeeEmail?: string | null;
   /** Supabase profile photo URL when set. */
@@ -42,7 +43,8 @@ export default function EmployeeSidebar({
   activeTab,
   setActiveTab,
   employeeName = 'Employee',
-  department = 'Team Member',
+  department,
+  employeeId,
   employeeEmail = null,
   profilePhotoUrl = null,
 }: EmployeeSidebarProps) {
@@ -128,16 +130,18 @@ export default function EmployeeSidebar({
             photoUrl={profilePhotoUrl}
             email={employeeEmail}
             initials={initials}
-            className="h-8 w-8 text-xs"
-            pixelSize={64}
+            className="h-9 w-9 text-xs"
+            pixelSize={72}
           />
           <div className="flex min-w-0 flex-col overflow-hidden">
             <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">
               {employeeName}
             </span>
-            <span className="truncate text-xs text-zinc-500 dark:text-zinc-500">
-              {department}
-            </span>
+            {(department || employeeId) && (
+              <span className="truncate text-[10px] text-zinc-500 dark:text-zinc-500">
+                {department || '—'}{employeeId ? ` · ${employeeId}` : ''}
+              </span>
+            )}
           </div>
         </div>
         <Button
@@ -146,7 +150,7 @@ export default function EmployeeSidebar({
           onClick={() => (window.location.href = '/')}
         >
           <LogOut className="h-4 w-4" />
-          Back to Admin
+          Log Out
         </Button>
       </div>
     </div>

@@ -58,54 +58,113 @@ Currency is formatted as Philippine Peso (₱) using `en-PH` locale.
 
 ---
 
-## Perfect Attendance
+## Perfect Attendance Bonus (PAB)
 
-Auto-detected in Step 3. The rule:
+Auto-detected in Step 3 (PayrollWizard) and displayed in the Employee Dashboard. The rule:
 
-> An employee has perfect attendance if they logged ≥ 7 hours (25,200 seconds) on **every Monday through Friday** in the Hubstaff export.
+> An employee has perfect attendance if they logged ≥ 7 hours (25,200 seconds) on **every Monday through Friday** within the **PAB month period**.
+
+**Perfect Attendance bonus: ₱5,000** per eligible month (applies to all departments).
+
+### PAB month period
+
+The PAB evaluation spans a full calendar month, but the boundaries are defined by **complete work weeks**. A week "belongs to" the month that contains its **Monday**.
+
+- **Start**: First Monday on or after the 1st of the month. If the 1st is not a Monday, the preceding days belong to the previous month's last week.
+- **End**: Friday of the last week whose Monday still falls within the calendar month. This Friday **may fall in the next calendar month** (the whole Mon–Fri week is "owned" by the month that contains the Monday).
+
+Example (March 2026, March 1 = Sunday):
+```
+Start = March 2  (first Monday on or after the 1st)
+End   = April 3  (last Monday in March = Mar 30 → Fri = Apr 3)
+→ 5 full work weeks (25 weekdays)
+```
+
+Implemented in `getPabMonthRange()` in `src/lib/hubstaff/calendar-column-dedupe.ts`.
+
+### Canonical column resolution
+
+Supabase stores daily hours under canonical column names (`monday`, `tuesday`, etc.) rather than ISO dates. When merging data across multiple weekly source files for full-month PAB evaluation, each file's canonical columns are resolved to actual ISO dates using the date range embedded in the source filename (e.g., `simple-biz_daily_report_2026-03-01_to_2026-03-07.csv` maps `monday` → `2026-03-02`). This prevents weeks from overwriting each other during merge.
+
+Implemented in `resolveCanonicalColumnsToIso()` and `columnsAreAllCanonical()` in `calendar-column-dedupe.ts`.
 
 ### Data source
 
-PA detection reads from `hubstaffDisplayRows` — the raw per-employee row data that includes daily columns.
+PA detection reads from merged per-employee row data across **all uploaded source files** for the month:
 
-- **After a CSV upload (same session)**: The data comes from the **client-side CSV re-parse** (`parseCsv` + `buildHubstaffDataFromParsedGrid`). This is authoritative — daily column values are always present because they come directly from the CSV, bypassing any Supabase column-name mismatch.
-- **On initial page load (no upload)**: The data comes from `GET /api/hubstaff-hours` (Supabase). If the Supabase table's date columns don't match the CSV that was originally uploaded (e.g., DB has `"2026-03-24"` but CSV had `"Mon 3/24"`), daily values may be `null`. When all daily values are null, the `dailyDataMissing` flag is set and an amber warning banner in Step 3 instructs the user to re-upload the CSV.
+- **PayrollWizard**: Fetches all source files, resolves canonical columns to ISO dates, merges into `pabAllRows`/`pabAllColumns`. The `weekdayColumnGroups` memo filters to the PAB month range via `filterColumnGroupsByPabRange()`.
+- **Employee Dashboard**: Same merge logic in a `useEffect`, building `pabMergedRow`/`pabMergedColumns`. Constructs a `pabCalendar` grid (array of weeks, each with Mon–Fri cells) via `buildPabCalendarWeeks()`.
+- **Fallback**: If daily columns are null in Supabase (column-name mismatch from old upload), `dailyDataMissing` flag triggers a warning banner.
 
 ### Weekday column detection
 
 `colIsWeekday()` uses a two-tier approach:
 
-1. **Day-name prefix** (priority): If the column starts with `Mon`, `Tue`, `Wed`, `Thu`, or `Fri` (short or full name like `Monday`), it is immediately classified as a weekday. The prefix from the CSV header is always correct regardless of year.
+1. **Day-name prefix** (priority): If the column starts with `Mon`, `Tue`, `Wed`, `Thu`, or `Fri` (short or full name like `Monday`), it is immediately classified as a weekday.
 2. **ISO date fallback**: For columns without a day-name prefix (e.g., `"2026-03-24"`), `parseColDate()` extracts the date and `getDay()` determines the day of week (1–5 = Mon–Fri).
 
-Supporting functions: `colDayPrefix()`, `DAY_PREFIX_MAP`, `parseColDate()`, `colDayOrder()` (sorts Mon→Fri), `dayLabel()`, `dayLetter()`.
+Supporting functions: `colDayPrefix()`, `DAY_PREFIX_MAP`, `parseColDate()`, `colDayOrder()`, `dayLabel()`, `dayLetter()`.
 
-### Detection steps
+### Detection steps (PayrollWizard)
 
-1. Filter `hubstaffDisplayColumns` through `colIsWeekday()` → weekday columns only.
-2. Sort weekday columns Mon→Fri via `colDayOrder()`.
-3. For each employee row, parse every weekday cell to integer seconds with `rawValueToTotalSeconds()`.
-4. If **all** weekday values ≥ 25,200 seconds: add the employee's normalized email to the `perfectAttendanceEligible` set.
-5. A `useEffect` auto-applies the `perfect_attendance` bonus toggle to all department-assigned employees based on the eligible set.
+1. Merge all source files' rows, resolving canonical columns to ISO dates.
+2. Infer PAB month from column dates via `inferPabMonthFromColumns()`.
+3. Compute PAB date range via `getPabMonthRange()`.
+4. Filter weekday column groups to the PAB range via `filterColumnGroupsByPabRange()`.
+5. For each employee row, check every weekday group: if `maxSecondsAcrossWeekdayGroup() ≥ 25,200`, mark as passing.
+6. If **all** weekday groups pass: add the employee to the `perfectAttendanceEligible` set.
+7. A `useEffect` auto-applies the `perfect_attendance` bonus toggle.
 
-The toggle can be manually overridden by the payroll operator after the auto-apply runs.
+### Detection steps (Employee Dashboard)
 
-### UI indicators
+1. Merge all source files with canonical-to-ISO resolution.
+2. Build `pabCalendar` grid: generate all expected Mon–Fri dates in the PAB range, map actual hours data onto each cell.
+3. Eligibility = every cell in the calendar has `seconds ≥ 7 × 3600`.
+
+### PAB Calendar UI (Employee Dashboard)
+
+Displayed as a card beside the Daily Hours Breakdown:
+- Column headers: M T W T F
+- One row per work week (Wk 1–5)
+- Each cell shows: date (e.g., `3/9`), hours worked, pass/fail icon
+- Color coding: green (≥7h), red (<7h), gray (no data)
+- Staggered fade-in animation per row/cell
+- Skeleton loading state while PAB data is being fetched
+- Legend with PAB Eligible/Not Met status
+
+### All Time mode (Employee Dashboard)
+
+The file selector includes an "All Time" option. When selected:
+- Stats cards (Total Hours, Regular Pay, OT Pay, Initial Pay) show accumulated totals across all source files.
+- Regular/OT split is computed per-file independently (each file split at 40h threshold, then summed), not re-split from the combined total.
+- A **PAB card** shows the accumulated PAB bonus (₱5,000 × number of eligible months).
+- Pay Summary includes the PAB amount in the total.
+- Daily Hours Breakdown shows the latest file's data; PAB Calendar is unaffected.
+
+### PayrollWizard UI indicators
 
 Each employee's PA toggle cell shows:
 - A Switch (on/off)
 - "✓ Eligible" or "✗ Ineligible" text label
-- A row of colored day pills (M T W T F): green = ≥7h, red = <7h. Hover tooltip shows the full column name and logged hours (e.g., `"Mon (Mon 3/24): 8:15 logged ✓"`).
+- A row of colored day pills: green = ≥7h, red = <7h. Hover tooltip shows the date and logged hours.
+- PAB period info badge (month name, date range, workday count).
 
-At the department level, the common bonuses section shows `X/Y eligible (7 h+ every Mon–Fri)`.
+At the department level, the common bonuses section shows `X/Y eligible (7 h+ every Mon–Fri)` with the PAB period dates.
 
-**Perfect Attendance bonus: ₱5,000** (applies to all departments).
+### System Overview — PAB metrics
+
+The Overview dashboard's **Bonus & Status** panel computes PAB eligibility across all employees by:
+1. Fetching all source files and merging per-employee data (same canonical-to-ISO resolution as the Employee Dashboard).
+2. For each employee, building the PAB calendar and checking whether every weekday passes the 7h threshold.
+3. Displaying: eligible count, not eligible count, progress bar (% eligible), and the PAB period label.
+
+This runs on mount and is independent of the CSV selector used for the stat cards (PAB always evaluates the full month across all files).
 
 ---
 
 ## Technology Bonus
 
-**₱1,850** per employee per cycle. Toggle-based, applies to all departments. Not auto-detected — must be manually toggled per employee.
+**₱1,850** per employee per cycle. Toggle-based, applies to all departments. Not auto-detected — must be manually toggled per employee. Shown in the Overview's Bonus & Status panel as a fixed-amount reference with "Payroll Discretion" status.
 
 ---
 

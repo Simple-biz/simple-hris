@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { normEmail } from "@/lib/email/norm-email";
 import type { EmployeeIdRow } from "@/lib/supabase/employee-ids";
+import EmployeeAvatar from "@/components/employee/EmployeeAvatar";
 
 type EmployeeRateProfile = {
   id: string;
@@ -158,6 +159,40 @@ function tableRowFromProfile(
     regularRate: pickFromMap(m, ["Regular Rate", "regular_rate", "Regular_Rate"]),
     otRate: pickFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"]),
   };
+}
+
+const HIDDEN_FIELD_KEYS = new Set([
+  "profile_photo_url",
+  "profile photo url",
+  "profilephotourl",
+  "photo_url",
+  "photo url",
+  "avatar_url",
+  "avatar url",
+]);
+
+function getAvatarInfoFromProfile(
+  p: EmployeeRateProfile,
+): { photoUrl: string | null; email: string | null; initials: string } {
+  const m = buildNormFieldMap(p.fields);
+  const photoUrl =
+    pickFromMap(m, ["Profile Photo Url", "profile_photo_url", "photo_url", "avatar_url"]);
+  const email =
+    pickFromMap(m, ["Work Email", "work_email", "Work_Email", "Email", "email"]);
+  const name = p.displayName?.trim() || "";
+  const parts = name.split(/\s+/).filter(Boolean);
+  let initials = "??";
+  if (parts.length >= 2) initials = (parts[0][0] + parts[1][0]).toUpperCase();
+  else if (parts.length === 1 && parts[0].length >= 2) initials = parts[0].slice(0, 2).toUpperCase();
+  return {
+    photoUrl: photoUrl !== "—" ? photoUrl : null,
+    email: email !== "—" ? email : null,
+    initials,
+  };
+}
+
+function isHiddenField(key: string): boolean {
+  return HIDDEN_FIELD_KEYS.has(normFieldKey(key));
 }
 
 const dialogEase = [0.22, 1, 0.36, 1] as const;
@@ -708,7 +743,21 @@ export default function Rates() {
                             )}
                           </TableCell>
                           <TableCell className="min-w-[11rem] whitespace-normal break-words align-top font-medium leading-snug text-zinc-900 dark:text-zinc-100">
-                            {row.name}
+                            {(() => {
+                              const av = getAvatarInfoFromProfile(p);
+                              return (
+                                <div className="flex items-center gap-2.5">
+                                  <EmployeeAvatar
+                                    photoUrl={av.photoUrl}
+                                    email={av.email}
+                                    initials={av.initials}
+                                    className="h-7 w-7 text-[10px]"
+                                    pixelSize={56}
+                                  />
+                                  <span>{row.name}</span>
+                                </div>
+                              );
+                            })()}
                           </TableCell>
                           <TableCell className="min-w-[9rem] whitespace-normal break-words align-top text-sm leading-snug text-zinc-700 dark:text-zinc-300">
                             {row.department ? (
@@ -1054,48 +1103,59 @@ export default function Rates() {
               transition={{ duration: 0.3, ease: dialogEase }}
               className="flex flex-col"
             >
-              <DialogHeader className="shrink-0 space-y-2 border-b border-orange-100/60 bg-gradient-to-r from-orange-50/80 via-white to-blue-50/60 px-6 py-5 dark:border-blue-950/60 dark:from-blue-950/60 dark:via-[#0f1729] dark:to-blue-950/40">
-                <div className="flex items-start gap-3">
-                  <DialogTitle className="pr-10 text-xl font-semibold leading-snug tracking-tight text-zinc-900 dark:text-white">
-                    {activeProfile.displayName}
-                  </DialogTitle>
-                  {(() => {
-                    const empId = tableRowFromProfile(activeProfile, employeeIdMap).employeeId;
-                    return empId ? (
-                      <span className="mt-0.5 inline-flex shrink-0 items-center rounded-md border border-orange-200 bg-orange-50 px-2.5 py-1 font-mono text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
-                        {empId}
-                      </span>
-                    ) : null;
-                  })()}
-                </div>
-                {(activeProfile.department || activeProfile.organization) ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    {activeProfile.department ? (
-                      <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
-                        {activeProfile.department}
-                      </span>
-                    ) : null}
-                    {activeProfile.organization ? (
-                      <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-400">
-                        {activeProfile.organization}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-                {activeProfile.subtitle ? (
-                  <DialogDescription className="text-left font-mono text-xs leading-relaxed text-zinc-500 dark:text-zinc-500">
-                    {activeProfile.subtitle}
-                  </DialogDescription>
-                ) : (
-                  <DialogDescription className="sr-only">
-                    Complete merged fields for this employee.
-                  </DialogDescription>
-                )}
-                <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-600">
-                  {activeProfile.fields.length} unique field
-                  {activeProfile.fields.length === 1 ? "" : "s"} — merged from all matching tables;
-                  duplicate column names appear once (hourly rates first, then master, then others A–Z).
-                </p>
+              <DialogHeader className="shrink-0 space-y-0 border-b border-orange-100/60 bg-gradient-to-r from-orange-50/80 via-white to-blue-50/60 px-6 py-5 dark:border-blue-950/60 dark:from-blue-950/60 dark:via-[#0f1729] dark:to-blue-950/40">
+                {(() => {
+                  const av = getAvatarInfoFromProfile(activeProfile);
+                  const empId = tableRowFromProfile(activeProfile, employeeIdMap).employeeId;
+                  return (
+                    <div className="flex items-start gap-4">
+                      <div className="shrink-0 rounded-full ring-2 ring-white/80 dark:ring-zinc-800/80">
+                        <EmployeeAvatar
+                          photoUrl={av.photoUrl}
+                          email={av.email}
+                          initials={av.initials}
+                          className="h-14 w-14 text-lg"
+                          pixelSize={112}
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <div className="flex items-start gap-3 pr-10">
+                          <DialogTitle className="text-xl font-semibold leading-snug tracking-tight text-zinc-900 dark:text-white">
+                            {activeProfile.displayName}
+                          </DialogTitle>
+                          {empId ? (
+                            <span className="mt-0.5 inline-flex shrink-0 items-center rounded-md border border-orange-200 bg-orange-50 px-2.5 py-1 font-mono text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                              {empId}
+                            </span>
+                          ) : null}
+                        </div>
+                        {(activeProfile.department || activeProfile.organization) ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {activeProfile.department ? (
+                              <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
+                                {activeProfile.department}
+                              </span>
+                            ) : null}
+                            {activeProfile.organization ? (
+                              <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-400">
+                                {activeProfile.organization}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {activeProfile.subtitle ? (
+                          <DialogDescription className="text-left font-mono text-xs leading-relaxed text-zinc-500 dark:text-zinc-500">
+                            {activeProfile.subtitle}
+                          </DialogDescription>
+                        ) : (
+                          <DialogDescription className="sr-only">
+                            Complete merged fields for this employee.
+                          </DialogDescription>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </DialogHeader>
 
               {/* Quick Rate Editor Section */}
@@ -1330,7 +1390,7 @@ export default function Rates() {
                           </motion.div>
                         );
                       })()}
-                      {activeProfile.fields.map(({ key, value }, i) => (
+                      {activeProfile.fields.filter(({ key }) => !isHiddenField(key)).map(({ key, value }, i) => (
                         <motion.div
                           key={`${activeProfile.id}-${key}`}
                           initial={{ opacity: 0, y: 6 }}
