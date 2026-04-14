@@ -33,6 +33,8 @@ import {
 import {
   groupDateColumnsByCalendarDay,
   pickPreferredHubstaffColumn,
+  getCurrentPabMonth,
+  getLatestPabMonthFromColumns,
   getPabMonthRange,
   inferPabMonthFromColumns,
   filterColumnGroupsByPabRange,
@@ -242,6 +244,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   const [dataError, setDataError] = useState<string | null>(null);
   const [sourceFiles, setSourceFiles] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [manualFileSelect, setManualFileSelect] = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
   /** Merged row for this employee across ALL uploaded CSVs — used for full-month PAB. */
   const [pabMergedRow, setPabMergedRow] = useState<Record<string, unknown> | null>(null);
@@ -453,7 +456,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       } catch {
         // PAB degrades gracefully — falls back to single-file check
       } finally {
-        if (!cancelled) setPabMergeLoading(false);
+        setPabMergeLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -540,13 +543,18 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
    * Falls back to single-file dailyHours if merged data isn't available.
    */
   const pabDailyHours = useMemo<DayHours[]>(() => {
+    const useSelected = !!selectedFile && selectedFile !== '__all__';
+    // Hours always come from merged data so every day in the PAB period fills.
     const pabRow = pabMergedRow ?? row;
     const pabCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
     if (!pabRow) return [];
     const dateCols = pabCols.filter(isDateCol);
     let groups = groupDateColumnsByCalendarDay(dateCols, pabCols);
-    // Filter to PAB month boundaries (Mon–Fri days in range)
-    const pabMonth = inferPabMonthFromColumns(pabCols);
+    // PAB period: manual file selection → that file's inferred month;
+    // otherwise → PAB month containing the latest date in merged uploads.
+    const pabMonth = useSelected
+      ? (getLatestPabMonthFromColumns(pabCols) ?? inferPabMonthFromColumns(pabCols))
+      : (getLatestPabMonthFromColumns(pabCols) ?? getCurrentPabMonth());
     if (pabMonth) {
       const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
       groups = filterColumnGroupsByPabRange(groups, pabCols, start, end);
@@ -583,25 +591,50 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         if (da && db) return da.getTime() - db.getTime();
         return a.order - b.order;
       });
-  }, [pabMergedRow, pabMergedColumns, row, columns]);
+  }, [pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect]);
 
-  /** Inferred PAB month + computed date range for display. */
+  /** PAB month + date range for display.
+   * Default: latest PAB period in merged CSV data (or today if none).
+   * When user manually picks a CSV: use that file's inferred period. */
   const pabMonthRange = useMemo(() => {
-    const pabCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
-    if (!pabCols?.length) return null;
-    const pabMonth = inferPabMonthFromColumns(pabCols);
+    const useSelected = !!selectedFile && selectedFile !== '__all__';
+    // Selected file may have canonical day columns — resolve to ISO via filename
+    // so we can derive a real date-based PAB month.
+    let selCols = columns;
+    if (useSelected && row && columns.length > 0 && columnsAreAllCanonical(columns)) {
+      const resolved = resolveCanonicalColumnsToIso(row, selectedFile!);
+      selCols = Object.keys(resolved);
+    }
+    const mergedCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
+    // In manual mode, prefer the selected file's columns but fall back to merged
+    // (or today) if the selected file is still loading so we never stall on null.
+    const pabMonth = useSelected
+      ? (selCols?.length
+          ? (getLatestPabMonthFromColumns(selCols)
+              ?? inferPabMonthFromColumns(selCols)
+              ?? getCurrentPabMonth())
+          : (getLatestPabMonthFromColumns(mergedCols) ?? getCurrentPabMonth()))
+      : (getLatestPabMonthFromColumns(mergedCols ?? []) ?? getCurrentPabMonth());
     if (!pabMonth) return null;
     const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
-  }, [pabMergedColumns, columns]);
+  }, [pabMergedColumns, columns, row, selectedFile, manualFileSelect]);
 
   /** PAB calendar grid: one row per Mon–Fri work week in the PAB range. */
   const pabCalendar = useMemo<PabCalendarDay[][] | null>(() => {
     if (!pabMonthRange) return null;
+    const useSelected = !!selectedFile && selectedFile !== '__all__';
+    // Always use merged data for hours lookup so every week in the derived
+    // PAB period is populated, regardless of which file drives the period.
     const pabRow = pabMergedRow ?? row;
     const pabCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
-    if (!pabRow || !pabCols.length) return null;
+    // When we have a month range but no row/cols yet, still render empty weeks
+    // (placeholders with 0h) instead of looping the skeleton forever.
+    if (!pabRow || !pabCols.length) {
+      const empty = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, new Map());
+      return empty.length > 0 ? [empty[0]] : null;
+    }
 
     // Build date → seconds lookup directly from grouped columns + raw row data.
     // We try ALL columns in each group so that canonical names ("monday") get
@@ -627,24 +660,69 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       const key = pabDateKey(d);
       hoursByDateKey.set(key, Math.max(hoursByDateKey.get(key) ?? 0, maxS));
     }
-    return buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, hoursByDateKey);
-  }, [pabMonthRange, pabMergedRow, pabMergedColumns, row, columns]);
+    const weeks = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, hoursByDateKey);
+
+    // Manual file selection: show the full range for that file's period.
+    if (useSelected) return weeks;
+
+    // Trim to weeks that have elapsed so far: hide future weeks with no data yet.
+    // Find the latest date that actually has logged hours (>0)
+    let latest: Date | null = null;
+    for (const [key, secs] of hoursByDateKey) {
+      if (secs <= 0) continue;
+      const [y, m, d] = key.split('-').map(Number);
+      if (!y || !m || !d) continue;
+      const dt = new Date(y, m - 1, d);
+      if (!latest || dt.getTime() > latest.getTime()) latest = dt;
+    }
+    const today = new Date();
+    const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const cutoff = latest ?? todayMid;
+
+    const trimmed = weeks.filter((week) => {
+      const firstDay = week[0]?.date;
+      if (!firstDay) return false;
+      const weekStart = new Date(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate());
+      return weekStart.getTime() <= cutoff.getTime();
+    });
+    return trimmed.length > 0 ? trimmed : weeks.slice(0, 1);
+  }, [pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect]);
 
   /** PAB: every expected weekday in the PAB period must be ≥ 7 h. */
   const pabWeekdayHours = pabDailyHours.filter((d) => d.weekday);
   const allPabDays = pabCalendar?.flat() ?? [];
-  const isPAEligible = allPabDays.length > 0 && allPabDays.every((d) => d.passes);
 
-  const perfectAttendanceBonusStatus = useMemo<'eligible' | 'not_eligible' | 'unknown'>(() => {
+  /** Is the current PAB period still in progress? (today ≤ period end, viewing default period) */
+  const isPabPeriodInProgress = useMemo(() => {
+    if (!pabMonthRange) return false;
+    const useSelected = !!selectedFile && selectedFile !== '__all__';
+    if (useSelected) return false; // historical file — not pending
+    const today = new Date();
+    const t = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const endT = new Date(
+      pabMonthRange.end.getFullYear(),
+      pabMonthRange.end.getMonth(),
+      pabMonthRange.end.getDate(),
+    ).getTime();
+    return t <= endT;
+  }, [pabMonthRange, selectedFile, manualFileSelect]);
+
+  const isPAEligible =
+    !isPabPeriodInProgress && allPabDays.length > 0 && allPabDays.every((d) => d.passes);
+
+  const perfectAttendanceBonusStatus = useMemo<
+    'eligible' | 'not_eligible' | 'pending' | 'unknown'
+  >(() => {
     if (!row && !pabMergedRow) return 'unknown';
     const days = pabCalendar?.flat();
     if (!days || days.length === 0) return 'unknown';
+    if (isPabPeriodInProgress) return 'pending';
     return days.every((d) => d.passes) ? 'eligible' : 'not_eligible';
-  }, [row, pabMergedRow, pabCalendar]);
+  }, [row, pabMergedRow, pabCalendar, isPabPeriodInProgress]);
 
-  /** Number of PAB-eligible months (currently 1 month evaluated). */
+  /** Number of PAB-eligible months (currently 1 month evaluated). Pending periods don't count. */
   const pabEligibleCount = isPAEligible ? 1 : 0;
-  /** Total PAB bonus in PHP. For "All Time" this sums across all eligible months. */
+  /** Total PAB bonus in PHP. Excluded from pay summary while period is still in progress. */
   const pabBonusAmount = pabEligibleCount * PERFECT_ATTENDANCE_BONUS_PHP;
 
   const maxBarSeconds = Math.max(...dailyHours.map((d) => d.seconds), 8 * 3600);
@@ -761,7 +839,10 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                 <FileText className="h-3.5 w-3.5 shrink-0 text-orange-500" />
                 <select
                   value={selectedFile ?? ''}
-                  onChange={(e) => setSelectedFile(e.target.value || null)}
+                  onChange={(e) => {
+                    setSelectedFile(e.target.value || null);
+                    setManualFileSelect(true);
+                  }}
                   className="h-7 rounded-md border border-zinc-200 bg-white px-2 pr-6 font-mono text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
                 >
                   <option value="__all__">All Time (all uploads combined)</option>
@@ -800,6 +881,16 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             >
               <XCircle className="h-3 w-3" />
               PAB not met{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
+            </Badge>
+          )}
+          {row && perfectAttendanceBonusStatus === 'pending' && (
+            <Badge
+              variant="outline"
+              className="gap-1 border-indigo-400/30 bg-indigo-500/10 px-3 py-1 text-indigo-700 dark:border-indigo-500/30 dark:text-indigo-300"
+              title={pabMonthRange ? `Period in progress: ${formatPabCalendarDate(pabMonthRange.start)} – ${formatPabCalendarDate(pabMonthRange.end)}` : undefined}
+            >
+              <CalendarDays className="h-3 w-3" />
+              PAB in progress{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
             </Badge>
           )}
           {row && perfectAttendanceBonusStatus === 'unknown' && (
@@ -880,13 +971,17 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                         ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                         : perfectAttendanceBonusStatus === 'not_eligible'
                           ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                          : 'bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+                          : perfectAttendanceBonusStatus === 'pending'
+                            ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                            : 'bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
                     }`}
                   >
                     {perfectAttendanceBonusStatus === 'eligible' ? (
                       <CheckCircle2 className="h-4 w-4" />
                     ) : perfectAttendanceBonusStatus === 'not_eligible' ? (
                       <XCircle className="h-4 w-4" />
+                    ) : perfectAttendanceBonusStatus === 'pending' ? (
+                      <CalendarDays className="h-4 w-4" />
                     ) : (
                       <Info className="h-4 w-4" />
                     )}
@@ -920,6 +1015,11 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                         Not eligible: at least one weekday in the PAB period is under 7 hours. See the breakdown below.
                       </p>
                     )}
+                    {perfectAttendanceBonusStatus === 'pending' && (
+                      <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                        This PAB period is still in progress — eligibility and bonus will be finalized once all Mon–Fri days have elapsed. Not yet included in the pay summary.
+                      </p>
+                    )}
                     {perfectAttendanceBonusStatus === 'unknown' && (
                       <p className="text-xs text-zinc-600 dark:text-zinc-400">
                         Can&apos;t evaluate monthly PAB: need Mon–Fri daily hours in the merged Hubstaff uploads. If this
@@ -935,14 +1035,18 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                       ? 'shrink-0 border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
                       : perfectAttendanceBonusStatus === 'not_eligible'
                         ? 'shrink-0 border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-300'
-                        : 'shrink-0 border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
+                        : perfectAttendanceBonusStatus === 'pending'
+                          ? 'shrink-0 border-indigo-500/40 bg-indigo-500/10 text-indigo-800 dark:text-indigo-300'
+                          : 'shrink-0 border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
                   }
                 >
                   {perfectAttendanceBonusStatus === 'eligible'
                     ? 'Eligible'
                     : perfectAttendanceBonusStatus === 'not_eligible'
                       ? 'Not eligible'
-                      : 'Unknown'}
+                      : perfectAttendanceBonusStatus === 'pending'
+                        ? 'In progress'
+                        : 'Unknown'}
                 </Badge>
               </div>
 
@@ -1067,18 +1171,24 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                     pabBonusAmount > 0 ? 'text-indigo-700 dark:text-indigo-400' : 'text-zinc-400 dark:text-zinc-500'
                   }`}
                 >
-                  {pabBonusAmount > 0 ? formatPHP(pabBonusAmount) : formatPHP(0)}
+                  {perfectAttendanceBonusStatus === 'pending'
+                    ? 'Pending'
+                    : pabBonusAmount > 0
+                      ? formatPHP(pabBonusAmount)
+                      : formatPHP(0)}
                 </div>
                 <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
-                  {isAllTime
-                    ? pabEligibleCount > 0
-                      ? `${pabEligibleCount} month${pabEligibleCount !== 1 ? 's' : ''} eligible × ${formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}`
-                      : 'Not eligible this period'
-                    : isPAEligible
-                      ? 'Eligible this month'
-                      : perfectAttendanceBonusStatus === 'unknown'
-                        ? 'Pending data'
-                        : 'Not eligible'}
+                  {perfectAttendanceBonusStatus === 'pending'
+                    ? 'Period in progress — not finalized'
+                    : isAllTime
+                      ? pabEligibleCount > 0
+                        ? `${pabEligibleCount} month${pabEligibleCount !== 1 ? 's' : ''} eligible × ${formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}`
+                        : 'Not eligible this period'
+                      : isPAEligible
+                        ? 'Eligible this month'
+                        : perfectAttendanceBonusStatus === 'unknown'
+                          ? 'Pending data'
+                          : 'Not eligible'}
                 </p>
               </CardContent>
             </Card>
@@ -1220,7 +1330,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                 )}
               </CardHeader>
               <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
-                {pabMergeLoading || (!pabCalendar && sourceFiles.length > 0) ? (
+                {pabMergeLoading || fileLoading ? (
                   /* -------- Skeleton loading state -------- */
                   <div className="flex flex-1 flex-col gap-0">
                     {/* Skeleton header row */}
@@ -1395,9 +1505,14 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                   <div className="flex min-w-0 items-start justify-between gap-2">
                     <span className={`shrink-0 text-xs ${pabBonusAmount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
                       PAB{isAllTime && pabEligibleCount > 0 ? ` (${pabEligibleCount}×)` : ''}
+                      {perfectAttendanceBonusStatus === 'pending' ? ' (pending)' : ''}
                     </span>
                     <span className={`max-w-[58%] break-words text-right font-mono text-xs sm:text-sm ${pabBonusAmount > 0 ? 'font-medium text-indigo-600 dark:text-indigo-400' : 'text-zinc-400 dark:text-zinc-500'}`}>
-                      {pabBonusAmount > 0 ? `+${formatPHP(pabBonusAmount)}` : formatPHP(0)}
+                      {perfectAttendanceBonusStatus === 'pending'
+                        ? '—'
+                        : pabBonusAmount > 0
+                          ? `+${formatPHP(pabBonusAmount)}`
+                          : formatPHP(0)}
                     </span>
                   </div>
                   <div className="h-px bg-zinc-200 dark:bg-zinc-800" />

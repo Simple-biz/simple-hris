@@ -12,7 +12,9 @@ import {
   Plus,
   Search,
   Trash2,
+  UserCheck,
   UserCog,
+  UserX,
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -40,6 +42,10 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { normEmail } from "@/lib/email/norm-email";
+import {
+  OFFICIAL_USD_TO_PHP_RATE,
+  effectiveUsdToPhpRateFromStored,
+} from "@/lib/fx/usd-php";
 import type { EmployeeIdRow } from "@/lib/supabase/employee-ids";
 import EmployeeAvatar from "@/components/employee/EmployeeAvatar";
 
@@ -81,6 +87,35 @@ function shouldTryFormatAsDate(key: string, v: unknown): boolean {
   return false;
 }
 
+/** Strip currency symbols and grouping; parse a numeric hourly rate. */
+function parseRateNumberString(raw: string): number | null {
+  const cleaned = raw.replace(/[$₱,\s]/g, "").trim();
+  if (!cleaned) return null;
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Format stored rate values as Philippine peso (₱). */
+function formatRateDisplay(raw: string): string {
+  if (raw === "—" || !String(raw).trim()) return raw === "—" ? "—" : String(raw);
+  const n = parseRateNumberString(raw);
+  if (n === null) return `₱${raw}`;
+  return (
+    "₱" +
+    n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  );
+}
+
+function isHourlyRateFieldKey(key: string): boolean {
+  const nk = normFieldKey(key);
+  return (
+    nk === "regular_rate" ||
+    nk === "ot_rate" ||
+    nk === "overtime_rate" ||
+    nk === "hourly_rate"
+  );
+}
+
 function formatFieldValue(key: string, v: unknown): string {
   if (v === null || v === undefined) return "—";
   if (typeof v === "object") {
@@ -93,6 +128,11 @@ function formatFieldValue(key: string, v: unknown): string {
   if (shouldTryFormatAsDate(key, v)) {
     const long = formatLongDateEnUS(v);
     if (long) return long;
+  }
+  if (isHourlyRateFieldKey(key)) {
+    const s = String(v).trim();
+    if (!s) return "—";
+    return formatRateDisplay(s);
   }
   return String(v);
 }
@@ -112,6 +152,36 @@ function pickFromMap(m: Map<string, unknown>, aliases: string[]): string {
     if (m.has(nk)) return formatFieldValue(a, m.get(nk));
   }
   return "—";
+}
+
+/** Raw cell value from merged profile fields (no formatting). */
+function pickRawFromMap(m: Map<string, unknown>, aliases: string[]): string {
+  for (const a of aliases) {
+    const nk = normFieldKey(a);
+    if (m.has(nk)) {
+      const v = m.get(nk);
+      if (v != null && String(v).trim() !== "") return String(v).trim();
+    }
+  }
+  return "—";
+}
+
+/** Plain number string for rate inputs (strips $ / ₱ / commas from legacy data). */
+function normalizeRateForEdit(raw: string): string {
+  if (raw === "—") return "—";
+  const n = parseRateNumberString(raw);
+  return n !== null ? String(n) : raw;
+}
+
+function sanitizeRateForApi(raw: string): string {
+  if (raw === "—") return "";
+  const n = parseRateNumberString(raw);
+  return n !== null ? String(n) : raw.trim();
+}
+
+function isSuspendedFromProfile(p: EmployeeRateProfile): boolean {
+  const f = p.fields.find((field) => normFieldKey(field.key) === 'suspended');
+  return f?.value === true;
 }
 
 function tableRowFromProfile(
@@ -156,8 +226,9 @@ function tableRowFromProfile(
     department: p.department ?? null,
     organization: p.organization ?? pickFromMap(m, ["Organization", "organization", "Organisation", "org", "Company", "company"]),
     workEmail,
-    regularRate: pickFromMap(m, ["Regular Rate", "regular_rate", "Regular_Rate"]),
-    otRate: pickFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"]),
+    regularRate: formatRateDisplay(pickRawFromMap(m, ["Regular Rate", "regular_rate", "Regular_Rate"])),
+    otRate: formatRateDisplay(pickRawFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])),
+    suspended: isSuspendedFromProfile(p),
   };
 }
 
@@ -209,6 +280,8 @@ export default function Rates() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [activeProfile, setActiveProfile] = useState<EmployeeRateProfile | null>(null);
   const [mergeNotes, setMergeNotes] = useState<string[]>([]);
+  /** Same `usd_to_php_rate` as Payroll — for reference next to ₱ hourly rates. */
+  const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
 
   // Rate editing state
   const [isEditing, setIsEditing] = useState(false);
@@ -273,8 +346,8 @@ export default function Rates() {
           workEmail: addForm.workEmail.trim() || null,
           personalEmail: addForm.personalEmail.trim() || null,
           startDate: addForm.startDate || null,
-          regularRate: addForm.regularRate.trim() || null,
-          otRate: addForm.otRate.trim() || null,
+          regularRate: sanitizeRateForApi(addForm.regularRate) || null,
+          otRate: sanitizeRateForApi(addForm.otRate) || null,
         }),
       });
       const json = await res.json();
@@ -293,6 +366,9 @@ export default function Rates() {
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<EmployeeRateProfile | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Suspend state — stores the profile.id currently being toggled, or null
+  const [isSuspending, setIsSuspending] = useState<string | null>(null);
 
   function extractEmailsFromProfile(p: EmployeeRateProfile): { workEmail: string | null; personalEmail: string | null } {
     const m = buildNormFieldMap(p.fields);
@@ -340,11 +416,54 @@ export default function Rates() {
     }
   }
 
+  async function handleToggleSuspend(profile: EmployeeRateProfile, suspend: boolean) {
+    const { workEmail, personalEmail } = extractEmailsFromProfile(profile);
+    if (!workEmail && !personalEmail) {
+      toast.error("Cannot identify employee — no email found");
+      return;
+    }
+    setIsSuspending(profile.id);
+    try {
+      const res = await fetch("/api/suspend-employee", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workEmail,
+          personalEmail,
+          suspended: suspend,
+          name: profile.displayName || null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to update status");
+      toast.success(`${profile.displayName} ${suspend ? "suspended" : "unsuspended"}`);
+      // Refresh list and keep modal in sync
+      await fetchProfiles();
+      if (activeProfile?.id === profile.id) {
+        setActiveProfile((prev) =>
+          prev
+            ? {
+                ...prev,
+                fields: prev.fields.map((f) =>
+                  normFieldKey(f.key) === "suspended" ? { ...f, value: suspend } : f,
+                ),
+              }
+            : null,
+        );
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update status");
+    } finally {
+      setIsSuspending(null);
+    }
+  }
+
   const fetchProfiles = async () => {
     try {
-      const [profilesRes, idsRes] = await Promise.all([
+      const [profilesRes, idsRes, fxRes] = await Promise.all([
         fetch("/api/employee-rate-profiles", { cache: "no-store" }),
         fetch("/api/employee-ids", { cache: "no-store" }),
+        fetch("/api/app-settings?key=usd_to_php_rate", { cache: "no-store" }),
       ]);
       if (!profilesRes.ok) throw new Error(`HTTP ${profilesRes.status}`);
 
@@ -356,6 +475,11 @@ export default function Rates() {
       setProfiles(json.profiles ?? []);
       setError(json.error ?? null);
       setMergeNotes(json.mergeNotes ?? []);
+
+      if (fxRes.ok) {
+        const fxJson = (await fxRes.json()) as { value: string | null };
+        setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
+      }
 
       if (idsRes.ok) {
         const idsJson = (await idsRes.json()) as { rows: EmployeeIdRow[] };
@@ -428,8 +552,8 @@ export default function Rates() {
 
     // Find current rates
     const m = buildNormFieldMap(p.fields);
-    setEditRegularRate(pickFromMap(m, ["Regular Rate", "regular_rate", "Regular_Rate"]));
-    setEditOtRate(pickFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"]));
+    setEditRegularRate(normalizeRateForEdit(pickRawFromMap(m, ["Regular Rate", "regular_rate", "Regular_Rate"])));
+    setEditOtRate(normalizeRateForEdit(pickRawFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])));
   }
 
   async function handleSaveRates() {
@@ -468,8 +592,8 @@ export default function Rates() {
         body: JSON.stringify({
           workEmail: workEmail !== "—" ? workEmail : null,
           personalEmail: personalEmail !== "—" ? personalEmail : null,
-          regularRate: editRegularRate,
-          otRate: editOtRate,
+          regularRate: sanitizeRateForApi(editRegularRate),
+          otRate: sanitizeRateForApi(editOtRate),
         }),
       });
 
@@ -484,13 +608,15 @@ export default function Rates() {
       await fetchProfiles();
 
       // Also update activeProfile fields locally to reflect the change in the modal
+      const rr = sanitizeRateForApi(editRegularRate);
+      const ot = sanitizeRateForApi(editOtRate);
       const updatedFields = activeProfile.fields.map(f => {
         const nk = normFieldKey(f.key);
         if (["regular_rate", "regular_rate", "Regular_Rate"].map(normFieldKey).includes(nk)) {
-          return { ...f, value: editRegularRate };
+          return { ...f, value: rr };
         }
         if (["ot_rate", "ot_rate", "OT_Rate", "Ot Rate"].map(normFieldKey).includes(nk)) {
-          return { ...f, value: editOtRate };
+          return { ...f, value: ot };
         }
         return f;
       });
@@ -587,6 +713,13 @@ export default function Rates() {
           <p className="line-clamp-2 text-xs text-zinc-600 sm:text-sm dark:text-zinc-500">
             Rows match by work/personal email (or name). Open a row for the full merged profile from
             Supabase.
+          </p>
+          <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-blue-800/90 dark:text-blue-300/90">
+            <span className="font-medium">USD → PHP</span>
+            <span className="font-mono tabular-nums">
+              ₱{usdToPhpRate.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 5 })} = $1 USD
+            </span>
+            <span className="text-zinc-500 dark:text-zinc-500">(payroll conversion)</span>
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
@@ -731,7 +864,10 @@ export default function Rates() {
                       return (
                         <TableRow
                           key={p.id}
-                          className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/40"
+                          className={cn(
+                            "border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/40",
+                            row.suspended && "bg-amber-50/60 opacity-60 dark:bg-amber-950/10",
+                          )}
                         >
                           <TableCell className="align-top">
                             {row.employeeId ? (
@@ -754,7 +890,15 @@ export default function Rates() {
                                     className="h-7 w-7 text-[10px]"
                                     pixelSize={56}
                                   />
-                                  <span>{row.name}</span>
+                                  <div className="flex flex-col gap-0.5">
+                                    <span>{row.name}</span>
+                                    {row.suspended && (
+                                      <span className="inline-flex w-fit items-center gap-0.5 rounded border border-amber-300 bg-amber-100 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-400">
+                                        <UserX className="h-2.5 w-2.5" />
+                                        Suspended
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })()}
@@ -797,6 +941,28 @@ export default function Rates() {
                               >
                                 <Eye className="size-3.5" />
                                 View
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={isSuspending === p.id}
+                                onClick={() => handleToggleSuspend(p, !row.suspended)}
+                                title={row.suspended ? `Unsuspend ${p.displayName}` : `Suspend ${p.displayName}`}
+                                className={cn(
+                                  "h-8 w-8 p-0",
+                                  row.suspended
+                                    ? "border-emerald-200 text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50 dark:border-emerald-800/60 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                                    : "border-amber-200 text-amber-500 hover:border-amber-300 hover:bg-amber-50 dark:border-amber-800/60 dark:text-amber-400 dark:hover:bg-amber-950/40",
+                                )}
+                              >
+                                {isSuspending === p.id ? (
+                                  <Loader2 className="size-3.5 animate-spin" />
+                                ) : row.suspended ? (
+                                  <UserCheck className="size-3.5" />
+                                ) : (
+                                  <UserX className="size-3.5" />
+                                )}
                               </Button>
                               <Button
                                 type="button"
@@ -1012,13 +1178,15 @@ export default function Rates() {
                       Regular Rate
                     </Label>
                     <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400" aria-hidden>
+                        ₱
+                      </span>
                       <Input
                         id="add-regular-rate"
                         placeholder="0.00"
                         value={addForm.regularRate}
                         onChange={(e) => setAddForm((f) => ({ ...f, regularRate: e.target.value }))}
-                        className="h-9 border-zinc-200 bg-white pl-6 font-mono text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                        className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
                       />
                     </div>
                   </div>
@@ -1027,17 +1195,25 @@ export default function Rates() {
                       OT Rate
                     </Label>
                     <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400" aria-hidden>
+                        ₱
+                      </span>
                       <Input
                         id="add-ot-rate"
                         placeholder="0.00"
                         value={addForm.otRate}
                         onChange={(e) => setAddForm((f) => ({ ...f, otRate: e.target.value }))}
-                        className="h-9 border-zinc-200 bg-white pl-6 font-mono text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                        className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
                       />
                     </div>
                   </div>
                 </div>
+                <p className="mt-3 border-t border-orange-100/70 pt-3 text-[10px] text-zinc-500 dark:border-blue-950/40 dark:text-zinc-500">
+                  USD → PHP:{" "}
+                  <span className="font-mono font-medium text-blue-700 dark:text-blue-300">
+                    ₱{usdToPhpRate.toFixed(5)} = $1 USD
+                  </span>
+                </p>
               </div>
             </div>
 
@@ -1158,6 +1334,16 @@ export default function Rates() {
                 })()}
               </DialogHeader>
 
+              {/* Suspended banner */}
+              {isSuspendedFromProfile(activeProfile) && (
+                <div className="shrink-0 flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-6 py-2.5 dark:border-amber-800/50 dark:bg-amber-950/30">
+                  <UserX className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                    This account is currently suspended — excluded from payroll runs.
+                  </span>
+                </div>
+              )}
+
               {/* Quick Rate Editor Section */}
               <div className="shrink-0 border-b border-orange-100/40 bg-gradient-to-r from-white to-orange-50/30 px-6 py-4 dark:border-blue-950/40 dark:from-[#0d1117] dark:to-blue-950/10">
                 <div className="flex items-center justify-between">
@@ -1174,7 +1360,7 @@ export default function Rates() {
                         />
                       ) : (
                         <p className="font-mono text-lg font-semibold text-zinc-900 dark:text-white">
-                          {editRegularRate === "—" ? "—" : `$${editRegularRate}`}
+                          {formatRateDisplay(editRegularRate)}
                         </p>
                       )}
                     </div>
@@ -1190,7 +1376,7 @@ export default function Rates() {
                         />
                       ) : (
                         <p className="font-mono text-lg font-semibold text-zinc-900 dark:text-white">
-                          {editOtRate === "—" ? "—" : `$${editOtRate}`}
+                          {formatRateDisplay(editOtRate)}
                         </p>
                       )}
                     </div>
@@ -1205,8 +1391,8 @@ export default function Rates() {
                           onClick={() => {
                             setIsEditing(false);
                             const m = buildNormFieldMap(activeProfile.fields);
-                            setEditRegularRate(pickFromMap(m, ["Regular Rate", "regular_rate", "Regular_Rate"]));
-                            setEditOtRate(pickFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"]));
+                            setEditRegularRate(normalizeRateForEdit(pickRawFromMap(m, ["Regular Rate", "regular_rate", "Regular_Rate"])));
+                            setEditOtRate(normalizeRateForEdit(pickRawFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])));
                           }}
                           disabled={isSaving}
                         >
@@ -1250,6 +1436,32 @@ export default function Rates() {
                         <Button
                           size="sm"
                           variant="outline"
+                          disabled={isSuspending === activeProfile.id}
+                          onClick={() => handleToggleSuspend(activeProfile, !isSuspendedFromProfile(activeProfile))}
+                          className={cn(
+                            "h-8 gap-1.5",
+                            isSuspendedFromProfile(activeProfile)
+                              ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                              : "border-amber-200 text-amber-600 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:hover:bg-amber-950/30",
+                          )}
+                        >
+                          {isSuspending === activeProfile.id ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : isSuspendedFromProfile(activeProfile) ? (
+                            <>
+                              <UserCheck className="size-3.5" />
+                              Unsuspend
+                            </>
+                          ) : (
+                            <>
+                              <UserX className="size-3.5" />
+                              Suspend
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
                           className="h-8 gap-1.5 border-red-200 text-red-500 hover:bg-red-50 hover:text-red-600 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/40"
                           onClick={() => setDeleteTarget(activeProfile)}
                         >
@@ -1260,6 +1472,12 @@ export default function Rates() {
                     )}
                   </div>
                 </div>
+                <p className="mt-3 text-[10px] text-zinc-500 dark:text-zinc-500">
+                  USD → PHP:{" "}
+                  <span className="font-mono font-medium text-blue-700 dark:text-blue-300">
+                    ₱{usdToPhpRate.toFixed(5)} = $1 USD
+                  </span>
+                </p>
               </div>
               <div className="overflow-y-auto overflow-x-hidden bg-gradient-to-b from-white to-orange-50/20 px-6 [-webkit-overflow-scrolling:touch] dark:from-[#0d1117] dark:to-blue-950/10" style={{ maxHeight: "min(58vh, 600px)" }}>
                 {isEditingProfile ? (

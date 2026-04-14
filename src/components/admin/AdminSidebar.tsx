@@ -3,78 +3,45 @@
 import React from 'react';
 import { useTheme } from 'next-themes';
 import {
-  LayoutDashboard,
-  FileText,
-  Clock,
-  CalendarDays,
-  Moon,
-  Sun,
-  LogOut,
   ChevronRight,
-  User,
-  UserCircle,
-  Settings,
+  LogOut,
+  Moon,
+  ShieldCheck,
+  Sun,
+  UserCog,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import EmployeeAvatar from './EmployeeAvatar';
 
-interface EmployeeSidebarProps {
+interface AdminSidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
-  employeeName?: string;
-  department?: string;
-  employeeId?: string;
-  /** Used for Gravatar (same email as ?email= on /employee). */
-  employeeEmail?: string | null;
-  /** Supabase profile photo URL when set. */
-  profilePhotoUrl?: string | null;
 }
 
 const navItems = [
-  { id: 'dashboard', label: 'My Dashboard', icon: LayoutDashboard },
-  { id: 'profile', label: 'Profile', icon: UserCircle },
-  { id: 'hours', label: 'My Hours', icon: Clock },
-  { id: 'leaves', label: 'Leave', icon: CalendarDays },
-  { id: 'disputes', label: 'My Disputes', icon: FileText },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'roles',      label: 'Roles & Permissions', icon: UserCog },
+  { id: 'employees',  label: 'Employees',           icon: Users },
+  { id: 'audit',      label: 'Audit Log',           icon: ShieldCheck },
 ];
 
-export default function EmployeeSidebar({
-  activeTab,
-  setActiveTab,
-  employeeName = 'Employee',
-  department,
-  employeeId,
-  employeeEmail = null,
-  profilePhotoUrl = null,
-}: EmployeeSidebarProps) {
+export default function AdminSidebar({ activeTab, setActiveTab }: AdminSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
-  const initials = employeeName
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-
   return (
-    <div className="flex h-screen w-64 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400">
+    <div className="flex h-screen w-64 shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400">
       <div className="p-6">
         <div className="mb-8 flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/30">
-            <User className="h-5 w-5 text-white" />
+            <ShieldCheck className="h-5 w-5 text-white" />
           </div>
-          <div className="rounded-md bg-white px-2 py-1">
-            <img
-              src="/simple%20logo.png"
-              alt="Simple HRIS"
-              className="h-5 w-auto object-contain"
-            />
+          <div className="flex flex-col leading-tight">
+            <span className="text-sm font-semibold text-zinc-900 dark:text-white">Admin</span>
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-400">Simple HRIS</span>
           </div>
         </div>
 
@@ -106,6 +73,7 @@ export default function EmployeeSidebar({
               </button>
             ))}
           </nav>
+
         </ScrollArea>
       </div>
 
@@ -120,39 +88,24 @@ export default function EmployeeSidebar({
             <span className="text-xs font-medium">{isDark ? 'Dark mode' : 'Light mode'}</span>
           </div>
           <div className="flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm dark:bg-blue-950/60">
-            {isDark ? (
-              <Sun className="h-3.5 w-3.5 text-orange-400" />
-            ) : (
-              <Moon className="h-3.5 w-3.5 text-blue-500" />
-            )}
+            {isDark ? <Sun className="h-3.5 w-3.5 text-orange-400" /> : <Moon className="h-3.5 w-3.5 text-blue-500" />}
           </div>
         </button>
-        <div className="mb-4 flex items-center gap-3 px-3 py-2">
-          <EmployeeAvatar
-            photoUrl={profilePhotoUrl}
-            email={employeeEmail}
-            initials={initials}
-            className="h-9 w-9 text-xs"
-            pixelSize={72}
-          />
+        <div className="mb-3 flex items-center gap-3 px-3 py-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-blue-500 text-xs font-bold text-white shadow-sm">
+            FM
+          </div>
           <div className="flex min-w-0 flex-col overflow-hidden">
-            <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">
-              {employeeName}
-            </span>
-            {(department || employeeId) && (
-              <span className="truncate text-[10px] text-zinc-500 dark:text-zinc-500">
-                {department || '—'}{employeeId ? ` · ${employeeId}` : ''}
-              </span>
-            )}
+            <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">Fran M</span>
+            <span className="truncate text-xs text-zinc-500 dark:text-zinc-500">Senior Admin</span>
           </div>
         </div>
         <Button
           variant="ghost"
           className="w-full justify-start gap-3 text-zinc-600 hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
-          onClick={() => (window.location.href = '/')}
         >
           <LogOut className="h-4 w-4" />
-          Log Out
+          Sign Out
         </Button>
       </div>
     </div>

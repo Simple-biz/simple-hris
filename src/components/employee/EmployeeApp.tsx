@@ -1,25 +1,34 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
+import { motion, AnimatePresence } from 'motion/react';
 import EmployeeSidebar from './EmployeeSidebar';
 import EmployeeDashboard from './EmployeeDashboard';
 import EmployeeProfile from './EmployeeProfile';
+import EmployeeLeaves from './EmployeeLeaves';
 import EmployeeSettings from './EmployeeSettings';
 import { Toaster } from '@/components/ui/sonner';
-import { AlertCircle, FileText, Clock, Settings } from 'lucide-react';
+import { FileText, Clock } from 'lucide-react';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 
+const SESSION_KEY = 'employee_session_email';
+
+function isPlausibleEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+
 /**
  * Employee-facing app shell — rendered at /employee.
- *
- * For now, the employee email is read from a query param (?email=xxx)
- * so you can demo any employee. Once Supabase Auth is wired up,
- * this will be replaced by the logged-in user's email.
+ * Identity comes from `?email=` (synced to sessionStorage) when present; otherwise sessionStorage
+ * set at login. Without either, redirects to /login.
  */
 export default function EmployeeApp() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState('dashboard');
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -29,11 +38,28 @@ export default function EmployeeApp() {
   const [employeeDepartment, setEmployeeDepartment] = useState<string | null>(null);
   const [employeeId, setEmployeeId] = useState<string | null>(null);
 
+  const emailFromQuery = searchParams.get('email');
+
   useEffect(() => {
     setMounted(true);
-    const params = new URLSearchParams(window.location.search);
-    setEmployeeEmail(params.get('email'));
-  }, []);
+    try {
+      const q = emailFromQuery?.trim() ?? '';
+      if (q && isPlausibleEmail(q)) {
+        const normalized = normEmail(q) ?? q.toLowerCase();
+        sessionStorage.setItem(SESSION_KEY, normalized);
+        setEmployeeEmail(normalized);
+        return;
+      }
+      const stored = sessionStorage.getItem(SESSION_KEY);
+      if (stored) {
+        setEmployeeEmail(stored);
+      } else {
+        router.replace('/login');
+      }
+    } catch {
+      router.replace('/login');
+    }
+  }, [router, emailFromQuery]);
 
   // Fetch profile photo, name, department, and employee ID
   useEffect(() => {
@@ -85,25 +111,10 @@ export default function EmployeeApp() {
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
+  if (!employeeEmail) return null;
+
   const renderContent = () => {
-    if (!employeeEmail) {
-      return (
-        <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-8 text-center dark:bg-none dark:bg-[#0d1117]">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/10">
-            <AlertCircle className="h-8 w-8 text-amber-500" />
-          </div>
-          <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">
-            Employee Dashboard
-          </h2>
-          <p className="max-w-md text-sm text-zinc-600 dark:text-zinc-500">
-            Add your work email as a query parameter to view your dashboard.
-          </p>
-          <code className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-2 font-mono text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
-            /employee?email=your.email@company.com
-          </code>
-        </div>
-      );
-    }
+    if (!employeeEmail) return null;
 
     switch (activeTab) {
       case 'dashboard':
@@ -128,6 +139,14 @@ export default function EmployeeApp() {
               Detailed hour logs and historical pay period data will be available here.
             </p>
           </div>
+        );
+      case 'leaves':
+        return (
+          <EmployeeLeaves
+            employeeEmail={employeeEmail}
+            employeeName={employeeName ?? undefined}
+            department={employeeDepartment ?? undefined}
+          />
         );
       case 'disputes':
         return (
@@ -160,7 +179,19 @@ export default function EmployeeApp() {
         profilePhotoUrl={profilePhotoUrl}
       />
       <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-        {renderContent()}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            role="presentation"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+          >
+            {renderContent()}
+          </motion.div>
+        </AnimatePresence>
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>

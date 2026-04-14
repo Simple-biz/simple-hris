@@ -129,8 +129,25 @@ Displayed as a card beside the Daily Hours Breakdown:
 - Each cell shows: date (e.g., `3/9`), hours worked, pass/fail icon
 - Color coding: green (≥7h), red (<7h), gray (no data)
 - Staggered fade-in animation per row/cell
-- Skeleton loading state while PAB data is being fetched
-- Legend with PAB Eligible/Not Met status
+- Skeleton loading state while PAB data is being fetched (`pabMergeLoading || fileLoading`)
+- Legend with PAB Eligible/Not Met/In Progress status
+
+### PAB period selection (Employee Dashboard)
+
+The PAB period shown on the calendar adapts to what the employee is viewing:
+
+- **"All Time" / default**: period is derived from the **latest parseable date** across merged CSV uploads via `getLatestPabMonthFromColumns()`. When a new week's CSV is uploaded and its dates roll into a new PAB month, the calendar automatically advances. Falls back to today's period (`getCurrentPabMonth()`) if no parseable dates are present.
+- **Specific CSV selected**: period is derived from the **latest parseable date in that file's columns**. When columns are canonical (`monday`, `tuesday`…) they are resolved to ISO via `resolveCanonicalColumnsToIso(row, filename)` so the date math works. Falls back to `inferPabMonthFromColumns()` then `getCurrentPabMonth()`.
+- **Hours always come from merged data**, regardless of the active CSV — so every week in the derived period is populated from every uploaded CSV, not just the slice in the selected file.
+
+### PAB "in progress" / pending state
+
+When the default (merged-latest) PAB period end date is in the future (today ≤ `pabMonthRange.end`):
+- `perfectAttendanceBonusStatus` returns `'pending'`.
+- Calendar weeks are **trimmed to elapsed weeks only** — weeks whose Monday ≤ latest-date-with-hours (or today if no data) are rendered; future weeks are hidden.
+- The bonus card shows "Pending / Period in progress — not finalized" and `pabBonusAmount = 0` (excluded from the pay summary total).
+- Pay summary renders the PAB row as `—` with a `(pending)` label instead of a peso amount.
+- A specific CSV selection is **never pending** (historical view shows the full range and a finalized eligible/not-eligible status).
 
 ### All Time mode (Employee Dashboard)
 

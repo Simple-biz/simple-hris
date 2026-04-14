@@ -26,6 +26,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import EmployeeAvatar from './EmployeeAvatar';
 import { normEmail } from '@/lib/email/norm-email';
+import {
+  OFFICIAL_USD_TO_PHP_RATE,
+  effectiveUsdToPhpRateFromStored,
+} from '@/lib/fx/usd-php';
 import { compressProfilePhotoForUpload } from '@/lib/images/compress-profile-photo';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
@@ -209,6 +213,7 @@ export default function EmployeeProfile({
     jobTitle: string | null;
     organization: string | null;
   } | null>(null);
+  const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
 
   useEffect(() => {
     let cancelled = false;
@@ -216,11 +221,12 @@ export default function EmployeeProfile({
       setError(null);
       setLoading(true);
       try {
-        const [empRes, rateRes, hubRes, idsRes] = await Promise.all([
+        const [empRes, rateRes, hubRes, idsRes, fxRes] = await Promise.all([
           fetch('/api/employees', { cache: 'no-store' }),
           fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
           fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' }),
           fetch('/api/employee-ids', { cache: 'no-store' }),
+          fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
         ]);
 
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[]; error?: string | null };
@@ -230,8 +236,13 @@ export default function EmployeeProfile({
           error?: string | null;
         };
         const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[]; error?: string | null };
+        const fxJson = (await fxRes.json()) as { value: string | null };
 
         if (cancelled) return;
+
+        if (fxRes.ok) {
+          setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
+        }
 
         if (empJson.error) setError(empJson.error);
         else {
@@ -468,6 +479,14 @@ export default function EmployeeProfile({
           <ProfilePanel title="Compensation" icon={Banknote}>
             <FieldRow icon={Banknote} label="Regular Rate" value={reg != null ? `${formatPHP(reg)} / hr` : null} />
             <FieldRow icon={Banknote} label="Overtime Rate" value={ot != null ? `${formatPHP(ot)} / hr` : null} />
+            <div className="border-t border-zinc-100 pt-2 dark:border-zinc-800">
+              <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                USD → PHP (payroll)
+              </div>
+              <p className="mt-1 font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                ₱{usdToPhpRate.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 5 })} = $1 USD
+              </p>
+            </div>
             {!reg && !ot && (
               <p className="py-2 text-[10px] text-zinc-400 dark:text-zinc-500">
                 No hourly rates set yet. Contact HR.

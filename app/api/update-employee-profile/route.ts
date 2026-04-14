@@ -1,5 +1,8 @@
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { NextResponse } from "next/server";
+
+const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
 
 export async function POST(req: Request) {
   try {
@@ -74,6 +77,26 @@ export async function POST(req: Request) {
     if (errors.length > 0) {
       return NextResponse.json({ error: errors.join("; ") }, { status: 500 });
     }
+
+    // Build a concise map of what actually changed
+    const changes: Record<string, unknown> = {};
+    if (name !== undefined)         changes.name         = name;
+    if (department !== undefined)   changes.department   = department;
+    if (workEmail !== undefined)    changes.work_email   = workEmail;
+    if (personalEmail !== undefined) changes.personal_email = personalEmail;
+    if (startDate !== undefined)    changes.start_date   = startDate;
+
+    void insertAuditLog({
+      user_name:   SYSTEM_USER.name,
+      user_role:   SYSTEM_USER.role,
+      action:      'employee.profile.update',
+      resource:    'global_master_list',
+      resource_id: originalWorkEmail || originalPersonalEmail,
+      details: {
+        employee: originalWorkEmail || originalPersonalEmail,
+        changes,
+      },
+    });
 
     return NextResponse.json({ success: true });
   } catch (e) {

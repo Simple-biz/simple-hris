@@ -206,6 +206,37 @@ export function countMonFriInclusiveInRange(start: Date, end: Date): number {
 }
 
 /**
+ * Current PAB period based on today's local date.
+ * A Mon–Fri week is "owned" by the month containing its Monday — so the PAB
+ * month for today is the month containing the Monday of today's week.
+ */
+export function getCurrentPabMonth(today: Date = new Date()): { year: number; month: number } {
+  const dow = today.getDay(); // 0=Sun..6=Sat
+  const daysBackToMon = dow === 0 ? 6 : dow - 1;
+  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysBackToMon);
+  return { year: monday.getFullYear(), month: monday.getMonth() };
+}
+
+/**
+ * Find the latest parseable date across a set of columns and derive the PAB
+ * month it falls into. Returns `null` if no parseable date columns exist.
+ */
+export function getLatestPabMonthFromColumns(
+  cols: string[],
+): { year: number; month: number; latest: Date } | null {
+  const isoYearHint = inferIsoYearFromColumns(cols);
+  let latest: Date | null = null;
+  for (const col of cols) {
+    const d = parseColDateForDedupe(col, isoYearHint);
+    if (!d) continue;
+    if (!latest || d.getTime() > latest.getTime()) latest = d;
+  }
+  if (!latest) return null;
+  const pm = getCurrentPabMonth(latest);
+  return { ...pm, latest };
+}
+
+/**
  * Infer the target PAB month from column headers by picking the month that
  * appears most frequently among parseable date columns.
  */

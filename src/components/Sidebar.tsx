@@ -6,6 +6,7 @@ import {
   Wand2,
   Building2,
   AlertCircle,
+  CalendarDays,
   Settings,
   ChevronRight,
   LogOut,
@@ -26,6 +27,7 @@ const navItems = [
   { id: 'rates', label: 'Rates', icon: DollarSign },
   { id: 'payroll-wizard', label: 'Payroll Wizard', icon: Wand2 },
   { id: 'hogan-suite', label: 'Hogan Suite', icon: Building2 },
+  { id: 'leave-requests', label: 'Leave requests', icon: CalendarDays },
   { id: 'disputes', label: 'Disputes', icon: AlertCircle },
   { id: 'settings', label: 'System Settings', icon: Settings },
 ];

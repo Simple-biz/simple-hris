@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useTransition } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Check, 
@@ -18,6 +18,8 @@ import {
   FileText,
   ChevronRight,
   CalendarDays,
+  X,
+  Info,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -396,9 +398,6 @@ const DEPARTMENTS: {
   { key: 'site_building',    name: 'Site Building',      bonuses: [] },
 ];
 
-/** Rows per page in Additions step employee table */
-const ADDITIONS_ROWS_PER_PAGE = 5;
-
 /** Known non-date Hubstaff column names (lowercase). Used as a quick-reject before date parsing. */
 const HUBSTAFF_NON_DATE_COLS = new Set([
   'id', 'member', 'email', 'total worked', 'activity', 'activity (%)', 'spent', 'spent total',
@@ -590,6 +589,25 @@ const FORMULA_DEPT_KEYS = new Set([
   'callback', 'qc', 'discovery', 'hr', 'sales_assistant', 'smart_staff',
 ]);
 
+/** Mon–Fri collection counts; sum drives Accounting weekly tier. Keys present ⇒ sum only; else legacy `collected` total. */
+const ACCOUNTING_WEEKDAY_METRICS: { key: string; label: string }[] = [
+  { key: 'collectedMon', label: 'Mon' },
+  { key: 'collectedTue', label: 'Tue' },
+  { key: 'collectedWed', label: 'Wed' },
+  { key: 'collectedThu', label: 'Thu' },
+  { key: 'collectedFri', label: 'Fri' },
+];
+
+function accountingWeeklyCollectedTotal(em: Record<string, number>): number {
+  const hasDailyBreakdown = ACCOUNTING_WEEKDAY_METRICS.some(({ key }) =>
+    Object.prototype.hasOwnProperty.call(em, key),
+  );
+  if (hasDailyBreakdown) {
+    return ACCOUNTING_WEEKDAY_METRICS.reduce((sum, { key }) => sum + (em[key] ?? 0), 0);
+  }
+  return em.collected ?? 0;
+}
+
 /**
  * Computes department-specific bonuses for all employees in a single department.
  * Returns a map of email → bonus amount (does NOT include common bonuses).
@@ -613,7 +631,7 @@ function calculateDepartmentBonus(
     // ── Accounting (tiered by collected count) ─────────────────────────────
     case 'accounting': {
       for (const emp of employees) {
-        const collected = em(emp.email).collected ?? 0;
+        const collected = accountingWeeklyCollectedTotal(em(emp.email));
         let bonus = 0;
         if (collected >= 30)      bonus = 450;
         else if (collected >= 22) bonus = 300;
@@ -713,8 +731,14 @@ function calculateDepartmentBonus(
       break;
     }
 
-    // ── Lead Gen — disregarded per policy ─────────────────────────────────
-    case 'lead_gen':
+    // ── Lead Gen (₱500/appt when ≥ 10, else ₱250/appt, 0 when zero) ───────
+    case 'lead_gen': {
+      for (const emp of employees) {
+        result[emp.email] = calcLeadGenBonus(em(emp.email).leadGenAppts ?? 0);
+      }
+      break;
+    }
+
     default:
       break;
   }
@@ -856,8 +880,26 @@ export default function PayrollWizard() {
   const [usdToPhpEditing, setUsdToPhpEditing] = useState(false);
 
   const [activeDeptTab, setActiveDeptTab] = useState('accounting');
+  const [accountingModalEmail, setAccountingModalEmail] = useState<string | null>(null);
+  const [ticketsModalEmail, setTicketsModalEmail] = useState<string | null>(null);
+  const [sitesModalEmail, setSitesModalEmail] = useState<string | null>(null);
+  const [leadGenModalEmail, setLeadGenModalEmail] = useState<string | null>(null);
+  const [callbackModalEmail, setCallbackModalEmail] = useState<string | null>(null);
+  const [qcModalEmail, setQcModalEmail] = useState<string | null>(null);
+  const [hrModalEmail, setHrModalEmail] = useState<string | null>(null);
+  const [simpleMetricModal, setSimpleMetricModal] = useState<
+    | null
+    | {
+        email: string;
+        metric: 'unitsSoldPriorWeek' | 'salesLastWeek' | 'appointmentsSet' | 'callbackAppts';
+        rate: number;
+        title: string;
+        inputLabel: string;
+        unitLabel: string;
+      }
+  >(null);
+  const [isRecalcPending, startRecalc] = useTransition();
   const [additionsSearch, setAdditionsSearch] = useState('');
-  const [additionsTablePage, setAdditionsTablePage] = useState(1);
   const [validationSearch, setValidationSearch] = useState('');
   const [employeeDepts, setEmployeeDepts] = useState<Record<string, string>>({});
   const [employeeBonuses, setEmployeeBonuses] = useState<Record<string, Record<string, boolean>>>({});
@@ -866,11 +908,13 @@ export default function PayrollWizard() {
   /** Department-level numeric metrics: deptKey → { metric → value }. Used for pool calculations (QC, HR). */
   const [deptMetrics, setDeptMetrics] = useState<Record<string, Record<string, number>>>({});
 
-  const fileInputWeeklyRef = useRef<HTMLInputElement>(null);
+  // ── Overtime settings from System Settings ──────────────────────────────────
+  const [otGlobalSuspended, setOtGlobalSuspended] = useState(false);
+  const [otDeptEnabled, setOtDeptEnabled] = useState<Record<string, boolean>>(
+    Object.fromEntries(DEPARTMENTS.map(d => [`ot_dept_${d.key}`, true])),
+  );
 
-  useEffect(() => {
-    setAdditionsTablePage(1);
-  }, [activeDeptTab, additionsSearch]);
+  const fileInputWeeklyRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -904,6 +948,31 @@ export default function PayrollWizard() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Fetch overtime settings (global + per-department) from System Settings
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const allKeys = ['ot_global_suspended', ...DEPARTMENTS.map(d => `ot_dept_${d.key}`)];
+        const responses = await Promise.all(
+          allKeys.map(key => fetch(`/api/app-settings?key=${encodeURIComponent(key)}`, { cache: 'no-store' })),
+        );
+        if (cancelled) return;
+        const jsons = (await Promise.all(responses.map(r => r.json()))) as { value: string | null }[];
+        setOtGlobalSuspended(jsons[0].value === 'true');
+        const deptMap: Record<string, boolean> = {};
+        DEPARTMENTS.forEach((d, i) => {
+          const val = jsons[i + 1].value;
+          deptMap[`ot_dept_${d.key}`] = val === null ? true : val === 'true';
+        });
+        setOtDeptEnabled(deptMap);
+      } catch {
+        // keep defaults (all OT enabled)
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   const loadEmployeeHourlyRates = React.useCallback(async () => {
@@ -1378,12 +1447,35 @@ export default function PayrollWizard() {
     });
   }, [hubstaffData, ratesByEmail, masterEmployees]);
 
+  /**
+   * Applies per-department and global OT suspension from System Settings.
+   * If a department's OT is turned off (or global OT is suspended), otHours/otPay
+   * are zeroed and initialPay is recalculated as regularPay only.
+   */
+  const effectiveCalcResults = useMemo<CalcRow[]>(() => {
+    return calcResults.map((row) => {
+      const deptKey = employeeDepts[row.email];
+      const deptOtOn = otGlobalSuspended
+        ? false
+        : (deptKey ? (otDeptEnabled[`ot_dept_${deptKey}`] ?? true) : true);
+
+      if (deptOtOn) return row;
+
+      return {
+        ...row,
+        otHours: 0,
+        otPay: 0,
+        initialPay: row.regularPay != null ? Math.round(row.regularPay * 100) / 100 : null,
+      };
+    });
+  }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled]);
+
   const bonusTotals = useMemo(() => {
     const result: Record<string, number> = {};
 
     // Group assigned employees by department for formula-based dept calculations
     const deptEmployeeMap: Record<string, CalcRow[]> = {};
-    for (const calcRow of calcResults) {
+    for (const calcRow of effectiveCalcResults) {
       const deptKey = employeeDepts[calcRow.email];
       if (!deptKey) continue;
       if (!deptEmployeeMap[deptKey]) deptEmployeeMap[deptKey] = [];
@@ -1423,12 +1515,12 @@ export default function PayrollWizard() {
     }
 
     return result;
-  }, [calcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics]);
+  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics]);
 
   const filteredCalcResults = useMemo(() => {
     const needle = initialCalcSearch.toLowerCase().trim();
-    if (!needle) return calcResults;
-    return calcResults.filter((row) => {
+    if (!needle) return effectiveCalcResults;
+    return effectiveCalcResults.filter((row) => {
       const haystack = [
         row.name,
         row.email,
@@ -1445,7 +1537,7 @@ export default function PayrollWizard() {
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [calcResults, initialCalcSearch]);
+  }, [effectiveCalcResults, initialCalcSearch]);
 
   const loadHubstaffPreview = React.useCallback(async () => {
     setHubstaffPreviewLoading(true);
@@ -2624,13 +2716,13 @@ export default function PayrollWizard() {
             {/* Warning banner for employees missing rates */}
             {(() => {
               if (initialCalcDataLoading) return null;
-              const missingCount = calcResults.filter(r => r.regularRate == null).length;
-              if (missingCount === 0 || calcResults.length === 0) return null;
+              const missingCount = effectiveCalcResults.filter(r => r.regularRate == null).length;
+              if (missingCount === 0 || effectiveCalcResults.length === 0) return null;
               return (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
                   <div>
-                    <span className="font-semibold">{missingCount} of {calcResults.length} employees</span>{' '}
+                    <span className="font-semibold">{missingCount} of {effectiveCalcResults.length} employees</span>{' '}
                     have no matching rate in <span className="font-mono text-xs">employee_hourly_rates</span>.
                     Their Hubstaff email was not found as a <span className="font-mono text-xs">Work Email</span> or{' '}
                     <span className="font-mono text-xs">Personal Email</span> in the rates table.
@@ -2734,7 +2826,7 @@ export default function PayrollWizard() {
                   </Table>
                 </div>
               </div>
-            ) : calcResults.length === 0 ? (
+            ) : effectiveCalcResults.length === 0 ? (
               <div className="flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-3 text-sm text-zinc-500 dark:border-zinc-800">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
                 No Hubstaff hours data found. Go back to step 1 and upload a weekly report first.
@@ -2747,14 +2839,14 @@ export default function PayrollWizard() {
                     {initialCalcSearch.trim() ? (
                       <>
                         Showing <span className="font-medium text-zinc-800 dark:text-zinc-200">{filteredCalcResults.length}</span> of{' '}
-                        {calcResults.length} rows
+                        {effectiveCalcResults.length} rows
                       </>
                     ) : (
                       <>
-                        {calcResults.length} {calcResults.length === 1 ? 'row' : 'rows'}
+                        {effectiveCalcResults.length} {effectiveCalcResults.length === 1 ? 'row' : 'rows'}
                         {(() => {
-                          const matched = calcResults.filter(r => r.regularRate != null).length;
-                          const missing = calcResults.length - matched;
+                          const matched = effectiveCalcResults.filter(r => r.regularRate != null).length;
+                          const missing = effectiveCalcResults.length - matched;
                           if (missing === 0) return (
                             <span className="ml-2 text-emerald-600 dark:text-emerald-400">— all matched</span>
                           );
@@ -2951,10 +3043,10 @@ export default function PayrollWizard() {
       }
       case 3: {
         const activeDept = DEPARTMENTS.find(d => d.key === activeDeptTab) ?? DEPARTMENTS[0]!;
-        const deptEmployees = calcResults.filter(r => employeeDepts[r.email] === activeDeptTab);
-        const unassignedEmployees = calcResults.filter(r => !employeeDepts[r.email]);
+        const deptEmployees = effectiveCalcResults.filter(r => employeeDepts[r.email] === activeDeptTab);
+        const unassignedEmployees = effectiveCalcResults.filter(r => !employeeDepts[r.email]);
         const totalBonusesAdded = Object.values(bonusTotals).reduce((sum, v) => sum + v, 0);
-        const assignedEmployees = calcResults.filter(r => employeeDepts[r.email]);
+        const assignedEmployees = effectiveCalcResults.filter(r => employeeDepts[r.email]);
         const totalFinalPay = assignedEmployees.reduce(
           (sum, r) => sum + (r.initialPay ?? 0) + (bonusTotals[r.email] ?? 0),
           0,
@@ -3066,7 +3158,7 @@ export default function PayrollWizard() {
             {/* Department Tabs */}
             <div className="flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
               {DEPARTMENTS.map(dept => {
-                const count = calcResults.filter(r => employeeDepts[r.email] === dept.key).length;
+                const count = effectiveCalcResults.filter(r => employeeDepts[r.email] === dept.key).length;
                 return (
                   <button
                     key={dept.key}
@@ -3097,115 +3189,39 @@ export default function PayrollWizard() {
               })}
             </div>
 
-            {/* Main layout — single page scroll (wizard ScrollArea); no nested scroll here */}
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)] lg:items-start lg:gap-6">
+            {/* Main layout — single page scroll (wizard ScrollArea); wide table uses horizontal scroll only when needed */}
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,220px)_minmax(0,1fr)] xl:items-start xl:gap-4">
               {/* Left column: Bonus config + Assign panel */}
               <div className="min-w-0 space-y-4">
-                {/* Common Bonuses */}
-                <Card className="border-zinc-200 bg-zinc-50/80 shadow-sm ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
-                  <CardHeader className="pb-3 pt-4">
-                    <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-indigo-100 dark:bg-indigo-950">
-                        <DollarSign className="h-3 w-3 text-indigo-600 dark:text-indigo-400" />
-                      </span>
-                      Common Bonuses
-                    </CardTitle>
-                    <CardDescription className="text-xs text-zinc-500">
-                      Available in all 12 departments
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3 pb-4">
-                    {COMMON_BONUSES.map(bonus => {
-                      const allChecked =
-                        deptEmployees.length > 0 &&
-                        deptEmployees.every(e => employeeBonuses[e.email]?.[bonus.id]);
-                      const isPerfectAttendance = bonus.id === 'perfect_attendance';
-                      const eligibleCount = isPerfectAttendance
-                        ? deptEmployees.filter(e =>
-                            perfectAttendanceEligible.has(normEmail(e.email) ?? e.email.toLowerCase()),
-                          ).length
-                        : 0;
-                      return (
-                        <div key={bonus.id} className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
-                                {bonus.label}
-                              </div>
-                              <div className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                                {formatPHP(bonus.amount)}
-                              </div>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className={cn(
-                                'h-7 shrink-0 border px-2 text-[10px] font-semibold',
-                                allChecked
-                                  ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400'
-                                  : 'border-zinc-200 text-zinc-600 hover:border-indigo-300 hover:text-indigo-600 dark:border-zinc-700 dark:text-zinc-400',
-                              )}
-                              disabled={deptEmployees.length === 0}
-                              onClick={() =>
-                                applyBonusToAllInDept(
-                                  bonus.id,
-                                  activeDeptTab,
-                                  !allChecked,
-                                  deptEmployees.map(e => e.email),
-                                )
-                              }
-                            >
-                              {allChecked ? 'Remove All' : 'Apply All'}
-                            </Button>
-                          </div>
-                          {isPerfectAttendance && deptEmployees.length > 0 && (
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-1.5 rounded-md bg-zinc-100 px-2 py-1 dark:bg-zinc-800/60">
-                                <Check className={cn('h-3 w-3 shrink-0', eligibleCount > 0 ? 'text-emerald-500' : 'text-zinc-400')} />
-                                <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                                  <span className={cn('font-bold', eligibleCount > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-500')}>
-                                    {eligibleCount}/{deptEmployees.length}
-                                  </span>{' '}
-                                  eligible (full PAB month · 7h+ each Mon–Fri in range)
-                                </span>
-                              </div>
-                              {pabMonthRange && (
-                                <div className="flex items-center gap-1.5 rounded-md bg-indigo-50 px-2 py-1 dark:bg-indigo-950/30">
-                                  <CalendarDays className="h-3 w-3 shrink-0 text-indigo-500" />
-                                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400">
-                                    <span className="font-semibold">{pabMonthRange.monthName} {pabMonthRange.year}</span>
-                                    {' · '}
-                                    {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                    {' – '}
-                                    {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                    {' · '}
-                                    {weekdayColumnGroups.length}/{pabExpectedMonFriCount} Mon–Fri
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </CardContent>
-                </Card>
+                {/* Common Bonuses card removed — PAB counters live per-row in the dept table */}
 
-                {/* Dept-specific Bonus Panel — formula descriptions or toggle buttons */}
-                {activeDeptTab === 'lead_gen' ? (
-                  <Card className="border-amber-200/60 bg-amber-50/60 ring-0 dark:border-amber-800/40 dark:bg-amber-950/20">
+                {/* Dept-specific Bonus Panel — hover-info for formulas, action card for toggles */}
+                <DeptFormulaInfo deptKey={activeDeptTab} deptName={activeDept.name} />
+                {FORMULA_DEPT_KEYS.has(activeDeptTab) ? null : activeDeptTab === 'lead_gen' ? (
+                  <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                     <CardHeader className="pb-3 pt-4">
-                      <CardTitle className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-200">
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-amber-100 dark:bg-amber-900">
-                          <AlertCircle className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                      <CardTitle className="flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
+                          <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
                         </span>
-                        Lead Gen — Disregarded
+                        Lead Gen — Appointments Bonus
                       </CardTitle>
-                      <CardDescription className="text-xs text-amber-600/80 dark:text-amber-400/80">
-                        No department bonus formula applied to Lead Gen per policy.
+                      <CardDescription className="text-xs text-zinc-500">
+                        Rate scales with the number of appointments set this period.
                       </CardDescription>
                     </CardHeader>
+                    <CardContent className="space-y-1.5 pb-4">
+                      {([
+                        ['10 or more appts', '₱500 × appts'],
+                        ['1 – 9 appts',       '₱250 × appts'],
+                        ['0 appts',           '₱0'],
+                      ] as [string, string][]).map(([label, amount]) => (
+                        <div key={label} className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+                          <span className="text-xs text-zinc-600 dark:text-zinc-400">{label}</span>
+                          <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">{amount}</span>
+                        </div>
+                      ))}
+                    </CardContent>
                   </Card>
                 ) : activeDeptTab === 'accounting' ? (
                   <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
@@ -3216,7 +3232,9 @@ export default function PayrollWizard() {
                         </span>
                         Accounting — Tiered Bonus
                       </CardTitle>
-                      <CardDescription className="text-xs text-zinc-500">Based on total collected per employee</CardDescription>
+                      <CardDescription className="text-xs text-zinc-500">
+                        Enter collections per weekday (Mon–Fri); the week total sets the tier. If you do not use per-day fields, the legacy single total still applies.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-1.5 pb-4">
                       {([['≥ 30 collected', '₱450'], ['22 – 29 collected', '₱300'], ['17 – 21 collected', '₱200'], ['< 17 collected', '₱0']] as [string, string][]).map(([label, amount]) => (
@@ -3527,14 +3545,6 @@ export default function PayrollWizard() {
                       })
                     : deptEmployees;
                   const totalFiltered = filteredDeptEmployees.length;
-                  const totalAdditionsPages = Math.max(1, Math.ceil(totalFiltered / ADDITIONS_ROWS_PER_PAGE));
-                  const safeAdditionsPage = Math.min(Math.max(1, additionsTablePage), totalAdditionsPages);
-                  const additionsPageStart = (safeAdditionsPage - 1) * ADDITIONS_ROWS_PER_PAGE;
-                  const pagedDeptEmployees = filteredDeptEmployees.slice(
-                    additionsPageStart,
-                    additionsPageStart + ADDITIONS_ROWS_PER_PAGE,
-                  );
-                  const additionsRowEnd = Math.min(additionsPageStart + ADDITIONS_ROWS_PER_PAGE, totalFiltered);
                   return (
                   <div className="flex flex-col gap-2">
                     {/* Search bar */}
@@ -3563,107 +3573,101 @@ export default function PayrollWizard() {
                       )}
                     </div>
 
-                    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white/50 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25">
-                    <div
-                      className="overflow-auto [-ms-overflow-style:none] [scrollbar-gutter:stable]"
-                      style={{ maxHeight: 'min(62vh, calc(100dvh - 17rem))' }}
-                    >
-                      <Table className="w-full">
+                    <div className="rounded-xl border border-zinc-200 bg-white/50 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25">
+                    <div className="w-full min-w-0 overflow-x-auto [-ms-overflow-style:none] [scrollbar-gutter:stable]">
+                      <Table className="w-full min-w-[720px] text-xs">
                         <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
                           <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
-                            <TableHead className="min-w-[140px] px-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                            <TableHead className="min-w-[96px] max-w-[140px] px-1.5 py-2 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
                               Employee
                             </TableHead>
-                            <TableHead className="min-w-[100px] px-2 text-right text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                              Initial Pay
+                            <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+                              Init
                             </TableHead>
-                            {COMMON_BONUSES.map(b => (
-                              <TableHead
-                                key={b.id}
-                                className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-indigo-600 dark:text-indigo-400"
-                              >
-                                {b.label}<br />
-                                <span className="font-mono font-bold">{formatPHP(b.amount)}</span>
-                              </TableHead>
-                            ))}
+                            <TableHead className="min-w-[96px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-indigo-600 dark:text-indigo-400">
+                              PAB<br />
+                              <span className="font-mono font-normal text-zinc-400">M T W T F · 7h+</span>
+                            </TableHead>
                             {/* Formula-based dept metric columns */}
                             {activeDeptTab === 'accounting' && (
-                              <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                Collected<br /><span className="font-mono font-normal text-zinc-400">≥30→₱450 · 22–29→₱300 · 17–21→₱200</span>
+                              <TableHead className="min-w-[120px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Weekly bonus<br />
+                                <span className="font-mono font-normal text-zinc-400">Σ→≥30 ₱450 · 22–29 ₱300 · 17–21 ₱200</span>
                               </TableHead>
                             )}
                             {activeDeptTab === 'edit' && (
-                              <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                Tickets<br /><span className="font-mono font-normal text-zinc-400">₱50 × tickets</span>
+                              <TableHead className="min-w-[56px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Tix<br /><span className="font-mono font-normal text-zinc-400">×₱50</span>
+                              </TableHead>
+                            )}
+                            {activeDeptTab === 'lead_gen' && (
+                              <TableHead className="min-w-[120px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Appts<br /><span className="font-mono font-normal text-zinc-400">1–9 ×₱250 · 10+ ×₱500</span>
                               </TableHead>
                             )}
                             {activeDeptTab === 'devs' && (
                               <>
-                                <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                  Tickets<br /><span className="font-mono font-normal text-zinc-400">₱50 × tickets</span>
+                                <TableHead className="min-w-[56px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                  Tix<br /><span className="font-mono font-normal text-zinc-400">×₱50</span>
                                 </TableHead>
-                                <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                  Sites<br /><span className="font-mono font-normal text-zinc-400">Delivery ₱50 · Checking ₱250</span>
+                                <TableHead className="min-w-[72px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                  Sites<br /><span className="font-mono font-normal text-zinc-400">Del/Chk</span>
                                 </TableHead>
                               </>
                             )}
                             {activeDeptTab === 'callback' && (
-                              <>
-                                <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                  Callback Appts<br /><span className="font-mono font-normal text-zinc-400">₱50 × appts</span>
-                                </TableHead>
-                                <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                  Lead Gen Appts<br /><span className="font-mono font-normal text-zinc-400">1–9: ₱250 / 10+: ₱500</span>
-                                </TableHead>
-                              </>
+                              <TableHead className="min-w-[140px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Callback + LeadGen<br />
+                                <span className="font-mono font-normal text-zinc-400">CB ×₱50 · LG 1–9 ×₱250 · 10+ ×₱500</span>
+                              </TableHead>
                             )}
                             {activeDeptTab === 'qc' && (
                               <>
-                                <TableHead className="min-w-[110px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                <TableHead className="min-w-[64px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
                                   Role
                                 </TableHead>
-                                <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                  Callback Appts<br /><span className="font-mono font-normal text-zinc-400">Jerome only</span>
+                                <TableHead className="min-w-[52px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                  CB<br /><span className="font-mono font-normal text-zinc-400">J only</span>
                                 </TableHead>
                               </>
                             )}
                             {activeDeptTab === 'discovery' && (
-                              <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                Units (Prior Wk)<br /><span className="font-mono font-normal text-zinc-400">₱25 × units</span>
+                              <TableHead className="min-w-[56px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Units<br /><span className="font-mono font-normal text-zinc-400">×₱25</span>
                               </TableHead>
                             )}
                             {activeDeptTab === 'hr' && (
-                              <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                HR Pool Share
+                              <TableHead className="min-w-[64px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                HR pool
                               </TableHead>
                             )}
                             {activeDeptTab === 'sales_assistant' && (
-                              <TableHead className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                Sales (Last Wk)<br /><span className="font-mono font-normal text-zinc-400">₱150 × sales</span>
+                              <TableHead className="min-w-[56px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Sales<br /><span className="font-mono font-normal text-zinc-400">×₱150</span>
                               </TableHead>
                             )}
                             {activeDeptTab === 'smart_staff' && (
-                              <TableHead className="min-w-[100px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                Appts Set<br /><span className="font-mono font-normal text-zinc-400">₱250 × appts</span>
+                              <TableHead className="min-w-[56px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                Appts<br /><span className="font-mono font-normal text-zinc-400">×₱250</span>
                               </TableHead>
                             )}
                             {/* Toggle-based dept bonus columns */}
                             {!FORMULA_DEPT_KEYS.has(activeDeptTab) && activeDept.bonuses.map(b => (
                               <TableHead
                                 key={b.id}
-                                className="min-w-[90px] px-2 text-center text-[10px] font-medium leading-tight text-violet-600 dark:text-violet-400"
+                                className="min-w-[68px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400"
                               >
-                                {b.label}<br />
+                                <span className="line-clamp-2">{b.label}</span><br />
                                 <span className="font-mono font-bold">{formatPHP(b.amount)}</span>
                               </TableHead>
                             ))}
-                            <TableHead className="min-w-[100px] px-2 text-right text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                              Bonus Total
+                            <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                              Bonus
                             </TableHead>
-                            <TableHead className="min-w-[100px] px-2 text-right text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                              Final Pay
+                            <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+                              Final
                             </TableHead>
-                            <TableHead className="w-8 px-1" />
+                            <TableHead className="w-7 px-0.5" />
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -3673,295 +3677,444 @@ export default function PayrollWizard() {
                                 No employees match &quot;{additionsSearch.trim()}&quot;
                               </TableCell>
                             </TableRow>
-                          ) : pagedDeptEmployees.map((emp, i) => {
+                          ) : filteredDeptEmployees.map((emp) => {
                             const bonusTotal = bonusTotals[emp.email] ?? 0;
                             const finalPay = (emp.initialPay ?? 0) + bonusTotal;
                             const empM = employeeMetrics[emp.email] ?? {};
                             const isJerome = isJeromeRosero(emp.name);
                             return (
                               <TableRow
-                                key={`${emp.email}-${additionsPageStart + i}`}
+                                key={emp.email}
                                 className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
                               >
-                                <TableCell className="px-3 py-2.5">
-                                  <div className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
+                                <TableCell className="max-w-[140px] px-1.5 py-1.5">
+                                  <div className="truncate text-[11px] font-medium leading-tight text-zinc-800 dark:text-zinc-200">
                                     {emp.name || '—'}
                                   </div>
-                                  <div className="truncate font-mono text-[10px] text-zinc-400">
+                                  <div className="truncate font-mono text-[9px] leading-tight text-zinc-400">
                                     {emp.email}
                                   </div>
                                 </TableCell>
-                                <TableCell className="px-2 py-2.5 text-right font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                                <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
                                   {emp.initialPay != null ? formatPHP(emp.initialPay) : '—'}
                                 </TableCell>
-                                {/* Common bonus toggles */}
-                                {COMMON_BONUSES.map(bonus => {
-                                  const isPA = bonus.id === 'perfect_attendance';
-                                  const paEligible = isPA && perfectAttendanceEligible.has(
-                                    normEmail(emp.email) ?? emp.email.toLowerCase(),
-                                  );
+                                {/* PAB date counters per-employee */}
+                                {(() => {
                                   const normEmpEmail = normEmail(emp.email) ?? emp.email.toLowerCase();
-                                  const weekdayBreakdown = isPA ? (employeeWeekdayHours.get(normEmpEmail) ?? null) : null;
+                                  const paEligible = perfectAttendanceEligible.has(normEmpEmail);
+                                  const weekdayBreakdown = employeeWeekdayHours.get(normEmpEmail) ?? null;
                                   return (
-                                    <TableCell key={bonus.id} className="px-2 py-2 text-center">
+                                    <TableCell className="px-1 py-1.5 text-center">
                                       <div className="flex flex-col items-center gap-0.5">
-                                        <Switch
-                                          checked={employeeBonuses[emp.email]?.[bonus.id] ?? false}
-                                          onCheckedChange={v => toggleEmployeeBonus(emp.email, bonus.id, v)}
-                                          className="data-[state=checked]:bg-indigo-600"
-                                        />
-                                        {isPA && (
-                                          <>
-                                            <span className={cn(
-                                              'text-[9px] font-semibold leading-none',
-                                              paEligible ? 'text-emerald-500' : 'text-zinc-400',
-                                            )}>
-                                              {paEligible ? '✓ Eligible' : '✗ Ineligible'}
-                                            </span>
-                                            {weekdayBreakdown && weekdayBreakdown.length > 0 && (
-                                              <div className="mt-0.5 flex flex-wrap gap-px">
-                                                {weekdayBreakdown.map(({ col, seconds, passes }) => {
-                                                  const colDate = parseColDate(col);
-                                                  const dateStr = colDate
-                                                    ? `${colDate.getMonth() + 1}/${colDate.getDate()}`
-                                                    : '';
-                                                  return (
-                                                    <span
-                                                      key={col}
-                                                      title={`${dayLabel(col)}${dateStr ? ` ${dateStr}` : ''}: ${formatSeconds(seconds)} logged${passes ? ' ✓' : ' — needs 7 h'}`}
-                                                      className={cn(
-                                                        'flex h-3.5 cursor-default items-center justify-center rounded-sm px-0.5 text-[7px] font-bold leading-none select-none',
-                                                        passes
-                                                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
-                                                          : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
-                                                      )}
-                                                    >
-                                                      {dayLetter(col)}
-                                                    </span>
-                                                  );
-                                                })}
-                                              </div>
-                                            )}
-                                          </>
+                                        {weekdayBreakdown && weekdayBreakdown.length > 0 ? (
+                                          <div className="flex flex-wrap justify-center gap-px">
+                                            {weekdayBreakdown.map(({ col, seconds, passes }) => {
+                                              const colDate = parseColDate(col);
+                                              const dateStr = colDate
+                                                ? `${colDate.getMonth() + 1}/${colDate.getDate()}`
+                                                : '';
+                                              return (
+                                                <span
+                                                  key={col}
+                                                  title={`${dayLabel(col)}${dateStr ? ` ${dateStr}` : ''}: ${formatSeconds(seconds)} logged${passes ? ' ✓' : ' — needs 7 h'}`}
+                                                  className={cn(
+                                                    'flex h-3.5 cursor-default items-center justify-center rounded-sm px-0.5 text-[7px] font-bold leading-none select-none',
+                                                    passes
+                                                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+                                                      : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+                                                  )}
+                                                >
+                                                  {dayLetter(col)}
+                                                </span>
+                                              );
+                                            })}
+                                          </div>
+                                        ) : (
+                                          <span className="text-[9px] italic text-zinc-400">—</span>
                                         )}
+                                        <span className={cn(
+                                          'text-[9px] font-semibold leading-none',
+                                          paEligible ? 'text-emerald-500' : 'text-zinc-400',
+                                        )}>
+                                          {paEligible ? '✓ Eligible' : '✗ Ineligible'}
+                                        </span>
                                       </div>
                                     </TableCell>
                                   );
-                                })}
-                                {/* Accounting: collected input */}
-                                {activeDeptTab === 'accounting' && (
-                                  <TableCell className="px-2 py-2">
-                                    <Input
-                                      type="number" min={0}
-                                      value={empM.collected ?? 0 ? (empM.collected ?? 0) : ''}
-                                      placeholder="0"
-                                      onChange={e => {
-                                        const v = parseInt(e.target.value, 10);
-                                        updateEmployeeMetric(emp.email, 'collected', Number.isFinite(v) && v >= 0 ? v : 0);
-                                      }}
-                                      className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                    />
-                                  </TableCell>
-                                )}
-                                {/* Edit: tickets input */}
-                                {activeDeptTab === 'edit' && (
-                                  <TableCell className="px-2 py-2">
-                                    <Input
-                                      type="number" min={0}
-                                      value={empM.tickets ?? 0 ? (empM.tickets ?? 0) : ''}
-                                      placeholder="0"
-                                      onChange={e => {
-                                        const v = parseInt(e.target.value, 10);
-                                        updateEmployeeMetric(emp.email, 'tickets', Number.isFinite(v) && v >= 0 ? v : 0);
-                                      }}
-                                      className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                    />
-                                  </TableCell>
-                                )}
-                                {/* Devs: tickets + site delivery/checking */}
-                                {activeDeptTab === 'devs' && (
-                                  <>
-                                    <TableCell className="px-2 py-2">
-                                      <Input
-                                        type="number" min={0}
-                                        value={empM.tickets ?? 0 ? (empM.tickets ?? 0) : ''}
-                                        placeholder="0"
-                                        onChange={e => {
-                                          const v = parseInt(e.target.value, 10);
-                                          updateEmployeeMetric(emp.email, 'tickets', Number.isFinite(v) && v >= 0 ? v : 0);
-                                        }}
-                                        className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                      />
-                                    </TableCell>
-                                    <TableCell className="px-2 py-2">
-                                      {isDevsDelivery(emp.name) ? (
-                                        <div className="flex flex-col items-center gap-0.5">
-                                          <Input
-                                            type="number" min={0}
-                                            value={empM.siteDelivery ?? 0 ? (empM.siteDelivery ?? 0) : ''}
-                                            placeholder="0"
-                                            onChange={e => {
-                                              const v = parseInt(e.target.value, 10);
-                                              updateEmployeeMetric(emp.email, 'siteDelivery', Number.isFinite(v) && v >= 0 ? v : 0);
-                                            }}
-                                            className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                          />
-                                          <span className="text-[9px] text-violet-500">Delivery ₱50</span>
+                                })()}
+                                {/* Accounting: Mon–Fri collections (sum = week tier) */}
+                                {activeDeptTab === 'accounting' && (() => {
+                                  const weekSum = accountingWeeklyCollectedTotal(empM);
+                                  const tierLabel =
+                                    weekSum >= 30 ? '₱450' : weekSum >= 22 ? '₱300' : weekSum >= 17 ? '₱200' : '₱0';
+                                  const hasData = ACCOUNTING_WEEKDAY_METRICS.some(({ key }) =>
+                                    Object.prototype.hasOwnProperty.call(empM, key),
+                                  );
+                                  return (
+                                    <TableCell className="px-1 py-1 align-middle">
+                                      <div className="flex flex-col items-center gap-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => setAccountingModalEmail(emp.email)}
+                                          className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                        >
+                                          {hasData ? 'Edit Bonus' : 'Set Bonus'}
+                                        </Button>
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-[9px] text-zinc-500 dark:text-zinc-400">
+                                            Σ{' '}
+                                            <span className="font-mono font-bold text-zinc-700 dark:text-zinc-200">
+                                              {weekSum}
+                                            </span>
+                                          </span>
+                                          <span className="text-[9px] font-semibold text-violet-600 dark:text-violet-400">
+                                            {tierLabel}
+                                          </span>
                                         </div>
-                                      ) : isDevsChecking(emp.name) ? (
-                                        <div className="flex flex-col items-center gap-0.5">
-                                          <Input
-                                            type="number" min={0}
-                                            value={empM.siteChecking ?? 0 ? (empM.siteChecking ?? 0) : ''}
-                                            placeholder="0"
-                                            onChange={e => {
-                                              const v = parseInt(e.target.value, 10);
-                                              updateEmployeeMetric(emp.email, 'siteChecking', Number.isFinite(v) && v >= 0 ? v : 0);
-                                            }}
-                                            className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                          />
-                                          <span className="text-[9px] text-violet-500">Checking ₱250</span>
+                                      </div>
+                                    </TableCell>
+                                  );
+                                })()}
+                                {/* Edit: tickets via modal */}
+                                {activeDeptTab === 'edit' && (() => {
+                                  const tix = empM.tickets ?? 0;
+                                  const bonus = tix * 50;
+                                  return (
+                                    <TableCell className="px-1 py-1 align-middle">
+                                      <div className="flex flex-col items-center gap-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => setTicketsModalEmail(emp.email)}
+                                          className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                        >
+                                          {tix > 0 ? 'Edit Bonus' : 'Set Bonus'}
+                                        </Button>
+                                        <div className="flex items-center gap-1 text-[9px]">
+                                          <span className="text-zinc-500 dark:text-zinc-400">
+                                            {tix} tix
+                                          </span>
+                                          <span className="font-semibold text-violet-600 dark:text-violet-400">
+                                            {formatPHP(bonus)}
+                                          </span>
                                         </div>
-                                      ) : (
-                                        <span className="block text-center text-xs text-zinc-400">—</span>
-                                      )}
+                                      </div>
                                     </TableCell>
-                                  </>
-                                )}
-                                {/* Callback: callback appts + lead gen appts */}
-                                {activeDeptTab === 'callback' && (
-                                  <>
-                                    <TableCell className="px-2 py-2">
-                                      <Input
-                                        type="number" min={0}
-                                        value={empM.callbackAppts ?? 0 ? (empM.callbackAppts ?? 0) : ''}
-                                        placeholder="0"
-                                        onChange={e => {
-                                          const v = parseInt(e.target.value, 10);
-                                          updateEmployeeMetric(emp.email, 'callbackAppts', Number.isFinite(v) && v >= 0 ? v : 0);
-                                        }}
-                                        className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                      />
-                                    </TableCell>
-                                    <TableCell className="px-2 py-2">
-                                      <div className="flex flex-col items-center gap-0.5">
-                                        <Input
-                                          type="number" min={0}
-                                          value={empM.leadGenAppts ?? 0 ? (empM.leadGenAppts ?? 0) : ''}
-                                          placeholder="0"
-                                          onChange={e => {
-                                            const v = parseInt(e.target.value, 10);
-                                            updateEmployeeMetric(emp.email, 'leadGenAppts', Number.isFinite(v) && v >= 0 ? v : 0);
-                                          }}
-                                          className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                        />
-                                        {(empM.leadGenAppts ?? 0) > 0 && (
+                                  );
+                                })()}
+                                {/* Lead Gen: appts (modal) — tiered ₱250 / ₱500 */}
+                                {activeDeptTab === 'lead_gen' && (() => {
+                                  const appts = empM.leadGenAppts ?? 0;
+                                  const bonus = calcLeadGenBonus(appts);
+                                  const rateLabel = appts >= 10 ? '₱500 × appts' : appts > 0 ? '₱250 × appts' : '—';
+                                  return (
+                                    <TableCell className="px-1 py-1 align-middle">
+                                      <div className="flex flex-col items-center gap-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => setLeadGenModalEmail(emp.email)}
+                                          className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                        >
+                                          {appts > 0 ? 'Edit Bonus' : 'Set Bonus'}
+                                        </Button>
+                                        <div className="flex flex-wrap items-center justify-center gap-x-1 text-[9px]">
+                                          <span className="text-zinc-500 dark:text-zinc-400">
+                                            {appts} appt{appts !== 1 ? 's' : ''}
+                                          </span>
                                           <span className={cn(
-                                            'text-[9px] font-bold',
-                                            (empM.leadGenAppts ?? 0) >= 10 ? 'text-violet-600' : 'text-zinc-500',
+                                            'font-semibold',
+                                            appts >= 10 ? 'text-violet-600 dark:text-violet-400' : 'text-zinc-500 dark:text-zinc-500',
                                           )}>
-                                            ×{(empM.leadGenAppts ?? 0) >= 10 ? '₱500' : '₱250'}
+                                            {rateLabel}
+                                          </span>
+                                        </div>
+                                        {bonus > 0 && (
+                                          <span className="font-mono text-[10px] font-bold text-violet-600 dark:text-violet-400">
+                                            {formatPHP(bonus)}
                                           </span>
                                         )}
                                       </div>
                                     </TableCell>
+                                  );
+                                })()}
+                                {/* Devs: tickets (modal) + site delivery/checking */}
+                                {activeDeptTab === 'devs' && (
+                                  <>
+                                    <TableCell className="px-1 py-1 align-middle">
+                                      {(() => {
+                                        const tix = empM.tickets ?? 0;
+                                        const bonus = tix * 50;
+                                        return (
+                                          <div className="flex flex-col items-center gap-1">
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              variant="outline"
+                                              onClick={() => setTicketsModalEmail(emp.email)}
+                                              className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                            >
+                                              {tix > 0 ? 'Edit Bonus' : 'Set Bonus'}
+                                            </Button>
+                                            <div className="flex items-center gap-1 text-[9px]">
+                                              <span className="text-zinc-500 dark:text-zinc-400">{tix} tix</span>
+                                              <span className="font-semibold text-violet-600 dark:text-violet-400">
+                                                {formatPHP(bonus)}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
+                                    </TableCell>
+                                    <TableCell className="px-1 py-1 align-middle">
+                                      {(() => {
+                                        const isDel = isDevsDelivery(emp.name);
+                                        const isChk = isDevsChecking(emp.name);
+                                        if (!isDel && !isChk) {
+                                          return <span className="block text-center text-xs text-zinc-400">—</span>;
+                                        }
+                                        const count = isDel ? (empM.siteDelivery ?? 0) : (empM.siteChecking ?? 0);
+                                        const rate = isDel ? 50 : 250;
+                                        const bonus = count * rate;
+                                        const roleLbl = isDel ? 'Delivery · ₱50' : 'Checking · ₱250';
+                                        return (
+                                          <div className="flex flex-col items-center gap-1">
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              variant="outline"
+                                              onClick={() => setSitesModalEmail(emp.email)}
+                                              className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                            >
+                                              {count > 0 ? 'Edit Bonus' : 'Set Bonus'}
+                                            </Button>
+                                            <span className="text-[9px] text-violet-500">{roleLbl}</span>
+                                            <div className="flex items-center gap-1 text-[9px]">
+                                              <span className="text-zinc-500 dark:text-zinc-400">{count} site{count !== 1 ? 's' : ''}</span>
+                                              <span className="font-semibold text-violet-600 dark:text-violet-400">
+                                                {formatPHP(bonus)}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
+                                    </TableCell>
                                   </>
                                 )}
-                                {/* QC: role badge + optional Jerome callback appts */}
-                                {activeDeptTab === 'qc' && (
-                                  <>
-                                    <TableCell className="px-2 py-2 text-center">
-                                      {isJerome ? (
-                                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                                          Jerome · ₱30/unit
-                                        </span>
-                                      ) : (
-                                        <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                                          Pool ÷ {standardQcMembers.length}
-                                          {qcPoolPerMember > 0 && (
-                                            <span className="ml-1 font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                                              = {formatPHP(qcPoolPerMember)}
+                                {/* Callback: CB appts + LG appts (modal) */}
+                                {activeDeptTab === 'callback' && (() => {
+                                  const cb = empM.callbackAppts ?? 0;
+                                  const lg = empM.leadGenAppts ?? 0;
+                                  const cbBonus = cb * 50;
+                                  const lgBonus = calcLeadGenBonus(lg);
+                                  const total = cbBonus + lgBonus;
+                                  return (
+                                    <TableCell className="px-1 py-1 align-middle">
+                                      <div className="flex flex-col items-center gap-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => setCallbackModalEmail(emp.email)}
+                                          className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                        >
+                                          {cb > 0 || lg > 0 ? 'Edit Bonus' : 'Set Bonus'}
+                                        </Button>
+                                        <div className="flex items-center gap-1 text-[9px] text-zinc-500 dark:text-zinc-400">
+                                          <span>CB {cb}</span>
+                                          <span>·</span>
+                                          <span>LG {lg}</span>
+                                        </div>
+                                        {total > 0 && (
+                                          <span className="font-mono text-[10px] font-bold text-violet-600 dark:text-violet-400">
+                                            {formatPHP(total)}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </TableCell>
+                                  );
+                                })()}
+                                {/* QC: single Set/Edit Bonus button for every member */}
+                                {activeDeptTab === 'qc' && (() => {
+                                  const unitsSold = deptMetrics['qc']?.unitsSold ?? 0;
+                                  const cb = empM.callbackAppts ?? 0;
+                                  const perMemberRate = standardQcMembers.length >= 6 ? 150 : 125;
+                                  const share = isJerome
+                                    ? unitsSold * 30 + cb * 50
+                                    : (standardQcMembers.length > 0
+                                        ? (unitsSold * perMemberRate) / standardQcMembers.length
+                                        : 0);
+                                  return (
+                                    <TableCell className="px-1 py-1 align-middle" colSpan={2}>
+                                      <div className="flex flex-col items-center gap-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => setQcModalEmail(emp.email)}
+                                          className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                        >
+                                          {isJerome ? (cb > 0 || unitsSold > 0 ? 'Edit Bonus' : 'Set Bonus') : 'View Share'}
+                                        </Button>
+                                        <div className="flex items-center gap-1 text-[9px]">
+                                          {isJerome ? (
+                                            <>
+                                              <span className="rounded-full bg-amber-100 px-1.5 py-0 font-bold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                                                Jerome · ₱30/u
+                                              </span>
+                                              <span className="text-zinc-500 dark:text-zinc-400">CB {cb}</span>
+                                            </>
+                                          ) : (
+                                            <span className="text-zinc-500 dark:text-zinc-400">
+                                              Pool ÷ {standardQcMembers.length}
                                             </span>
                                           )}
+                                        </div>
+                                        <span className="font-mono text-[10px] font-bold text-violet-600 dark:text-violet-400">
+                                          {formatPHP(share)}
                                         </span>
-                                      )}
+                                      </div>
                                     </TableCell>
-                                    <TableCell className="px-2 py-2">
-                                      {isJerome ? (
-                                        <Input
-                                          type="number" min={0}
-                                          value={empM.callbackAppts ?? 0 ? (empM.callbackAppts ?? 0) : ''}
-                                          placeholder="0"
-                                          onChange={e => {
-                                            const v = parseInt(e.target.value, 10);
-                                            updateEmployeeMetric(emp.email, 'callbackAppts', Number.isFinite(v) && v >= 0 ? v : 0);
-                                          }}
-                                          className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                        />
-                                      ) : (
-                                        <span className="block text-center text-xs text-zinc-400">—</span>
-                                      )}
+                                  );
+                                })()}
+                                {/* Discovery: units sold prior week — modal */}
+                                {activeDeptTab === 'discovery' && (() => {
+                                  const units = empM.unitsSoldPriorWeek ?? 0;
+                                  const bonus = units * 25;
+                                  return (
+                                    <TableCell className="px-1 py-1 align-middle">
+                                      <div className="flex flex-col items-center gap-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() =>
+                                            setSimpleMetricModal({
+                                              email: emp.email,
+                                              metric: 'unitsSoldPriorWeek',
+                                              rate: 25,
+                                              title: 'Discovery — Units Sold (Prior Week)',
+                                              inputLabel: 'Units sold (prior week)',
+                                              unitLabel: 'unit',
+                                            })
+                                          }
+                                          className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                        >
+                                          {units > 0 ? 'Edit Bonus' : 'Set Bonus'}
+                                        </Button>
+                                        <div className="flex items-center gap-1 text-[9px]">
+                                          <span className="text-zinc-500 dark:text-zinc-400">{units} units</span>
+                                          <span className="font-semibold text-violet-600 dark:text-violet-400">
+                                            {formatPHP(bonus)}
+                                          </span>
+                                        </div>
+                                      </div>
                                     </TableCell>
-                                  </>
-                                )}
-                                {/* Discovery: units sold prior week */}
-                                {activeDeptTab === 'discovery' && (
-                                  <TableCell className="px-2 py-2">
-                                    <Input
-                                      type="number" min={0}
-                                      value={empM.unitsSoldPriorWeek ?? 0 ? (empM.unitsSoldPriorWeek ?? 0) : ''}
-                                      placeholder="0"
-                                      onChange={e => {
-                                        const v = parseInt(e.target.value, 10);
-                                        updateEmployeeMetric(emp.email, 'unitsSoldPriorWeek', Number.isFinite(v) && v >= 0 ? v : 0);
-                                      }}
-                                      className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                    />
-                                  </TableCell>
-                                )}
-                                {/* HR: show computed pool share */}
-                                {activeDeptTab === 'hr' && (
-                                  <TableCell className="px-2 py-2.5 text-center font-mono text-xs font-bold">
-                                    {hrNewHires > 0 ? (
-                                      <span className="text-violet-600 dark:text-violet-400">{formatPHP(hrPoolShare)}</span>
-                                    ) : (
-                                      <span className="text-zinc-400">— (enter new hires)</span>
-                                    )}
-                                  </TableCell>
-                                )}
-                                {/* Sales Assistant: sales last week */}
-                                {activeDeptTab === 'sales_assistant' && (
-                                  <TableCell className="px-2 py-2">
-                                    <Input
-                                      type="number" min={0}
-                                      value={empM.salesLastWeek ?? 0 ? (empM.salesLastWeek ?? 0) : ''}
-                                      placeholder="0"
-                                      onChange={e => {
-                                        const v = parseInt(e.target.value, 10);
-                                        updateEmployeeMetric(emp.email, 'salesLastWeek', Number.isFinite(v) && v >= 0 ? v : 0);
-                                      }}
-                                      className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                    />
-                                  </TableCell>
-                                )}
-                                {/* SmartStaff: appointments set */}
-                                {activeDeptTab === 'smart_staff' && (
-                                  <TableCell className="px-2 py-2">
-                                    <Input
-                                      type="number" min={0}
-                                      value={empM.appointmentsSet ?? 0 ? (empM.appointmentsSet ?? 0) : ''}
-                                      placeholder="0"
-                                      onChange={e => {
-                                        const v = parseInt(e.target.value, 10);
-                                        updateEmployeeMetric(emp.email, 'appointmentsSet', Number.isFinite(v) && v >= 0 ? v : 0);
-                                      }}
-                                      className="h-7 w-16 border-violet-200 bg-white text-center font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
-                                    />
-                                  </TableCell>
-                                )}
+                                  );
+                                })()}
+                                {/* HR: Set/Edit Bonus button — edits dept newHires */}
+                                {activeDeptTab === 'hr' && (() => {
+                                  const teal = isTeal(emp.name);
+                                  const share = teal ? 0 : (hrNewHires > 0 ? hrPoolShare : 0);
+                                  return (
+                                    <TableCell className="px-1 py-1 align-middle">
+                                      <div className="flex flex-col items-center gap-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() => setHrModalEmail(emp.email)}
+                                          className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                        >
+                                          {hrNewHires > 0 ? 'Edit Bonus' : 'Set Bonus'}
+                                        </Button>
+                                        <span className="text-[9px] text-zinc-500 dark:text-zinc-400">
+                                          {teal ? 'Teal · excluded' : `Pool ÷ ${hrNewHires > 0 ? hrNewHires : '?'} hires`}
+                                        </span>
+                                        <span className="font-mono text-[10px] font-bold text-violet-600 dark:text-violet-400">
+                                          {formatPHP(share)}
+                                        </span>
+                                      </div>
+                                    </TableCell>
+                                  );
+                                })()}
+                                {/* Sales Assistant: sales last week — modal */}
+                                {activeDeptTab === 'sales_assistant' && (() => {
+                                  const sales = empM.salesLastWeek ?? 0;
+                                  const bonus = sales * 150;
+                                  return (
+                                    <TableCell className="px-1 py-1 align-middle">
+                                      <div className="flex flex-col items-center gap-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() =>
+                                            setSimpleMetricModal({
+                                              email: emp.email,
+                                              metric: 'salesLastWeek',
+                                              rate: 150,
+                                              title: 'Sales Assistant — Sales Last Week',
+                                              inputLabel: 'Sales last week',
+                                              unitLabel: 'sale',
+                                            })
+                                          }
+                                          className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                        >
+                                          {sales > 0 ? 'Edit Bonus' : 'Set Bonus'}
+                                        </Button>
+                                        <div className="flex items-center gap-1 text-[9px]">
+                                          <span className="text-zinc-500 dark:text-zinc-400">{sales} sales</span>
+                                          <span className="font-semibold text-violet-600 dark:text-violet-400">
+                                            {formatPHP(bonus)}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </TableCell>
+                                  );
+                                })()}
+                                {/* SmartStaff: appointments set — modal */}
+                                {activeDeptTab === 'smart_staff' && (() => {
+                                  const appts = empM.appointmentsSet ?? 0;
+                                  const bonus = appts * 250;
+                                  return (
+                                    <TableCell className="px-1 py-1 align-middle">
+                                      <div className="flex flex-col items-center gap-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          onClick={() =>
+                                            setSimpleMetricModal({
+                                              email: emp.email,
+                                              metric: 'appointmentsSet',
+                                              rate: 250,
+                                              title: 'SmartStaff — Appointments Set',
+                                              inputLabel: 'Appointments set',
+                                              unitLabel: 'appt',
+                                            })
+                                          }
+                                          className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
+                                        >
+                                          {appts > 0 ? 'Edit Bonus' : 'Set Bonus'}
+                                        </Button>
+                                        <div className="flex items-center gap-1 text-[9px]">
+                                          <span className="text-zinc-500 dark:text-zinc-400">{appts} appts</span>
+                                          <span className="font-semibold text-violet-600 dark:text-violet-400">
+                                            {formatPHP(bonus)}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </TableCell>
+                                  );
+                                })()}
                                 {/* Toggle-based dept bonus switches */}
                                 {!FORMULA_DEPT_KEYS.has(activeDeptTab) && activeDept.bonuses.map(bonus => (
-                                  <TableCell key={bonus.id} className="px-2 py-2.5 text-center">
+                                  <TableCell key={bonus.id} className="px-1 py-1.5 text-center">
                                     <Switch
                                       checked={employeeBonuses[emp.email]?.[bonus.id] ?? false}
                                       onCheckedChange={v => toggleEmployeeBonus(emp.email, bonus.id, v)}
@@ -3969,8 +4122,10 @@ export default function PayrollWizard() {
                                     />
                                   </TableCell>
                                 ))}
-                                <TableCell className="px-2 py-2.5 text-right font-mono text-xs font-bold">
-                                  {bonusTotal > 0 ? (
+                                <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-bold">
+                                  {isRecalcPending ? (
+                                    <span className="inline-block h-3 w-12 animate-pulse rounded bg-emerald-200/60 dark:bg-emerald-900/40" />
+                                  ) : bonusTotal > 0 ? (
                                     <span className="text-emerald-600 dark:text-emerald-400">
                                       +{formatPHP(bonusTotal)}
                                     </span>
@@ -3978,10 +4133,14 @@ export default function PayrollWizard() {
                                     <span className="text-zinc-400">—</span>
                                   )}
                                 </TableCell>
-                                <TableCell className="px-2 py-2.5 text-right font-mono text-xs font-semibold text-zinc-900 dark:text-white">
-                                  {formatPHP(finalPay)}
+                                <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-semibold text-zinc-900 dark:text-white">
+                                  {isRecalcPending ? (
+                                    <span className="inline-block h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                                  ) : (
+                                    formatPHP(finalPay)
+                                  )}
                                 </TableCell>
-                                <TableCell className="px-1 py-2.5">
+                                <TableCell className="px-0.5 py-1.5">
                                   <Button
                                     type="button"
                                     variant="ghost"
@@ -4011,51 +4170,23 @@ export default function PayrollWizard() {
                           {totalFiltered > 0 && (
                             <span className="text-zinc-400">
                               {' · '}
-                              Rows {additionsPageStart + 1}
-                              {totalFiltered > 1 ? `–${additionsRowEnd}` : ''} of {totalFiltered}
-                              {totalAdditionsPages > 1 && (
-                                <span className="tabular-nums">
-                                  {' '}(page {safeAdditionsPage}/{totalAdditionsPages})
-                                </span>
-                              )}
+                              {totalFiltered} row{totalFiltered !== 1 ? 's' : ''} shown
                             </span>
                           )}
                         </span>
-                        {totalFiltered > ADDITIONS_ROWS_PER_PAGE && (
-                          <div className="flex items-center gap-1">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 border-zinc-200 px-2 text-[10px] dark:border-zinc-700"
-                              disabled={safeAdditionsPage <= 1}
-                              onClick={() => setAdditionsTablePage(p => Math.max(1, p - 1))}
-                              aria-label="Previous page"
-                            >
-                              <ArrowLeft className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 border-zinc-200 px-2 text-[10px] dark:border-zinc-700"
-                              disabled={safeAdditionsPage >= totalAdditionsPages}
-                              onClick={() => setAdditionsTablePage(p => Math.min(totalAdditionsPages, p + 1))}
-                              aria-label="Next page"
-                            >
-                              <ArrowRight className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        )}
                       </div>
                       <div className="flex flex-wrap items-center gap-4">
                         <span className="text-xs text-zinc-500">
                           Dept Bonuses:{' '}
-                          <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                            +{formatPHP(
-                              deptEmployees.reduce((sum, e) => sum + (bonusTotals[e.email] ?? 0), 0),
-                            )}
-                          </span>
+                          {isRecalcPending ? (
+                            <span className="inline-block h-3 w-20 animate-pulse rounded bg-emerald-200/60 align-middle dark:bg-emerald-900/40" />
+                          ) : (
+                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                              +{formatPHP(
+                                deptEmployees.reduce((sum, e) => sum + (bonusTotals[e.email] ?? 0), 0),
+                              )}
+                            </span>
+                          )}
                         </span>
                         <span className="text-xs text-zinc-500">
                           Dept Final Pay:{' '}
@@ -4080,7 +4211,7 @@ export default function PayrollWizard() {
         );
       }
       case 4: {
-        const finalPayRows = calcResults
+        const finalPayRows = effectiveCalcResults
           .map(r => ({
             ...r,
             deptKey: employeeDepts[r.email] ?? null,
@@ -4310,7 +4441,7 @@ export default function PayrollWizard() {
               <CardContent className="grid gap-2 pb-4 sm:grid-cols-2 sm:gap-3">
                 {[
                   { label: 'Hubstaff Hours Uploaded', pass: hubstaffData.length > 0 },
-                  { label: 'Initial Calculations Complete', pass: calcResults.some(r => r.initialPay != null) },
+                  { label: 'Initial Calculations Complete', pass: effectiveCalcResults.some(r => r.initialPay != null) },
                   { label: 'All Employees Dept-Assigned', pass: unassignedCount === 0 },
                   {
                     label: 'Perfect Attendance Evaluated',
@@ -4581,8 +4712,8 @@ export default function PayrollWizard() {
             </Button>
             <div className="flex items-center gap-4">
               <span className="text-xs text-zinc-500 font-mono">Step {currentStep} of {steps.length}</span>
-              <Button 
-                onClick={nextStep} 
+              <Button
+                onClick={nextStep}
                 disabled={currentStep === steps.length}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2 px-8"
               >
@@ -4592,6 +4723,1129 @@ export default function PayrollWizard() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Accounting weekly-collections modal */}
+      {accountingModalEmail && (() => {
+        const emp = calcResults.find((e) => e.email === accountingModalEmail);
+        const empM = employeeMetrics[accountingModalEmail] ?? {};
+        const weekSum = accountingWeeklyCollectedTotal(empM);
+        const tierAmount =
+          weekSum >= 30 ? 450 : weekSum >= 22 ? 300 : weekSum >= 17 ? 200 : 0;
+        const tierLabel =
+          weekSum >= 30 ? '≥ 30 collected' :
+          weekSum >= 22 ? '22 – 29 collected' :
+          weekSum >= 17 ? '17 – 21 collected' : '< 17 collected';
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setAccountingModalEmail(null)}
+          >
+            <div
+              className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
+                    <Calculator className="h-4 w-4 text-violet-500" />
+                    Accounting Weekly Bonus
+                  </h2>
+                  <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                    {emp?.name || accountingModalEmail}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setAccountingModalEmail(null)}
+                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mb-3 grid grid-cols-5 gap-2">
+                {ACCOUNTING_WEEKDAY_METRICS.map(({ key, label }) => (
+                  <div key={key} className="flex flex-col items-center gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
+                      {label}
+                    </span>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={empM[key] && empM[key] > 0 ? empM[key] : ''}
+                      placeholder="0"
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        const n = Number.isFinite(v) && v >= 0 ? v : 0;
+                        startRecalc(() => {
+                          setEmployeeMetrics((prev) => ({
+                            ...prev,
+                            [accountingModalEmail]: {
+                              ...(prev[accountingModalEmail] ?? {}),
+                              [key]: n,
+                            },
+                          }));
+                        });
+                      }}
+                      className="h-9 border-violet-200 bg-white text-center font-mono text-sm dark:border-violet-800/50 dark:bg-zinc-900"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="mb-4 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">Week total</span>
+                  <span className="font-mono text-lg font-bold text-zinc-900 dark:text-white">{weekSum}</span>
+                </div>
+                <div className="space-y-1">
+                  {([
+                    ['≥ 30 collected', '₱450', 30],
+                    ['22 – 29 collected', '₱300', 22],
+                    ['17 – 21 collected', '₱200', 17],
+                    ['< 17 collected', '₱0', 0],
+                  ] as [string, string, number][]).map(([lbl, amt, threshold]) => {
+                    const active = lbl === tierLabel;
+                    return (
+                      <div
+                        key={lbl}
+                        className={cn(
+                          'flex items-center justify-between rounded-md border px-2.5 py-1.5 text-xs transition',
+                          active
+                            ? 'border-violet-500/50 bg-violet-50 font-semibold text-violet-800 dark:border-violet-500/40 dark:bg-violet-950/40 dark:text-violet-200'
+                            : 'border-transparent text-zinc-500 dark:text-zinc-500',
+                        )}
+                      >
+                        <span>{lbl}</span>
+                        <span className="font-mono">{amt}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Bonus awarded</span>
+                  <span className="font-mono text-base font-bold text-violet-600 dark:text-violet-400">
+                    {formatPHP(tierAmount)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEmployeeMetrics((prev) => {
+                      const copy = { ...(prev[accountingModalEmail] ?? {}) };
+                      for (const { key } of ACCOUNTING_WEEKDAY_METRICS) delete copy[key];
+                      return { ...prev, [accountingModalEmail]: copy };
+                    });
+                  }}
+                  className="text-xs"
+                >
+                  Clear days
+                </Button>
+                <Button
+                  onClick={() => setAccountingModalEmail(null)}
+                  className="bg-violet-600 text-xs text-white hover:bg-violet-700"
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Tickets modal — shared by Edit and Devs (₱50 × tickets) */}
+      {ticketsModalEmail && (() => {
+        const emp = calcResults.find((e) => e.email === ticketsModalEmail);
+        const empM = employeeMetrics[ticketsModalEmail] ?? {};
+        const tickets = empM.tickets ?? 0;
+        const bonus = tickets * 50;
+        const deptLabel = activeDeptTab === 'devs' ? 'Devs' : 'Edit';
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setTicketsModalEmail(null)}
+          >
+            <div
+              className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
+                    <Calculator className="h-4 w-4 text-violet-500" />
+                    {deptLabel} Ticket Bonus
+                  </h2>
+                  <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                    {emp?.name || ticketsModalEmail}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setTicketsModalEmail(null)}
+                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mb-3">
+                <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                  Tickets completed
+                </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  autoFocus
+                  value={tickets > 0 ? tickets : ''}
+                  placeholder="0"
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    const n = Number.isFinite(v) && v >= 0 ? v : 0;
+                    startRecalc(() => {
+                      setEmployeeMetrics((prev) => ({
+                        ...prev,
+                        [ticketsModalEmail]: { ...(prev[ticketsModalEmail] ?? {}), tickets: n },
+                      }));
+                    });
+                  }}
+                  className="h-10 border-violet-200 bg-white text-center font-mono text-base dark:border-violet-800/50 dark:bg-zinc-900"
+                />
+              </div>
+
+              <div className="mb-4 space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500 dark:text-zinc-400">Rate</span>
+                  <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                    ₱50 / ticket
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500 dark:text-zinc-400">Tickets</span>
+                  <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                    × {tickets}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    Bonus awarded
+                  </span>
+                  <span className="font-mono text-base font-bold text-violet-600 dark:text-violet-400">
+                    {formatPHP(bonus)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setEmployeeMetrics((prev) => ({
+                      ...prev,
+                      [ticketsModalEmail]: { ...(prev[ticketsModalEmail] ?? {}), tickets: 0 },
+                    }))
+                  }
+                  className="text-xs"
+                >
+                  Clear
+                </Button>
+                <Button
+                  onClick={() => setTicketsModalEmail(null)}
+                  className="bg-violet-600 text-xs text-white hover:bg-violet-700"
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Devs — Site Delivery / Checking modal */}
+      {sitesModalEmail && (() => {
+        const emp = calcResults.find((e) => e.email === sitesModalEmail);
+        const empM = employeeMetrics[sitesModalEmail] ?? {};
+        const isDel = emp ? isDevsDelivery(emp.name) : false;
+        const isChk = emp ? isDevsChecking(emp.name) : false;
+        const metricKey = isDel ? 'siteDelivery' : isChk ? 'siteChecking' : null;
+        const rate = isDel ? 50 : isChk ? 250 : 0;
+        const roleLabel = isDel ? 'Site Delivery' : isChk ? 'Site Checking' : '—';
+        const count = metricKey ? (empM[metricKey] ?? 0) : 0;
+        const bonus = count * rate;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setSitesModalEmail(null)}
+          >
+            <div
+              className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
+                    <Calculator className="h-4 w-4 text-violet-500" />
+                    Devs — {roleLabel}
+                  </h2>
+                  <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                    {emp?.name || sitesModalEmail}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSitesModalEmail(null)}
+                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {!metricKey ? (
+                <p className="rounded-md bg-amber-50 p-3 text-xs text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                  This employee isn&apos;t assigned to site delivery or checking. Add them to the pool first.
+                </p>
+              ) : (
+                <>
+                  <div className="mb-3">
+                    <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                      Sites {isDel ? 'delivered' : 'checked'}
+                    </Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      autoFocus
+                      value={count > 0 ? count : ''}
+                      placeholder="0"
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        const n = Number.isFinite(v) && v >= 0 ? v : 0;
+                        startRecalc(() => {
+                          setEmployeeMetrics((prev) => ({
+                            ...prev,
+                            [sitesModalEmail]: { ...(prev[sitesModalEmail] ?? {}), [metricKey]: n },
+                          }));
+                        });
+                      }}
+                      className="h-10 border-violet-200 bg-white text-center font-mono text-base dark:border-violet-800/50 dark:bg-zinc-900"
+                    />
+                  </div>
+
+                  <div className="mb-4 space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-500 dark:text-zinc-400">Rate</span>
+                      <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                        {formatPHP(rate)} / site
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-500 dark:text-zinc-400">Sites</span>
+                      <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">× {count}</span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                      <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Bonus awarded</span>
+                      <span className="font-mono text-base font-bold text-violet-600 dark:text-violet-400">
+                        {formatPHP(bonus)}
+                      </span>
+                    </div>
+                    <p className="pt-1 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">
+                      Delivery pool: Enriquez Harry Jr., Lagundi Bryan. Checking pool: Ranis Christian, Velasco Anjeo, Felices John Carl.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        setEmployeeMetrics((prev) => ({
+                          ...prev,
+                          [sitesModalEmail]: { ...(prev[sitesModalEmail] ?? {}), [metricKey]: 0 },
+                        }))
+                      }
+                      className="text-xs"
+                    >
+                      Clear
+                    </Button>
+                    <Button
+                      onClick={() => setSitesModalEmail(null)}
+                      className="bg-violet-600 text-xs text-white hover:bg-violet-700"
+                    >
+                      Done
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Lead Gen appointments modal */}
+      {leadGenModalEmail && (() => {
+        const emp = calcResults.find((e) => e.email === leadGenModalEmail);
+        const empM = employeeMetrics[leadGenModalEmail] ?? {};
+        const appts = empM.leadGenAppts ?? 0;
+        const bonus = calcLeadGenBonus(appts);
+        const activeTier =
+          appts === 0 ? 'zero' : appts >= 10 ? 'hi' : 'lo';
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setLeadGenModalEmail(null)}
+          >
+            <div
+              className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
+                    <Calculator className="h-4 w-4 text-violet-500" />
+                    Lead Gen — Appointments
+                  </h2>
+                  <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                    {emp?.name || leadGenModalEmail}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setLeadGenModalEmail(null)}
+                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mb-3">
+                <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                  Appointments set
+                </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  autoFocus
+                  value={appts > 0 ? appts : ''}
+                  placeholder="0"
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    const n = Number.isFinite(v) && v >= 0 ? v : 0;
+                    startRecalc(() => {
+                      setEmployeeMetrics((prev) => ({
+                        ...prev,
+                        [leadGenModalEmail]: { ...(prev[leadGenModalEmail] ?? {}), leadGenAppts: n },
+                      }));
+                    });
+                  }}
+                  className="h-10 border-violet-200 bg-white text-center font-mono text-base dark:border-violet-800/50 dark:bg-zinc-900"
+                />
+              </div>
+
+              <div className="mb-4 space-y-1 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                {([
+                  ['10 or more appts', '₱500 × appts', 'hi'],
+                  ['1 – 9 appts',       '₱250 × appts', 'lo'],
+                  ['0 appts',           '₱0',           'zero'],
+                ] as [string, string, string][]).map(([lbl, amt, tier]) => {
+                  const active = tier === activeTier;
+                  return (
+                    <div
+                      key={tier}
+                      className={cn(
+                        'flex items-center justify-between rounded-md border px-2.5 py-1.5 text-xs transition',
+                        active
+                          ? 'border-violet-500/50 bg-violet-50 font-semibold text-violet-800 dark:border-violet-500/40 dark:bg-violet-950/40 dark:text-violet-200'
+                          : 'border-transparent text-zinc-500 dark:text-zinc-500',
+                      )}
+                    >
+                      <span>{lbl}</span>
+                      <span className="font-mono">{amt}</span>
+                    </div>
+                  );
+                })}
+                <div className="mt-2 flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Bonus awarded</span>
+                  <span className="font-mono text-base font-bold text-violet-600 dark:text-violet-400">
+                    {formatPHP(bonus)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setEmployeeMetrics((prev) => ({
+                      ...prev,
+                      [leadGenModalEmail]: { ...(prev[leadGenModalEmail] ?? {}), leadGenAppts: 0 },
+                    }))
+                  }
+                  className="text-xs"
+                >
+                  Clear
+                </Button>
+                <Button
+                  onClick={() => setLeadGenModalEmail(null)}
+                  className="bg-violet-600 text-xs text-white hover:bg-violet-700"
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Callback modal — CB ×₱50 + LG tiered */}
+      {callbackModalEmail && (() => {
+        const emp = calcResults.find((e) => e.email === callbackModalEmail);
+        const empM = employeeMetrics[callbackModalEmail] ?? {};
+        const cb = empM.callbackAppts ?? 0;
+        const lg = empM.leadGenAppts ?? 0;
+        const cbBonus = cb * 50;
+        const lgBonus = calcLeadGenBonus(lg);
+        const total = cbBonus + lgBonus;
+        const lgTier = lg === 0 ? 'zero' : lg >= 10 ? 'hi' : 'lo';
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setCallbackModalEmail(null)}
+          >
+            <div
+              className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
+                    <Calculator className="h-4 w-4 text-violet-500" />
+                    Callback Bonus
+                  </h2>
+                  <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                    {emp?.name || callbackModalEmail}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setCallbackModalEmail(null)}
+                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mb-3 grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                    Callback appts
+                  </Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    autoFocus
+                    value={cb > 0 ? cb : ''}
+                    placeholder="0"
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      const n = Number.isFinite(v) && v >= 0 ? v : 0;
+                      startRecalc(() => {
+                        setEmployeeMetrics((prev) => ({
+                          ...prev,
+                          [callbackModalEmail]: { ...(prev[callbackModalEmail] ?? {}), callbackAppts: n },
+                        }));
+                      });
+                    }}
+                    className="h-10 border-violet-200 bg-white text-center font-mono text-base dark:border-violet-800/50 dark:bg-zinc-900"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                    LeadGen appts
+                  </Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={lg > 0 ? lg : ''}
+                    placeholder="0"
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      const n = Number.isFinite(v) && v >= 0 ? v : 0;
+                      startRecalc(() => {
+                        setEmployeeMetrics((prev) => ({
+                          ...prev,
+                          [callbackModalEmail]: { ...(prev[callbackModalEmail] ?? {}), leadGenAppts: n },
+                        }));
+                      });
+                    }}
+                    className="h-10 border-violet-200 bg-white text-center font-mono text-base dark:border-violet-800/50 dark:bg-zinc-900"
+                  />
+                </div>
+              </div>
+
+              <div className="mb-4 space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Callback</p>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500 dark:text-zinc-400">{cb} × ₱50</span>
+                  <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                    {formatPHP(cbBonus)}
+                  </span>
+                </div>
+
+                <p className="pt-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">LeadGen</p>
+                {([
+                  ['10 or more appts', '₱500 × appts', 'hi'],
+                  ['1 – 9 appts',       '₱250 × appts', 'lo'],
+                  ['0 appts',           '₱0',           'zero'],
+                ] as [string, string, string][]).map(([lbl, amt, tier]) => {
+                  const active = tier === lgTier;
+                  return (
+                    <div
+                      key={tier}
+                      className={cn(
+                        'flex items-center justify-between rounded-md border px-2.5 py-1 text-xs transition',
+                        active
+                          ? 'border-violet-500/50 bg-violet-50 font-semibold text-violet-800 dark:border-violet-500/40 dark:bg-violet-950/40 dark:text-violet-200'
+                          : 'border-transparent text-zinc-500 dark:text-zinc-500',
+                      )}
+                    >
+                      <span>{lbl}</span>
+                      <span className="font-mono">{amt}</span>
+                    </div>
+                  );
+                })}
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500 dark:text-zinc-400">LeadGen subtotal</span>
+                  <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                    {formatPHP(lgBonus)}
+                  </span>
+                </div>
+
+                <div className="mt-2 flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Total bonus</span>
+                  <span className="font-mono text-base font-bold text-violet-600 dark:text-violet-400">
+                    {formatPHP(total)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setEmployeeMetrics((prev) => ({
+                      ...prev,
+                      [callbackModalEmail]: {
+                        ...(prev[callbackModalEmail] ?? {}),
+                        callbackAppts: 0,
+                        leadGenAppts: 0,
+                      },
+                    }))
+                  }
+                  className="text-xs"
+                >
+                  Clear
+                </Button>
+                <Button
+                  onClick={() => setCallbackModalEmail(null)}
+                  className="bg-violet-600 text-xs text-white hover:bg-violet-700"
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* QC modal — pool math for everyone, plus Jerome's per-unit + callback */}
+      {qcModalEmail && (() => {
+        const emp = calcResults.find((e) => e.email === qcModalEmail);
+        const empM = employeeMetrics[qcModalEmail] ?? {};
+        const isJerome = emp ? isJeromeRosero(emp.name) : false;
+        const qcRoster = calcResults.filter(
+          (e) => employeeDepts[e.email] === 'qc' && !isJeromeRosero(e.name),
+        );
+        const qcMemberCount = qcRoster.length;
+        const unitsSold = deptMetrics['qc']?.unitsSold ?? 0;
+        const cb = empM.callbackAppts ?? 0;
+        const perMemberRate = qcMemberCount >= 6 ? 150 : 125;
+        const rateNote = qcMemberCount >= 6 ? '≥ 6 members' : '< 6 members';
+        const pool = unitsSold * perMemberRate;
+        const poolShare = qcMemberCount > 0 ? pool / qcMemberCount : 0;
+        const jeromeCore = unitsSold * 30;
+        const jeromeCb = cb * 50;
+        const total = isJerome ? jeromeCore + jeromeCb : poolShare;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setQcModalEmail(null)}
+          >
+            <div
+              className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
+                    <Calculator className="h-4 w-4 text-violet-500" />
+                    QC — {isJerome ? 'Jerome Rosero' : 'Pool Share'}
+                  </h2>
+                  <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                    {emp?.name || qcModalEmail}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setQcModalEmail(null)}
+                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className={cn('grid gap-3', isJerome ? 'grid-cols-2' : 'grid-cols-1')}>
+                <div>
+                  <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                    Units sold (team-wide)
+                  </Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    autoFocus
+                    value={unitsSold > 0 ? unitsSold : ''}
+                    placeholder="0"
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10);
+                      const n = Number.isFinite(v) && v >= 0 ? v : 0;
+                      startRecalc(() => {
+                        setDeptMetrics((prev) => ({
+                          ...prev,
+                          qc: { ...(prev.qc ?? {}), unitsSold: n },
+                        }));
+                      });
+                    }}
+                    className="h-10 border-violet-200 bg-white text-center font-mono text-base dark:border-violet-800/50 dark:bg-zinc-900"
+                  />
+                </div>
+                {isJerome && (
+                  <div>
+                    <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                      Callback appts (Jerome)
+                    </Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={cb > 0 ? cb : ''}
+                      placeholder="0"
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        const n = Number.isFinite(v) && v >= 0 ? v : 0;
+                        startRecalc(() => {
+                          setEmployeeMetrics((prev) => ({
+                            ...prev,
+                            [qcModalEmail]: { ...(prev[qcModalEmail] ?? {}), callbackAppts: n },
+                          }));
+                        });
+                      }}
+                      className="h-10 border-violet-200 bg-white text-center font-mono text-base dark:border-violet-800/50 dark:bg-zinc-900"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-3 mb-4 space-y-1.5 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                {isJerome ? (
+                  <>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                      Per-unit QC
+                    </p>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-500 dark:text-zinc-400">{unitsSold} × ₱30</span>
+                      <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                        {formatPHP(jeromeCore)}
+                      </span>
+                    </div>
+                    <p className="pt-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                      Callback add-on
+                    </p>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-500 dark:text-zinc-400">{cb} × ₱50</span>
+                      <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                        {formatPHP(jeromeCb)}
+                      </span>
+                    </div>
+                    <p className="pt-1 text-[9px] italic text-zinc-500 dark:text-zinc-500">
+                      Jerome is excluded from the QC pool and paid per-unit instead.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                      Pool formula
+                    </p>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-500 dark:text-zinc-400">
+                        Rate per unit ({rateNote})
+                      </span>
+                      <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                        {formatPHP(perMemberRate)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-500 dark:text-zinc-400">
+                        Pool ({unitsSold} × {formatPHP(perMemberRate)})
+                      </span>
+                      <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                        {formatPHP(pool)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-500 dark:text-zinc-400">
+                        ÷ {qcMemberCount} member
+                        {qcMemberCount !== 1 ? 's' : ''}
+                      </span>
+                      <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                        {formatPHP(poolShare)}
+                      </span>
+                    </div>
+                    <p className="pt-1 text-[9px] italic text-zinc-500 dark:text-zinc-500">
+                      The pool is split equally across every QC member except Jerome.
+                    </p>
+                  </>
+                )}
+                <div className="mt-2 flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    Bonus awarded
+                  </span>
+                  <span className="font-mono text-base font-bold text-violet-600 dark:text-violet-400">
+                    {formatPHP(total)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  onClick={() => setQcModalEmail(null)}
+                  className="bg-violet-600 text-xs text-white hover:bg-violet-700"
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* HR modal — pool math (billable × ₱1000) ÷ new hires */}
+      {hrModalEmail && (() => {
+        const emp = calcResults.find((e) => e.email === hrModalEmail);
+        const teal = emp ? isTeal(emp.name) : false;
+        const hrRoster = calcResults.filter((e) => employeeDepts[e.email] === 'hr');
+        const billable = hrRoster.filter((e) => !isTeal(e.name));
+        const newHires = deptMetrics['hr']?.newHires ?? 0;
+        const pool = billable.length * 1000;
+        const share = newHires > 0 ? pool / newHires : 0;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setHrModalEmail(null)}
+          >
+            <div
+              className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
+                    <Calculator className="h-4 w-4 text-violet-500" />
+                    HR — Pool Share
+                  </h2>
+                  <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                    {emp?.name || hrModalEmail}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setHrModalEmail(null)}
+                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mb-3">
+                <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                  New hires after 4 weeks (team-wide)
+                </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  autoFocus
+                  value={newHires > 0 ? newHires : ''}
+                  placeholder="0"
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    const n = Number.isFinite(v) && v >= 0 ? v : 0;
+                    startRecalc(() => {
+                      setDeptMetrics((prev) => ({
+                        ...prev,
+                        hr: { ...(prev.hr ?? {}), newHires: n },
+                      }));
+                    });
+                  }}
+                  className="h-10 border-violet-200 bg-white text-center font-mono text-base dark:border-violet-800/50 dark:bg-zinc-900"
+                />
+              </div>
+
+              <div className="mb-4 space-y-1.5 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Pool</p>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500 dark:text-zinc-400">
+                    Billable HR members ({billable.length}) × ₱1,000
+                  </span>
+                  <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                    {formatPHP(pool)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500 dark:text-zinc-400">
+                    ÷ {newHires > 0 ? newHires : '?'} new hires
+                  </span>
+                  <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                    {newHires > 0 ? formatPHP(share) : '—'}
+                  </span>
+                </div>
+                <p className="pt-1 text-[9px] italic text-zinc-500 dark:text-zinc-500">
+                  Teal is excluded from the headcount and receives no pool share.
+                </p>
+
+                <div className="mt-2 flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    Bonus awarded
+                  </span>
+                  <span className="font-mono text-base font-bold text-violet-600 dark:text-violet-400">
+                    {formatPHP(teal ? 0 : (newHires > 0 ? share : 0))}
+                  </span>
+                </div>
+                {teal && (
+                  <p className="rounded-md bg-amber-50 px-2 py-1 text-[10px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                    Teal is excluded from this pool — bonus is ₱0.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  onClick={() => setHrModalEmail(null)}
+                  className="bg-violet-600 text-xs text-white hover:bg-violet-700"
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Generic single-metric modal — Discovery, Sales Asst, SmartStaff */}
+      {simpleMetricModal && (() => {
+        const cfg = simpleMetricModal;
+        const emp = calcResults.find((e) => e.email === cfg.email);
+        const empM = employeeMetrics[cfg.email] ?? {};
+        const count = empM[cfg.metric] ?? 0;
+        const bonus = count * cfg.rate;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setSimpleMetricModal(null)}
+          >
+            <div
+              className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
+                    <Calculator className="h-4 w-4 text-violet-500" />
+                    {cfg.title}
+                  </h2>
+                  <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                    {emp?.name || cfg.email}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setSimpleMetricModal(null)}
+                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mb-3">
+                <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                  {cfg.inputLabel}
+                </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  autoFocus
+                  value={count > 0 ? count : ''}
+                  placeholder="0"
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    const n = Number.isFinite(v) && v >= 0 ? v : 0;
+                    startRecalc(() => {
+                      setEmployeeMetrics((prev) => ({
+                        ...prev,
+                        [cfg.email]: { ...(prev[cfg.email] ?? {}), [cfg.metric]: n },
+                      }));
+                    });
+                  }}
+                  className="h-10 border-violet-200 bg-white text-center font-mono text-base dark:border-violet-800/50 dark:bg-zinc-900"
+                />
+              </div>
+
+              <div className="mb-4 space-y-2 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500 dark:text-zinc-400">Rate</span>
+                  <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">
+                    {formatPHP(cfg.rate)} / {cfg.unitLabel}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500 dark:text-zinc-400">Count</span>
+                  <span className="font-mono font-semibold text-zinc-700 dark:text-zinc-300">× {count}</span>
+                </div>
+                <div className="flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Bonus awarded</span>
+                  <span className="font-mono text-base font-bold text-violet-600 dark:text-violet-400">
+                    {formatPHP(bonus)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    setEmployeeMetrics((prev) => ({
+                      ...prev,
+                      [cfg.email]: { ...(prev[cfg.email] ?? {}), [cfg.metric]: 0 },
+                    }))
+                  }
+                  className="text-xs"
+                >
+                  Clear
+                </Button>
+                <Button
+                  onClick={() => setSimpleMetricModal(null)}
+                  className="bg-violet-600 text-xs text-white hover:bg-violet-700"
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Dept formula hover-info chip — shown in Step 3 in place of the old big cards.
+// Hover the (i) icon to read the bonus rules for the active department.
+// ────────────────────────────────────────────────────────────────────────────
+const DEPT_FORMULA_INFO: Record<string, { title: string; lines: string[] }> = {
+  accounting: {
+    title: 'Accounting — Tiered weekly bonus',
+    lines: [
+      '≥ 30 collected → ₱450',
+      '22 – 29 collected → ₱300',
+      '17 – 21 collected → ₱200',
+      '< 17 collected → ₱0',
+      'Enter per-weekday collections; sum sets the tier.',
+    ],
+  },
+  edit: {
+    title: 'Edit — Ticket bonus',
+    lines: ['₱50 per completed ticket.'],
+  },
+  devs: {
+    title: 'Devs — Tickets + Sites',
+    lines: [
+      '₱50 per completed ticket (all devs).',
+      'Delivery (Harry Jr., Bryan): ₱50 per site delivered.',
+      'Checking (Chris, Joe, John Carl): ₱250 per site checked.',
+      'Total = tickets + sites.',
+    ],
+  },
+  callback: {
+    title: 'Callback — CB + LeadGen',
+    lines: [
+      'Callback: ₱50 per appointment.',
+      'LeadGen 1–9 appts → ₱250 each.',
+      'LeadGen 10+ appts → ₱500 each.',
+      'Total = Callback + LeadGen.',
+    ],
+  },
+  lead_gen: {
+    title: 'Lead Gen — Tiered appointments',
+    lines: [
+      '10+ appts → ₱500 × appts.',
+      '1 – 9 appts → ₱250 × appts.',
+      '0 appts → ₱0.',
+    ],
+  },
+  qc: {
+    title: 'QC — Pool + Jerome exception',
+    lines: [
+      '₱150 per unit sold (₱125 if <6 QC members).',
+      'Pool = units × rate, split equally among non-Jerome members.',
+      'Jerome Rosero: units × ₱30 + his callback × ₱50 (excluded from pool).',
+    ],
+  },
+  discovery: {
+    title: 'Discovery — Units sold',
+    lines: ['₱25 per unit sold in the prior week.'],
+  },
+  hr: {
+    title: 'HR — Pool ÷ New Hires',
+    lines: [
+      'Pool = (HR members excluding Teal) × ₱1,000.',
+      '÷ number of new hires after 4 weeks = per-person share.',
+      'Teal is excluded from the pool.',
+    ],
+  },
+  sales_assistant: {
+    title: 'Sales Asst — Sales Bonus',
+    lines: ['₱150 per sale last week (from the live scoreboard).'],
+  },
+  smart_staff: {
+    title: 'SmartStaff — Appointments',
+    lines: ['₱250 per appointment set.'],
+  },
+};
+
+function DeptFormulaInfo({ deptKey, deptName }: { deptKey: string; deptName: string }) {
+  const info = DEPT_FORMULA_INFO[deptKey];
+  if (!info) return null;
+  return (
+    <div className="relative inline-flex items-center gap-1.5 self-start rounded-full border border-violet-200 bg-violet-50/60 px-2.5 py-1 text-[11px] text-violet-700 dark:border-violet-800/50 dark:bg-violet-950/20 dark:text-violet-300 [&:hover_.dept-formula-pop]:opacity-100 [&:hover_.dept-formula-pop]:pointer-events-auto">
+      <Info className="h-3.5 w-3.5" />
+      <span className="font-medium">{deptName} bonus rules</span>
+      <div className="dept-formula-pop pointer-events-none absolute left-0 top-full z-20 mt-1 w-72 rounded-lg border border-zinc-200 bg-white p-3 text-zinc-700 opacity-0 shadow-lg transition-opacity dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+        <p className="mb-1.5 text-xs font-semibold text-zinc-900 dark:text-white">{info.title}</p>
+        <ul className="space-y-0.5 text-[11px] leading-snug">
+          {info.lines.map((line, i) => (
+            <li key={i} className="flex gap-1.5">
+              <span className="text-violet-500">•</span>
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );

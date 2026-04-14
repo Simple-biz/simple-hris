@@ -235,4 +235,12 @@ Hubstaff CSVs use day-name date headers (`"Mon 3/24"`) while the Supabase table 
 After uploading a CSV, the component re-parses the CSV text client-side (`parseCsv()`) and uses it to set `hubstaffDisplayColumns` / `hubstaffDisplayRows` directly — rather than re-fetching from Supabase. This guarantees Perfect Attendance detection in Step 3 always has real daily values, even if the Supabase date columns don't match. The `dailyDataMissing` flag detects the case where Supabase daily columns are all null and shows a warning banner.
 
 **8. No authentication (planned)**
-The app currently has no login, sessions, or role-based access. The user identity is hardcoded as `"Fran M / Senior Admin"`. A full RBAC implementation plan with 6 roles, API guards, RLS policies, and audit logging is documented in `Documentation/IMPLEMENTATION_PLAN_RBAC.md`.
+The admin app currently has no session gate — the user identity is hardcoded as `"Fran M / Senior Admin"`. A full RBAC implementation plan with 6 roles, API guards, RLS policies, and audit logging is documented in `Documentation/IMPLEMENTATION_PLAN_RBAC.md`.
+
+**9. Employee / Accounting login (`/login`)**
+A unified login page at `/login` authenticates users via bcrypt-hashed passwords stored in `employee_hourly_rates`. The form has an **Employee / Accounting** role toggle; on success the verified work email is written to `sessionStorage` (`employee_session_email`, `employee_session_role`) and the user is routed to `/employee` (Employee) or `/` (Accounting). The admin dashboard gate is currently disabled pending full wiring; the login form and APIs are live.
+
+- **`POST /api/employee-login`** — calls Supabase RPC `verify_employee_password(p_email, p_password)` which returns `password_hash = crypt(p_password, password_hash)`. Successes and failures are written to `audit_log` (`employee.login.success` / `employee.login.failed`) with the submitted work email in `details`.
+- **`POST /api/employee-forgot-password`** — verifies identity via RPC `verify_employee_identity(p_email, p_start_mmddyy)` (work email + `MMDDYY` of start date). On match, writes `employee.password_reset.requested` to `audit_log` for the accounting team to action out-of-band. No password is ever returned.
+- **Temp password convention**: `MMDDYY` of the employee's start date (e.g. June 5 2026 → `060526`). Hashes are generated via pgcrypto `crypt(pwd, gen_salt('bf'))` during a one-time backfill and on new-employee creation (planned).
+- **Password columns** on `employee_hourly_rates`: `password_hash`, `previous_password_hash`, `password_updated_at`. Plaintext is never stored.

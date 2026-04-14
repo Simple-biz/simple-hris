@@ -10,7 +10,15 @@ import {
   rowsToPayrollRows,
   sortHubstaffColumnsForDisplay,
 } from "@/lib/supabase/hubstaff-hours-db";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { NextRequest, NextResponse } from "next/server";
+
+const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
+
+function clientIp(req: NextRequest): string | null {
+  const fwd = req.headers.get('x-forwarded-for');
+  return fwd ? fwd.split(',')[0].trim() : (req.headers.get('x-real-ip') ?? null);
+}
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -94,6 +102,17 @@ export async function DELETE(req: NextRequest) {
     }
 
     const { deleted } = await deleteHubstaffRowsBySourceFile(sourceFile);
+
+    void insertAuditLog({
+      user_name:   SYSTEM_USER.name,
+      user_role:   SYSTEM_USER.role,
+      action:      'csv.delete',
+      resource:    'hubstaff_hours',
+      resource_id: sourceFile,
+      details:     { file: sourceFile, rows_deleted: deleted },
+      ip_address:  clientIp(req),
+    });
+
     return NextResponse.json({ success: true, deleted });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -128,6 +147,17 @@ export async function POST(req: NextRequest) {
     const { rowCount } = replace
       ? await replaceHubstaffHoursFromCsvText(text)
       : await appendHubstaffHoursFromCsvText(text, fileName);
+
+    void insertAuditLog({
+      user_name:   SYSTEM_USER.name,
+      user_role:   SYSTEM_USER.role,
+      action:      'csv.upload',
+      resource:    'hubstaff_hours',
+      resource_id: fileName ?? null,
+      details:     { file: fileName ?? 'unknown', rows: rowCount, mode: replace ? 'replace' : 'append' },
+      ip_address:  clientIp(req),
+    });
+
     return NextResponse.json({ success: true, rowCount });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

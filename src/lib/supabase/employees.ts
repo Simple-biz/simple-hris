@@ -189,7 +189,8 @@ export async function getEmployees(): Promise<{
 
   const { data, error } = await supabase
     .from(table)
-    .select(GLOBAL_MASTER_SELECT);
+    .select(GLOBAL_MASTER_SELECT)
+    .range(0, 9999);
 
   if (error) {
     return { employees: [], error: error.message };

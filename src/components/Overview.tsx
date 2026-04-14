@@ -30,6 +30,7 @@ import {
   indexHourlyRatesByEmail,
   type EmployeeHourlyRateRow,
 } from '@/lib/supabase/employee-hourly-rates';
+import type { PayrollHubstaffRow } from '@/lib/supabase/hubstaff-hours';
 import { normEmail } from '@/lib/email/norm-email';
 import { phpHourlyPayFromSeconds, splitRegularOvertimeSeconds } from '@/lib/payroll/money-php';
 import {
@@ -71,6 +72,34 @@ function formatStartDate(value: string | null): string {
   });
 }
 
+/** Match payroll emails to master rows (personal or work email). */
+function buildMasterEmailSet(list: EmployeeRow[]): Set<string> {
+  const s = new Set<string>();
+  for (const e of list) {
+    const p = normEmail(e.personal_email);
+    const w = normEmail(e.work_email ?? null);
+    if (p) s.add(p);
+    if (w) s.add(w);
+  }
+  return s;
+}
+
+/** Merge Member / Job type from Hubstaff rows per normalized email (current payroll scope). */
+function mergePayrollIdentity(rows: PayrollHubstaffRow[]): Record<string, { name: string | null; department: string | null }> {
+  const acc: Record<string, { name: string | null; department: string | null }> = {};
+  for (const row of rows) {
+    const em = normEmail(row.email);
+    if (!em) continue;
+    const cur = acc[em];
+    const name = row.name?.trim() || cur?.name || null;
+    const department = row.department?.trim() || cur?.department || null;
+    acc[em] = { name, department };
+  }
+  return acc;
+}
+
+type OverviewEmployeeRow = EmployeeRow & { recordSource: 'master' | 'hubstaff' };
+
 export default function Overview() {
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [employeesError, setEmployeesError] = useState<string | null>(null);
@@ -88,6 +117,11 @@ export default function Overview() {
   const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(null);
   /** The actual file being displayed (resolved from selection). */
   const [activeSourceFile, setActiveSourceFile] = useState<string | null>(null);
+  /** Name / department from Hubstaff rows for the selected payroll scope (for employees not on master list). */
+  const [payrollIdentityByEmail, setPayrollIdentityByEmail] = useState<Record<
+    string,
+    { name: string | null; department: string | null }
+  > | null>(null);
 
   /** PAB metrics — computed from all source files. */
   const [pabMetrics, setPabMetrics] = useState<{
@@ -182,11 +216,11 @@ export default function Overview() {
         const ratesByEmail = indexHourlyRatesByEmail(ratesJson.rows ?? []);
 
         // Accumulate payroll rows across all fetched files
-        const allPayrollRows: Array<{ email: string | null; hoursDecimal: number }> = [];
+        const allPayrollRows: PayrollHubstaffRow[] = [];
         for (const url of hoursUrls) {
           const res = await fetch(url, { cache: 'no-store' });
           const json = (await res.json()) as {
-            payrollRows?: Array<{ email: string | null; hoursDecimal: number }> | null;
+            payrollRows?: PayrollHubstaffRow[] | null;
             error?: string | null;
           };
           if (cancelled) return;
@@ -253,6 +287,7 @@ export default function Overview() {
           setPayrollEmailsNorm(paySet.size > 0 ? paySet : null);
           setPayrollWorkerCount(paySet.size > 0 ? paySet.size : null);
           setTotalPayout(hasAnyPay ? sum : null);
+          setPayrollIdentityByEmail(mergePayrollIdentity(allPayrollRows));
         }
       } catch {
         if (!cancelled) {
@@ -260,6 +295,7 @@ export default function Overview() {
           setPayrollEmailsNorm(null);
           setPayrollWorkerCount(null);
           setActiveSourceFile(null);
+          setPayrollIdentityByEmail(null);
         }
       } finally {
         if (!cancelled) setPayoutLoading(false);
@@ -363,31 +399,62 @@ export default function Overview() {
     return () => { cancelled = true; };
   }, [sourceFiles]);
 
+  /** Master list rows plus Hubstaff-only workers (same payroll scope as stats). */
+  const mergedEmployees = useMemo((): OverviewEmployeeRow[] => {
+    const masterRows: OverviewEmployeeRow[] = employees.map((e) => ({
+      ...e,
+      recordSource: 'master',
+    }));
+    const masterSet = buildMasterEmailSet(employees);
+    const idMap = payrollIdentityByEmail ?? {};
+    const extras: OverviewEmployeeRow[] = [];
+    for (const [em, id] of Object.entries(idMap)) {
+      if (!masterSet.has(em)) {
+        extras.push({
+          employee_id: null,
+          department: id.department,
+          name: id.name,
+          personal_email: em,
+          work_email: em,
+          start_date: null,
+          recordSource: 'hubstaff',
+        });
+      }
+    }
+    const combined = [...masterRows, ...extras];
+    combined.sort((a, b) => {
+      const an = (a.name ?? a.personal_email ?? '').toLowerCase();
+      const bn = (b.name ?? b.personal_email ?? '').toLowerCase();
+      return an.localeCompare(bn, undefined, { sensitivity: 'base' });
+    });
+    return combined;
+  }, [employees, payrollIdentityByEmail]);
+
   const departmentOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const e of employees) {
+    for (const e of mergedEmployees) {
       const d = e.department?.trim();
       if (d) set.add(d);
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  }, [employees]);
+  }, [mergedEmployees]);
 
   const filteredEmployees = useMemo(() => {
-    let list = employees;
+    let list = mergedEmployees;
     if (departmentFilter) {
       list = list.filter((e) => (e.department ?? '').trim() === departmentFilter);
     }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
       list = list.filter((e) => {
-        const parts = [e.department, e.name, e.personal_email, e.start_date].map((v) =>
+        const parts = [e.department, e.name, e.personal_email, e.work_email, e.start_date].map((v) =>
           (v ?? '').toLowerCase(),
         );
         return parts.some((p) => p.includes(q));
       });
     }
     return list;
-  }, [employees, departmentFilter, searchQuery]);
+  }, [mergedEmployees, departmentFilter, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filteredEmployees.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -406,11 +473,7 @@ export default function Overview() {
   }, [filteredEmployees, safePage]);
 
   const { inPayrollNotMaster, inMasterNotPayroll } = useMemo(() => {
-    const masterSet = new Set<string>();
-    for (const e of employees) {
-      const em = normEmail(e.personal_email);
-      if (em) masterSet.add(em);
-    }
+    const masterSet = buildMasterEmailSet(employees);
     if (payrollEmailsNorm === null) {
       return { inPayrollNotMaster: null as number | null, inMasterNotPayroll: null as number | null };
     }
@@ -531,7 +594,7 @@ export default function Overview() {
           <CardHeader className="flex flex-row items-center justify-between gap-4">
             <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Employees</CardTitle>
             <Badge variant="outline" className="border-blue-500/20 bg-blue-500/10 font-mono text-[10px] text-blue-700 dark:border-blue-500/30 dark:text-blue-400">
-              global_master_list
+              master + Hubstaff fallback
             </Badge>
           </CardHeader>
           <CardContent>
@@ -540,24 +603,29 @@ export default function Overview() {
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Loading employees…
               </div>
-            ) : employeesError ? (
+            ) : employeesError && mergedEmployees.length === 0 ? (
               <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200/90">
                 {employeesError}
               </p>
-            ) : employees.length === 0 ? (
+            ) : mergedEmployees.length === 0 ? (
               <p className="text-sm text-zinc-600 dark:text-zinc-500">
-                No rows returned. Point{' '}
-                <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE</code>{' '}
-                at your table (default <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">global_master_list</code>) with
-                columns{' '}
-                <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">Department</code>,{' '}
-                <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">Name</code>,{' '}
-                <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">Personal Email</code>,{' '}
-                <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">Start Date</code>, and allow{' '}
-                <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">select</code> for the anon key (RLS).
+                No employees to show. Load <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">global_master_list</code> via{' '}
+                <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE</code> and/or upload Hubstaff hours
+                so payroll can list workers.
               </p>
             ) : (
               <div className="space-y-4">
+                {employeesError && mergedEmployees.length > 0 && (
+                  <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200/90">
+                    Master list could not be loaded ({employeesError}). Showing Hubstaff-derived rows where available.
+                  </p>
+                )}
+                {employees.length === 0 && mergedEmployees.some((r) => r.recordSource === 'hubstaff') && (
+                  <p className="rounded-lg border border-sky-200/80 bg-sky-50/80 px-3 py-2 text-xs text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-200">
+                    No <span className="font-mono">global_master_list</span> rows loaded — showing names and departments from the selected Hubstaff payroll
+                    export only. Add master records to fill IDs and start dates.
+                  </p>
+                )}
                 {/* Filters */}
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
                   <div className="flex-1 space-y-1.5">
@@ -605,23 +673,24 @@ export default function Overview() {
                     <TableHeader className="bg-gradient-to-r from-orange-50/80 to-blue-50/40 dark:from-blue-950/40 dark:to-blue-950/20">
                       <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
                         <TableHead className="text-zinc-600 dark:text-zinc-400">Employee ID</TableHead>
+                        <TableHead className="text-zinc-600 dark:text-zinc-400">Source</TableHead>
                         <TableHead className="text-zinc-600 dark:text-zinc-400">Department</TableHead>
                         <TableHead className="text-zinc-600 dark:text-zinc-400">Name</TableHead>
-                        <TableHead className="text-zinc-600 dark:text-zinc-400">Personal Email</TableHead>
+                        <TableHead className="text-zinc-600 dark:text-zinc-400">Email</TableHead>
                         <TableHead className="text-right text-zinc-600 dark:text-zinc-400">Start Date</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {pageRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="py-8 text-center text-zinc-600 dark:text-zinc-500">
+                          <TableCell colSpan={6} className="py-8 text-center text-zinc-600 dark:text-zinc-500">
                             No employees match your search or filter.
                           </TableCell>
                         </TableRow>
                       ) : (
                         pageRows.map((row, i) => (
                           <TableRow
-                            key={`${row.personal_email ?? ''}-${row.name ?? ''}-${(safePage - 1) * PAGE_SIZE + i}`}
+                            key={`${row.recordSource}-${row.personal_email ?? ''}-${row.name ?? ''}-${(safePage - 1) * PAGE_SIZE + i}`}
                             className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
                           >
                             <TableCell>
@@ -633,9 +702,28 @@ export default function Overview() {
                                 <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
                               )}
                             </TableCell>
+                            <TableCell>
+                              {row.recordSource === 'hubstaff' ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-sky-300 bg-sky-50 font-mono text-[10px] text-sky-800 dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-300"
+                                >
+                                  Hubstaff
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="outline"
+                                  className="border-emerald-300 bg-emerald-50 font-mono text-[10px] text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                >
+                                  Master
+                                </Badge>
+                              )}
+                            </TableCell>
                             <TableCell className="text-zinc-800 dark:text-zinc-200">{row.department ?? '—'}</TableCell>
                             <TableCell className="font-medium text-zinc-800 dark:text-zinc-200">{row.name ?? '—'}</TableCell>
-                            <TableCell className="font-mono text-xs text-zinc-600 dark:text-zinc-400">{row.personal_email ?? '—'}</TableCell>
+                            <TableCell className="font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                              {row.personal_email ?? row.work_email ?? '—'}
+                            </TableCell>
                             <TableCell className="text-right text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
                               {formatStartDate(row.start_date)}
                             </TableCell>
@@ -660,7 +748,7 @@ export default function Overview() {
                         <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">
                           {filteredEmployees.length}
                         </span>
-                        {filteredEmployees.length !== employees.length && (
+                        {filteredEmployees.length !== mergedEmployees.length && (
                           <span className="text-zinc-400 dark:text-zinc-600"> (filtered)</span>
                         )}
                       </>

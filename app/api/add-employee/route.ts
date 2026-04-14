@@ -1,5 +1,8 @@
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { NextResponse } from "next/server";
+
+const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
 
 export async function POST(req: Request) {
   try {
@@ -56,6 +59,23 @@ export async function POST(req: Request) {
     if (errors.length > 0) {
       return NextResponse.json({ error: errors.join("; ") }, { status: 500 });
     }
+
+    void insertAuditLog({
+      user_name:   SYSTEM_USER.name,
+      user_role:   SYSTEM_USER.role,
+      action:      'employee.create',
+      resource:    'global_master_list',
+      resource_id: workEmail || personalEmail,
+      details: {
+        name,
+        department:     department ?? null,
+        work_email:     workEmail ?? null,
+        personal_email: personalEmail ?? null,
+        start_date:     startDate ?? null,
+        regular_rate:   regularRate ?? null,
+        ot_rate:        otRate ?? null,
+      },
+    });
 
     return NextResponse.json({ success: true });
   } catch (e) {

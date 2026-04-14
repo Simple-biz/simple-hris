@@ -576,3 +576,108 @@ For each role, verify:
 - [ ] Sign out clears session and redirects to login
 - [ ] Direct URL access to `/` without session redirects to `/login`
 - [ ] Direct API call without session returns 401
+
+---
+
+## 12. Admin-Assigned Cross-Dashboard Roles
+
+> **Goal**: Every person in the system is first an employee. The **Admin** assigns additional roles (e.g., `accounting` / `finance`, `payroll_manager`) to specific employees; when assigned, that employee can pivot from their Employee Dashboard to the Accounting Dashboard without a separate account.
+
+### 12.1 Data model
+
+Roles attach to the **employee identity** (work email), not to a separate `auth.users` row. A single person has:
+
+- Their employee record in `employee_hourly_rates` + `global_master_list` (source of truth for identity).
+- Zero or more assigned roles in `public.employee_roles` (new table — see below).
+
+```sql
+CREATE TABLE public.employee_roles (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  work_email   TEXT NOT NULL,           -- FK-equivalent to employee_hourly_rates."Work Email"
+  role         TEXT NOT NULL
+               CHECK (role IN ('viewer','hr_coordinator','payroll_coordinator',
+                               'payroll_manager','finance','admin')),
+  assigned_by  TEXT,                    -- work_email of the assigning admin
+  assigned_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at   TIMESTAMPTZ,
+  UNIQUE (work_email, role)
+);
+
+CREATE INDEX employee_roles_work_email_idx ON public.employee_roles (LOWER(work_email));
+
+-- Active-role helper
+CREATE OR REPLACE FUNCTION public.employee_has_role(p_email TEXT, p_role TEXT)
+RETURNS BOOLEAN
+LANGUAGE SQL SECURITY DEFINER AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.employee_roles
+    WHERE LOWER(work_email) = LOWER(p_email)
+      AND role = p_role
+      AND revoked_at IS NULL
+  );
+$$;
+```
+
+Every employee has the implicit `employee` role (self-view of own dashboard). Assigned rows grant additional capabilities.
+
+### 12.2 Admin UI — role assignment
+
+A new **Roles** panel in **System Settings** (Admin-only):
+
+- Employee picker (searches `employee_hourly_rates` by name / work email).
+- Multi-select of assignable roles.
+- Assign → inserts rows in `employee_roles`, writes `audit_log` action `rbac.role.granted` with `{ target_email, role, assigned_by }`.
+- Revoke → updates `revoked_at`, writes `rbac.role.revoked`.
+
+### 12.3 Employee Dashboard pivot
+
+On login (`/api/employee-login`), after password verification, the server also fetches the employee's active roles:
+
+```ts
+const { data: roles } = await supabase
+  .from('employee_roles')
+  .select('role')
+  .ilike('work_email', email)
+  .is('revoked_at', null);
+const roleList = (roles ?? []).map((r) => r.role);
+```
+
+Returned to the client and stored in `sessionStorage` as `employee_session_roles` (JSON array).
+
+In `EmployeeApp`, if the session contains `finance` or `admin` (or any role whose `permission_matrix` grants access to the Accounting Dashboard), render a new sidebar item:
+
+```
+┌──────────────┐
+│  Dashboard   │
+│  Profile     │
+│  Hours       │
+│  Disputes    │
+│  Settings    │
+│ ───────────  │
+│ ▶ Switch to  │
+│   Accounting │   ← shown only when role ∈ {finance, payroll_manager, admin}
+└──────────────┘
+```
+
+Clicking it sets `sessionStorage.employee_session_role = 'accounting'` and routes to `/`. The admin dashboard gate (when re-enabled) checks the role list, not a single-role claim, so the same session is valid for both dashboards.
+
+### 12.4 Example flow — `franm@simple.biz`
+
+1. Fran logs in at `/login` (Employee role) → session email stored, `employee_session_roles = ['finance']`.
+2. Her Employee Dashboard renders the **Switch to Accounting** sidebar button because `finance ∈ roleList`.
+3. She clicks it → routed to `/`, which checks `'finance'` or `'admin'` ∈ `roleList` → Accounting Dashboard renders.
+4. She can switch back from the Accounting sidebar via a mirrored **Switch to Employee View** button.
+5. Every pivot is logged (`rbac.dashboard.switch` with `from`, `to`, `work_email`).
+
+### 12.5 Server-side enforcement
+
+Don't trust `sessionStorage`. Every API route that gates on role must look up `employee_roles` server-side using the session cookie/JWT (once Supabase Auth is wired). The `permission_matrix` in §2 maps each `role` string to allowed actions; a helper `assertRole(req, ...allowed: Role[])` at the top of each route handler returns 403 on mismatch.
+
+### 12.6 Migration order
+
+1. Create `employee_roles` table + helper function.
+2. Add Roles panel to System Settings (Admin-only) — wire create/revoke + audit log.
+3. Extend `/api/employee-login` to return role list.
+4. Update `EmployeeApp` sidebar to show the pivot button for accounting-eligible roles.
+5. Re-enable the admin dashboard session gate — check role list (not single role) before granting access.
+6. Backfill: grant `admin` to seed users (Fran M) via SQL; all other employees start with no extra roles.

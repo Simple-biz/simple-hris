@@ -7,6 +7,8 @@ import Overview from './components/Overview';
 import Rates from './components/Rates';
 import PayrollWizard from './components/PayrollWizard';
 import { Toaster } from '@/components/ui/sonner';
+import SystemSettings from './components/SystemSettings';
+import LeaveRequestsPanel from './components/LeaveRequestsPanel';
 export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const { resolvedTheme } = useTheme();
@@ -52,17 +54,9 @@ export default function App() {
           </div>
         );
       case 'settings':
-        return (
-          <div className="p-8 flex flex-col items-center justify-center h-full text-center space-y-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-zinc-200 dark:bg-zinc-800">
-              <span className="text-2xl font-bold text-zinc-600 dark:text-zinc-400">S</span>
-            </div>
-            <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">System Settings</h2>
-            <p className="text-zinc-600 dark:text-zinc-500 max-w-md">
-              Configure API keys, recruitment DB connections, and payroll rules.
-            </p>
-          </div>
-        );
+        return <SystemSettings />;
+      case 'leave-requests':
+        return <LeaveRequestsPanel />;
       default:
         return <Overview />;
     }
