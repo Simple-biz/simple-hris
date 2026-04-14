@@ -740,19 +740,22 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   const pabBonusAmount = pabEligibleCount * PERFECT_ATTENDANCE_BONUS_PHP;
 
   /** Technology Bonus unlocks once the PAB period reaches its 3rd week. */
+  /**
+   * Tech bonus unlocks starting the 3rd *calendar* week of the PAB month, where
+   * week 1 is the Mon–Sun week containing the 1st of the month (even if partial).
+   * Example April 2026 (Apr 1 = Wed): week 1 Mon = Mar 30, week 3 Mon = Apr 13.
+   */
   const isTechnologyBonusActive = useMemo(() => {
-    if (!pabCalendar || pabCalendar.length < 3) return false;
-    const thirdWeekStart = pabCalendar[2]?.[0]?.date;
-    if (!thirdWeekStart) return false;
+    if (!pabMonthRange) return false;
+    const first = new Date(pabMonthRange.year, pabMonthRange.month, 1);
+    const dow = first.getDay();
+    const daysBack = dow === 0 ? 6 : dow - 1;
+    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBack);
+    const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
     const today = new Date();
     const todayT = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-    const weekT = new Date(
-      thirdWeekStart.getFullYear(),
-      thirdWeekStart.getMonth(),
-      thirdWeekStart.getDate(),
-    ).getTime();
-    return todayT >= weekT;
-  }, [pabCalendar]);
+    return todayT >= thirdWeekMon.getTime();
+  }, [pabMonthRange]);
 
   const technologyBonusAmount = isTechnologyBonusActive ? TECHNOLOGY_BONUS_PHP : 0;
 

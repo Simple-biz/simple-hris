@@ -1611,6 +1611,38 @@ export default function PayrollWizard() {
         : { month_label: '—', range_start: '—', range_end: '—' },
     };
 
+    // Bonus gating based on the weekly pay period:
+    //  - PAB: a monthly bonus — only attach to the *final* weekly paystub of the PAB period.
+    //  - Tech: unlocks on the 3rd calendar week of the PAB month (week 1 = Mon–Sun
+    //    week containing the 1st, even if partial). Applies to that week and every
+    //    week after within the PAB month.
+    const parseIso = (s: string) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+      if (!m) return null;
+      return new Date(+m[1], +m[2] - 1, +m[3]);
+    };
+    const isFinalPabWeek = (() => {
+      if (!week || !pabMonthRange) return false;
+      const weekEnd = parseIso(week.end);
+      if (!weekEnd) return false;
+      return weekEnd.getTime() >= new Date(
+        pabMonthRange.end.getFullYear(),
+        pabMonthRange.end.getMonth(),
+        pabMonthRange.end.getDate(),
+      ).getTime();
+    })();
+    const isTechBonusWeek = (() => {
+      if (!week || !pabMonthRange) return false;
+      const weekStart = parseIso(week.start);
+      if (!weekStart) return false;
+      const first = new Date(pabMonthRange.year, pabMonthRange.month, 1);
+      const dow = first.getDay();
+      const daysBack = dow === 0 ? 6 : dow - 1;
+      const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBack);
+      const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
+      return weekStart.getTime() >= thirdWeekMon.getTime();
+    })();
+
     const rows: DispatchEmployee[] = [];
     const missing: string[] = [];
     for (const r of effectiveCalcResults) {
@@ -1624,12 +1656,21 @@ export default function PayrollWizard() {
         ? DEPARTMENTS.find((d) => d.key === deptKey)?.name ?? null
         : null;
       const toggles = employeeBonuses[r.email] ?? {};
-      const pabBonus = toggles.perfect_attendance
+      const pabBonus = isFinalPabWeek && toggles.perfect_attendance
         ? commonBonusPhp('perfect_attendance')
         : 0;
-      const techBonus = toggles.tech_bonus ? commonBonusPhp('tech_bonus') : 0;
-      const bonusTotal = bonusTotals[r.email] ?? 0;
-      const otherBonuses = Math.max(0, bonusTotal - pabBonus - techBonus);
+      // Tech bonus auto-applies once the pay period hits week 3+ of the PAB month;
+      // the manual toggle can still opt-in earlier.
+      const techBonus = (isTechBonusWeek || toggles.tech_bonus)
+        ? commonBonusPhp('tech_bonus')
+        : 0;
+      const rawBonusTotal = bonusTotals[r.email] ?? 0;
+      // Strip out the month-wide PAB/tech amounts that `bonusTotals` may include,
+      // then re-add the week-gated versions so weekly paystubs get the right total.
+      const toggledPab = toggles.perfect_attendance ? commonBonusPhp('perfect_attendance') : 0;
+      const toggledTech = toggles.tech_bonus ? commonBonusPhp('tech_bonus') : 0;
+      const otherBonuses = Math.max(0, rawBonusTotal - toggledPab - toggledTech);
+      const bonusTotal = pabBonus + techBonus + otherBonuses;
       const finalPay = (r.initialPay ?? 0) + bonusTotal;
 
       rows.push({
