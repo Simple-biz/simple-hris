@@ -707,6 +707,17 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     return t <= endT;
   }, [pabMonthRange, selectedFile, manualFileSelect]);
 
+  /** Elapsed weekdays where hours were logged but fell below the 7h threshold — hard disqualifications. */
+  const pabViolations = useMemo<PabCalendarDay[]>(() => {
+    const days = pabCalendar?.flat() ?? [];
+    const today = new Date();
+    const todayT = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    return days.filter((d) => {
+      const dT = new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate()).getTime();
+      return dT <= todayT && d.hasData && !d.passes;
+    });
+  }, [pabCalendar]);
+
   const isPAEligible =
     !isPabPeriodInProgress && allPabDays.length > 0 && allPabDays.every((d) => d.passes);
 
@@ -716,14 +727,34 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     if (!row && !pabMergedRow) return 'unknown';
     const days = pabCalendar?.flat();
     if (!days || days.length === 0) return 'unknown';
+    // Any elapsed sub-7h weekday disqualifies the whole month immediately,
+    // even while the period is still in progress.
+    if (pabViolations.length > 0) return 'not_eligible';
     if (isPabPeriodInProgress) return 'pending';
     return days.every((d) => d.passes) ? 'eligible' : 'not_eligible';
-  }, [row, pabMergedRow, pabCalendar, isPabPeriodInProgress]);
+  }, [row, pabMergedRow, pabCalendar, isPabPeriodInProgress, pabViolations]);
 
   /** Number of PAB-eligible months (currently 1 month evaluated). Pending periods don't count. */
   const pabEligibleCount = isPAEligible ? 1 : 0;
   /** Total PAB bonus in PHP. Excluded from pay summary while period is still in progress. */
   const pabBonusAmount = pabEligibleCount * PERFECT_ATTENDANCE_BONUS_PHP;
+
+  /** Technology Bonus unlocks once the PAB period reaches its 3rd week. */
+  const isTechnologyBonusActive = useMemo(() => {
+    if (!pabCalendar || pabCalendar.length < 3) return false;
+    const thirdWeekStart = pabCalendar[2]?.[0]?.date;
+    if (!thirdWeekStart) return false;
+    const today = new Date();
+    const todayT = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const weekT = new Date(
+      thirdWeekStart.getFullYear(),
+      thirdWeekStart.getMonth(),
+      thirdWeekStart.getDate(),
+    ).getTime();
+    return todayT >= weekT;
+  }, [pabCalendar]);
+
+  const technologyBonusAmount = isTechnologyBonusActive ? TECHNOLOGY_BONUS_PHP : 0;
 
   const maxBarSeconds = Math.max(...dailyHours.map((d) => d.seconds), 8 * 3600);
 
@@ -1011,8 +1042,19 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                       </p>
                     )}
                     {perfectAttendanceBonusStatus === 'not_eligible' && (
-                      <p className="text-xs text-amber-800 dark:text-amber-300">
-                        Not eligible: at least one weekday in the PAB period is under 7 hours. See the breakdown below.
+                      <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                        No longer Eligible for PAB, Try again next month
+                        {pabViolations.length > 0 && (
+                          <>
+                            {' — '}
+                            <span className="font-normal">
+                              violated on{' '}
+                              {pabViolations
+                                .map((v) => formatPabCalendarDate(v.date))
+                                .join(', ')}
+                            </span>
+                          </>
+                        )}
                       </p>
                     )}
                     {perfectAttendanceBonusStatus === 'pending' && (
@@ -1076,7 +1118,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           </Card>
 
           {/* Stats — min-w-0 + responsive type so PHP amounts don’t overflow narrow cells */}
-          <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-5 md:gap-3">
+          <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-6 md:gap-3">
             {/* Total Hours */}
             <Card
               size="sm"
@@ -1189,6 +1231,37 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                         : perfectAttendanceBonusStatus === 'unknown'
                           ? 'Pending data'
                           : 'Not eligible'}
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Technology Bonus */}
+            <Card
+              size="sm"
+              className={`min-w-0 shadow-sm transition-colors duration-300 ${
+                isTechnologyBonusActive
+                  ? 'border-sky-200/80 bg-gradient-to-br from-white to-sky-50/30 hover:to-sky-50/60 dark:border-sky-950/60 dark:bg-none dark:from-sky-950/20 dark:to-sky-950/10 dark:hover:from-sky-950/30'
+                  : 'border-zinc-200/80 bg-gradient-to-br from-white to-zinc-50/30 dark:border-zinc-800/60 dark:bg-none dark:from-zinc-900/20 dark:to-zinc-900/10'
+              }`}
+            >
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
+                  Tech Bonus
+                </CardTitle>
+                <Laptop className={`h-3.5 w-3.5 shrink-0 ${isTechnologyBonusActive ? 'text-sky-500' : 'text-zinc-400'}`} />
+              </CardHeader>
+              <CardContent className="pb-3 pt-0">
+                <div
+                  className={`break-words font-mono text-base font-bold tabular-nums leading-tight sm:text-lg ${
+                    technologyBonusAmount > 0 ? 'text-sky-700 dark:text-sky-400' : 'text-zinc-400 dark:text-zinc-500'
+                  }`}
+                >
+                  {technologyBonusAmount > 0 ? formatPHP(technologyBonusAmount) : formatPHP(0)}
+                </div>
+                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
+                  {isTechnologyBonusActive
+                    ? 'Unlocked · 3rd week reached'
+                    : 'Unlocks on week 3 of PAB'}
                 </p>
               </CardContent>
             </Card>
@@ -1515,18 +1588,28 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                           : formatPHP(0)}
                     </span>
                   </div>
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <span className={`shrink-0 text-xs ${technologyBonusAmount > 0 ? 'text-sky-600 dark:text-sky-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                      Tech Bonus{isTechnologyBonusActive ? '' : ' (locked)'}
+                    </span>
+                    <span className={`max-w-[58%] break-words text-right font-mono text-xs sm:text-sm ${technologyBonusAmount > 0 ? 'font-medium text-sky-600 dark:text-sky-400' : 'text-zinc-400 dark:text-zinc-500'}`}>
+                      {technologyBonusAmount > 0
+                        ? `+${formatPHP(technologyBonusAmount)}`
+                        : formatPHP(0)}
+                    </span>
+                  </div>
                   <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
                   <div className="flex min-w-0 items-start justify-between gap-2">
                     <span className="shrink-0 text-sm font-medium text-zinc-900 dark:text-white">Total</span>
                     <span className="max-w-[60%] break-words text-right font-mono text-base font-bold leading-tight text-emerald-700 sm:text-lg dark:text-emerald-400">
                       {totalPay != null
-                        ? formatPHP(totalPay + pabBonusAmount)
+                        ? formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)
                         : '—'}
                     </span>
                   </div>
                   {totalPay != null && (
                     <p className="break-words text-right font-mono text-[10px] text-blue-500 dark:text-blue-400">
-                      ≈ ${((totalPay + pabBonusAmount) / usdToPhpRate).toLocaleString('en-US', {
+                      ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount) / usdToPhpRate).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}{' '}

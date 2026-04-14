@@ -1,0 +1,126 @@
+{
+  "name": "Paystub Dispatch - Test",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "confirm-dispatch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook: Confirm Dispatch",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "confirm-dispatch-test"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "employees",
+        "options": {}
+      },
+      "id": "split-employees",
+      "name": "Split Out Employees",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-over-items",
+      "name": "Loop Over Employees",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@example.com",
+        "toEmail": "={{ $json.personal_email }}",
+        "subject": "[TEST] Your Paystub is Ready",
+        "emailFormat": "html",
+        "html": "<p>Hi {{ $json.name }},</p>\n<p>Your paystub summary (amounts in PHP):</p>\n<ul>\n  <li>Pay period file: {{ $json.pay_period.hubstaff_source_file }}</li>\n  <li>PAB evaluation month: {{ $json.pay_period.pab_evaluation.month_label }}</li>\n  <li>Department: {{ $json.department_name }}</li>\n  <li>Hours (total / reg / OT): {{ $json.hours.total }} / {{ $json.hours.regular }} / {{ $json.hours.ot }}</li>\n  <li>Net pay (final): {{ $json.pay_php.final }}</li>\n  <li>Initial pay: {{ $json.pay_php.initial }}</li>\n  <li>PAB (Perfect Attendance): {{ $json.pay_php.perfect_attendance_bonus }}</li>\n  <li>Tech Bonus: {{ $json.pay_php.tech_bonus }}</li>\n  <li>Other bonuses: {{ $json.pay_php.other_bonuses }}</li>\n</ul>\n<p>Regards,<br/>HR Team</p>",
+        "options": {}
+      },
+      "id": "send-email",
+      "name": "Send Test Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [900, 300],
+      "credentials": {
+        "smtp": {
+          "id": "REPLACE_WITH_SMTP_CREDENTIAL_ID",
+          "name": "SMTP (test)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 200,
+        "unit": "ms"
+      },
+      "id": "rate-limit-delay",
+      "name": "Throttle (200ms)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ok', sent: $items('Loop Over Employees').length } }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Webhook: Confirm Dispatch": {
+      "main": [
+        [{ "node": "Split Out Employees", "type": "main", "index": 0 }]
+      ]
+    },
+    "Split Out Employees": {
+      "main": [
+        [{ "node": "Loop Over Employees", "type": "main", "index": 0 }]
+      ]
+    },
+    "Loop Over Employees": {
+      "main": [
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }],
+        [{ "node": "Send Test Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Test Email": {
+      "main": [
+        [{ "node": "Throttle (200ms)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Throttle (200ms)": {
+      "main": [
+        [{ "node": "Loop Over Employees", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    { "name": "hris" },
+    { "name": "paystub" },
+    { "name": "test" }
+  ],
+  "meta": {
+    "description": "Test workflow: triggered by HRIS 'Confirm Dispatch'. Receives { pay_period, employees[] } with pay_php, hours, department, and pay_period on each employee row. Replace SMTP credential and fromEmail before running."
+  }
+}

@@ -44,6 +44,7 @@ import {
   countMonFriInclusiveInRange,
   resolveCanonicalColumnsToIso,
   columnsAreAllCanonical,
+  parseDateRangeFromFilename,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { parseCsv } from '@/lib/csv/parse-csv';
@@ -342,6 +343,35 @@ type CalcRow = {
   regularPay: number | null;
   otPay: number | null;
   initialPay: number | null;
+};
+
+type PayPeriodPayload = {
+  currency: 'PHP';
+  hubstaff_source_file: string | null;
+  /** Latest weekly pay-period range (ISO dates) derived from the source file or Hubstaff columns. */
+  week: { start: string; end: string } | null;
+  pab_evaluation: { month_label: string; range_start: string; range_end: string };
+};
+
+type DispatchEmployee = {
+  name: string;
+  email: string;
+  personal_email: string;
+  pay_period: PayPeriodPayload;
+  department_key: string | null;
+  department_name: string | null;
+  hours: { total: number; regular: number; ot: number };
+  rates_php: { regular: number | null; ot: number | null };
+  pay_php: {
+    regular: number | null;
+    ot: number | null;
+    initial: number | null;
+    bonuses_total: number;
+    perfect_attendance_bonus: number;
+    tech_bonus: number;
+    other_bonuses: number;
+    final: number;
+  };
 };
 
 function formatPHP(n: number): string {
@@ -845,6 +875,9 @@ export default function PayrollWizard() {
   const [hubstaffSearch, setHubstaffSearch] = useState('');
   const [initialCalcSearch, setInitialCalcSearch] = useState('');
   const [approveUploadDialogOpen, setApproveUploadDialogOpen] = useState(false);
+  const [previewPaystubsOpen, setPreviewPaystubsOpen] = useState(false);
+  const [previewSelectedEmail, setPreviewSelectedEmail] = useState<string | null>(null);
+  const [previewSearch, setPreviewSearch] = useState('');
   const [pendingWeekly, setPendingWeekly] = useState<{
     text: string;
     fileName: string;
@@ -1516,6 +1549,122 @@ export default function PayrollWizard() {
 
     return result;
   }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics]);
+
+  /** Enriched dispatch rows shared by Preview Paystubs + Confirm & Dispatch. */
+  const dispatchData = useMemo(() => {
+    const resolvePersonalEmail = (r: CalcRow): string | null => {
+      const em = normEmail(r.email);
+      const rateRow = em ? ratesByEmail.get(em) : undefined;
+      const fromRate = normEmail(rateRow?.personal_email);
+      if (fromRate) return fromRate;
+      let master = em
+        ? masterEmployees.find((e) => normEmail(e.work_email) === em)
+        : undefined;
+      if (!master && r.name) {
+        const tokens = normalizeNameTokens(r.name);
+        if (tokens) {
+          master = masterEmployees.find(
+            (e) => e.name && normalizeNameTokens(e.name) === tokens,
+          );
+        }
+      }
+      return normEmail(master?.personal_email) ?? null;
+    };
+
+    const commonBonusPhp = (id: string) =>
+      COMMON_BONUSES.find((b) => b.id === id)?.amount ?? 0;
+
+    // Derive the latest weekly pay period: prefer parsed range from the source filename,
+    // otherwise compute Mon–Sun around the latest parseable date column in the dataset.
+    const toIso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    let week: { start: string; end: string } | null = null;
+    const fromFile = calcSourceFile ? parseDateRangeFromFilename(calcSourceFile) : null;
+    if (fromFile) {
+      week = { start: toIso(fromFile.start), end: toIso(fromFile.end) };
+    } else {
+      const cols = hubstaffColsForPab ?? [];
+      let latest: Date | null = null;
+      for (const c of cols) {
+        const d = parseColDate(c);
+        if (d && (!latest || d.getTime() > latest.getTime())) latest = d;
+      }
+      if (latest) {
+        const dow = latest.getDay();
+        const daysBackToMon = dow === 0 ? 6 : dow - 1;
+        const mon = new Date(latest.getFullYear(), latest.getMonth(), latest.getDate() - daysBackToMon);
+        const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
+        week = { start: toIso(mon), end: toIso(sun) };
+      }
+    }
+
+    const payPeriodPayload = {
+      currency: 'PHP' as const,
+      hubstaff_source_file: calcSourceFile,
+      week,
+      pab_evaluation: pabMonthRange
+        ? {
+            month_label: `${pabMonthRange.monthName} ${pabMonthRange.year}`,
+            range_start: pabMonthRange.start.toLocaleDateString('en-CA'),
+            range_end: pabMonthRange.end.toLocaleDateString('en-CA'),
+          }
+        : { month_label: '—', range_start: '—', range_end: '—' },
+    };
+
+    const rows: DispatchEmployee[] = [];
+    const missing: string[] = [];
+    for (const r of effectiveCalcResults) {
+      const pe = resolvePersonalEmail(r);
+      if (!pe) {
+        missing.push(r.name || r.email);
+        continue;
+      }
+      const deptKey = employeeDepts[r.email] ?? null;
+      const deptName = deptKey
+        ? DEPARTMENTS.find((d) => d.key === deptKey)?.name ?? null
+        : null;
+      const toggles = employeeBonuses[r.email] ?? {};
+      const pabBonus = toggles.perfect_attendance
+        ? commonBonusPhp('perfect_attendance')
+        : 0;
+      const techBonus = toggles.tech_bonus ? commonBonusPhp('tech_bonus') : 0;
+      const bonusTotal = bonusTotals[r.email] ?? 0;
+      const otherBonuses = Math.max(0, bonusTotal - pabBonus - techBonus);
+      const finalPay = (r.initialPay ?? 0) + bonusTotal;
+
+      rows.push({
+        name: r.name,
+        email: r.email,
+        personal_email: pe,
+        pay_period: payPeriodPayload,
+        department_key: deptKey,
+        department_name: deptName,
+        hours: { total: r.totalHours, regular: r.regularHours, ot: r.otHours },
+        rates_php: { regular: r.regularRate, ot: r.otRate },
+        pay_php: {
+          regular: r.regularPay,
+          ot: r.otPay,
+          initial: r.initialPay,
+          bonuses_total: bonusTotal,
+          perfect_attendance_bonus: pabBonus,
+          tech_bonus: techBonus,
+          other_bonuses: otherBonuses,
+          final: finalPay,
+        },
+      });
+    }
+    return { rows, missing, payPeriodPayload };
+  }, [
+    effectiveCalcResults,
+    ratesByEmail,
+    masterEmployees,
+    employeeDepts,
+    employeeBonuses,
+    bonusTotals,
+    pabMonthRange,
+    calcSourceFile,
+    hubstaffColsForPab,
+  ]);
 
   const filteredCalcResults = useMemo(() => {
     const needle = initialCalcSearch.toLowerCase().trim();
@@ -4496,24 +4645,69 @@ export default function PayrollWizard() {
               </p>
             </div>
             <div className="flex gap-4">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 className="border-zinc-200 px-8 text-zinc-600 hover:text-zinc-900 dark:border-zinc-800 dark:text-zinc-400 dark:hover:text-white"
                 onClick={() => {
-                  toast.info("Paystub preview generated", {
-                    description: "Opening secure preview for Fran M...",
-                  });
+                  if (dispatchData.rows.length === 0) {
+                    toast.error('No paystubs to preview', {
+                      description: 'No employees have a personal email on file.',
+                    });
+                    return;
+                  }
+                  setPreviewSelectedEmail(null);
+                  setPreviewPaystubsOpen(true);
                 }}
               >
                 Preview Paystubs
               </Button>
-              <Button 
+              <Button
                 className="bg-indigo-600 hover:bg-indigo-700 text-white px-12 font-bold"
-                onClick={() => {
-                  toast.success("Payroll Dispatched", {
-                    description: "All payments initiated and paystubs sent.",
-                  });
-                  setCurrentStep(1);
+                onClick={async () => {
+                  const { rows: employees, missing, payPeriodPayload } = dispatchData;
+                  if (employees.length === 0) {
+                    toast.error('Dispatch blocked', {
+                      description: 'No employees have a personal email on file.',
+                    });
+                    return;
+                  }
+                  if (missing.length > 0) {
+                    toast.warning(
+                      `Skipping ${missing.length} employee${missing.length === 1 ? '' : 's'} without personal email`,
+                      {
+                        description:
+                          missing.slice(0, 5).join(', ') + (missing.length > 5 ? '…' : ''),
+                      },
+                    );
+                  }
+                  try {
+                    const res = await fetch('/api/dispatch-paystubs', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ pay_period: payPeriodPayload, employees }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) {
+                      const detail =
+                        typeof data?.detail === 'string' && data.detail.trim()
+                          ? data.detail.trim().slice(0, 500)
+                          : undefined;
+                      toast.error('Dispatch failed', {
+                        description: [data?.error ?? `HTTP ${res.status}`, detail]
+                          .filter(Boolean)
+                          .join(' — '),
+                      });
+                      return;
+                    }
+                    toast.success('Payroll Dispatched', {
+                      description: `Sent ${employees.length} paystub request${employees.length === 1 ? '' : 's'} to n8n.`,
+                    });
+                    setCurrentStep(1);
+                  } catch (err) {
+                    toast.error('Dispatch failed', {
+                      description: err instanceof Error ? err.message : String(err),
+                    });
+                  }
                 }}
               >
                 Confirm & Dispatch
@@ -4626,6 +4820,250 @@ export default function PayrollWizard() {
               Approve & upload
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={previewPaystubsOpen}
+        onOpenChange={(open) => {
+          setPreviewPaystubsOpen(open);
+          if (!open) {
+            setPreviewSelectedEmail(null);
+            setPreviewSearch('');
+          }
+        }}
+      >
+        <DialogContent className="overflow-hidden rounded-2xl border-zinc-200 bg-white p-0 sm:max-w-md dark:border-zinc-800 dark:bg-zinc-950">
+          {(() => {
+            const selected = previewSelectedEmail
+              ? dispatchData.rows.find((e) => e.email === previewSelectedEmail)
+              : null;
+            if (selected) {
+              const pp = selected.pay_php;
+              const fmt = (n: number | null) =>
+                n == null ? '—' : '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              return (
+                <>
+                  <DialogHeader className="sr-only">
+                    <DialogTitle>Paystub Preview · {selected.name}</DialogTitle>
+                    <DialogDescription>{selected.personal_email}</DialogDescription>
+                  </DialogHeader>
+                  <div className="flex flex-col bg-white">
+                    <div className="flex shrink-0 items-center justify-between border-b border-zinc-100 bg-white/80 px-4 py-2 backdrop-blur">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs text-zinc-700"
+                        onClick={() => setPreviewSelectedEmail(null)}
+                      >
+                        ← Back
+                      </Button>
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700">
+                        Preview · Not yet sent
+                      </span>
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                      {/* Header — full width, centered, vertical like email */}
+                      <div
+                        className="px-6 py-4 text-center"
+                        style={{
+                          background:
+                            'linear-gradient(to top right, #3b82f6 0%, #ffffff 50%, #f97316 100%)',
+                        }}
+                      >
+                        <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-800">
+                          Simple HRIS · Paystub
+                        </div>
+                        <div className="mt-2 text-lg font-bold tracking-tight text-slate-900">
+                          Hi {selected.name},
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-slate-700">
+                          Your paystub has been prepared.
+                        </div>
+                      </div>
+
+                      {/* Recipient */}
+                      <div className="px-4 pt-3">
+                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-orange-600">
+                          Recipient
+                        </div>
+                        <div
+                          className="mt-0.5 h-0.5 w-12 rounded-sm"
+                          style={{
+                            background:
+                              'linear-gradient(to top right, #3b82f6 0%, #ffffff 50%, #f97316 100%)',
+                          }}
+                        />
+                        <div
+                          className="mt-1.5 rounded-lg border border-orange-100 px-3 py-2"
+                          style={{
+                            background:
+                              'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
+                          }}
+                        >
+                          <div className="space-y-0.5 text-[11px]">
+                            <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Dept</span><span className="truncate font-semibold text-zinc-900">{selected.department_name ?? '—'}</span></div>
+                            <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Week</span><span className="truncate font-mono text-zinc-900">{selected.pay_period.week ? `${selected.pay_period.week.start} → ${selected.pay_period.week.end}` : '—'}</span></div>
+                            <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">PAB Month</span><span className="truncate text-zinc-900">{selected.pay_period.pab_evaluation.month_label}</span></div>
+                            <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Email</span><span className="truncate font-mono font-semibold text-blue-600">{selected.personal_email}</span></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Earnings */}
+                      <div className="px-4 pt-2.5">
+                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-orange-600">
+                          Earnings
+                        </div>
+                        <div
+                          className="mt-0.5 h-0.5 w-12 rounded-sm"
+                          style={{
+                            background:
+                              'linear-gradient(to top right, #3b82f6 0%, #ffffff 50%, #f97316 100%)',
+                          }}
+                        />
+                        <div
+                          className="mt-1.5 rounded-lg border border-orange-100 px-3 py-2"
+                          style={{
+                            background:
+                              'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
+                          }}
+                        >
+                          <div className="space-y-0.5 font-mono text-[11px]">
+                            <div className="flex justify-between"><span className="text-amber-800/70">Regular</span><span>{selected.hours.regular.toFixed(2)}h · {fmt(pp.regular)}</span></div>
+                            <div className="flex justify-between"><span className="text-amber-800/70">Overtime</span><span>{selected.hours.ot.toFixed(2)}h · {fmt(pp.ot)}</span></div>
+                            <div className="mt-1 border-t border-orange-100 pt-1" />
+                            <div className="flex justify-between"><span className="text-amber-800/70">Initial Pay</span><span className="font-semibold">{fmt(pp.initial)}</span></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Bonuses */}
+                      <div className="px-4 pt-2.5">
+                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-orange-600">
+                          Bonuses
+                        </div>
+                        <div
+                          className="mt-0.5 h-0.5 w-12 rounded-sm"
+                          style={{
+                            background:
+                              'linear-gradient(to top right, #3b82f6 0%, #ffffff 50%, #f97316 100%)',
+                          }}
+                        />
+                        <div
+                          className="mt-1.5 rounded-lg border border-orange-100 px-3 py-2"
+                          style={{
+                            background:
+                              'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
+                          }}
+                        >
+                          <div className="space-y-0.5 font-mono text-[11px]">
+                            <div className="flex justify-between"><span className="text-amber-800/70">Perfect Attendance</span><span className="font-semibold text-indigo-600">+{fmt(pp.perfect_attendance_bonus)}</span></div>
+                            <div className="flex justify-between"><span className="text-amber-800/70">Tech Bonus</span><span className="font-semibold text-sky-600">+{fmt(pp.tech_bonus)}</span></div>
+                            <div className="flex justify-between"><span className="text-amber-800/70">Other</span><span className="font-semibold text-violet-600">+{fmt(pp.other_bonuses)}</span></div>
+                            <div className="mt-1 border-t border-orange-100 pt-1" />
+                            <div className="flex justify-between"><span className="text-amber-800/70">Bonus Total</span><span className="font-bold">{fmt(pp.bonuses_total)}</span></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Total bar */}
+                      <div className="px-4 pt-2.5">
+                        <div
+                          className="flex items-center justify-between rounded-lg px-4 py-2.5"
+                          style={{
+                            background:
+                              'linear-gradient(to top right, #1d4ed8 0%, #ffffff 50%, #ea580c 100%)',
+                          }}
+                        >
+                          <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-800">
+                            Total Pay
+                          </div>
+                          <div className="text-lg font-extrabold tracking-tight text-slate-900">
+                            {fmt(pp.final)} <span className="text-[10px] font-semibold text-slate-600">PHP</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Footer */}
+                      <div
+                        className="mt-2 flex items-center justify-center gap-2 px-4 py-2"
+                        style={{
+                          background:
+                            'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
+                        }}
+                      >
+                        <img
+                          src="https://host.simple.biz/email/simplelogo.png"
+                          alt="Simple"
+                          className="h-5 w-auto"
+                        />
+                        <div className="text-[9px] text-slate-400">© Simple · Confidential</div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              );
+            }
+            const needle = previewSearch.trim().toLowerCase();
+            const filtered = needle
+              ? dispatchData.rows.filter(
+                  (e) =>
+                    e.name.toLowerCase().includes(needle) ||
+                    e.personal_email.toLowerCase().includes(needle),
+                )
+              : dispatchData.rows;
+            return (
+              <>
+                <DialogHeader className="px-6 pt-6">
+                  <DialogTitle className="text-zinc-900 dark:text-white">Preview Paystubs</DialogTitle>
+                  <DialogDescription className="text-zinc-600 dark:text-zinc-400">
+                    {dispatchData.rows.length} employee{dispatchData.rows.length === 1 ? '' : 's'} queued for this batch.
+                    Click View to inspect a paystub.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="px-6 pt-3">
+                  <input
+                    type="text"
+                    value={previewSearch}
+                    onChange={(ev) => setPreviewSearch(ev.target.value)}
+                    placeholder="Search by name or email…"
+                    className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                  />
+                </div>
+                <div className="max-h-[60vh] overflow-y-auto px-6 pb-6 pt-2">
+                  {filtered.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                      No employees match &ldquo;{previewSearch}&rdquo;.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                      {filtered.map((e) => (
+                        <div key={e.email} className="flex items-center justify-between gap-3 py-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-medium text-zinc-900 dark:text-white">
+                              {e.name}
+                            </div>
+                            <div className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                              {e.personal_email}
+                            </div>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 shrink-0"
+                            onClick={() => setPreviewSelectedEmail(e.email)}
+                          >
+                            View
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
