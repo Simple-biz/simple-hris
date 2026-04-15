@@ -181,7 +181,43 @@ This runs on mount and is independent of the CSV selector used for the stat card
 
 ## Technology Bonus
 
-**₱1,850** per employee per cycle. Toggle-based, applies to all departments. Not auto-detected — must be manually toggled per employee. Shown in the Overview's Bonus & Status panel as a fixed-amount reference with "Payroll Discretion" status.
+**₱1,850** per employee. Applies to every department. Covers technology expenses (equipment, internet).
+
+### Eligibility rules
+
+1. **30 days of service from `start_date`.** The employee's master-list `start_date` plus 30 days is their `eligibleFrom` date. Before that date the employee never receives the bonus. If `start_date` is missing on an employee, the system treats them as ineligible and surfaces a "start date unknown" state in the employee dashboard.
+   - Example: start June 15 → eligible July 15 → bonus lands on July's 3rd paycheck (or August's if July's 3rd paycheck is before July 15).
+
+2. **Paid only in the 3rd paycheck of each month.** The "3rd paycheck" is the weekly pay period whose Monday falls in the **3rd calendar week** of the month. Week 1 is defined as the Mon–Sun week containing the 1st of the month, **even if partial**. So for April 2026 (April 1 = Wed): week 1 Mon = Mar 30, week 2 Mon = Apr 6, **week 3 Mon = Apr 13** (the paycheck that includes Apr 13 → Apr 19 carries the Tech Bonus).
+
+3. **Equality, not ≥.** Only the 3rd paycheck of the month — weeks 4, 5 do not re-apply the bonus.
+
+### Where the rule is enforced
+
+| Surface | File | Notes |
+|---|---|---|
+| PayrollWizard dispatch payload | `src/components/PayrollWizard.tsx` (`dispatchData` useMemo) | `isTechBonusWeek` gated by calendar-week math against the dispatch week's PAB month; `hasThirtyDaysByWeek(workEmail)` checks service from `masterEmployees[].start_date`. |
+| Employee Dashboard indicator + stat card + pay summary | `src/components/employee/EmployeeDashboard.tsx` | `isTechnologyBonusActive` uses the same calendar-week math; `employeeStartDate` is fetched from `/api/employees` on mount. `techServiceStatus` yields `'eligible' \| 'pending' \| 'unknown'` and drives the amber "Not eligible yet — you'll become eligible on <date> (N days to go)" warning in the indicator row. |
+| Admin Overview card | `src/components/Overview.tsx` (`techBonusEligibility` useMemo) | Counts employees by eligibility: `{ eligible, pending, unknown }` + progress bar showing `% eligible of total`. |
+
+### Manual toggle override
+
+A `tech_bonus` toggle still exists in `employeeBonuses` for payroll operators. Manual `true` opts an employee in, **but the 30-day service gate is still enforced** at dispatch time — the manual toggle does not bypass it. The week gate (3rd paycheck) is likewise enforced.
+
+---
+
+## Weekly gating for monthly bonuses (PAB + Tech)
+
+Both the Perfect Attendance Bonus and the Technology Bonus are **monthly** bonuses but paystubs are **weekly**. Without gating, a month-wide toggle would attach the bonus to whichever weekly batch was dispatched first. The rules:
+
+- **PAB**: only attaches to the **final weekly paystub** of the PAB period — the weekly pay period whose `week.end ≥ pabMonthRange.end`. Every earlier weekly paystub in the same PAB month gets ₱0 PAB.
+- **Tech Bonus**: only attaches to the **3rd weekly paystub of the calendar month** (see above).
+
+The PAB month used for both checks is derived from **the dispatch week's own Monday**, *not* from the most-frequent month in merged uploads. This prevents a heavily-covered prior month (e.g., March) from masking a partial current month (e.g., first week of April) and mis-attaching PAB to the wrong week. Implemented in `dispatchData.weekPabMonth` / `weekPabRange`.
+
+`pabMonthRange` display itself was switched from `inferPabMonthFromColumns` (mode) to `getLatestPabMonthFromColumns` (latest) in PayrollWizard so the Additions tab surfaces the in-progress current month and does not auto-toggle PAB based on a concluded prior month's data.
+
+`bonusTotals[email]` (which sums toggled bonuses for display in the Additions table) is **recomposed** at dispatch time: `pabBonus + techBonus + otherBonuses`, where `pabBonus` and `techBonus` are the gated values. This keeps the weekly paystub's totals consistent with the gating and independent of stale toggle state.
 
 ---
 

@@ -123,6 +123,34 @@ export default function Overview() {
     { name: string | null; department: string | null }
   > | null>(null);
 
+  /**
+   * Tech Bonus eligibility: employees who have completed 30 days of service
+   * from their start_date (as of today). This is the standing eligibility —
+   * the bonus is paid on the 3rd paycheck of each month.
+   */
+  const techBonusEligibility = useMemo(() => {
+    const today = new Date();
+    const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    let eligible = 0;
+    let pending = 0;
+    let unknown = 0;
+    for (const e of employees) {
+      if (!e.start_date) {
+        unknown += 1;
+        continue;
+      }
+      const sd = new Date(e.start_date);
+      if (isNaN(sd.getTime())) {
+        unknown += 1;
+        continue;
+      }
+      const eligibleFrom = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() + 30).getTime();
+      if (todayMid >= eligibleFrom) eligible += 1;
+      else pending += 1;
+    }
+    return { eligible, pending, unknown, total: employees.length };
+  }, [employees]);
+
   /** PAB metrics — computed from all source files. */
   const [pabMetrics, setPabMetrics] = useState<{
     loading: boolean;
@@ -915,14 +943,46 @@ export default function Overview() {
                   <span className="font-mono text-sm font-bold text-sky-600 dark:text-sky-400">₱1,850</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-600 dark:text-zinc-400">Status</span>
-                  <Badge variant="outline" className="gap-1 border-sky-200 bg-sky-50 text-[10px] text-sky-700 dark:border-sky-800/50 dark:bg-sky-950/30 dark:text-sky-400">
-                    <CheckCircle2 className="h-3 w-3" />
-                    Payroll Discretion
-                  </Badge>
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                    Eligible
+                  </div>
+                  <span className="font-mono text-sm font-bold text-sky-600 dark:text-sky-400">
+                    {techBonusEligibility.eligible}
+                  </span>
                 </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+                    <Clock className="h-3.5 w-3.5 text-amber-500" />
+                    Pending 30d
+                  </div>
+                  <span className="font-mono text-sm font-bold text-amber-600 dark:text-amber-400">
+                    {techBonusEligibility.pending}
+                  </span>
+                </div>
+                {techBonusEligibility.unknown > 0 && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-zinc-600 dark:text-zinc-400">No start date</span>
+                    <span className="font-mono text-sm font-bold text-zinc-500">
+                      {techBonusEligibility.unknown}
+                    </span>
+                  </div>
+                )}
+                {techBonusEligibility.total > 0 && (
+                  <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+                    <div
+                      className="h-full bg-sky-500 transition-all"
+                      style={{ width: `${(techBonusEligibility.eligible / techBonusEligibility.total) * 100}%` }}
+                    />
+                  </div>
+                )}
+                <p className="mt-1 text-right text-[10px] text-zinc-400">
+                  {techBonusEligibility.total > 0
+                    ? `${Math.round((techBonusEligibility.eligible / techBonusEligibility.total) * 100)}% eligible of ${techBonusEligibility.total}`
+                    : 'No employees loaded'}
+                </p>
                 <p className="mt-1 text-[10px] leading-snug text-zinc-400 dark:text-zinc-500">
-                  Applied manually by payroll operator per cycle. Not auto-computed from hours data.
+                  Paid on the 3rd paycheck of each month to employees with ≥ 30 days of service.
                 </p>
               </div>
             </div>

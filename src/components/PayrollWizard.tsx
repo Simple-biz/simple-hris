@@ -45,6 +45,7 @@ import {
   resolveCanonicalColumnsToIso,
   columnsAreAllCanonical,
   parseDateRangeFromFilename,
+  getLatestPabMonthFromColumns,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { parseCsv } from '@/lib/csv/parse-csv';
@@ -878,6 +879,7 @@ export default function PayrollWizard() {
   const [previewPaystubsOpen, setPreviewPaystubsOpen] = useState(false);
   const [previewSelectedEmail, setPreviewSelectedEmail] = useState<string | null>(null);
   const [previewSearch, setPreviewSearch] = useState('');
+  const [isDispatching, setIsDispatching] = useState(false);
   const [pendingWeekly, setPendingWeekly] = useState<{
     text: string;
     fileName: string;
@@ -1233,7 +1235,10 @@ export default function PayrollWizard() {
   const pabMonthRange = useMemo(() => {
     const cols = hubstaffColsForPab;
     if (!cols?.length) return null;
-    const pabMonth = inferPabMonthFromColumns(cols);
+    // Prefer the LATEST month present so an in-progress current month isn't masked
+    // by a more column-dense prior month (fixes "Additions tab shows PAB eligible
+    // from a concluded past month when only a partial current month is uploaded").
+    const pabMonth = getLatestPabMonthFromColumns(cols) ?? inferPabMonthFromColumns(cols);
     if (!pabMonth) return null;
     const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -1621,27 +1626,70 @@ export default function PayrollWizard() {
       if (!m) return null;
       return new Date(+m[1], +m[2] - 1, +m[3]);
     };
+    // Derive the PAB month from the *current dispatch week*, not from merged uploads.
+    // PAB month = month of the Monday of the week containing the pay period.
+    const weekStartDate = week ? parseIso(week.start) : null;
+    const weekEndDate = week ? parseIso(week.end) : null;
+    const weekPabMonth = (() => {
+      if (!weekStartDate) return null;
+      const dow = weekStartDate.getDay();
+      const daysBackToMon = dow === 0 ? 6 : dow - 1;
+      const mon = new Date(
+        weekStartDate.getFullYear(),
+        weekStartDate.getMonth(),
+        weekStartDate.getDate() - daysBackToMon,
+      );
+      return { year: mon.getFullYear(), month: mon.getMonth() };
+    })();
+    const weekPabRange = weekPabMonth
+      ? getPabMonthRange(weekPabMonth.year, weekPabMonth.month)
+      : null;
+
     const isFinalPabWeek = (() => {
-      if (!week || !pabMonthRange) return false;
-      const weekEnd = parseIso(week.end);
-      if (!weekEnd) return false;
-      return weekEnd.getTime() >= new Date(
-        pabMonthRange.end.getFullYear(),
-        pabMonthRange.end.getMonth(),
-        pabMonthRange.end.getDate(),
+      if (!weekEndDate || !weekPabRange) return false;
+      return weekEndDate.getTime() >= new Date(
+        weekPabRange.end.getFullYear(),
+        weekPabRange.end.getMonth(),
+        weekPabRange.end.getDate(),
       ).getTime();
     })();
+    /**
+     * Tech Bonus rule: paid in the *3rd paycheck* of the month (the weekly pay
+     * period whose Monday is the 3rd calendar week of the month — week 1 = the
+     * Mon–Sun week containing the 1st, even if partial). Equality, not ≥.
+     */
     const isTechBonusWeek = (() => {
-      if (!week || !pabMonthRange) return false;
-      const weekStart = parseIso(week.start);
-      if (!weekStart) return false;
-      const first = new Date(pabMonthRange.year, pabMonthRange.month, 1);
+      if (!weekStartDate || !weekPabMonth) return false;
+      const first = new Date(weekPabMonth.year, weekPabMonth.month, 1);
       const dow = first.getDay();
       const daysBack = dow === 0 ? 6 : dow - 1;
       const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBack);
       const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
-      return weekStart.getTime() >= thirdWeekMon.getTime();
+      const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
+      const t = weekStartDate.getTime();
+      return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
     })();
+    /**
+     * Build start_date lookup (work_email → Date). Employees need 30 days of
+     * service before their first Tech Bonus; eligibleFrom = start_date + 30d.
+     */
+    const startDateByEmail = new Map<string, Date>();
+    for (const emp of masterEmployees) {
+      const sd = emp.start_date ? new Date(emp.start_date) : null;
+      if (!sd || isNaN(sd.getTime())) continue;
+      const we = normEmail(emp.work_email);
+      const pe = normEmail(emp.personal_email);
+      if (we) startDateByEmail.set(we, sd);
+      if (pe) startDateByEmail.set(pe, sd);
+    }
+    const hasThirtyDaysByWeek = (workEmail: string) => {
+      if (!weekStartDate) return false;
+      const em = normEmail(workEmail);
+      const sd = em ? startDateByEmail.get(em) : undefined;
+      if (!sd) return false;
+      const eligibleFrom = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() + 30);
+      return weekStartDate.getTime() >= eligibleFrom.getTime();
+    };
 
     const rows: DispatchEmployee[] = [];
     const missing: string[] = [];
@@ -1659,11 +1707,14 @@ export default function PayrollWizard() {
       const pabBonus = isFinalPabWeek && toggles.perfect_attendance
         ? commonBonusPhp('perfect_attendance')
         : 0;
-      // Tech bonus auto-applies once the pay period hits week 3+ of the PAB month;
-      // the manual toggle can still opt-in earlier.
-      const techBonus = (isTechBonusWeek || toggles.tech_bonus)
-        ? commonBonusPhp('tech_bonus')
-        : 0;
+      // Tech Bonus: paid in the 3rd paycheck of the month, but only after the
+      // employee has completed 30 days of service from their start_date.
+      // Manual toggle can opt-in earlier (still requires 30-day service).
+      const hasThirtyDays = hasThirtyDaysByWeek(r.email);
+      const techBonus =
+        hasThirtyDays && (isTechBonusWeek || toggles.tech_bonus)
+          ? commonBonusPhp('tech_bonus')
+          : 0;
       const rawBonusTotal = bonusTotals[r.email] ?? 0;
       // Strip out the month-wide PAB/tech amounts that `bonusTotals` may include,
       // then re-add the week-gated versions so weekly paystubs get the right total.
@@ -4664,8 +4715,37 @@ export default function PayrollWizard() {
       }
       case 5:
         return (
-          <div className="flex flex-col items-center justify-center py-12 space-y-6 text-center">
-            <motion.div 
+          <div
+            className={cn(
+              'relative flex flex-col items-center justify-center py-12 space-y-6 text-center rounded-2xl',
+              isDispatching && 'dispatch-running-light',
+            )}
+          >
+            {isDispatching && (
+              <style>{`
+                @keyframes dispatch-spin { to { transform: rotate(360deg); } }
+                .dispatch-running-light { position: relative; isolation: isolate; overflow: hidden; }
+                .dispatch-running-light::before {
+                  content: '';
+                  position: absolute;
+                  inset: -150%;
+                  background: conic-gradient(from 0deg, transparent 0%, transparent 80%, #ef4444 90%, #fca5a5 95%, #ef4444 100%);
+                  animation: dispatch-spin 1.6s linear infinite;
+                  z-index: -2;
+                }
+                .dispatch-running-light::after {
+                  content: '';
+                  position: absolute;
+                  inset: 3px;
+                  border-radius: 14px;
+                  background: inherit;
+                  background-color: #ffffff;
+                  z-index: -1;
+                }
+                .dark .dispatch-running-light::after { background-color: #09090b; }
+              `}</style>
+            )}
+            <motion.div
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               className="w-20 h-20 bg-indigo-600 rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(79,70,229,0.4)]"
@@ -4685,6 +4765,21 @@ export default function PayrollWizard() {
                 and initiate bank transfers. An audit log will be created for this session.
               </p>
             </div>
+            <a
+              href="https://simpledotbiz.app.n8n.cloud/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-full border border-[#ea4b71]/30 bg-[#ea4b71]/10 px-3.5 py-1.5 text-xs font-medium text-[#ea4b71] transition hover:bg-[#ea4b71]/15 hover:shadow-[0_0_12px_rgba(234,75,113,0.25)]"
+              title="Clicking Confirm & Dispatch will trigger the paystub workflow in n8n"
+            >
+              <img
+                src="https://n8n.io/favicon.ico"
+                alt="n8n"
+                className="h-4 w-4"
+              />
+              <span>Triggers n8n automation</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#ea4b71]/80">· Accounting heads up</span>
+            </a>
             <div className="flex gap-4">
               <Button
                 variant="outline"
@@ -4721,6 +4816,7 @@ export default function PayrollWizard() {
                       },
                     );
                   }
+                  setIsDispatching(true);
                   try {
                     const res = await fetch('/api/dispatch-paystubs', {
                       method: 'POST',
@@ -4748,10 +4844,13 @@ export default function PayrollWizard() {
                     toast.error('Dispatch failed', {
                       description: err instanceof Error ? err.message : String(err),
                     });
+                  } finally {
+                    setIsDispatching(false);
                   }
                 }}
+                disabled={isDispatching}
               >
-                Confirm & Dispatch
+                {isDispatching ? 'Dispatching…' : 'Confirm & Dispatch'}
               </Button>
             </div>
           </div>

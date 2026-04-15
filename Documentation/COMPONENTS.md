@@ -404,6 +404,14 @@ Shared module for PAB (Perfect Attendance Bonus) date logic, used by both Payrol
 
 A thin wrapper around `next-themes`' `ThemeProvider`. Sets `attribute="class"` (Tailwind dark mode), `defaultTheme="system"`, `enableSystem`. The patch in `patches/next-themes+0.4.6.patch` fixes a hydration mismatch where the theme script was injected twice (once server-side, once client-side). The fix makes the `ScriptInjector` return `null` on the client.
 
+### Theme cross-fade
+
+All three sidebar toggles (Sidebar, AdminSidebar, EmployeeSidebar) wrap `setTheme()` with `withViewTransition()` (`src/lib/theme/with-view-transition.ts`), which uses the browser's **View Transition API** (`document.startViewTransition`) to snapshot the old theme, apply the new one, and cross-fade between them.
+
+The fade is controlled by `::view-transition-old(root)` / `::view-transition-new(root)` keyframes in `src/index.css` (`theme-fade-out` / `theme-fade-in`, 420ms, `cubic-bezier(0.4, 0, 0.2, 1)`). Browsers without support fall back to an instant swap (Safari < 18).
+
+An earlier attempt at a global `transition-property: background-color, …` on every element was removed because Tailwind utility classes overrode it on most components and the cumulative transitions made the rest of the UI feel sluggish. The View Transition approach is isolated to the theme swap and doesn't affect other hover/focus transitions.
+
 ---
 
 ## `components/ui/` — shadcn Primitives

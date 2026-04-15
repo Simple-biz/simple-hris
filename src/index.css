@@ -66,6 +66,32 @@
   * {
     @apply border-zinc-200 dark:border-zinc-800;
   }
+
+  /*
+   * Theme swap cross-fade via the View Transitions API.
+   * Trigger by wrapping setTheme() with document.startViewTransition().
+   * Falls back to an instant swap on browsers without support.
+   */
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 420ms;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  ::view-transition-old(root) {
+    animation-name: theme-fade-out;
+  }
+  ::view-transition-new(root) {
+    animation-name: theme-fade-in;
+  }
+  @keyframes theme-fade-out {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+  @keyframes theme-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
   body {
     @apply bg-white text-zinc-900 antialiased font-sans dark:bg-[#0d1117] dark:text-zinc-200;
   }

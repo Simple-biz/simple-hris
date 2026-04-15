@@ -39,6 +39,7 @@ import {
   inferPabMonthFromColumns,
   filterColumnGroupsByPabRange,
   parseColDate,
+  parseDateRangeFromFilename,
   buildPabCalendarWeeks,
   pabDateKey,
   resolveCanonicalColumnsToIso,
@@ -237,6 +238,7 @@ function isoDateToUtcDow(iso: string): number | null {
 
 export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
+  const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
   const [columns, setColumns] = useState<string[]>([]);
   const [row, setRow] = useState<Record<string, unknown> | null>(null);
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
@@ -256,6 +258,37 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   const [allTimeOtSec, setAllTimeOtSec] = useState(0);
 
   const email = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
+
+  // Fetch the employee's master row once to get their start_date
+  // (used to gate Tech Bonus on the 30-day-of-service requirement).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/employees', { cache: 'no-store' });
+        const json = (await res.json()) as {
+          employees?: { work_email?: string | null; personal_email?: string | null; start_date?: string | null }[];
+        };
+        if (cancelled) return;
+        const me = (json.employees ?? []).find((e) => {
+          const we = normEmail(e.work_email ?? '');
+          const pe = normEmail(e.personal_email ?? '');
+          return we === email || pe === email;
+        });
+        if (!me?.start_date) {
+          setEmployeeStartDate(null);
+          return;
+        }
+        const d = new Date(me.start_date);
+        setEmployeeStartDate(isNaN(d.getTime()) ? null : d);
+      } catch {
+        if (!cancelled) setEmployeeStartDate(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [email]);
 
   // Load rates, exchange rate, and source file list on mount
   useEffect(() => {
@@ -736,28 +769,119 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   /** Number of PAB-eligible months (currently 1 month evaluated). Pending periods don't count. */
   const pabEligibleCount = isPAEligible ? 1 : 0;
-  /** Total PAB bonus in PHP. Excluded from pay summary while period is still in progress. */
-  const pabBonusAmount = pabEligibleCount * PERFECT_ATTENDANCE_BONUS_PHP;
 
-  /** Technology Bonus unlocks once the PAB period reaches its 3rd week. */
   /**
-   * Tech bonus unlocks starting the 3rd *calendar* week of the PAB month, where
-   * week 1 is the Mon–Sun week containing the 1st of the month (even if partial).
-   * Example April 2026 (Apr 1 = Wed): week 1 Mon = Mar 30, week 3 Mon = Apr 13.
+   * Selected weekly file's range. Prefer parsing the filename (`..._YYYY-MM-DD_to_YYYY-MM-DD.csv`)
+   * and fall back to scanning the file's date columns so non-standard filenames still work.
+   */
+  const selectedFileWeek = useMemo(() => {
+    if (!selectedFile || selectedFile === '__all__') return null;
+    const fromName = parseDateRangeFromFilename(selectedFile);
+    if (fromName) return fromName;
+    // Fallback: derive from the selected file's date columns.
+    let earliest: Date | null = null;
+    let latest: Date | null = null;
+    for (const c of columns) {
+      const d = parseColDate(c);
+      if (!d) continue;
+      if (!earliest || d.getTime() < earliest.getTime()) earliest = d;
+      if (!latest || d.getTime() > latest.getTime()) latest = d;
+    }
+    return earliest && latest ? { start: earliest, end: latest } : null;
+  }, [selectedFile, columns]);
+
+  /** PAB month containing this file's Monday — used to gate weekly bonuses. */
+  const weekPabRange = useMemo(() => {
+    if (!selectedFileWeek) return null;
+    const ws = selectedFileWeek.start;
+    const dow = ws.getDay();
+    const daysBackToMon = dow === 0 ? 6 : dow - 1;
+    const mon = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() - daysBackToMon);
+    return { pabMonth: { year: mon.getFullYear(), month: mon.getMonth() }, ...getPabMonthRange(mon.getFullYear(), mon.getMonth()) };
+  }, [selectedFileWeek]);
+
+  /** When viewing a specific weekly file, PAB attaches only to the final week of that week's PAB month. */
+  const isFinalPabWeekForSelected = useMemo(() => {
+    if (!selectedFileWeek || !weekPabRange) return false;
+    return selectedFileWeek.end.getTime() >= weekPabRange.end.getTime();
+  }, [selectedFileWeek, weekPabRange]);
+
+  /**
+   * Total PAB bonus in PHP. Rules:
+   *  - Must be eligible (period concluded with all weekdays ≥7h).
+   *  - Explicit all-time view: full monthly total (reflects what already posted to the employee).
+   *  - Weekly file view: only on the final week of that file's PAB month.
+   *  - Otherwise (file selected but week can't be derived, or nothing selected): 0 — never
+   *    fall back to showing the monthly total on an arbitrary week.
+   */
+  const pabBonusAmount = useMemo(() => {
+    if (!isPAEligible) return 0;
+    if (isAllTime) return pabEligibleCount * PERFECT_ATTENDANCE_BONUS_PHP;
+    if (selectedFileWeek) return isFinalPabWeekForSelected ? PERFECT_ATTENDANCE_BONUS_PHP : 0;
+    return 0;
+  }, [isPAEligible, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
+
+  /**
+   * Tech Bonus rules:
+   *  - Paid only in the 3rd paycheck of the month (the weekly pay period whose
+   *    Monday is the 3rd calendar week — week 1 = Mon–Sun week containing the
+   *    1st, even if partial). Equality, not ≥.
+   *  - Employee must have completed 30 days of service from their start_date.
+   *
+   *  All-time view uses today's PAB month for the week check (and always honors
+   *  the 30-day requirement); weekly view uses the selected file's PAB month.
    */
   const isTechnologyBonusActive = useMemo(() => {
-    if (!pabMonthRange) return false;
-    const first = new Date(pabMonthRange.year, pabMonthRange.month, 1);
+    // 30-day service gate — same for all views.
+    if (!employeeStartDate) return false;
+    const eligibleFrom = new Date(
+      employeeStartDate.getFullYear(),
+      employeeStartDate.getMonth(),
+      employeeStartDate.getDate() + 30,
+    );
+    const source = selectedFileWeek && weekPabRange
+      ? { year: weekPabRange.pabMonth.year, month: weekPabRange.pabMonth.month, refDate: selectedFileWeek.start }
+      : pabMonthRange
+        ? { year: pabMonthRange.year, month: pabMonthRange.month, refDate: new Date() }
+        : null;
+    if (!source) return false;
+    const refMid = new Date(source.refDate.getFullYear(), source.refDate.getMonth(), source.refDate.getDate());
+    if (refMid.getTime() < eligibleFrom.getTime()) return false;
+
+    const first = new Date(source.year, source.month, 1);
     const dow = first.getDay();
     const daysBack = dow === 0 ? 6 : dow - 1;
     const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBack);
     const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
-    const today = new Date();
-    const todayT = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-    return todayT >= thirdWeekMon.getTime();
-  }, [pabMonthRange]);
+    const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
+    const refT = refMid.getTime();
+    return refT >= thirdWeekMon.getTime() && refT < fourthWeekMon.getTime();
+  }, [employeeStartDate, pabMonthRange, selectedFileWeek, weekPabRange]);
 
   const technologyBonusAmount = isTechnologyBonusActive ? TECHNOLOGY_BONUS_PHP : 0;
+
+  /** 30-day service status for Tech Bonus eligibility (independent of week gating). */
+  const techServiceStatus = useMemo<
+    | { state: 'eligible'; eligibleFrom: Date }
+    | { state: 'pending'; eligibleFrom: Date; daysRemaining: number }
+    | { state: 'unknown' }
+  >(() => {
+    if (!employeeStartDate) return { state: 'unknown' };
+    const eligibleFrom = new Date(
+      employeeStartDate.getFullYear(),
+      employeeStartDate.getMonth(),
+      employeeStartDate.getDate() + 30,
+    );
+    const today = new Date();
+    const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    if (todayMid.getTime() >= eligibleFrom.getTime()) {
+      return { state: 'eligible', eligibleFrom };
+    }
+    const daysRemaining = Math.ceil(
+      (eligibleFrom.getTime() - todayMid.getTime()) / (24 * 60 * 60 * 1000),
+    );
+    return { state: 'pending', eligibleFrom, daysRemaining };
+  }, [employeeStartDate]);
 
   const maxBarSeconds = Math.max(...dailyHours.map((d) => d.seconds), 8 * 3600);
 
@@ -1095,26 +1219,69 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                 </Badge>
               </div>
 
-              <div className="flex flex-col gap-2 rounded-lg border border-zinc-200/90 bg-white/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <div
+                className={`flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 ${
+                  techServiceStatus.state === 'pending'
+                    ? 'border-amber-200/80 bg-amber-50/40 dark:border-amber-900/40 dark:bg-amber-950/20'
+                    : 'border-zinc-200/90 bg-white/80 dark:border-zinc-800 dark:bg-zinc-900/40'
+                }`}
+              >
                 <div className="flex min-w-0 flex-1 gap-2">
-                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-400">
+                  <div
+                    className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                      techServiceStatus.state === 'pending'
+                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                        : 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+                    }`}
+                  >
                     <Laptop className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 space-y-0.5">
                     <p className="text-xs font-medium text-zinc-900 dark:text-white">
                       Technology Bonus · {formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')}
                     </p>
-                    <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                      This bonus isn&apos;t calculated from your hours here. Payroll applies it per cycle when your row is
-                      selected—ask your coordinator if you expect this addition.
-                    </p>
+                    {techServiceStatus.state === 'pending' ? (
+                      <p className="text-xs text-amber-800 dark:text-amber-300">
+                        Not eligible yet. You need 30 days of service before your first Tech Bonus — you&apos;ll become
+                        eligible on{' '}
+                        <span className="font-semibold">
+                          {techServiceStatus.eligibleFrom.toLocaleDateString('en-US', {
+                            month: 'long',
+                            day: 'numeric',
+                            year: 'numeric',
+                          })}
+                        </span>{' '}
+                        ({techServiceStatus.daysRemaining} day{techServiceStatus.daysRemaining === 1 ? '' : 's'} to go).
+                        The bonus is paid on the 3rd paycheck of the month.
+                      </p>
+                    ) : techServiceStatus.state === 'eligible' ? (
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                        You&apos;re past your 30-day service mark. ₱1,850 is paid on the 3rd paycheck of each month to help
+                        cover your technology expenses (equipment, internet).
+                      </p>
+                    ) : (
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                        Paid on the 3rd paycheck of each month, but only after 30 days of service. Your start date isn&apos;t
+                        on file yet — please contact your coordinator.
+                      </p>
+                    )}
                   </div>
                 </div>
                 <Badge
                   variant="outline"
-                  className="shrink-0 border-sky-500/35 bg-sky-500/10 text-sky-900 dark:border-sky-500/30 dark:text-sky-300"
+                  className={`shrink-0 ${
+                    techServiceStatus.state === 'pending'
+                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:border-amber-500/30 dark:text-amber-300'
+                      : techServiceStatus.state === 'eligible'
+                        ? 'border-sky-500/35 bg-sky-500/10 text-sky-900 dark:border-sky-500/30 dark:text-sky-300'
+                        : 'border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400'
+                  }`}
                 >
-                  Payroll discretion
+                  {techServiceStatus.state === 'pending'
+                    ? `Pending · ${techServiceStatus.daysRemaining}d left`
+                    : techServiceStatus.state === 'eligible'
+                      ? 'Eligible'
+                      : 'Start date unknown'}
                 </Badge>
               </div>
             </CardContent>

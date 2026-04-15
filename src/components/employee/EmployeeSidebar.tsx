@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { useTheme } from 'next-themes';
+import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   LayoutDashboard,
   FileText,
@@ -111,7 +112,7 @@ export default function EmployeeSidebar({
 
       <div className="mt-auto border-t border-orange-100 p-4 dark:border-blue-950/60">
         <button
-          onClick={() => setTheme(isDark ? 'light' : 'dark')}
+          onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
           className="mb-2 flex w-full items-center justify-between rounded-md border border-orange-100 bg-orange-50/60 px-3 py-2 transition-colors hover:bg-orange-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
           aria-label="Toggle dark mode"
         >
