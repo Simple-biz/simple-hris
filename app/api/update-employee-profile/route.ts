@@ -6,15 +6,16 @@ const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
 
 export async function POST(req: Request) {
   try {
-    const {
-      originalWorkEmail,
-      originalPersonalEmail,
-      name,
-      department,
-      workEmail,
-      personalEmail,
-      startDate,
-    } = await req.json();
+    const body = await req.json();
+    const trim = (v: unknown) =>
+      typeof v === "string" ? v.trim() : v === null || v === undefined ? v : v;
+    const originalWorkEmail     = trim(body.originalWorkEmail) as string | null | undefined;
+    const originalPersonalEmail = trim(body.originalPersonalEmail) as string | null | undefined;
+    const name                  = trim(body.name) as string | null | undefined;
+    const department            = trim(body.department) as string | null | undefined;
+    const workEmail             = trim(body.workEmail) as string | null | undefined;
+    const personalEmail         = trim(body.personalEmail) as string | null | undefined;
+    const startDate             = trim(body.startDate) as string | null | undefined;
 
     if (!originalWorkEmail && !originalPersonalEmail) {
       return NextResponse.json(
@@ -47,12 +48,26 @@ export async function POST(req: Request) {
     if (department !== undefined) ratesUpdate["Department"] = department;
 
     if (Object.keys(ratesUpdate).length > 0) {
-      let q = supabase.from(ratesTable).update(ratesUpdate);
-      q = originalWorkEmail
-        ? q.eq("Work Email", originalWorkEmail)
-        : q.eq("Personal Email", originalPersonalEmail);
-      const { error } = await q;
-      if (error) errors.push(`${ratesTable}: ${error.message}`);
+      let matched = 0;
+      if (originalWorkEmail) {
+        const { data, error } = await supabase
+          .from(ratesTable)
+          .update(ratesUpdate)
+          .ilike("Work Email", `%${originalWorkEmail.trim()}%`)
+          .select("*");
+        if (error) errors.push(`${ratesTable} (Work Email): ${error.message}`);
+        else matched += data?.length ?? 0;
+      }
+      if (matched === 0 && originalPersonalEmail) {
+        const { data, error } = await supabase
+          .from(ratesTable)
+          .update(ratesUpdate)
+          .ilike("Personal Email", `%${originalPersonalEmail.trim()}%`)
+          .select("*");
+        if (error) errors.push(`${ratesTable} (Personal Email): ${error.message}`);
+        else matched += data?.length ?? 0;
+      }
+      // 0 matches is fine — employee may not be in rates (US / no-rate).
     }
 
     // ── global_master_list ───────────────────────────────────────────────────
@@ -65,13 +80,30 @@ export async function POST(req: Request) {
     if (startDate !== undefined) masterUpdate["Start Date"] = startDate;
 
     if (Object.keys(masterUpdate).length > 0) {
-      let q = supabase.from(masterTable).update(masterUpdate);
-      // global_master_list is keyed by Personal Email first, then Work Email
-      q = originalPersonalEmail
-        ? q.eq("Personal Email", originalPersonalEmail)
-        : q.eq("Work Email", originalWorkEmail);
-      const { error } = await q;
-      if (error) errors.push(`${masterTable}: ${error.message}`);
+      let matched = 0;
+      if (originalWorkEmail) {
+        const { data, error } = await supabase
+          .from(masterTable)
+          .update(masterUpdate)
+          .ilike("Work Email", `%${originalWorkEmail.trim()}%`)
+          .select("*");
+        if (error) errors.push(`${masterTable} (Work Email): ${error.message}`);
+        else matched += data?.length ?? 0;
+      }
+      if (matched === 0 && originalPersonalEmail) {
+        const { data, error } = await supabase
+          .from(masterTable)
+          .update(masterUpdate)
+          .ilike("Personal Email", `%${originalPersonalEmail.trim()}%`)
+          .select("*");
+        if (error) errors.push(`${masterTable} (Personal Email): ${error.message}`);
+        else matched += data?.length ?? 0;
+      }
+      if (matched === 0) {
+        errors.push(
+          `${masterTable}: no matching row for Work Email=${originalWorkEmail || "∅"} or Personal Email=${originalPersonalEmail || "∅"}. Check the original email value (case/whitespace) on the master row.`,
+        );
+      }
     }
 
     if (errors.length > 0) {

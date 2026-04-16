@@ -188,16 +188,28 @@ This runs on mount and is independent of the CSV selector used for the stat card
 1. **30 days of service from `start_date`.** The employee's master-list `start_date` plus 30 days is their `eligibleFrom` date. Before that date the employee never receives the bonus. If `start_date` is missing on an employee, the system treats them as ineligible and surfaces a "start date unknown" state in the employee dashboard.
    - Example: start June 15 → eligible July 15 → bonus lands on July's 3rd paycheck (or August's if July's 3rd paycheck is before July 15).
 
-2. **Paid only in the 3rd paycheck of each month.** The "3rd paycheck" is the weekly pay period whose Monday falls in the **3rd calendar week** of the month. Week 1 is defined as the Mon–Sun week containing the 1st of the month, **even if partial**. So for April 2026 (April 1 = Wed): week 1 Mon = Mar 30, week 2 Mon = Apr 6, **week 3 Mon = Apr 13** (the paycheck that includes Apr 13 → Apr 19 carries the Tech Bonus).
+2. **Paid in the paycheck whose Salary Date falls in the 3rd calendar week of the month.**
+   - **Salary Date** = the **Tuesday after the pay-period Sunday** (i.e. `pay_period.week.start + 8 days`). Paychecks dispatch every Tuesday.
+   - Week 1 of a month is the **Mon–Sun week containing the 1st**, even if partial. Week 3 is two weeks later.
+   - The qualifying paycheck is the one whose **Salary Date** lands inside that 3rd Mon–Sun window.
 
-3. **Equality, not ≥.** Only the 3rd paycheck of the month — weeks 4, 5 do not re-apply the bonus.
+   **April 2026 walk-through** (April 1 = Wednesday → April week 3 = Apr 13–19):
+
+   | Pay period (Mon–Sun) | Salary Date (Tue) | April week | Tech Bonus? |
+   |---|---|---|---|
+   | Mar 30 – Apr 5 | Apr 7 | week 2 | ❌ |
+   | **Apr 6 – 12** | **Apr 14** | **week 3** | ✅ |
+   | Apr 13 – 19 | Apr 21 | week 4 | ❌ |
+   | Apr 20 – 26 | Apr 28 | week 5 | ❌ |
+
+3. **Equality, not ≥.** Only the paycheck whose Salary Date is in week 3 — weeks 4, 5 do not re-apply the bonus.
 
 ### Where the rule is enforced
 
 | Surface | File | Notes |
 |---|---|---|
-| PayrollWizard dispatch payload | `src/components/PayrollWizard.tsx` (`dispatchData` useMemo) | `isTechBonusWeek` gated by calendar-week math against the dispatch week's PAB month; `hasThirtyDaysByWeek(workEmail)` checks service from `masterEmployees[].start_date`. |
-| Employee Dashboard indicator + stat card + pay summary | `src/components/employee/EmployeeDashboard.tsx` | `isTechnologyBonusActive` uses the same calendar-week math; `employeeStartDate` is fetched from `/api/employees` on mount. `techServiceStatus` yields `'eligible' \| 'pending' \| 'unknown'` and drives the amber "Not eligible yet — you'll become eligible on <date> (N days to go)" warning in the indicator row. |
+| PayrollWizard dispatch payload | `src/components/PayrollWizard.tsx` (`dispatchData` useMemo) | `salaryDate = weekStart + 8d`; `isTechBonusWeek` checks that `salaryDate` falls in the 3rd Mon–Sun week of `salaryDate`'s month; `hasThirtyDaysByWeek(workEmail)` checks service from `masterEmployees[].start_date`. The salary date is also written to `pay_period.salary_date` (ISO `YYYY-MM-DD`) on every dispatched employee row so the n8n webhook + paystub template can render it. |
+| Employee Dashboard indicator + stat card + pay summary | `src/components/employee/EmployeeDashboard.tsx` | `isTechnologyBonusActive` mirrors the wizard: derives the **most recently dispatched pay period** (refMonday = `lastTuesday − 8`) for the all-time view, or the selected file's week start for the weekly view; computes salaryDate; checks 3rd-week-of-month. `employeeStartDate` is fetched from `/api/employees` on mount. `techServiceStatus` yields `'eligible' \| 'pending' \| 'unknown'` and drives the amber "Not eligible yet — you'll become eligible on <date> (N days to go)" warning in the indicator row. |
 | Admin Overview card | `src/components/Overview.tsx` (`techBonusEligibility` useMemo) | Counts employees by eligibility: `{ eligible, pending, unknown }` + progress bar showing `% eligible of total`. |
 
 ### Manual toggle override
@@ -211,9 +223,9 @@ A `tech_bonus` toggle still exists in `employeeBonuses` for payroll operators. M
 Both the Perfect Attendance Bonus and the Technology Bonus are **monthly** bonuses but paystubs are **weekly**. Without gating, a month-wide toggle would attach the bonus to whichever weekly batch was dispatched first. The rules:
 
 - **PAB**: only attaches to the **final weekly paystub** of the PAB period — the weekly pay period whose `week.end ≥ pabMonthRange.end`. Every earlier weekly paystub in the same PAB month gets ₱0 PAB.
-- **Tech Bonus**: only attaches to the **3rd weekly paystub of the calendar month** (see above).
+- **Tech Bonus**: only attaches to the weekly paystub whose **Salary Date (Tue = weekStart + 8d)** falls in the 3rd Mon–Sun week of that Salary Date's month (see above). The Tech Bonus uses its **own** month bucket derived from the salary date — independent of `weekPabMonth`, which buckets by the dispatch week's Monday and is used only by PAB.
 
-The PAB month used for both checks is derived from **the dispatch week's own Monday**, *not* from the most-frequent month in merged uploads. This prevents a heavily-covered prior month (e.g., March) from masking a partial current month (e.g., first week of April) and mis-attaching PAB to the wrong week. Implemented in `dispatchData.weekPabMonth` / `weekPabRange`.
+The PAB month used for the PAB check is derived from **the dispatch week's own Monday**, *not* from the most-frequent month in merged uploads. This prevents a heavily-covered prior month (e.g., March) from masking a partial current month (e.g., first week of April) and mis-attaching PAB to the wrong week. Implemented in `dispatchData.weekPabMonth` / `weekPabRange`.
 
 `pabMonthRange` display itself was switched from `inferPabMonthFromColumns` (mode) to `getLatestPabMonthFromColumns` (latest) in PayrollWizard so the Additions tab surfaces the in-progress current month and does not auto-toggle PAB based on a concluded prior month's data.
 
@@ -348,6 +360,89 @@ Step 5 is currently a **placeholder**. The "Confirm & Dispatch" button fires a s
 **RLS awareness**: The app uses anon key for reads (subject to RLS policies) and service role key for writes. If a table is RLS-blocked under the anon key during profile merge, a `mergeNotes` warning is added to the response and shown as a yellow banner in the Rates view.
 
 **No transaction support**: Operations that touch multiple tables (add/delete employee) are not wrapped in a database transaction. If the second table operation fails, the first is not rolled back.
+
+### Email-drift between `employee_hourly_rates` and `global_master_list`
+
+The most common "missing Tech Bonus / missing hours" symptom traces back to an **email mismatch across tables** rather than a rules bug. An employee can legitimately appear in `employee_hourly_rates` under one spelling of their Work Email (e.g. `john@simple.biz`) and in `global_master_list` under a different spelling (e.g. `johnr@simple.biz`), with no Personal Email on the master row. Neither table references the other by FK, so the inconsistency survives silently until a join fires.
+
+**Downstream effects when this happens:**
+
+| Surface | Symptom |
+|---|---|
+| Employee Dashboard (`/employee?email=<work-email>`) | "No hours data found" banner, because the Hubstaff row is keyed on the personal email which isn't listed as `Personal Email` on the master row. The entire bonus section (including Tech Bonus) is **replaced** by the banner (`EmployeeDashboard.tsx:1126`), even though `isTechnologyBonusActive` itself returns `true`. |
+| PayrollWizard dispatch | The employee is **silently dropped** from `effectiveCalcResults` because the rate↔hours join fails. No paystub is generated. No warning is raised. |
+| Rates & Profiles edit dialog | Saving a Personal Email returns error *"no matching row for Work Email=… or Personal Email=… Check the original email value (case/whitespace) on the master row"* because the rates row's Work Email does not exist in master under either column. |
+
+**Resolution protocol:**
+
+1. Decide which email is canonical (usually whichever is used to log in).
+2. Align the other table via SQL — e.g. to reconcile John Rivera (ID `2301-0005`):
+   ```sql
+   update global_master_list
+   set "Work Email"     = 'john@simple.biz',
+       "Personal Email" = 'jhonelsr@gmail.com'
+   where "Work Email" = 'johnr@simple.biz';
+   ```
+3. Hard-refresh the employee's dashboard — hours and Tech Bonus should surface.
+
+**Audit queries** (run periodically to catch drift before users complain):
+
+```sql
+-- A. Rates rows whose Work Email is unknown to master under any column.
+--    These employees will fail the Hubstaff join → no hours, no paystub.
+select r."Work Email" as rates_we, r."Personal Email" as rates_pe
+from employee_hourly_rates r
+left join global_master_list g
+  on lower(trim(g."Work Email"))     = lower(trim(r."Work Email"))
+  or lower(trim(g."Personal Email")) = lower(trim(r."Work Email"))
+  or lower(trim(g."Personal Email")) = lower(trim(r."Personal Email"))
+where g."Work Email" is null
+order by r."Work Email";
+
+-- B. Master rows with no rates row. Either intentional (US / paid externally)
+--    or a missing rate seed for a new PH hire. Review manually.
+select g."Name", g."Work Email", g."Personal Email", g."Department"
+from global_master_list g
+left join employee_hourly_rates r
+  on lower(trim(r."Work Email"))     = lower(trim(g."Work Email"))
+  or lower(trim(r."Personal Email")) = lower(trim(g."Personal Email"))
+where r."Work Email" is null
+order by g."Name";
+
+-- C. Hubstaff members whose email doesn't match any master row under either
+--    column. These employees will see "No hours data found" on their dashboards.
+select distinct h."Member", h."Email"
+from hubstaff_hours h
+left join global_master_list g
+  on lower(trim(g."Work Email"))     = lower(trim(h."Email"))
+  or lower(trim(g."Personal Email")) = lower(trim(h."Email"))
+where g."Work Email" is null and h."Email" is not null
+order by h."Member";
+```
+
+**Hardening done in the update API** (`app/api/update-employee-profile/route.ts`):
+
+- All string fields are `trim()`ed server-side before both the WHERE clause and the UPDATE, so whitespace drift on either side no longer breaks matching.
+- WHERE clauses use `.ilike('%<value>%')` (case-insensitive + substring) instead of `.eq()`, so minor formatting differences still match.
+- The endpoint now **returns a real error** when a master-table UPDATE affects zero rows, instead of silently returning `{success:true}`. That's what surfaces the "no matching row" toast when two tables hold different spellings — don't try to "make the save work"; fix the underlying data with the SQL above.
+
+**Dashboard fallback** (`EmployeeDashboard.tsx`): the dashboard builds an `aliasEmails` set from the logged-in email plus both `Work Email` and `Personal Email` on the master row, and matches Hubstaff rows against any of them. So as long as master has the Hubstaff email in one of its columns, the join succeeds regardless of which email the user logged in with.
+
+### No-rates policy — US / externally-paid employees get zero bonuses
+
+Employees with **no row** in `employee_hourly_rates` (or whose row has both `regular_rate` and `ot_rate` null) are treated as "paid externally" — typically US employees or new hires whose PH rate hasn't been seeded yet. For these employees, **every PH-side bonus is suppressed** on both the dashboard and the dispatched paystub:
+
+| Bonus | Suppressed when no rates? | Where |
+|---|---|---|
+| Perfect Attendance Bonus (PAB) | ✅ | PayrollWizard (`pabBonus = 0`) + Dashboard (`pabBonusAmount = 0`) |
+| Technology Bonus (₱1,850) | ✅ | PayrollWizard (`techBonus = 0`) + Dashboard (`technologyBonusAmount = 0`) |
+| Department performance/attendance (e.g. collections tiers, lead-gen, callback) | ✅ | PayrollWizard (`otherBonuses = 0` when `hasRates === false`) |
+
+**Why:** the paystub pipeline is PHP-only. Attaching peso bonuses to someone whose base pay is null produces a misleading `final` total (just the bonus, no wages) that the n8n dispatcher may still email. Suppressing the bonuses at the calc stage keeps the dispatch set clean — a no-rates employee either gets a proper USD paystub outside this system, or doesn't get a paystub at all until a PH rate is seeded.
+
+**Toggle behavior is unchanged** — manual `tech_bonus: true` / `perfect_attendance: true` in `employeeBonuses` still record the operator's intent, but the `hasRates` gate dominates at the final calc. Once rates are added, the toggles take effect on the next recompute without further action.
+
+Implementation: `src/components/PayrollWizard.tsx` `dispatchData` useMemo computes `const hasRates = r.regularRate != null || r.otRate != null;` and gates `pabBonus`, `techBonus`, `rawBonusTotal`, and `otherBonuses`. `src/components/employee/EmployeeDashboard.tsx` mirrors with `const hasRates = parseRate(rate.regular_rate) != null || parseRate(rate.ot_rate) != null;` gating `pabBonusAmount` and `technologyBonusAmount`.
 
 ---
 

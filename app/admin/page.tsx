@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 import AdminRoles from '@/components/admin/AdminRoles';
+import AdminWebhooks from '@/components/admin/AdminWebhooks';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
 import { Toaster } from '@/components/ui/sonner';
 import { Construction } from 'lucide-react';
@@ -16,6 +17,8 @@ export default function AdminPage() {
         return <AdminRoles />;
       case 'employees':
         return <Placeholder title="Employees" hint="Manage employees from the Rates page for now." />;
+      case 'webhooks':
+        return <AdminWebhooks />;
       case 'audit':
         return (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

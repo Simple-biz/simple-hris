@@ -351,6 +351,8 @@ type PayPeriodPayload = {
   hubstaff_source_file: string | null;
   /** Latest weekly pay-period range (ISO dates) derived from the source file or Hubstaff columns. */
   week: { start: string; end: string } | null;
+  /** ISO date (YYYY-MM-DD) when this paycheck is dispatched (Tuesday after the pay-period Sunday). */
+  salary_date: string | null;
   pab_evaluation: { month_label: string; range_start: string; range_end: string };
 };
 
@@ -1603,10 +1605,19 @@ export default function PayrollWizard() {
       }
     }
 
+    const salaryDateIso = (() => {
+      if (!week?.start) return null;
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(week.start);
+      if (!m) return null;
+      const d = new Date(+m[1], +m[2] - 1, +m[3] + 8);
+      return d.toLocaleDateString('en-CA');
+    })();
+
     const payPeriodPayload = {
       currency: 'PHP' as const,
       hubstaff_source_file: calcSourceFile,
       week,
+      salary_date: salaryDateIso,
       pab_evaluation: pabMonthRange
         ? {
             month_label: `${pabMonthRange.monthName} ${pabMonthRange.year}`,
@@ -1658,15 +1669,29 @@ export default function PayrollWizard() {
      * period whose Monday is the 3rd calendar week of the month — week 1 = the
      * Mon–Sun week containing the 1st, even if partial). Equality, not ≥.
      */
+    /**
+     * Salary date = the Tuesday after the pay period's Sunday (i.e. weekStart + 8).
+     * Tech bonus attaches to the paycheck whose salary date lands in the 3rd
+     * Mon–Sun calendar week of its month (week 1 = the Mon–Sun week containing
+     * the 1st of the month, even if partial).
+     *
+     * Example for April 2026:
+     *   Pay period Apr 6 – 12  → salary Tue Apr 14 → April week 3 (Apr 13 – 19) → ✅
+     *   Pay period Apr 13 – 19 → salary Tue Apr 21 → April week 4              → ❌
+     */
+    const salaryDate = weekStartDate
+      ? new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 8)
+      : null;
     const isTechBonusWeek = (() => {
-      if (!weekStartDate || !weekPabMonth) return false;
-      const first = new Date(weekPabMonth.year, weekPabMonth.month, 1);
+      if (!salaryDate) return false;
+      const techMonth = { year: salaryDate.getFullYear(), month: salaryDate.getMonth() };
+      const first = new Date(techMonth.year, techMonth.month, 1);
       const dow = first.getDay();
       const daysBack = dow === 0 ? 6 : dow - 1;
       const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBack);
       const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
       const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
-      const t = weekStartDate.getTime();
+      const t = salaryDate.getTime();
       return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
     })();
     /**
@@ -1704,7 +1729,12 @@ export default function PayrollWizard() {
         ? DEPARTMENTS.find((d) => d.key === deptKey)?.name ?? null
         : null;
       const toggles = employeeBonuses[r.email] ?? {};
-      const pabBonus = isFinalPabWeek && toggles.perfect_attendance
+      // No rates in Supabase → employee is US / paid externally / unseeded.
+      // Strip every PH-side bonus (PAB, Tech, dept performance / attendance).
+      // The paystub pipeline is PHP-only; attaching bonuses without a rate
+      // produces misleading totals.
+      const hasRates = r.regularRate != null || r.otRate != null;
+      const pabBonus = hasRates && isFinalPabWeek && toggles.perfect_attendance
         ? commonBonusPhp('perfect_attendance')
         : 0;
       // Tech Bonus: paid in the 3rd paycheck of the month, but only after the
@@ -1712,15 +1742,15 @@ export default function PayrollWizard() {
       // Manual toggle can opt-in earlier (still requires 30-day service).
       const hasThirtyDays = hasThirtyDaysByWeek(r.email);
       const techBonus =
-        hasThirtyDays && (isTechBonusWeek || toggles.tech_bonus)
+        hasRates && hasThirtyDays && (isTechBonusWeek || toggles.tech_bonus)
           ? commonBonusPhp('tech_bonus')
           : 0;
-      const rawBonusTotal = bonusTotals[r.email] ?? 0;
+      const rawBonusTotal = hasRates ? (bonusTotals[r.email] ?? 0) : 0;
       // Strip out the month-wide PAB/tech amounts that `bonusTotals` may include,
       // then re-add the week-gated versions so weekly paystubs get the right total.
       const toggledPab = toggles.perfect_attendance ? commonBonusPhp('perfect_attendance') : 0;
       const toggledTech = toggles.tech_bonus ? commonBonusPhp('tech_bonus') : 0;
-      const otherBonuses = Math.max(0, rawBonusTotal - toggledPab - toggledTech);
+      const otherBonuses = hasRates ? Math.max(0, rawBonusTotal - toggledPab - toggledTech) : 0;
       const bonusTotal = pabBonus + techBonus + otherBonuses;
       const finalPay = (r.initialPay ?? 0) + bonusTotal;
 
@@ -4988,7 +5018,41 @@ export default function PayrollWizard() {
                     <DialogTitle>Paystub Preview · {selected.name}</DialogTitle>
                     <DialogDescription>{selected.personal_email}</DialogDescription>
                   </DialogHeader>
-                  <div className="flex flex-col bg-white">
+                  <div className="paystub-body relative flex flex-col bg-white">
+                    <style>{`
+                      .paystub-body::before {
+                        content: "";
+                        position: absolute;
+                        top: 110px; left: 0; right: 0; bottom: 70px;
+                        overflow: hidden;
+                        background-image:
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png');
+                        background-repeat: no-repeat;
+                        background-size:
+                          120px, 120px, 120px, 120px,
+                          70px, 70px, 70px, 70px,
+                          40px, 40px, 40px, 40px;
+                        background-position:
+                          10% 8%, 75% 22%, 25% 55%, 85% 78%,
+                          50% 12%, 12% 38%, 65% 48%, 38% 85%,
+                          90% 10%, 5% 72%, 55% 30%, 92% 55%;
+                        transform: rotate(-28deg);
+                        opacity: 0.08;
+                        pointer-events: none;
+                        z-index: 2;
+                      }
+                    `}</style>
                     <div className="flex shrink-0 items-center justify-between border-b border-zinc-100 bg-white/80 px-4 py-2 backdrop-blur">
                       <Button
                         variant="ghost"
@@ -5044,6 +5108,7 @@ export default function PayrollWizard() {
                           <div className="space-y-0.5 text-[11px]">
                             <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Dept</span><span className="truncate font-semibold text-zinc-900">{selected.department_name ?? '—'}</span></div>
                             <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Week</span><span className="truncate font-mono text-zinc-900">{selected.pay_period.week ? `${selected.pay_period.week.start} → ${selected.pay_period.week.end}` : '—'}</span></div>
+                            <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Salary Date</span><span className="truncate font-mono text-emerald-700">{selected.pay_period.salary_date ?? '—'}</span></div>
                             <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">PAB Month</span><span className="truncate text-zinc-900">{selected.pay_period.pab_evaluation.month_label}</span></div>
                             <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Email</span><span className="truncate font-mono font-semibold text-blue-600">{selected.personal_email}</span></div>
                           </div>

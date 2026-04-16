@@ -1,8 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   ClipboardList,
   Clock,
   Loader2,
@@ -13,7 +19,11 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { AuditLogEntry } from '@/lib/supabase/audit-log';
 
-async function loadAuditLog(limit = 100): Promise<AuditLogEntry[]> {
+type SortKey = 'created_at' | 'action' | 'user_name';
+type SortDir = 'asc' | 'desc';
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+
+async function loadAuditLog(limit = 500): Promise<AuditLogEntry[]> {
   const res = await fetch(`/api/audit-log?limit=${limit}`, { cache: 'no-store' });
   const json = (await res.json()) as { rows: AuditLogEntry[]; error: string | null };
   return json.rows ?? [];
@@ -123,6 +133,19 @@ function actionDot(action: string): string {
   return 'bg-zinc-400';
 }
 
+function PageBtn({ children, onClick, disabled }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex h-6 w-6 items-center justify-center rounded border border-zinc-200 bg-white text-zinc-600 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+    >
+      {children}
+    </button>
+  );
+}
+
 function AuditRow({ entry }: { entry: AuditLogEntry }) {
   const details = entry.details as Record<string, unknown> | null;
 
@@ -190,6 +213,39 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
   const [auditError, setAuditError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>('created_at');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25);
+
+  const sortedLogs = useMemo(() => {
+    const arr = [...auditLogs];
+    arr.sort((a, b) => {
+      const av = (a[sortKey] ?? '') as string;
+      const bv = (b[sortKey] ?? '') as string;
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [auditLogs, sortKey, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedLogs.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const pageRows = sortedLogs.slice(pageStart, pageStart + pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [sortKey, sortDir, pageSize, auditLogs.length]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'created_at' ? 'desc' : 'asc');
+    }
+  };
 
   const refreshAuditLog = useCallback(async () => {
     setAuditLoading(true);
@@ -297,7 +353,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+      <div className="flex min-h-0 flex-1 flex-col px-5 py-3">
         {auditLoading ? (
           <div className="flex items-center justify-center gap-2 py-12 text-zinc-400">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -317,8 +373,8 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
             </p>
           </div>
         ) : (
-          <div className="space-y-1.5">
-            <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="mb-2 flex flex-shrink-0 flex-wrap items-center gap-x-4 gap-y-1">
               {LEGEND.map(({ dot, label }) => (
                 <div key={label} className="flex items-center gap-1.5">
                   <span className={cn('h-2 w-2 rounded-full', dot)} />
@@ -330,9 +386,68 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
               </span>
             </div>
 
-            {auditLogs.map((entry) => (
-              <AuditRow key={entry.id} entry={entry} />
-            ))}
+            <div className="mb-2 flex flex-shrink-0 flex-wrap items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50/60 px-2.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Sort</span>
+              {([
+                { k: 'created_at', label: 'Date' },
+                { k: 'action',     label: 'Action' },
+                { k: 'user_name',  label: 'User' },
+              ] as { k: SortKey; label: string }[]).map(({ k, label }) => {
+                const active = sortKey === k;
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => toggleSort(k)}
+                    className={cn(
+                      'flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition',
+                      active
+                        ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300'
+                        : 'text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800',
+                    )}
+                  >
+                    {label}
+                    {active && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
+                  </button>
+                );
+              })}
+
+              <div className="ml-auto flex items-center gap-1.5">
+                <label className="flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+                  Per page
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value) as (typeof PAGE_SIZE_OPTIONS)[number])}
+                    className="rounded border border-zinc-200 bg-white px-1 py-0.5 text-[10px] dark:border-zinc-700 dark:bg-zinc-900"
+                  >
+                    {PAGE_SIZE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+              {pageRows.map((entry) => (
+                <AuditRow key={entry.id} entry={entry} />
+              ))}
+            </div>
+
+            <div className="mt-2 flex flex-shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">
+              <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                Showing <strong>{sortedLogs.length === 0 ? 0 : pageStart + 1}</strong>–<strong>{Math.min(pageStart + pageSize, sortedLogs.length)}</strong> of <strong>{sortedLogs.length}</strong>
+              </span>
+              <div className="flex items-center gap-1">
+                <PageBtn onClick={() => setPage(1)} disabled={safePage === 1}><ChevronsLeft className="h-3 w-3" /></PageBtn>
+                <PageBtn onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage === 1}><ChevronLeft className="h-3 w-3" /></PageBtn>
+                <span className="px-2 text-[10px] font-medium text-zinc-600 dark:text-zinc-300">
+                  Page {safePage} / {totalPages}
+                </span>
+                <PageBtn onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}><ChevronRight className="h-3 w-3" /></PageBtn>
+                <PageBtn onClick={() => setPage(totalPages)} disabled={safePage === totalPages}><ChevronsRight className="h-3 w-3" /></PageBtn>
+              </div>
+            </div>
           </div>
         )}
       </div>

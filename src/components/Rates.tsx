@@ -58,6 +58,54 @@ type EmployeeRateProfile = {
   fields: { key: string; value: unknown }[];
 };
 
+const DEPARTMENT_OPTIONS = [
+  'Accounting',
+  'Edit',
+  'Devs',
+  'Lead Gen',
+  'Callback',
+  'QC',
+  'Discovery',
+  'HR',
+  'Sales Assistant',
+  'Smart Staff',
+  'US Manager Bonus',
+  'Hogan Smith Law',
+] as const;
+
+function DepartmentSelect({
+  value,
+  onChange,
+  id,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  id?: string;
+}) {
+  // Keep legacy/typo'd values visible as a one-off option so saving doesn't
+  // silently rewrite them to "" if the current department isn't in the canonical list.
+  const trimmed = value?.trim() ?? '';
+  const isKnown =
+    trimmed === '' ||
+    DEPARTMENT_OPTIONS.some((d) => d.toLowerCase() === trimmed.toLowerCase());
+  return (
+    <select
+      id={id}
+      value={trimmed}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+    >
+      <option value="">— None —</option>
+      {DEPARTMENT_OPTIONS.map((d) => (
+        <option key={d} value={d}>{d}</option>
+      ))}
+      {!isKnown && (
+        <option value={trimmed}>{trimmed} (legacy)</option>
+      )}
+    </select>
+  );
+}
+
 function normFieldKey(key: string): string {
   return key.trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
 }
@@ -1110,12 +1158,10 @@ export default function Rates() {
                   <Label htmlFor="add-department" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
                     Department
                   </Label>
-                  <Input
+                  <DepartmentSelect
                     id="add-department"
-                    placeholder="e.g. Engineering"
                     value={addForm.department}
-                    onChange={(e) => setAddForm((f) => ({ ...f, department: e.target.value }))}
-                    className="h-9 border-zinc-200 bg-white text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                    onChange={(v) => setAddForm((f) => ({ ...f, department: v }))}
                   />
                 </div>
               </div>
@@ -1504,11 +1550,9 @@ export default function Rates() {
                           <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
                             Department
                           </Label>
-                          <Input
-                            placeholder="e.g. Engineering"
+                          <DepartmentSelect
                             value={editProfileForm.department}
-                            onChange={(e) => setEditProfileForm((f) => ({ ...f, department: e.target.value }))}
-                            className="h-9 border-zinc-200 bg-white text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                            onChange={(v) => setEditProfileForm((f) => ({ ...f, department: v }))}
                           />
                         </div>
                         <div className="space-y-1.5">

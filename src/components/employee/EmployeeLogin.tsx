@@ -1,20 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { Loader2, Lock, Mail, LogIn, HelpCircle, X, Briefcase, User } from 'lucide-react';
+import { Loader2, Lock, Mail, LogIn, HelpCircle, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
-export type LoginRole = 'accounting' | 'employee';
-
 interface EmployeeLoginProps {
-  onSuccess: (workEmail: string, role: LoginRole) => void;
+  onSuccess: (workEmail: string) => void;
 }
 
 export default function EmployeeLogin({ onSuccess }: EmployeeLoginProps) {
-  const [role, setRole] = useState<LoginRole>('employee');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -39,7 +36,7 @@ export default function EmployeeLogin({ onSuccess }: EmployeeLoginProps) {
         return;
       }
       toast.success('Welcome back.');
-      onSuccess(json.work_email || email.trim(), role);
+      onSuccess(json.work_email || email.trim());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed.');
     } finally {
@@ -56,32 +53,7 @@ export default function EmployeeLogin({ onSuccess }: EmployeeLoginProps) {
               <LogIn className="h-7 w-7 text-orange-500" />
             </div>
             <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Sign in</h1>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">Choose your role and enter your work email.</p>
-          </div>
-
-          <div className="mb-5 grid grid-cols-2 gap-1 rounded-lg border border-zinc-200 bg-zinc-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
-            <button
-              type="button"
-              onClick={() => setRole('employee')}
-              className={`flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition ${
-                role === 'employee'
-                  ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white'
-                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200'
-              }`}
-            >
-              <User className="h-3.5 w-3.5" /> Employee
-            </button>
-            <button
-              type="button"
-              onClick={() => setRole('accounting')}
-              className={`flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition ${
-                role === 'accounting'
-                  ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-white'
-                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200'
-              }`}
-            >
-              <Briefcase className="h-3.5 w-3.5" /> Accounting
-            </button>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">Enter your work email to continue.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">

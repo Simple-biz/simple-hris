@@ -184,8 +184,15 @@ function collectHubstaffRowEmails(r: Record<string, unknown>): string[] {
   return [...seen];
 }
 
-function hubstaffRowMatchesEmployee(r: Record<string, unknown>, employeeNorm: string): boolean {
-  return collectHubstaffRowEmails(r).some((e) => normEmail(e) === employeeNorm);
+function hubstaffRowMatchesEmployee(
+  r: Record<string, unknown>,
+  employeeNorms: string | string[],
+): boolean {
+  const set = Array.isArray(employeeNorms) ? new Set(employeeNorms) : new Set([employeeNorms]);
+  return collectHubstaffRowEmails(r).some((e) => {
+    const n = normEmail(e);
+    return n ? set.has(n) : false;
+  });
 }
 
 function getFieldFromRow(row: Record<string, unknown>, keys: string[]): unknown {
@@ -239,6 +246,8 @@ function isoDateToUtcDow(iso: string): number | null {
 export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
+  /** All normalized emails known for this employee (login + work + personal). */
+  const [aliasEmails, setAliasEmails] = useState<string[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
   const [row, setRow] = useState<Record<string, unknown> | null>(null);
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
@@ -275,6 +284,14 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           const pe = normEmail(e.personal_email ?? '');
           return we === email || pe === email;
         });
+        const aliases = new Set<string>([email]);
+        if (me) {
+          const we = normEmail(me.work_email ?? '');
+          const pe = normEmail(me.personal_email ?? '');
+          if (we) aliases.add(we);
+          if (pe) aliases.add(pe);
+        }
+        setAliasEmails([...aliases]);
         if (!me?.start_date) {
           setEmployeeStartDate(null);
           return;
@@ -342,7 +359,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [email]);
+  }, [email, aliasEmails]);
 
   // Load hours data for the selected source file
   const loadHoursData = React.useCallback(async (file: string | null, cancelled?: boolean) => {
@@ -363,7 +380,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         setRow(null);
       } else if (json.columns && json.rows) {
         setColumns(json.columns);
-        const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, email));
+        const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, aliasEmails.length ? aliasEmails : [email]));
 
         if (myRow) {
           const dateCols = json.columns.filter(isDateCol);
@@ -415,7 +432,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         setRow(null);
       }
     }
-  }, [email]);
+  }, [email, aliasEmails]);
 
   // Reload hours when the selected file changes (skip for "All Time")
   useEffect(() => {
@@ -457,7 +474,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           if (cancelled) return;
           if (!json.columns || !json.rows) continue;
 
-          const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, email));
+          const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, aliasEmails.length ? aliasEmails : [email]));
           if (!myRow) continue;
           found = true;
 
@@ -814,12 +831,20 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
    *  - Otherwise (file selected but week can't be derived, or nothing selected): 0 — never
    *    fall back to showing the monthly total on an arbitrary week.
    */
+  // No rates row in Supabase → US / paid externally / unseeded. Hide PH-side
+  // bonuses so the dashboard doesn't advertise amounts the paystub won't pay.
+  const hasRates = !!(
+    rate &&
+    (parseRate(rate.regular_rate) != null || parseRate(rate.ot_rate) != null)
+  );
+
   const pabBonusAmount = useMemo(() => {
+    if (!hasRates) return 0;
     if (!isPAEligible) return 0;
     if (isAllTime) return pabEligibleCount * PERFECT_ATTENDANCE_BONUS_PHP;
     if (selectedFileWeek) return isFinalPabWeekForSelected ? PERFECT_ATTENDANCE_BONUS_PHP : 0;
     return 0;
-  }, [isPAEligible, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
+  }, [hasRates, isPAEligible, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
 
   /**
    * Tech Bonus rules:
@@ -839,26 +864,40 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       employeeStartDate.getMonth(),
       employeeStartDate.getDate() + 30,
     );
-    const source = selectedFileWeek && weekPabRange
-      ? { year: weekPabRange.pabMonth.year, month: weekPabRange.pabMonth.month, refDate: selectedFileWeek.start }
-      : pabMonthRange
-        ? { year: pabMonthRange.year, month: pabMonthRange.month, refDate: new Date() }
-        : null;
-    if (!source) return false;
-    const refMid = new Date(source.refDate.getFullYear(), source.refDate.getMonth(), source.refDate.getDate());
-    if (refMid.getTime() < eligibleFrom.getTime()) return false;
+    // Reference Monday of the pay-period week.
+    // - Weekly view → the selected file's week start (already a Monday).
+    // - All-time view → Monday of the most recently dispatched pay period
+    //   (i.e. the Monday whose salary Tuesday = Mon + 8 has already arrived).
+    const refMonday = (() => {
+      if (selectedFileWeek) {
+        const s = selectedFileWeek.start;
+        return new Date(s.getFullYear(), s.getMonth(), s.getDate());
+      }
+      const today = new Date();
+      // Most recent past Tuesday (or today if today is Tuesday).
+      const dow = today.getDay(); // Sun=0..Sat=6
+      const daysBackToTue = (dow - 2 + 7) % 7;
+      const lastTuesday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysBackToTue);
+      // Salary Tuesday = pay-period Monday + 8, so Monday = lastTuesday − 8.
+      return new Date(lastTuesday.getFullYear(), lastTuesday.getMonth(), lastTuesday.getDate() - 8);
+    })();
+    if (refMonday.getTime() < eligibleFrom.getTime()) return false;
 
-    const first = new Date(source.year, source.month, 1);
+    // Salary Date = the Tuesday after the pay-period Sunday (refMonday + 8).
+    // Tech bonus fires when salary date falls in the 3rd Mon–Sun week of its month
+    // (week 1 = the Mon–Sun week containing the 1st).
+    const salaryDate = new Date(refMonday.getFullYear(), refMonday.getMonth(), refMonday.getDate() + 8);
+    const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
     const dow = first.getDay();
     const daysBack = dow === 0 ? 6 : dow - 1;
     const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBack);
     const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
     const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
-    const refT = refMid.getTime();
-    return refT >= thirdWeekMon.getTime() && refT < fourthWeekMon.getTime();
-  }, [employeeStartDate, pabMonthRange, selectedFileWeek, weekPabRange]);
+    const t = salaryDate.getTime();
+    return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
+  }, [employeeStartDate, selectedFileWeek]);
 
-  const technologyBonusAmount = isTechnologyBonusActive ? TECHNOLOGY_BONUS_PHP : 0;
+  const technologyBonusAmount = isTechnologyBonusActive && hasRates ? TECHNOLOGY_BONUS_PHP : 0;
 
   /** 30-day service status for Tech Bonus eligibility (independent of week gating). */
   const techServiceStatus = useMemo<

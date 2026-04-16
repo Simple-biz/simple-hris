@@ -420,10 +420,12 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
   });
 
   const profiles: EmployeeRateProfile[] = [];
+  const matchedMasters = new Set<RawRow>();
 
   for (const [groupId, groupRows] of groupMap) {
     const mergedRates = mergeRowsUniqueFieldOrder(groupRows);
     const master = findMasterForMergedRates(mergedRates, byEmail, byName);
+    if (master) matchedMasters.add(master);
     const identity = buildIdentity(mergedRates, master);
 
     const sources: RawRow[] = [mergedRates, master ?? {}];
@@ -452,6 +454,49 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
 
     profiles.push({
       id: groupId,
+      displayName,
+      subtitle: primaryEmail,
+      department,
+      organization,
+      fields,
+    });
+  }
+
+  // Second pass: include master-list employees who have no row in the rates
+  // table. Their rate fields stay null; other columns (department, emails,
+  // start date, etc.) come from master + extra tables.
+  for (let i = 0; i < masterRaw.length; i++) {
+    const masterRow = masterRaw[i];
+    if (matchedMasters.has(masterRow)) continue;
+
+    const mergedRates: RawRow = {};
+    const identity = buildIdentity(mergedRates, masterRow);
+    const sources: RawRow[] = [mergedRates, masterRow];
+
+    let memberFromHubstaff: string | null = null;
+    for (const tableName of extraMergeTables) {
+      const rows = byTable.get(tableName);
+      if (!rows || rows.length === 0) continue;
+      const matching = rows.filter((r) => rowMatchesEmployee(r, identity));
+      if (matching.length === 0) continue;
+      if (tableName === hubstaffTable) {
+        memberFromHubstaff = pickMemberFromHubstaffRows(matching);
+      }
+      let merged = mergeRowsUniqueFieldOrder(matching);
+      if (tableName === hubstaffTable) {
+        merged = filterHubstaffRowToAllowedFields(merged);
+      }
+      if (Object.keys(merged).length === 0) continue;
+      sources.push(merged);
+    }
+
+    const rawFields = mergeSourcesDeduped(sources);
+    const { fields, department, organization, primaryEmail } = finalizeProfileFields(rawFields);
+    const displayName = memberFromHubstaff || resolveDisplayName(mergedRates, masterRow);
+
+    const idEmail = [...identity.emails][0] || identity.nameNorm || `row-${i}`;
+    profiles.push({
+      id: `master:${idEmail}`,
       displayName,
       subtitle: primaryEmail,
       department,

@@ -11,10 +11,13 @@ import {
   Sun,
   UserCog,
   Users,
+  Webhook,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import ViewSwitcher from '@/components/rbac/ViewSwitcher';
+import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 
 interface AdminSidebarProps {
   activeTab: string;
@@ -24,13 +27,22 @@ interface AdminSidebarProps {
 const navItems = [
   { id: 'roles',      label: 'Roles & Permissions', icon: UserCog },
   { id: 'employees',  label: 'Employees',           icon: Users },
+  { id: 'webhooks',   label: 'Webhooks',            icon: Webhook },
   { id: 'audit',      label: 'Audit Log',           icon: ShieldCheck },
 ];
 
 export default function AdminSidebar({ activeTab, setActiveTab }: AdminSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
+  const [email, setEmail] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    setMounted(true);
+    try {
+      setEmail(sessionStorage.getItem(SESSION_EMAIL_KEY));
+    } catch {
+      /* ignore */
+    }
+  }, []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
   return (
@@ -79,6 +91,7 @@ export default function AdminSidebar({ activeTab, setActiveTab }: AdminSidebarPr
       </div>
 
       <div className="mt-auto border-t border-orange-100 p-4 dark:border-blue-950/60">
+        <ViewSwitcher email={email} currentView="admin" />
         <button
           onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
           className="mb-2 flex w-full items-center justify-between rounded-md border border-orange-100 bg-orange-50/60 px-3 py-2 transition-colors hover:bg-orange-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
@@ -94,11 +107,11 @@ export default function AdminSidebar({ activeTab, setActiveTab }: AdminSidebarPr
         </button>
         <div className="mb-3 flex items-center gap-3 px-3 py-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-blue-500 text-xs font-bold text-white shadow-sm">
-            FM
+            {(email || '?').slice(0, 2).toUpperCase()}
           </div>
           <div className="flex min-w-0 flex-col overflow-hidden">
-            <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">Fran M</span>
-            <span className="truncate text-xs text-zinc-500 dark:text-zinc-500">Senior Admin</span>
+            <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">{email || 'Not signed in'}</span>
+            <span className="truncate text-xs text-zinc-500 dark:text-zinc-500">Admin view</span>
           </div>
         </div>
         <Button

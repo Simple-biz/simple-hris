@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import EmployeeAvatar from './EmployeeAvatar';
+import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 
 interface EmployeeSidebarProps {
   activeTab: string;
@@ -111,6 +112,7 @@ export default function EmployeeSidebar({
       </div>
 
       <div className="mt-auto border-t border-orange-100 p-4 dark:border-blue-950/60">
+        <ViewSwitcher email={employeeEmail} currentView="employee" />
         <button
           onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
           className="mb-2 flex w-full items-center justify-between rounded-md border border-orange-100 bg-orange-50/60 px-3 py-2 transition-colors hover:bg-orange-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
