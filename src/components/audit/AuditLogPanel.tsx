@@ -103,6 +103,14 @@ function formatActionLabel(action: string, details: Record<string, unknown> | nu
       return `Leave rejected: ${String(details?.employee_email ?? '?')} by ${String(details?.approver_email ?? '?')}`;
     case 'leave.cancelled':
       return `Leave cancelled: ${String(details?.employee_email ?? '?')}`;
+    case 'pab_dispute.submitted':
+      return `PAB dispute filed: ${String(details?.employee ?? '?')} — ${String(details?.reason ?? '?')} on ${String(details?.dispute_date ?? '?')}`;
+    case 'pab_dispute.approved':
+      return `PAB dispute approved: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
+    case 'pab_dispute.denied':
+      return `PAB dispute denied: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
+    case 'pab_dispute.withdrawn':
+      return `PAB dispute withdrawn: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
     default:
       return action;
   }
@@ -130,6 +138,10 @@ function actionDot(action: string): string {
   if (action === 'leave.approved') return 'bg-green-600';
   if (action === 'leave.rejected') return 'bg-rose-600';
   if (action === 'leave.cancelled') return 'bg-zinc-500';
+  if (action === 'pab_dispute.submitted') return 'bg-amber-500';
+  if (action === 'pab_dispute.approved') return 'bg-green-600';
+  if (action === 'pab_dispute.denied') return 'bg-rose-600';
+  if (action === 'pab_dispute.withdrawn') return 'bg-zinc-500';
   return 'bg-zinc-400';
 }
 

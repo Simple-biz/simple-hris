@@ -9,6 +9,7 @@ import PayrollWizard from './components/PayrollWizard';
 import { Toaster } from '@/components/ui/sonner';
 import SystemSettings from './components/SystemSettings';
 import LeaveRequestsPanel from './components/LeaveRequestsPanel';
+import PabDisputeQueue from './components/payroll/PabDisputeQueue';
 export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const { resolvedTheme } = useTheme();
@@ -42,17 +43,7 @@ export default function App() {
           </div>
         );
       case 'disputes':
-        return (
-          <div className="p-8 flex flex-col items-center justify-center h-full text-center space-y-4">
-            <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center">
-              <span className="text-2xl font-bold text-red-500">!</span>
-            </div>
-            <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">Disputes & Conflicts</h2>
-            <p className="text-zinc-600 dark:text-zinc-500 max-w-md">
-              Review and resolve payment disputes or Hubstaff email mismatches.
-            </p>
-          </div>
-        );
+        return <PabDisputeQueue />;
       case 'settings':
         return <SystemSettings />;
       case 'leave-requests':

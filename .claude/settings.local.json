@@ -35,7 +35,10 @@
       "Bash(find:*)",
       "Bash(ls:*)",
       "Bash(npx tsc *)",
-      "Bash(rm tscout.txt)"
+      "Bash(rm tscout.txt)",
+      "Bash(python -c \"import openpyxl; wb=openpyxl.load_workbook\\('references/NEW Payroll Dashboard.xlsx', data_only=True\\); print\\('SHEETS:'\\); [print\\(' -', s\\) for s in wb.sheetnames]\")",
+      "Bash(python -c ' *)",
+      "Bash(python)"
     ]
   }
 }

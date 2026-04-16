@@ -16,6 +16,10 @@ export type EmployeeRateProfile = {
   department: string | null;
   /** Organization / company name (pulled out of fields). */
   organization: string | null;
+  /** Resolved work email, if any. Lifted out of fields during finalize. */
+  workEmail: string | null;
+  /** Resolved personal email, if any. Lifted out of fields during finalize. */
+  personalEmail: string | null;
   fields: { key: string; value: unknown }[];
 };
 
@@ -197,6 +201,8 @@ function finalizeProfileFields(rawFields: { key: string; value: unknown }[]): {
   department: string | null;
   organization: string | null;
   primaryEmail: string | null;
+  workEmail: string | null;
+  personalEmail: string | null;
 } {
   let fields = rawFields.filter((f) => !EXCLUDED_PROFILE_FIELD_KEYS.has(normFieldKey(f.key)));
 
@@ -236,19 +242,24 @@ function finalizeProfileFields(rawFields: { key: string; value: unknown }[]): {
   }
   emailRows.sort((a, b) => emailFieldPriority(b.nk) - emailFieldPriority(a.nk));
 
-  let primaryEmail: string | null = null;
+  let workEmail: string | null = null;
+  let personalEmail: string | null = null;
   for (const e of emailRows) {
-    const n = normEmail(toStr(e.value));
-    if (n) {
-      primaryEmail = toStr(e.value);
-      break;
-    }
+    const raw = toStr(e.value);
+    if (!normEmail(raw)) continue;
+    const nk = e.nk;
+    const isPersonal = nk === "personal_email" || (nk.includes("personal") && nk.includes("email"));
+    const isWork = nk === "work_email" || (nk.includes("work") && nk.includes("email"));
+    if (isPersonal && !personalEmail) personalEmail = raw;
+    else if (isWork && !workEmail) workEmail = raw;
+    else if (!workEmail && !isPersonal) workEmail = raw;
   }
+  const primaryEmail = workEmail ?? personalEmail;
 
   fields = nonEmail;
-  /* Primary email is only in `subtitle` / table fallback — not repeated as a body field. */
+  /* Emails are only in subtitle / dedicated fields — not repeated as a body field. */
 
-  return { fields, department, organization, primaryEmail };
+  return { fields, department, organization, primaryEmail, workEmail, personalEmail };
 }
 
 function rateGroupKey(row: RawRow, rowIndex: number): string {
@@ -421,6 +432,20 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
 
   const profiles: EmployeeRateProfile[] = [];
   const matchedMasters = new Set<RawRow>();
+  const usedIds = new Set<string>();
+  const uniqueId = (base: string): string => {
+    if (!usedIds.has(base)) {
+      usedIds.add(base);
+      return base;
+    }
+    for (let n = 2; ; n++) {
+      const candidate = `${base}#${n}`;
+      if (!usedIds.has(candidate)) {
+        usedIds.add(candidate);
+        return candidate;
+      }
+    }
+  };
 
   for (const [groupId, groupRows] of groupMap) {
     const mergedRates = mergeRowsUniqueFieldOrder(groupRows);
@@ -448,16 +473,19 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
     }
 
     const rawFields = mergeSourcesDeduped(sources);
-    const { fields, department, organization, primaryEmail } = finalizeProfileFields(rawFields);
+    const { fields, department, organization, primaryEmail, workEmail, personalEmail } =
+      finalizeProfileFields(rawFields);
     const displayName =
       memberFromHubstaff || resolveDisplayName(mergedRates, master);
 
     profiles.push({
-      id: groupId,
+      id: uniqueId(groupId),
       displayName,
       subtitle: primaryEmail,
       department,
       organization,
+      workEmail,
+      personalEmail,
       fields,
     });
   }
@@ -491,16 +519,19 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
     }
 
     const rawFields = mergeSourcesDeduped(sources);
-    const { fields, department, organization, primaryEmail } = finalizeProfileFields(rawFields);
+    const { fields, department, organization, primaryEmail, workEmail, personalEmail } =
+      finalizeProfileFields(rawFields);
     const displayName = memberFromHubstaff || resolveDisplayName(mergedRates, masterRow);
 
     const idEmail = [...identity.emails][0] || identity.nameNorm || `row-${i}`;
     profiles.push({
-      id: `master:${idEmail}`,
+      id: uniqueId(`master:${idEmail}`),
       displayName,
       subtitle: primaryEmail,
       department,
       organization,
+      workEmail,
+      personalEmail,
       fields,
     });
   }

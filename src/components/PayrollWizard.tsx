@@ -67,6 +67,9 @@ import {
   USD_TO_PHP_DECIMAL_SHIFT,
   effectiveUsdToPhpRateFromStored,
 } from '@/lib/fx/usd-php';
+import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { isDeptInPabScope } from '@/lib/pab-period-settings';
 import {
   Dialog,
   DialogContent,
@@ -568,6 +571,16 @@ function maxSecondsAcrossWeekdayGroup(row: Record<string, unknown>, group: strin
   return maxS;
 }
 
+function isoDateFromColumnGroup(group: string[]): string | null {
+  for (const col of group) {
+    const d = parseColDate(col);
+    if (d) {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+  }
+  return null;
+}
+
 /**
  * Lead Gen appointment-based bonus:
  *   1–9  appointments → ₱250 per appointment
@@ -779,72 +792,6 @@ function calculateDepartmentBonus(
   return result;
 }
 
-/**
- * Maps a raw Supabase Department string to one of the DEPARTMENTS keys.
- * Case-insensitive and trims whitespace.
- */
-function normalizeDeptToKey(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const s = raw.trim().toLowerCase();
-  const map: Record<string, string> = {
-    // Accounting
-    'accounting':               'accounting',
-    'accounting team':          'accounting',
-    // Edit
-    'edit':                     'edit',
-    'edit team':                'edit',
-    // Devs / AI / Site Building
-    'devs':                     'devs',
-    'ai/api team':              'devs',
-    'ai api team':              'devs',
-    // Lead Gen
-    'lead gen':                 'lead_gen',
-    'lead generation':          'lead_gen',
-    // US Manager Bonus
-    'us - manager bonus':       'us_manager_bonus',
-    'us manager bonus':         'us_manager_bonus',
-    'manager bonus':            'us_manager_bonus',
-    // Callback
-    'callback':                 'callback',
-    'callback team':            'callback',
-    // QC
-    'qc':                       'qc',
-    'quality control':          'qc',
-    // Discovery
-    'discovery':                'discovery',
-    // HR
-    'hr':                       'hr',
-    'human resources':          'hr',
-    // Sales Assistant
-    'sales assistant':          'sales_assistant',
-    'sales':                    'sales_assistant',
-    // SmartStaff
-    'smart staff':              'smart_staff',
-    'smartstaff':               'smart_staff',
-    // Hogan Smith Law
-    'hogan smith law':          'hogan_smith_law',
-    'hogan':                    'hogan_smith_law',
-    'hsl':                      'hogan_smith_law',
-    // Social Media
-    'smm':                      'smm',
-    'smm freelancer':           'smm',
-    'social media':             'smm',
-    'social media team':        'smm',
-    // PM Team
-    'pm team':                  'pm_team',
-    'pm':                       'pm_team',
-    'project management':       'pm_team',
-    'project management team':  'pm_team',
-    // Client VA
-    'client va':                'client_va',
-    'client - va':              'client_va',
-    'client-va':                'client_va',
-    // Site Building
-    'site building':            'site_building',
-  };
-  return map[s] ?? null;
-}
-
 const steps = [
   { id: 1, label: 'Upload CSV', icon: Upload, description: 'Hubstaff weekly report → public.hubstaff_hours' },
   { id: 2, label: 'Initial Calculation', icon: DollarSign, description: 'Hubstaff hours × employee_hourly_rates → Initial Pay' },
@@ -950,6 +897,10 @@ export default function PayrollWizard() {
   const [otDeptEnabled, setOtDeptEnabled] = useState<Record<string, boolean>>(
     Object.fromEntries(DEPARTMENTS.map(d => [`ot_dept_${d.key}`, true])),
   );
+
+  const pabPeriodSettings = usePabPeriodSettings();
+
+  const [approvedDisputeDates, setApprovedDisputeDates] = useState<Map<string, Set<string>>>(new Map());
 
   const fileInputWeeklyRef = useRef<HTMLInputElement>(null);
 
@@ -1233,8 +1184,20 @@ export default function PayrollWizard() {
     [hourlyRateRows],
   );
 
-  /** Inferred PAB month + computed date range for display. */
+  /** Inferred PAB month + computed date range for display (overridden by System Settings when custom PAB period is on). */
   const pabMonthRange = useMemo(() => {
+    const manual = pabPeriodSettings.validManualRange;
+    if (manual) {
+      const { start, end } = manual;
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      return {
+        year: start.getFullYear(),
+        month: start.getMonth(),
+        start,
+        end,
+        monthName: monthNames[start.getMonth()] ?? '',
+      };
+    }
     const cols = hubstaffColsForPab;
     if (!cols?.length) return null;
     // Prefer the LATEST month present so an in-progress current month isn't masked
@@ -1245,7 +1208,7 @@ export default function PayrollWizard() {
     const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
-  }, [hubstaffColsForPab]);
+  }, [hubstaffColsForPab, pabPeriodSettings.validManualRange]);
 
   /** One group per calendar weekday — dedupes ISO + Hubstaff labels for the same day across ALL CSVs, filtered to PAB month boundaries. */
   const weekdayColumnGroups = useMemo(() => {
@@ -1288,6 +1251,33 @@ export default function PayrollWizard() {
     );
   }, [hubstaffRowsForPab, hubstaffColsForPab, weekdayColumnGroups]);
 
+  useEffect(() => {
+    if (!pabMonthRange) return;
+    const s = pabMonthRange.start;
+    const e = pabMonthRange.end;
+    const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+    const dayAfterEnd = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1);
+    const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
+    fetch(`/api/pab-disputes?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then((json: { rows: { work_email: string; dispute_date: string }[] }) => {
+        const map = new Map<string, Set<string>>();
+        for (const row of json.rows ?? []) {
+          const em = (row.work_email ?? '').trim().toLowerCase();
+          if (!em) continue;
+          if (!map.has(em)) map.set(em, new Set());
+          const set = map.get(em)!;
+          set.add(row.dispute_date);
+          const next = new Date(row.dispute_date + 'T00:00:00');
+          next.setDate(next.getDate() + 1);
+          const nextIso = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+          set.add(nextIso);
+        }
+        setApprovedDisputeDates(map);
+      })
+      .catch(() => setApprovedDisputeDates(new Map()));
+  }, [pabMonthRange]);
+
   /**
    * Computes which employees qualify for Perfect Attendance. Requires a full month of daily
    * columns (merged uploads) covering every Mon–Fri in the PAB range, each ≥ 7 hours.
@@ -1299,50 +1289,83 @@ export default function PayrollWizard() {
     if (!rows || rows.length === 0) return new Set();
     if (weekdayColumnGroups.length === 0) return new Set();
 
+    const resolveDeptKey = (workEmail: string): string | null => {
+      const assigned = employeeDepts[workEmail];
+      if (assigned) return assigned;
+      const em = normEmail(workEmail);
+      for (const e of masterEmployees) {
+        if (normEmail(e.work_email ?? null) === em || normEmail(e.personal_email ?? null) === em) {
+          return normalizeDeptToKey(e.department);
+        }
+      }
+      return null;
+    };
+
     const eligible = new Set<string>();
     for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
 
+      if (!isDeptInPabScope(resolveDeptKey(email), pabPeriodSettings.scopeDepartmentKeys)) continue;
+
       let perfect = true;
+      const forgivenDates = approvedDisputeDates.get(email);
       for (const group of weekdayColumnGroups) {
-        if (maxSecondsAcrossWeekdayGroup(row, group) < 7 * 3600) {
-          perfect = false;
-          break;
+        const seconds = maxSecondsAcrossWeekdayGroup(row, group);
+        if (seconds < 7 * 3600) {
+          const groupDate = isoDateFromColumnGroup(group);
+          const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600);
+          if (!forgiven) {
+            perfect = false;
+            break;
+          }
         }
       }
       if (perfect) eligible.add(email);
     }
     return eligible;
-  }, [hubstaffRowsForPab, dailyDataMissing, pabMonthRange, pabMonthColumnCoverageComplete, weekdayColumnGroups]);
+  }, [
+    hubstaffRowsForPab,
+    dailyDataMissing,
+    pabMonthRange,
+    pabMonthColumnCoverageComplete,
+    weekdayColumnGroups,
+    employeeDepts,
+    masterEmployees,
+    pabPeriodSettings.scopeDepartmentKeys,
+    approvedDisputeDates,
+  ]);
 
   /**
    * Per-employee weekday breakdown for the PAB period (merged month). Used in the PA cell.
    */
   const employeeWeekdayHours = useMemo<
-    Map<string, { col: string; seconds: number; passes: boolean }[]>
+    Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean }[]>
   >(() => {
     const rows = hubstaffRowsForPab;
     if (!rows || rows.length === 0) return new Map();
     if (weekdayColumnGroups.length === 0) return new Map();
 
-    const map = new Map<string, { col: string; seconds: number; passes: boolean }[]>();
+    const map = new Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean }[]>();
     for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
+      const forgivenDates = approvedDisputeDates.get(email);
       map.set(
         email,
         weekdayColumnGroups.map(group => {
           const col = pickPreferredHubstaffColumn(group);
           const seconds = maxSecondsAcrossWeekdayGroup(row, group);
-          return { col, seconds, passes: seconds >= 7 * 3600 };
+          const groupDate = isoDateFromColumnGroup(group);
+          const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600 && seconds < 7 * 3600);
+          return { col, seconds, passes: seconds >= 7 * 3600 || forgiven, forgivenByDispute: forgiven };
         }),
       );
     }
     return map;
-  }, [hubstaffRowsForPab, weekdayColumnGroups]);
+  }, [hubstaffRowsForPab, weekdayColumnGroups, approvedDisputeDates]);
 
   /**
    * Auto-apply / remove perfect_attendance toggle whenever eligibility is
@@ -1657,11 +1680,14 @@ export default function PayrollWizard() {
       : null;
 
     const isFinalPabWeek = (() => {
-      if (!weekEndDate || !weekPabRange) return false;
+      if (!weekEndDate) return false;
+      const manualEnd = pabPeriodSettings.validManualRange?.end;
+      const periodEnd = manualEnd ?? weekPabRange?.end;
+      if (!periodEnd) return false;
       return weekEndDate.getTime() >= new Date(
-        weekPabRange.end.getFullYear(),
-        weekPabRange.end.getMonth(),
-        weekPabRange.end.getDate(),
+        periodEnd.getFullYear(),
+        periodEnd.getMonth(),
+        periodEnd.getDate(),
       ).getTime();
     })();
     /**
@@ -1786,6 +1812,7 @@ export default function PayrollWizard() {
     pabMonthRange,
     calcSourceFile,
     hubstaffColsForPab,
+    pabPeriodSettings.validManualRange,
   ]);
 
   const filteredCalcResults = useMemo(() => {
@@ -3979,7 +4006,7 @@ export default function PayrollWizard() {
                                       <div className="flex flex-col items-center gap-0.5">
                                         {weekdayBreakdown && weekdayBreakdown.length > 0 ? (
                                           <div className="flex flex-wrap justify-center gap-px">
-                                            {weekdayBreakdown.map(({ col, seconds, passes }) => {
+                                            {weekdayBreakdown.map(({ col, seconds, passes, forgivenByDispute }) => {
                                               const colDate = parseColDate(col);
                                               const dateStr = colDate
                                                 ? `${colDate.getMonth() + 1}/${colDate.getDate()}`
@@ -3987,15 +4014,17 @@ export default function PayrollWizard() {
                                               return (
                                                 <span
                                                   key={col}
-                                                  title={`${dayLabel(col)}${dateStr ? ` ${dateStr}` : ''}: ${formatSeconds(seconds)} logged${passes ? ' ✓' : ' — needs 7 h'}`}
+                                                  title={`${dayLabel(col)}${dateStr ? ` ${dateStr}` : ''}: ${formatSeconds(seconds)} logged${forgivenByDispute ? ' ★ forgiven by dispute' : passes ? ' ✓' : ' — needs 7 h'}`}
                                                   className={cn(
                                                     'flex h-3.5 cursor-default items-center justify-center rounded-sm px-0.5 text-[7px] font-bold leading-none select-none',
-                                                    passes
-                                                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
-                                                      : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+                                                    forgivenByDispute
+                                                      ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-400/50 dark:bg-amber-900/40 dark:text-amber-400'
+                                                      : passes
+                                                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+                                                        : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
                                                   )}
                                                 >
-                                                  {dayLetter(col)}
+                                                  {forgivenByDispute ? '★' : dayLetter(col)}
                                                 </span>
                                               );
                                             })}

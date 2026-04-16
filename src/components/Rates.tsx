@@ -55,6 +55,8 @@ type EmployeeRateProfile = {
   subtitle: string | null;
   department: string | null;
   organization: string | null;
+  workEmail: string | null;
+  personalEmail: string | null;
   fields: { key: string; value: unknown }[];
 };
 
@@ -324,6 +326,7 @@ export default function Rates() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [rateFilter, setRateFilter] = useState<"all" | "missing_any" | "missing_regular" | "missing_ot" | "missing_both">("all");
   const [page, setPage] = useState(1);
   const [profileOpen, setProfileOpen] = useState(false);
   const [activeProfile, setActiveProfile] = useState<EmployeeRateProfile | null>(null);
@@ -419,21 +422,29 @@ export default function Rates() {
   const [isSuspending, setIsSuspending] = useState<string | null>(null);
 
   function extractEmailsFromProfile(p: EmployeeRateProfile): { workEmail: string | null; personalEmail: string | null } {
-    const m = buildNormFieldMap(p.fields);
-    let workEmail = pickFromMap(m, ["Work Email", "work_email", "Work_Email"]);
-    let personalEmail = pickFromMap(m, ["Personal Email", "personal_email", "Personal_Email"]);
-    // Fallback: id is "e:<email>"
-    if (workEmail === "—" && p.id.startsWith("e:")) workEmail = p.id.slice(2);
-    // Fallback: subtitle
-    if (workEmail === "—" && p.subtitle) {
-      const parts = p.subtitle.split("·").map((s) => s.trim());
-      if (parts[0]) workEmail = parts[0];
-      if (parts[1]) personalEmail = parts[1];
+    // Primary: explicit fields lifted during profile finalize.
+    let workEmail: string | null = p.workEmail ?? null;
+    let personalEmail: string | null = p.personalEmail ?? null;
+
+    // Fallbacks for older data paths that may still carry emails inside `fields`.
+    if (!workEmail || !personalEmail) {
+      const m = buildNormFieldMap(p.fields);
+      if (!workEmail) {
+        const v = pickFromMap(m, ["Work Email", "work_email", "Work_Email"]);
+        if (v && v !== "—") workEmail = v;
+      }
+      if (!personalEmail) {
+        const v = pickFromMap(m, ["Personal Email", "personal_email", "Personal_Email"]);
+        if (v && v !== "—") personalEmail = v;
+      }
     }
-    return {
-      workEmail: workEmail !== "—" ? workEmail : null,
-      personalEmail: personalEmail !== "—" ? personalEmail : null,
-    };
+
+    // Fallback: id is "e:<email>"
+    if (!workEmail && p.id.startsWith("e:")) workEmail = p.id.slice(2);
+    // Fallback: subtitle carries the primary email (work preferred).
+    if (!workEmail && p.subtitle) workEmail = p.subtitle;
+
+    return { workEmail, personalEmail };
   }
 
   async function handleDeleteEmployee() {
@@ -555,9 +566,15 @@ export default function Rates() {
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return profiles;
     return profiles.filter((p) => {
       const row = tableRowFromProfile(p, employeeIdMap);
+      const missingRegular = row.regularRate === "—";
+      const missingOt = row.otRate === "—";
+      if (rateFilter === "missing_regular" && !missingRegular) return false;
+      if (rateFilter === "missing_ot" && !missingOt) return false;
+      if (rateFilter === "missing_both" && !(missingRegular && missingOt)) return false;
+      if (rateFilter === "missing_any" && !(missingRegular || missingOt)) return false;
+      if (!q) return true;
       const blob = [
         row.employeeId ?? "",
         p.displayName,
@@ -574,14 +591,14 @@ export default function Rates() {
         .toLowerCase();
       return blob.includes(q);
     });
-  }, [profiles, searchQuery, employeeIdMap]);
+  }, [profiles, searchQuery, rateFilter, employeeIdMap]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery]);
+  }, [searchQuery, rateFilter]);
 
   useEffect(() => {
     setPage((p) => Math.min(p, totalPages));
@@ -807,20 +824,40 @@ export default function Rates() {
           </CardTitle>
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden pt-0">
-          <div className="max-w-md shrink-0 space-y-1.5">
-            <Label htmlFor="rates-search" className="text-xs text-zinc-600 dark:text-zinc-500">
-              Search
-            </Label>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
-              <Input
-                id="rates-search"
-                placeholder="Name, email, rates…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end">
+            <div className="max-w-md flex-1 space-y-1.5">
+              <Label htmlFor="rates-search" className="text-xs text-zinc-600 dark:text-zinc-500">
+                Search
+              </Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
+                <Input
+                  id="rates-search"
+                  placeholder="Name, email, rates…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  disabled={loading || !!error}
+                  className="h-9 border-zinc-200 bg-white pl-9 text-zinc-900 placeholder:text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600"
+                />
+              </div>
+            </div>
+            <div className="w-full space-y-1.5 sm:w-56">
+              <Label htmlFor="rates-filter" className="text-xs text-zinc-600 dark:text-zinc-500">
+                Rate filter
+              </Label>
+              <select
+                id="rates-filter"
+                value={rateFilter}
+                onChange={(e) => setRateFilter(e.target.value as typeof rateFilter)}
                 disabled={loading || !!error}
-                className="h-9 border-zinc-200 bg-white pl-9 text-zinc-900 placeholder:text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600"
-              />
+                className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200"
+              >
+                <option value="all">All employees</option>
+                <option value="missing_any">Missing any rate</option>
+                <option value="missing_regular">Missing Regular Rate</option>
+                <option value="missing_ot">Missing OT Rate</option>
+                <option value="missing_both">Missing both rates</option>
+              </select>
             </div>
           </div>
 
@@ -901,6 +938,9 @@ export default function Rates() {
                         Regular Rate
                       </TableHead>
                       <TableHead className="text-right text-zinc-600 dark:text-zinc-400">OT Rate</TableHead>
+                      <TableHead className="min-w-[8rem] text-zinc-600 dark:text-zinc-400">
+                        Status
+                      </TableHead>
                       <TableHead className="w-[160px] text-right text-zinc-600 dark:text-zinc-400">
                         Action
                       </TableHead>
@@ -977,6 +1017,41 @@ export default function Rates() {
                           </TableCell>
                           <TableCell className="text-right font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
                             {row.otRate}
+                          </TableCell>
+                          <TableCell className="align-top">
+                            {(() => {
+                              const isMasterOnly = p.id.startsWith("master:");
+                              const ratesBlank =
+                                !isMasterOnly &&
+                                (row.regularRate === "—" || row.otRate === "—");
+                              if (!isMasterOnly && !ratesBlank) {
+                                return (
+                                  <span className="inline-flex w-fit items-center rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                    Complete
+                                  </span>
+                                );
+                              }
+                              return (
+                                <div className="flex flex-col gap-0.5">
+                                  {isMasterOnly && (
+                                    <span
+                                      title="No row in employee_hourly_rates — profile built from global_master_list only."
+                                      className="inline-flex w-fit items-center rounded border border-rose-300 bg-rose-100 px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide text-rose-700 dark:border-rose-700/60 dark:bg-rose-950/50 dark:text-rose-400"
+                                    >
+                                      Master only
+                                    </span>
+                                  )}
+                                  {ratesBlank && (
+                                    <span
+                                      title="Rates row exists but Regular Rate and/or OT Rate are blank."
+                                      className="inline-flex w-fit items-center rounded border border-yellow-300 bg-yellow-100 px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide text-yellow-800 dark:border-yellow-700/60 dark:bg-yellow-950/50 dark:text-yellow-300"
+                                    >
+                                      Rates blank
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1.5">

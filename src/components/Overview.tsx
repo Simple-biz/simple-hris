@@ -43,6 +43,8 @@ import {
   parseColDate,
   groupDateColumnsByCalendarDay,
 } from '@/lib/hubstaff/calendar-column-dedupe';
+import { fetchPabPeriodSettings, isDeptInPabScope, isValidManualPabRange } from '@/lib/pab-period-settings';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 
 const PAGE_SIZE = 5;
 
@@ -371,20 +373,45 @@ export default function Overview() {
         if (cancelled) return;
 
         const cols = [...allCols];
-        const pabMonth = inferPabMonthFromColumns(cols);
-        if (!pabMonth) {
-          setPabMetrics({ loading: false, totalEmployees: rowsByEmail.size, eligible: 0, notEligible: rowsByEmail.size, monthLabel: null });
-          return;
+        const pabCfg = await fetchPabPeriodSettings();
+
+        const emailToDeptKey = new Map<string, string | null>();
+        for (const e of employees) {
+          const dk = normalizeDeptToKey(e.department);
+          const we = normEmail(e.work_email ?? null);
+          const pe = normEmail(e.personal_email ?? null);
+          if (we) emailToDeptKey.set(we, dk);
+          if (pe) emailToDeptKey.set(pe, dk);
         }
 
-        const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
-        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const monthLabel = `${monthNames[pabMonth.month]} ${pabMonth.year}`;
+        let start: Date;
+        let end: Date;
+        let monthLabel: string;
+
+        if (isValidManualPabRange(pabCfg)) {
+          start = pabCfg.start;
+          end = pabCfg.end;
+          monthLabel = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+        } else {
+          const pabMonth = inferPabMonthFromColumns(cols);
+          if (!pabMonth) {
+            setPabMetrics({ loading: false, totalEmployees: rowsByEmail.size, eligible: 0, notEligible: rowsByEmail.size, monthLabel: null });
+            return;
+          }
+          const r = getPabMonthRange(pabMonth.year, pabMonth.month);
+          start = r.start;
+          end = r.end;
+          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          monthLabel = `${monthNames[pabMonth.month]} ${pabMonth.year}`;
+        }
 
         let eligible = 0;
         let notEligible = 0;
+        let evaluated = 0;
 
-        for (const [, mergedRow] of rowsByEmail) {
+        for (const [email, mergedRow] of rowsByEmail) {
+          if (!isDeptInPabScope(emailToDeptKey.get(email) ?? null, pabCfg.scopeDepartmentKeys)) continue;
+          evaluated++;
           // Build date → seconds lookup
           const hoursByDateKey = new Map<string, number>();
           const isDateCol = (c: string): boolean => parseColDate(c) !== null;
@@ -418,14 +445,20 @@ export default function Overview() {
         }
 
         if (!cancelled) {
-          setPabMetrics({ loading: false, totalEmployees: rowsByEmail.size, eligible, notEligible, monthLabel });
+          setPabMetrics({
+            loading: false,
+            totalEmployees: evaluated,
+            eligible,
+            notEligible,
+            monthLabel,
+          });
         }
       } catch {
         if (!cancelled) setPabMetrics({ loading: false, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null });
       }
     })();
     return () => { cancelled = true; };
-  }, [sourceFiles]);
+  }, [sourceFiles, employees]);
 
   /** Master list rows plus Hubstaff-only workers (same payroll scope as stats). */
   const mergedEmployees = useMemo((): OverviewEmployeeRow[] => {

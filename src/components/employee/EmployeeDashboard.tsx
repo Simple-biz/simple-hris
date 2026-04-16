@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Clock,
   DollarSign,
@@ -46,6 +46,10 @@ import {
   columnsAreAllCanonical,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { PabCalendarDay } from '@/lib/hubstaff/calendar-column-dedupe';
+import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { isDeptInPabScope } from '@/lib/pab-period-settings';
+import DisputeDialog from '@/components/employee/DisputeDialog';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -266,7 +270,22 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   const [allTimeRegularSec, setAllTimeRegularSec] = useState(0);
   const [allTimeOtSec, setAllTimeOtSec] = useState(0);
 
+  const pabPeriodSettings = usePabPeriodSettings();
+  /** `undefined` = master list not loaded yet; `null` = no mappable department */
+  const [employeeDeptKey, setEmployeeDeptKey] = useState<string | null | undefined>(undefined);
+
   const email = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
+
+  const [myDisputes, setMyDisputes] = useState<import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow[]>([]);
+  const [disputeDialogOpen, setDisputeDialogOpen] = useState(false);
+  const [selectedDisputeDay, setSelectedDisputeDay] = useState<{ date: string; seconds: number } | null>(null);
+  const [selectedExistingDispute, setSelectedExistingDispute] = useState<import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow | null>(null);
+
+  const pabAppliesToEmployee = useMemo(() => {
+    if (pabPeriodSettings.scopeDepartmentKeys === null) return true;
+    if (employeeDeptKey === undefined) return true;
+    return isDeptInPabScope(employeeDeptKey ?? null, pabPeriodSettings.scopeDepartmentKeys);
+  }, [employeeDeptKey, pabPeriodSettings.scopeDepartmentKeys]);
 
   // Fetch the employee's master row once to get their start_date
   // (used to gate Tech Bonus on the 30-day-of-service requirement).
@@ -276,7 +295,12 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       try {
         const res = await fetch('/api/employees', { cache: 'no-store' });
         const json = (await res.json()) as {
-          employees?: { work_email?: string | null; personal_email?: string | null; start_date?: string | null }[];
+          employees?: {
+            work_email?: string | null;
+            personal_email?: string | null;
+            start_date?: string | null;
+            department?: string | null;
+          }[];
         };
         if (cancelled) return;
         const me = (json.employees ?? []).find((e) => {
@@ -292,6 +316,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           if (pe) aliases.add(pe);
         }
         setAliasEmails([...aliases]);
+        setEmployeeDeptKey(me?.department != null ? normalizeDeptToKey(String(me.department)) : null);
         if (!me?.start_date) {
           setEmployeeStartDate(null);
           return;
@@ -299,7 +324,10 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         const d = new Date(me.start_date);
         setEmployeeStartDate(isNaN(d.getTime()) ? null : d);
       } catch {
-        if (!cancelled) setEmployeeStartDate(null);
+        if (!cancelled) {
+          setEmployeeStartDate(null);
+          setEmployeeDeptKey(null);
+        }
       }
     })();
     return () => {
@@ -593,6 +621,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
    * Falls back to single-file dailyHours if merged data isn't available.
    */
   const pabDailyHours = useMemo<DayHours[]>(() => {
+    if (!pabAppliesToEmployee) return [];
     const useSelected = !!selectedFile && selectedFile !== '__all__';
     // Hours always come from merged data so every day in the PAB period fills.
     const pabRow = pabMergedRow ?? row;
@@ -600,14 +629,19 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     if (!pabRow) return [];
     const dateCols = pabCols.filter(isDateCol);
     let groups = groupDateColumnsByCalendarDay(dateCols, pabCols);
-    // PAB period: manual file selection → that file's inferred month;
-    // otherwise → PAB month containing the latest date in merged uploads.
-    const pabMonth = useSelected
-      ? (getLatestPabMonthFromColumns(pabCols) ?? inferPabMonthFromColumns(pabCols))
-      : (getLatestPabMonthFromColumns(pabCols) ?? getCurrentPabMonth());
-    if (pabMonth) {
-      const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
-      groups = filterColumnGroupsByPabRange(groups, pabCols, start, end);
+    const manualPab = pabPeriodSettings.validManualRange;
+    if (manualPab) {
+      groups = filterColumnGroupsByPabRange(groups, pabCols, manualPab.start, manualPab.end);
+    } else {
+      // PAB period: manual file selection → that file's inferred month;
+      // otherwise → PAB month containing the latest date in merged uploads.
+      const pabMonth = useSelected
+        ? (getLatestPabMonthFromColumns(pabCols) ?? inferPabMonthFromColumns(pabCols))
+        : (getLatestPabMonthFromColumns(pabCols) ?? getCurrentPabMonth());
+      if (pabMonth) {
+        const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
+        groups = filterColumnGroupsByPabRange(groups, pabCols, start, end);
+      }
     }
     return groups
       .map((group) => {
@@ -641,12 +675,25 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         if (da && db) return da.getTime() - db.getTime();
         return a.order - b.order;
       });
-  }, [pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect]);
+  }, [pabAppliesToEmployee, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange]);
 
   /** PAB month + date range for display.
    * Default: latest PAB period in merged CSV data (or today if none).
    * When user manually picks a CSV: use that file's inferred period. */
   const pabMonthRange = useMemo(() => {
+    if (!pabAppliesToEmployee) return null;
+    const manual = pabPeriodSettings.validManualRange;
+    if (manual) {
+      const { start, end } = manual;
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      return {
+        year: start.getFullYear(),
+        month: start.getMonth(),
+        start,
+        end,
+        monthName: monthNames[start.getMonth()] ?? '',
+      };
+    }
     const useSelected = !!selectedFile && selectedFile !== '__all__';
     // Selected file may have canonical day columns — resolve to ISO via filename
     // so we can derive a real date-based PAB month.
@@ -669,11 +716,33 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
-  }, [pabMergedColumns, columns, row, selectedFile, manualFileSelect]);
+  }, [pabAppliesToEmployee, pabMergedColumns, columns, row, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange]);
+
+  const fetchMyDisputes = useCallback(() => {
+    if (!pabMonthRange || !email) return;
+    const s = pabMonthRange.start;
+    const e = pabMonthRange.end;
+    const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+    const to = `${e.getFullYear()}-${String(e.getMonth() + 1).padStart(2, '0')}-${String(e.getDate()).padStart(2, '0')}`;
+    fetch(`/api/pab-disputes?email=${encodeURIComponent(email)}&from=${from}&to=${to}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((json: { rows: import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow[] }) => {
+        setMyDisputes(json.rows ?? []);
+      })
+      .catch(() => setMyDisputes([]));
+  }, [pabMonthRange, email]);
+
+  useEffect(() => { fetchMyDisputes(); }, [fetchMyDisputes]);
+
+  const disputesByDate = useMemo(() => {
+    const map = new Map<string, import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow>();
+    for (const d of myDisputes) map.set(d.dispute_date, d);
+    return map;
+  }, [myDisputes]);
 
   /** PAB calendar grid: one row per Mon–Fri work week in the PAB range. */
   const pabCalendar = useMemo<PabCalendarDay[][] | null>(() => {
-    if (!pabMonthRange) return null;
+    if (!pabAppliesToEmployee || !pabMonthRange) return null;
     const useSelected = !!selectedFile && selectedFile !== '__all__';
     // Always use merged data for hours lookup so every week in the derived
     // PAB period is populated, regardless of which file drives the period.
@@ -736,7 +805,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       return weekStart.getTime() <= cutoff.getTime();
     });
     return trimmed.length > 0 ? trimmed : weeks.slice(0, 1);
-  }, [pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect]);
+  }, [pabAppliesToEmployee, pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect]);
 
   /** PAB: every expected weekday in the PAB period must be ≥ 7 h. */
   const pabWeekdayHours = pabDailyHours.filter((d) => d.weekday);
@@ -772,8 +841,9 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     !isPabPeriodInProgress && allPabDays.length > 0 && allPabDays.every((d) => d.passes);
 
   const perfectAttendanceBonusStatus = useMemo<
-    'eligible' | 'not_eligible' | 'pending' | 'unknown'
+    'eligible' | 'not_eligible' | 'pending' | 'unknown' | 'out_of_scope'
   >(() => {
+    if (!pabAppliesToEmployee) return 'out_of_scope';
     if (!row && !pabMergedRow) return 'unknown';
     const days = pabCalendar?.flat();
     if (!days || days.length === 0) return 'unknown';
@@ -782,7 +852,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     if (pabViolations.length > 0) return 'not_eligible';
     if (isPabPeriodInProgress) return 'pending';
     return days.every((d) => d.passes) ? 'eligible' : 'not_eligible';
-  }, [row, pabMergedRow, pabCalendar, isPabPeriodInProgress, pabViolations]);
+  }, [pabAppliesToEmployee, row, pabMergedRow, pabCalendar, isPabPeriodInProgress, pabViolations]);
 
   /** Number of PAB-eligible months (currently 1 month evaluated). Pending periods don't count. */
   const pabEligibleCount = isPAEligible ? 1 : 0;
@@ -809,13 +879,22 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   /** PAB month containing this file's Monday — used to gate weekly bonuses. */
   const weekPabRange = useMemo(() => {
+    if (!pabAppliesToEmployee) return null;
+    if (pabPeriodSettings.validManualRange) {
+      const { start, end } = pabPeriodSettings.validManualRange;
+      return {
+        pabMonth: { year: start.getFullYear(), month: start.getMonth() },
+        start,
+        end,
+      };
+    }
     if (!selectedFileWeek) return null;
     const ws = selectedFileWeek.start;
     const dow = ws.getDay();
     const daysBackToMon = dow === 0 ? 6 : dow - 1;
     const mon = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() - daysBackToMon);
     return { pabMonth: { year: mon.getFullYear(), month: mon.getMonth() }, ...getPabMonthRange(mon.getFullYear(), mon.getMonth()) };
-  }, [selectedFileWeek]);
+  }, [pabAppliesToEmployee, selectedFileWeek, pabPeriodSettings.validManualRange]);
 
   /** When viewing a specific weekly file, PAB attaches only to the final week of that week's PAB month. */
   const isFinalPabWeekForSelected = useMemo(() => {
@@ -840,11 +919,12 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   const pabBonusAmount = useMemo(() => {
     if (!hasRates) return 0;
+    if (!pabAppliesToEmployee) return 0;
     if (!isPAEligible) return 0;
     if (isAllTime) return pabEligibleCount * PERFECT_ATTENDANCE_BONUS_PHP;
     if (selectedFileWeek) return isFinalPabWeekForSelected ? PERFECT_ATTENDANCE_BONUS_PHP : 0;
     return 0;
-  }, [hasRates, isPAEligible, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
+  }, [hasRates, pabAppliesToEmployee, isPAEligible, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
 
   /**
    * Tech Bonus rules:
@@ -1090,6 +1170,16 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               PAB in progress{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
             </Badge>
           )}
+          {row && perfectAttendanceBonusStatus === 'out_of_scope' && (
+            <Badge
+              variant="outline"
+              className="gap-1 border-zinc-400/40 bg-zinc-200/40 px-3 py-1 text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300"
+              title="Your department is not selected for PAB in System Settings."
+            >
+              <Info className="h-3 w-3" />
+              PAB not in scope
+            </Badge>
+          )}
           {row && perfectAttendanceBonusStatus === 'unknown' && (
             <Badge
               variant="outline"
@@ -1127,6 +1217,19 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           <CardContent className="flex items-center gap-3 py-3">
             <AlertCircle className="h-5 w-5 shrink-0 text-red-500" />
             <p className="text-sm text-red-800 dark:text-red-300">{dataError}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {row && employeeDeptKey !== undefined && !pabAppliesToEmployee && (
+        <Card className="shrink-0 border-amber-200/90 bg-amber-50/70 dark:border-amber-900/40 dark:bg-amber-950/25">
+          <CardContent className="flex items-start gap-3 py-3">
+            <Info className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <p className="text-sm leading-relaxed text-amber-900 dark:text-amber-100">
+              Perfect Attendance (PAB) is not enabled for your department in{' '}
+              <span className="font-semibold">System Settings → Perfect Attendance (PAB)</span>. The PAB calendar and monthly PAB estimate
+              stay hidden until an administrator includes your department under <span className="font-medium">Departments in scope</span>.
+            </p>
           </CardContent>
         </Card>
       )}
@@ -1170,7 +1273,9 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                           ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                           : perfectAttendanceBonusStatus === 'pending'
                             ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
-                            : 'bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+                            : perfectAttendanceBonusStatus === 'out_of_scope'
+                              ? 'bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+                              : 'bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
                     }`}
                   >
                     {perfectAttendanceBonusStatus === 'eligible' ? (
@@ -1228,6 +1333,11 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                         This PAB period is still in progress — eligibility and bonus will be finalized once all Mon–Fri days have elapsed. Not yet included in the pay summary.
                       </p>
                     )}
+                    {perfectAttendanceBonusStatus === 'out_of_scope' && (
+                      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                        Your department is not selected under System Settings → Perfect Attendance (PAB) → Departments in scope.
+                      </p>
+                    )}
                     {perfectAttendanceBonusStatus === 'unknown' && (
                       <p className="text-xs text-zinc-600 dark:text-zinc-400">
                         Can&apos;t evaluate monthly PAB: need Mon–Fri daily hours in the merged Hubstaff uploads. If this
@@ -1245,7 +1355,9 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                         ? 'shrink-0 border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-300'
                         : perfectAttendanceBonusStatus === 'pending'
                           ? 'shrink-0 border-indigo-500/40 bg-indigo-500/10 text-indigo-800 dark:text-indigo-300'
-                          : 'shrink-0 border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
+                          : perfectAttendanceBonusStatus === 'out_of_scope'
+                            ? 'shrink-0 border-zinc-400/40 bg-zinc-200/40 text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300'
+                            : 'shrink-0 border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
                   }
                 >
                   {perfectAttendanceBonusStatus === 'eligible'
@@ -1254,7 +1366,9 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                       ? 'Not eligible'
                       : perfectAttendanceBonusStatus === 'pending'
                         ? 'In progress'
-                        : 'Unknown'}
+                        : perfectAttendanceBonusStatus === 'out_of_scope'
+                          ? 'Not in scope'
+                          : 'Unknown'}
                 </Badge>
               </div>
 
@@ -1680,34 +1794,57 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                               );
                             }
                             const hours = day.seconds / 3600;
+                            const dayIso = `${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, '0')}-${String(day.date.getDate()).padStart(2, '0')}`;
+                            const dispute = disputesByDate.get(dayIso);
+                            const canDispute = day.hasData && !day.passes && !dispute;
+                            const cellClickable = canDispute || !!dispute;
+
+                            let cellBorder = day.passes
+                              ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30'
+                              : day.hasData
+                                ? 'border-red-300 bg-red-50 dark:border-red-800/60 dark:bg-red-950/30'
+                                : 'border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900/40';
+                            if (dispute?.status === 'pending') cellBorder = 'border-amber-400 bg-amber-50 dark:border-amber-600/60 dark:bg-amber-950/30';
+                            else if (dispute?.status === 'approved') cellBorder = 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400/40 dark:border-emerald-600/60 dark:bg-emerald-950/30';
+                            else if (dispute?.status === 'denied') cellBorder = 'border-red-400 bg-red-50 ring-1 ring-red-400/40 dark:border-red-600/60 dark:bg-red-950/30';
+
                             return (
                               <div
                                 key={di}
-                                className={`flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-300 ${
-                                  day.passes
-                                    ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30'
-                                    : day.hasData
-                                      ? 'border-red-300 bg-red-50 dark:border-red-800/60 dark:bg-red-950/30'
-                                      : 'border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900/40'
-                                }`}
-                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${day.passes ? ' ✓' : day.hasData ? ' ✗ needs 7h' : ' — no data'}`}
+                                className={`flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-300 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
+                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
                                 style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
+                                onClick={cellClickable ? () => {
+                                  setSelectedDisputeDay({ date: dayIso, seconds: day.seconds });
+                                  setSelectedExistingDispute(dispute ?? null);
+                                  setDisputeDialogOpen(true);
+                                } : undefined}
                               >
                                 <span className="text-[7px] leading-none text-zinc-400 dark:text-zinc-500">
                                   {day.dateStr}
                                 </span>
                                 <span
                                   className={`font-mono text-[10px] font-bold leading-none ${
-                                    day.passes
-                                      ? 'text-emerald-700 dark:text-emerald-400'
-                                      : day.hasData
-                                        ? 'text-red-600 dark:text-red-400'
-                                        : 'text-zinc-400 dark:text-zinc-500'
+                                    dispute?.status === 'pending'
+                                      ? 'text-amber-700 dark:text-amber-400'
+                                      : dispute?.status === 'approved'
+                                        ? 'text-emerald-700 dark:text-emerald-400'
+                                        : day.passes
+                                          ? 'text-emerald-700 dark:text-emerald-400'
+                                          : day.hasData
+                                            ? 'text-red-600 dark:text-red-400'
+                                            : 'text-zinc-400 dark:text-zinc-500'
                                   }`}
                                 >
                                   {day.hasData ? `${hours.toFixed(1)}` : '—'}
                                 </span>
-                                {day.passes ? (
+                                {dispute?.status === 'pending' ? (
+                                  <Clock className="h-2 w-2 text-amber-500" />
+                                ) : dispute?.status === 'approved' ? (
+                                  <CheckCircle2 className="h-2 w-2 text-emerald-500" />
+                                ) : dispute?.status === 'denied' ? (
+                                  <XCircle className="h-2 w-2 text-red-500" />
+                                ) : day.passes ? (
                                   <CheckCircle2 className="h-2 w-2 text-emerald-500" />
                                 ) : day.hasData ? (
                                   <XCircle className="h-2 w-2 text-red-400" />
@@ -1728,6 +1865,12 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                       </span>
                       <span className="flex items-center gap-1">
                         <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-300 dark:bg-zinc-600 sm:h-2 sm:w-2" /> N/A
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 sm:h-2 sm:w-2" /> Pending
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 ring-1 ring-emerald-400 sm:h-2 sm:w-2" /> Forgiven
                       </span>
                       <span className="ml-auto font-medium">
                         {isPAEligible
@@ -1759,19 +1902,6 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               </CardHeader>
               <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-clip overscroll-contain pr-2 [-webkit-overflow-scrolling:touch]">
                 <div className="min-w-0 space-y-2.5 sm:space-y-3">
-                  <div className="flex min-w-0 items-start justify-between gap-2">
-                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Regular Rate</span>
-                    <span className="max-w-[55%] break-words text-right font-mono text-xs font-medium text-zinc-900 sm:text-sm dark:text-white">
-                      {regularRate != null ? `${formatPHP(regularRate)}/hr` : '—'}
-                    </span>
-                  </div>
-                  <div className="flex min-w-0 items-start justify-between gap-2">
-                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">OT Rate</span>
-                    <span className="max-w-[55%] break-words text-right font-mono text-xs font-medium text-zinc-900 sm:text-sm dark:text-white">
-                      {otRate != null ? `${formatPHP(otRate)}/hr` : '—'}
-                    </span>
-                  </div>
-                  <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
                   <div className="flex min-w-0 items-start justify-between gap-2">
                     <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Regular Pay</span>
                     <span className="max-w-[58%] break-words text-right font-mono text-xs text-zinc-700 sm:text-sm dark:text-zinc-300">
@@ -1839,6 +1969,17 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             </Card>
           </div>
         </div>
+      )}
+      {selectedDisputeDay && (
+        <DisputeDialog
+          open={disputeDialogOpen}
+          onOpenChange={setDisputeDialogOpen}
+          employeeEmail={email}
+          disputeDate={selectedDisputeDay.date}
+          hoursWorked={selectedDisputeDay.seconds}
+          existingDispute={selectedExistingDispute}
+          onSubmitted={fetchMyDisputes}
+        />
       )}
     </div>
   );

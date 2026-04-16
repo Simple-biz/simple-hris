@@ -452,6 +452,56 @@ Toggled in Step 1. Marks the upload as the Mon–Sun cycle used by the Hogan Smi
 
 ---
 
+## PAB Day-Dispute System
+
+Employees can dispute individual failing PAB days (days where they logged < 7 hours) via the PAB calendar on the Employee Dashboard. A dispute requests that the day be re-evaluated under a reduced threshold instead of being counted as a miss.
+
+### Reason codes
+
+Each dispute requires a reason code selected from a predefined list:
+
+- Orphanage visit
+- Doctor/medical
+- Internet outage
+- Power outage
+- Family emergency
+- Other
+
+The list is admin-configurable via the `app_settings` key `pab_dispute_reason_codes`.
+
+### Approval flow
+
+1. Employee submits a dispute from the PAB calendar for a specific date.
+2. The dispute enters `pending` status.
+3. HR reviews disputes from the **Disputes tab** and either approves or denies each one.
+
+### PAB eligibility impact
+
+Only disputes with `approved` status affect PAB eligibility. `pending` and `denied` disputes have no effect on the calculation.
+
+When a dispute is approved, the passing threshold for that day drops from **7 hours to 4 hours** (14,400 seconds). This reduced threshold applies to both the `dispute_date` itself and `dispute_date + 1` calendar day (the next day), covering two consecutive days per approved dispute.
+
+### Withdraw and re-submit
+
+Employees can **withdraw** a dispute while it is still in `pending` status. Editing a dispute is not supported — the employee must withdraw the pending dispute and submit a new one.
+
+### Audit log
+
+The following actions are logged:
+
+| Action | Trigger |
+|---|---|
+| `pab_dispute.submitted` | Employee submits a new dispute |
+| `pab_dispute.approved` | HR approves a dispute |
+| `pab_dispute.denied` | HR denies a dispute |
+| `pab_dispute.withdrawn` | Employee withdraws a pending dispute |
+
+### Data model
+
+Disputes are stored in the `pab_day_disputes` table with a unique constraint on `(work_email, dispute_date)` — one dispute per employee per calendar day.
+
+---
+
 ## Master List Coverage
 
 Computed by `comparePayrollToMaster()` in Step 4. Reports:

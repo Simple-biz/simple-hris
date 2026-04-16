@@ -15,11 +15,20 @@ import {
   Activity,
   ClipboardList,
   ChevronRight,
+  ChevronDown,
+  Building2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
+import { getCurrentPabMonth, getPabMonthRange } from '@/lib/hubstaff/calendar-column-dedupe';
+import {
+  parseLocalDateFromIso,
+  parsePabScopeDepartmentKeys,
+  PAB_SCOPE_DEPARTMENT_KEYS_KEY,
+} from '@/lib/pab-period-settings';
 
 // ─── Current user (hardcoded until RBAC is implemented) ───────────────────────
 
@@ -28,7 +37,7 @@ const CURRENT_USER = { name: 'Fran M', role: 'Senior Admin' };
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
-type RightTab  = 'ot' | 'audit';
+type RightTab  = 'ot' | 'pab' | 'audit';
 
 // ─── Custom Toggle ────────────────────────────────────────────────────────────
 
@@ -90,12 +99,34 @@ const DEPARTMENTS = [
   { key: 'hogan_smith_law',  name: 'Hogan Smith Law' },
 ] as const;
 
+/**
+ * Departments whose employees can receive PAB in Payroll Wizard (matches wizard tabs).
+ * The manual/automatic PAB window filters Hubstaff dates for everyone in these groups — not per-department exclusions.
+ */
+const PAB_DEPARTMENTS: { key: string; name: string }[] = [
+  ...DEPARTMENTS,
+  { key: 'smm', name: 'Social Media' },
+  { key: 'pm_team', name: 'PM Team' },
+  { key: 'client_va', name: 'Client VA' },
+  { key: 'site_building', name: 'Site Building' },
+];
+
 // ─── Payroll Rules ────────────────────────────────────────────────────────────
 
-const RULES = [
-  { key: 'tech_bonus_enabled', label: 'Technology Bonus',  description: '₱1,850 per employee per cycle',  icon: Laptop,       color: 'violet',  defaultEnabled: true },
-  { key: 'pab_auto_compute',   label: 'PAB Auto-Compute',  description: 'Auto-evaluate attendance bonus', icon: CheckCircle2, color: 'emerald', defaultEnabled: true },
+/** Shown in the left column under Payroll Rules. */
+const RULES_GENERAL = [
+  { key: 'tech_bonus_enabled', label: 'Technology Bonus', description: '₱1,850 per employee per cycle', icon: Laptop, color: 'violet' as const, defaultEnabled: true },
 ] as const;
+
+/** Perfect Attendance — lives on the PAB tab (right panel). */
+const RULE_PAB_AUTO = {
+  key: 'pab_auto_compute',
+  label: 'PAB Auto-Compute',
+  description: 'Auto-evaluate attendance bonus from Hubstaff daily hours',
+  icon: CheckCircle2,
+  color: 'emerald' as const,
+  defaultEnabled: true,
+};
 
 const RULE_COLORS: Record<string, { activeBorder: string; activeBg: string }> = {
   violet:  { activeBorder: 'border-violet-200 dark:border-violet-800/50',   activeBg: 'bg-violet-50/60 dark:bg-violet-950/10' },
@@ -139,13 +170,15 @@ async function postAuditLog(entry: {
 
 // ─── Rule Row ─────────────────────────────────────────────────────────────────
 
+type RuleDef = (typeof RULES_GENERAL)[number] | typeof RULE_PAB_AUTO;
+
 function RuleRow({
   rule,
   enabled,
   saveState,
   onToggle,
 }: {
-  rule: (typeof RULES)[number];
+  rule: RuleDef;
   enabled: boolean;
   saveState: SaveState;
   onToggle: (key: string, val: boolean) => void;
@@ -239,14 +272,21 @@ function DeptOtRow({
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function SystemSettings() {
-  const [rules, setRules] = useState<Record<string, boolean>>(
-    Object.fromEntries(RULES.map((r) => [r.key, r.defaultEnabled])),
-  );
+  const [rules, setRules] = useState<Record<string, boolean>>(() => ({
+    ...Object.fromEntries(RULES_GENERAL.map((r) => [r.key, r.defaultEnabled])),
+    [RULE_PAB_AUTO.key]: RULE_PAB_AUTO.defaultEnabled,
+  }));
   const [deptOt, setDeptOt] = useState<Record<string, boolean>>(
     Object.fromEntries(DEPARTMENTS.map((d) => [`ot_dept_${d.key}`, true])),
   );
   const [globalOtSuspended, setGlobalOtSuspended] = useState(false);
   const [saveStates, setSaveStates] = useState<Record<string, SaveState>>({});
+  /** Custom PAB evaluation window (overrides month inferred from Hubstaff uploads). */
+  const [pabPeriodManual, setPabPeriodManual] = useState(false);
+  const [pabPeriodStart, setPabPeriodStart] = useState('');
+  const [pabPeriodEnd, setPabPeriodEnd] = useState('');
+  /** Checked department keys for PAB scope; empty array = no one. Missing server value = all departments (see load). */
+  const [pabScopeKeys, setPabScopeKeys] = useState<string[]>(() => PAB_DEPARTMENTS.map((d) => d.key));
 
   // ── Right panel tab ──
   const [rightTab, setRightTab] = useState<RightTab>('ot');
@@ -255,7 +295,7 @@ export default function SystemSettings() {
   useEffect(() => {
     const load = async () => {
       const ruleResults = await Promise.all(
-        RULES.map(async (r) => {
+        [...RULES_GENERAL, RULE_PAB_AUTO].map(async (r) => {
           const val = await fetchSetting(r.key).catch(() => null);
           return [r.key, val === null ? r.defaultEnabled : val === 'true'] as const;
         }),
@@ -273,6 +313,17 @@ export default function SystemSettings() {
         }),
       );
       setDeptOt(Object.fromEntries(deptResults));
+
+      const pm = await fetchSetting('pab_period_manual').catch(() => null);
+      const ps = await fetchSetting('pab_period_start').catch(() => null);
+      const pe = await fetchSetting('pab_period_end').catch(() => null);
+      setPabPeriodManual(pm === 'true');
+      setPabPeriodStart(ps && /^\d{4}-\d{2}-\d{2}$/.test(ps) ? ps : '');
+      setPabPeriodEnd(pe && /^\d{4}-\d{2}-\d{2}$/.test(pe) ? pe : '');
+
+      const sk = await fetchSetting(PAB_SCOPE_DEPARTMENT_KEYS_KEY).catch(() => null);
+      const parsedScope = parsePabScopeDepartmentKeys(sk);
+      setPabScopeKeys(parsedScope === null ? PAB_DEPARTMENTS.map((d) => d.key) : parsedScope);
     };
     load();
   }, []);
@@ -308,7 +359,7 @@ export default function SystemSettings() {
   }, []);
 
   const handleRuleToggle = useCallback((key: string, val: boolean) => {
-    const rule = RULES.find((r) => r.key === key);
+    const rule = [...RULES_GENERAL, RULE_PAB_AUTO].find((r) => r.key === key);
     persist(key, val, rule?.label ?? key, setRules, {
       action:      'settings.rule.toggle',
       resource_id: key,
@@ -338,6 +389,111 @@ export default function SystemSettings() {
     }
   }, []);
 
+  const handlePabPeriodManualToggle = useCallback(async (val: boolean) => {
+    setSaveStates((p) => ({ ...p, pab_period: 'saving' }));
+    try {
+      if (!val) {
+        await saveSetting('pab_period_manual', 'false');
+        setPabPeriodManual(false);
+        void postAuditLog({
+          action: 'settings.pab_period.manual',
+          resource: 'app_settings',
+          resource_id: 'pab_period_manual',
+          details: { manual: false },
+        });
+        toast.success('PAB period mode: automatic', { description: 'Using calendar month from Hubstaff data.' });
+        setSaveStates((p) => ({ ...p, pab_period: 'saved' }));
+        setTimeout(() => setSaveStates((p) => ({ ...p, pab_period: 'idle' })), 2000);
+        return;
+      }
+      let start = pabPeriodStart;
+      let end = pabPeriodEnd;
+      if (!start || !end) {
+        const m = getCurrentPabMonth();
+        const r = getPabMonthRange(m.year, m.month);
+        start = r.start.toLocaleDateString('en-CA');
+        end = r.end.toLocaleDateString('en-CA');
+        setPabPeriodStart(start);
+        setPabPeriodEnd(end);
+      }
+      const sd = parseLocalDateFromIso(start);
+      const ed = parseLocalDateFromIso(end);
+      if (!sd || !ed || sd.getTime() > ed.getTime()) {
+        toast.error('Set valid start and end dates first', { description: 'Or toggle on again to default to the current PAB month.' });
+        setSaveStates((p) => ({ ...p, pab_period: 'idle' }));
+        return;
+      }
+      await saveSetting('pab_period_manual', 'true');
+      await saveSetting('pab_period_start', start);
+      await saveSetting('pab_period_end', end);
+      setPabPeriodManual(true);
+      void postAuditLog({
+        action: 'settings.pab_period.manual',
+        resource: 'app_settings',
+        resource_id: 'pab_period_manual',
+        details: { manual: true, start, end },
+      });
+      toast.success('PAB period mode: custom', { description: `${start} → ${end}` });
+      setSaveStates((p) => ({ ...p, pab_period: 'saved' }));
+      setTimeout(() => setSaveStates((p) => ({ ...p, pab_period: 'idle' })), 2000);
+    } catch (e) {
+      setSaveStates((p) => ({ ...p, pab_period: 'error' }));
+      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      setTimeout(() => setSaveStates((p) => ({ ...p, pab_period: 'idle' })), 3000);
+    }
+  }, [pabPeriodStart, pabPeriodEnd]);
+
+  const savePabScopeKeys = useCallback(async (keys: string[]) => {
+    setPabScopeKeys(keys);
+    setSaveStates((p) => ({ ...p, pab_scope: 'saving' }));
+    try {
+      await saveSetting(PAB_SCOPE_DEPARTMENT_KEYS_KEY, JSON.stringify(keys));
+      void postAuditLog({
+        action: 'settings.pab_period.scope',
+        resource: 'app_settings',
+        resource_id: PAB_SCOPE_DEPARTMENT_KEYS_KEY,
+        details: { keys },
+      });
+      setSaveStates((p) => ({ ...p, pab_scope: 'saved' }));
+      toast.success('PAB department scope saved', {
+        description: keys.length === 0 ? 'No departments — PAB hidden for all employees.' : `${keys.length} department(s) in scope.`,
+      });
+      setTimeout(() => setSaveStates((p) => ({ ...p, pab_scope: 'idle' })), 2000);
+    } catch (e) {
+      setSaveStates((p) => ({ ...p, pab_scope: 'error' }));
+      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      setTimeout(() => setSaveStates((p) => ({ ...p, pab_scope: 'idle' })), 3000);
+    }
+  }, []);
+
+  const savePabPeriodDates = useCallback(async (start: string, end: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return;
+    const sd = parseLocalDateFromIso(start);
+    const ed = parseLocalDateFromIso(end);
+    if (!sd || !ed || sd.getTime() > ed.getTime()) {
+      toast.error('Invalid PAB period', { description: 'End date must be on or after start date.' });
+      return;
+    }
+    setSaveStates((p) => ({ ...p, pab_period: 'saving' }));
+    try {
+      await saveSetting('pab_period_start', start);
+      await saveSetting('pab_period_end', end);
+      void postAuditLog({
+        action: 'settings.pab_period.dates',
+        resource: 'app_settings',
+        resource_id: 'pab_period_range',
+        details: { start, end },
+      });
+      toast.success('PAB period dates saved', { description: `${start} → ${end}` });
+      setSaveStates((p) => ({ ...p, pab_period: 'saved' }));
+      setTimeout(() => setSaveStates((p) => ({ ...p, pab_period: 'idle' })), 2000);
+    } catch (e) {
+      setSaveStates((p) => ({ ...p, pab_period: 'error' }));
+      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      setTimeout(() => setSaveStates((p) => ({ ...p, pab_period: 'idle' })), 3000);
+    }
+  }, []);
+
   const handleDeptOt = useCallback((key: string, val: boolean) => {
     const dKey = key.replace('ot_dept_', '');
     const dept = DEPARTMENTS.find((d) => d.key === dKey);
@@ -348,7 +504,7 @@ export default function SystemSettings() {
     });
   }, [persist]);
 
-  const activeRules = Object.values(rules).filter(Boolean).length;
+  const activeRules = [...RULES_GENERAL, RULE_PAB_AUTO].filter((r) => rules[r.key]).length;
   const otOffCount  = DEPARTMENTS.filter((d) => deptOt[`ot_dept_${d.key}`] === false).length;
 
   return (
@@ -364,7 +520,7 @@ export default function SystemSettings() {
             </div>
             <div>
               <h1 className="text-base font-bold text-zinc-900 dark:text-white">System Settings</h1>
-              <p className="text-xs text-zinc-400 dark:text-zinc-500">Payroll rules, overtime controls & access</p>
+              <p className="text-xs text-zinc-400 dark:text-zinc-500">Payroll rules, overtime, perfect attendance & access</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -401,7 +557,7 @@ export default function SystemSettings() {
               <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300">Payroll Rules</span>
             </div>
             <div className="space-y-1.5">
-              {RULES.map((rule) => (
+              {RULES_GENERAL.map((rule) => (
                 <RuleRow
                   key={rule.key}
                   rule={rule}
@@ -410,6 +566,46 @@ export default function SystemSettings() {
                   onToggle={handleRuleToggle}
                 />
               ))}
+            </div>
+
+            <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Panels</p>
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => setRightTab('ot')}
+                  className={cn(
+                    'flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left transition-colors',
+                    rightTab === 'ot'
+                      ? 'border-red-200 bg-red-50/60 dark:border-red-900/40 dark:bg-red-950/20'
+                      : 'border-zinc-200 bg-zinc-50/60 hover:border-red-200 hover:bg-red-50/30 dark:border-zinc-700 dark:bg-zinc-800/20 dark:hover:border-red-900/30',
+                  )}
+                >
+                  <Clock className={cn('mt-0.5 h-3 w-3 flex-shrink-0', rightTab === 'ot' ? 'text-red-500' : 'text-zinc-400')} />
+                  <div className="min-w-0 flex-1">
+                    <p className={cn('text-[11px] font-medium', rightTab === 'ot' ? 'text-red-800 dark:text-red-300' : 'text-zinc-600 dark:text-zinc-400')}>Overtime Pay</p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-600">Per-department OT toggles</p>
+                  </div>
+                  <ChevronRight className={cn('mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-300 dark:text-zinc-600', rightTab === 'ot' && 'text-red-400')} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRightTab('pab')}
+                  className={cn(
+                    'flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left transition-colors',
+                    rightTab === 'pab'
+                      ? 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/50 dark:bg-emerald-950/20'
+                      : 'border-zinc-200 bg-zinc-50/60 hover:border-emerald-200 hover:bg-emerald-50/30 dark:border-zinc-700 dark:bg-zinc-800/20 dark:hover:border-emerald-800/40',
+                  )}
+                >
+                  <CheckCircle2 className={cn('mt-0.5 h-3 w-3 flex-shrink-0', rightTab === 'pab' ? 'text-emerald-600' : 'text-zinc-400')} />
+                  <div className="min-w-0 flex-1">
+                    <p className={cn('text-[11px] font-medium', rightTab === 'pab' ? 'text-emerald-800 dark:text-emerald-300' : 'text-zinc-600 dark:text-zinc-400')}>Perfect Attendance (PAB)</p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-600">Auto-compute and period window</p>
+                  </div>
+                  <ChevronRight className={cn('mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-300 dark:text-zinc-600', rightTab === 'pab' && 'text-emerald-500')} />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -543,6 +739,185 @@ export default function SystemSettings() {
                   <div className="flex items-center gap-1.5">
                     <span className="h-2 w-2 rounded-full bg-red-400" />
                     <span className="text-[10px] text-zinc-400">OT excluded (suspended)</span>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── Perfect Attendance (PAB) tab ── */}
+          {rightTab === 'pab' && (
+            <>
+              <div className="flex flex-shrink-0 items-center justify-between border-b border-zinc-100 px-5 py-3 dark:border-zinc-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 dark:bg-emerald-950/30">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-zinc-900 dark:text-white">Perfect Attendance Bonus (PAB)</p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                      Control automatic PA evaluation and the evaluation date range (Payroll Wizard and employee dashboard)
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-5 py-3">
+                <div className="mb-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Rules</p>
+                  <RuleRow
+                    rule={RULE_PAB_AUTO}
+                    enabled={rules[RULE_PAB_AUTO.key] ?? RULE_PAB_AUTO.defaultEnabled}
+                    saveState={saveStates[RULE_PAB_AUTO.key] ?? 'idle'}
+                    onToggle={handleRuleToggle}
+                  />
+                </div>
+
+                <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-700 dark:bg-zinc-900/40">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-zinc-900 dark:text-white">PAB period window</p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                        <span className="font-medium text-zinc-600 dark:text-zinc-300">Automatic</span> uses the PAB calendar month
+                        inferred from Hubstaff columns. <span className="font-medium text-zinc-600 dark:text-zinc-300">Custom</span>{' '}
+                        sets explicit start and end dates for the whole company (merged uploads are filtered to that range).
+                      </p>
+                    </div>
+                    <div className="flex flex-shrink-0 flex-col items-end gap-1">
+                      <div className="flex items-center gap-2">
+                        {saveStates['pab_period'] === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />}
+                        {saveStates['pab_period'] === 'saved' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+                        {saveStates['pab_period'] === 'error' && <AlertTriangle className="h-3.5 w-3.5 text-red-400" />}
+                        <Toggle
+                          checked={pabPeriodManual}
+                          onChange={handlePabPeriodManualToggle}
+                          disabled={saveStates['pab_period'] === 'saving'}
+                          colorOn="emerald"
+                        />
+                      </div>
+                      <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                        {pabPeriodManual ? 'Custom range' : 'Automatic'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {pabPeriodManual && (
+                    <div className="flex flex-wrap items-end gap-3 border-t border-zinc-200/80 pt-3 dark:border-zinc-700/80">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">Period start</span>
+                        <Input
+                          type="date"
+                          value={pabPeriodStart}
+                          onChange={(ev) => {
+                            const v = ev.target.value;
+                            setPabPeriodStart(v);
+                            if (v && pabPeriodEnd) void savePabPeriodDates(v, pabPeriodEnd);
+                          }}
+                          className="h-9 w-[160px] text-xs"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">Period end</span>
+                        <Input
+                          type="date"
+                          value={pabPeriodEnd}
+                          onChange={(ev) => {
+                            const v = ev.target.value;
+                            setPabPeriodEnd(v);
+                            if (pabPeriodStart && v) void savePabPeriodDates(pabPeriodStart, v);
+                          }}
+                          className="h-9 w-[160px] text-xs"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <details
+                  className={cn(
+                    'group mt-4 overflow-hidden rounded-xl border border-emerald-200/80 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/15',
+                    '[&_summary::-webkit-details-marker]:hidden',
+                  )}
+                  open={pabPeriodManual}
+                >
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 transition-colors hover:bg-emerald-100/30 dark:hover:bg-emerald-950/25">
+                    <ChevronDown className="h-4 w-4 shrink-0 text-emerald-600 transition-transform group-open:rotate-180 dark:text-emerald-400" />
+                    <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-100/90 dark:bg-emerald-950/50">
+                      <Building2 className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" />
+                    </div>
+                    <div className="min-w-0 flex-1 text-left">
+                      <p className="text-sm font-semibold text-zinc-900 dark:text-white">Departments in scope</p>
+                      <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                        {pabScopeKeys.length === 0
+                          ? 'No departments selected — PAB calendar is off for everyone.'
+                          : pabScopeKeys.length >= PAB_DEPARTMENTS.length
+                            ? 'All departments in scope (same as default).'
+                            : `${pabScopeKeys.length} of ${PAB_DEPARTMENTS.length} selected — only those employees get PAB.`}
+                      </p>
+                    </div>
+                    {saveStates['pab_scope'] === 'saving' && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-zinc-400" />}
+                    {saveStates['pab_scope'] === 'saved' && <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />}
+                  </summary>
+                  <div className="border-t border-emerald-200/60 px-4 pb-4 pt-1 dark:border-emerald-900/40">
+                    <p className="mb-3 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                      With <span className="font-medium text-zinc-700 dark:text-zinc-300">automatic</span> PAB dates, this panel is
+                      collapsed by default — expand to choose departments. Only checked departments are included in Payroll Wizard PAB
+                      evaluation and the employee PAB calendar (master list <span className="font-medium">Department</span> column).
+                    </p>
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void savePabScopeKeys(PAB_DEPARTMENTS.map((d) => d.key))}
+                        disabled={saveStates['pab_scope'] === 'saving'}
+                        className="rounded-md border border-emerald-200 bg-white px-2.5 py-1 text-[10px] font-medium text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:bg-zinc-900 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void savePabScopeKeys([])}
+                        disabled={saveStates['pab_scope'] === 'saving'}
+                        className="rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-[10px] font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800/80"
+                      >
+                        Clear all
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {PAB_DEPARTMENTS.map((dept) => (
+                        <label
+                          key={dept.key}
+                          className="flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-200/90 bg-white/90 px-2.5 py-2 dark:border-zinc-700 dark:bg-zinc-900/50"
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500 dark:border-zinc-600 dark:bg-zinc-900"
+                            checked={pabScopeKeys.includes(dept.key)}
+                            onChange={(e) => {
+                              const next = e.target.checked
+                                ? [...new Set([...pabScopeKeys, dept.key])]
+                                : pabScopeKeys.filter((k) => k !== dept.key);
+                              void savePabScopeKeys(next);
+                            }}
+                          />
+                          <span className="text-[11px] font-medium text-zinc-800 dark:text-zinc-200">{dept.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="mt-3 text-[10px] text-zinc-500 dark:text-zinc-500">
+                      Employees still need PH rates in Supabase for PAB to pay. Unmapped department strings do not match any key and are
+                      treated as out of scope when a restrict list is saved.
+                    </p>
+                  </div>
+                </details>
+
+                <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    <span className="text-[10px] text-zinc-400">PAB Auto-Compute on → system derives eligibility</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-zinc-400" />
+                    <span className="text-[10px] text-zinc-400">Custom period → fixed evaluation window</span>
                   </div>
                 </div>
               </div>

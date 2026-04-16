@@ -1,71 +1,174 @@
-# Simple HRIS — Latent Problem Inventory
+# Attendance Bonus Calculator — Reference & Implementation Plan
 
-Generated: 2026-04-15. To review & triage tomorrow.
+## Overview
 
-31 findings. Severity: **P0** = shipping blocker · **P1** = fix this week · **P2** = fix this sprint · **P3** = tech debt.
-
----
-
-## 1. Correctness bugs
-
-- **P1** `src/components/PayrollWizard.tsx:1612` — Salary-date math `new Date(year, month, day + 8)`. Date constructor silently rolls over at month boundaries. For `weekStart = May 31`, `day+8 = 39` — JS handles this, but combined with the later `setFullYear/month` copies it's fragile. Fix: use `setDate`/`setUTCDate` or a dayjs equivalent consistently.
-- **P1** `src/components/PayrollWizard.tsx:457-469` — Hubstaff date columns parsed via `new Date(y, m-1, d)` (local TZ) then compared to other dates constructed in UTC context elsewhere. On a Manila server (UTC+8) this shifts days. Fix: pick one — always `Date.UTC(...)` for date-only values.
-- **P2** `src/components/employee/EmployeeDashboard.tsx:725-735` — No bounds checking on parsed column dates. `"2026-02-30"` silently becomes Mar 2 via Date rollover. Fix: reject parsed values where `m∉[1,12]` or `d∉[1,31]` before constructing.
-- **P2** Email matching in `src/lib/payroll/compare-to-master.ts` and various — still uses `.eq("Work Email", email)` in a few call sites even after the recent ilike hardening in `update-employee-profile`. Same drift class as the John Rivera case. Fix: audit for remaining `.eq(` on email columns; swap to `ilike` + `trim()`.
-- **P2** Bonus constants (`TECHNOLOGY_BONUS_PHP = 1850`, `PERFECT_ATTENDANCE_BONUS_PHP = 5000`) are hardcoded **twice** — once in `PayrollWizard.tsx`, once in `EmployeeDashboard.tsx`. Future amount change will desync the two surfaces. Fix: extract to `src/lib/payroll/constants.ts`.
-
-## 2. Security & auth
-
-- **P1** `app/api/employees/route.ts` — GET returns full employee list (names, emails, departments, start dates) with **no auth check**. Any unauthenticated request reads all PII. Fix: add role guard — `requireRole(req, ['admin','hr_coordinator','payroll_*'])`.
-- **P1** `app/api/employee-hourly-rates/route.ts` — Same pattern: unauthenticated GET returns the full rates table (everyone's regular + OT rates). Fix: same role guard + pagination.
-- **P1** `app/api/hubstaff-hours/route.ts` — GET returns every employee's hours for every day. No auth. Fix: role gate; for non-admin callers, filter to their own email server-side.
-- **P1** `src/components/rbac/ViewSwitcher.tsx:38` — `sessionStorage['active_view'] = 'admin'` from DevTools and the switcher lets the user hop to the admin dashboard. RBAC is client-trusted. Fix: server-side session cookie (HttpOnly) plus a middleware role check on `/admin/**`.
-- **P2** `app/api/update-employee-profile/route.ts:55, 64, 87, 96` — `ilike('Work Email', '%${value}%')` doesn't escape SQL-LIKE wildcards. If `originalWorkEmail = 'm%'` the UPDATE matches every email containing "m". Fix: escape `%` and `_` on input, or drop the surrounding `%...%` and trim server-side only.
-- **P2** `app/api/employee-login/route.ts:34-51` — Audit log differentiates `employee.login.failed` vs `employee.login.success` with the email in both. The response is generic, but anyone who can read audit log can enumerate users. Fix: log without exposing whether the email was valid.
-- **P2** `app/api/dispatch-paystubs/route.ts` — Webhook URL comes from `app_settings.webhooks.config`, admin-editable. No scheme or host allowlist. A compromised admin account could point paystubs at an attacker endpoint. Fix: validate `https://` scheme and match against a static allowlist (env-driven).
-
-## 3. Data integrity
-
-- **P2** `app/api/add-employee/route.ts` — Inserts into `employee_hourly_rates` **and** `global_master_list` as two independent statements. If the second fails (unique key, RLS), the first stays. No rollback. Fix: Supabase RPC wrapping both in a `BEGIN/COMMIT`, or compensating delete on error.
-- **P2** `app/api/delete-employee/route.ts:35-50` — Mirror problem on delete. Conditional branches on which email was provided can leave the other table's row orphaned. Fix: always delete from both tables using the full email set.
-- **P1** `src/lib/supabase/*` — `normEmail()` is applied at lookup time but **not** at DB read time. If a row was inserted with mixed case, later SELECTs that `normEmail()` the needle won't match. Fix: normalize on write OR wrap SELECT in `lower(trim(col))` comparison.
-
-## 4. Scale & performance
-
-- **P1** `app/api/hubstaff-hours/route.ts` — `select("*")` with no limit. Every Rates / Overview / Dashboard mount fetches the entire table (can exceed 10k cells). Same endpoint called from 3 places in parallel per mount. Fix: add `.range()` pagination, server-side filtering by employee for non-admin callers.
-- **P2** `src/components/PayrollWizard.tsx` — Seven sequential `fetch()` calls in mount effects. All `cache: 'no-store'`, so a parent re-render re-fires all seven. Fix: `Promise.all` + `useMemo` stabilization of the combined result.
-- **P2** `src/components/Rates.tsx:552-554` — `useEffect(..., [])` closes over `fetchProfiles` which is redefined each render → stale closure. Works today because effect only runs once, but refreshes after mutations won't pick up updated state. Fix: `useCallback(fetchProfiles, [])` or move definition outside.
-- **P2** `src/components/employee/EmployeeDashboard.tsx` — 200+ Hubstaff column cells rendered without `React.memo` or virtualization. Every parent re-render re-renders all of them. Fix: memoize the day-cell component; consider virtualization if columns >500.
-- **P2** `src/components/PayrollWizard.tsx` (6.5k lines) + `EmployeeDashboard.tsx` (~1.8k) — monolithic. Same date helpers duplicated. Fix: extract `src/lib/payroll/` modules for bonus calc, salary-date math, Hubstaff parsing.
-
-## 5. UX footguns
-
-- **P2** `src/components/Rates.tsx:651, 744` — `toast.success(...)` fires before checking `response.ok`. On API error, user sees a green "✓ updated" while the action silently failed. Fix: gate the toast behind `if (!res.ok) { toast.error(...); return; }`.
-- **P2** `src/components/PayrollWizard.tsx:4819-4874` — Dispatch button toasts "Payroll Dispatched" **before** the webhook resolves. If n8n is down, the user walked away believing paystubs went out. Fix: `await` the webhook response; add a confirm dialog upstream.
-- **P2** `src/components/employee/EmployeeLeaves.tsx` — Form submit only checks email; empty dates/reason get sent to the API, which bounces with a sparse error. Fix: client-side validation of required fields with inline messaging.
-- **P2** `src/components/Rates.tsx:439-465` — Delete dialog sets `isDeleting` but close button isn't disabled. Close-mid-delete races with state updates. Fix: `disabled={isDeleting}` on both buttons; prevent dialog close while pending.
-
-## 6. Operational
-
-- **P1** `app/api/dispatch-paystubs/route.ts` — `fetch(webhookUrl, ...)` has no timeout, no retry. If n8n hangs, Vercel kills the request at ~30s and the user sees a 500 with no clue. Fix: `AbortController` with 10s timeout + 1–2 retries with backoff.
-- **P2** `src/components/PayrollWizard.tsx:5029-5040` — `https://host.simple.biz/email/simplelogo.png` hardcoded in 12+ places across preview styles and email template. Fix: `process.env.NEXT_PUBLIC_EMAIL_LOGO_URL` with a sensible default.
-- **P2** Overview / Rates / EmployeeDashboard — no `ErrorBoundary`. A single failing fetch crashes the page. Fix: wrap top-level routes in an `ErrorBoundary` with a retry UI.
-- **P3** `src/components/PayrollWizard.tsx:1834, 1868` — `console.log('[hubstaff_hours] actual column names:', ...)` leaks column data to the prod browser console. Fix: gate on `process.env.NODE_ENV === 'development'` or remove.
-- **P3** `app/api/hubstaff-hours/route.ts:119, 164` — `console.error(...)` dumps raw Supabase error strings (can include query text + table names). Fix: sanitize before logging; route full details to Sentry.
-- **P3** Audit log helper `insertAuditLog` is called from 11+ places with inconsistent shapes (some include IP, some don't). Fix: middleware that observes mutating requests and inserts a canonical audit row.
-
-## 7. Tech debt
-
-- **P2** `src/constants.ts` — Contains `MOCK_USERS` and bonus constants that aren't used anywhere, while the **real** bonus constants live inline in two component files. New engineers will update the wrong file. Fix: delete mock constants; move real bonus constants here.
-- **P3** `src/lib/email/norm-email.ts` — Only lowercases. Gmail's dot-and-plus rules ignored (`fran.m@gmail.com` ≡ `franm@gmail.com` ≡ `fran+test@gmail.com`). Probably fine for `simple.biz` domain but a surprise waiting to happen. Fix: document the assumption; add Gmail-specific normalization if needed.
-- **P3** `src/components/admin/AdminRoles.tsx`, `AdminWebhooks.tsx` — `JSON.parse(raw) as WebhookEntry[]` trusts storage shape. A manually-edited `app_settings` row with a missing field will render a broken UI. Fix: Zod schema validation on read; fall back to defaults on parse error.
+This document breaks down how the existing Excel attendance bonus calculator works, based on the "How to Use This Sheet" tab and the supporting calculation sheets. The goal is to give enough detail to replicate the logic inside the payroll wizard.
 
 ---
 
-## Suggested tomorrow's order
+## Data Source
 
-1. **All P1 security** (employees / rates / hubstaff GETs unauthenticated) — 1 afternoon; biggest-blast-radius items.
-2. **Dispatch webhook hardening** (timeout + URL allowlist) — 1 hour; prevents an admin-level mistake from leaking paystub data.
-3. **Shared constants extract** — 30 min; quick win; prevents the next bonus-amount desync.
-4. **Date/TZ audit** in PayrollWizard + EmployeeDashboard — half day; correctness bugs lurking here can show up as wrong paystubs.
-5. Leave the 6.5k-line split as a dedicated later sprint unless something else forces it.
+The calculator is driven by time-tracking data exported from **Apploye** (previously Hubstaff). Each month, an admin exports a CSV report for the entire staff from `app.apploye.com/user/reports/time-and-activity`, then imports it into the `Import Time & Activity` tab. The raw import contains per-employee, per-day records including total hours worked and activity percentage.
+
+---
+
+## How Eligibility Is Determined
+
+An employee receives the attendance bonus only if **all** of the following conditions are satisfied for the measurement period:
+
+### 1. Zero days under the minimum shift length
+
+A workday is counted as under-minimum if the employee worked fewer than **5 hours**. An employee must have **zero** such days in the period to qualify.
+
+The `Employee Completed Data` sheet tracks this as `Days under min`.
+
+### 2. Zero unexcused absent days
+
+Absences are tracked across the entire period. Employees who appear on the `Individual Days Off` tab with approved time-off requests have their absences forgiven (counted as pre-approved). Only *unexcused* absences disqualify.
+
+The field tracked is `Absent Days Total`, cross-referenced against `# Preapproved Absences`.
+
+### 3. Minimum weekly hours met for all four workweeks
+
+The measurement period is divided into **four workweeks**. Each workweek must clear a minimum total:
+
+- **Non-HSL employees:** 35 hours per workweek (Sunday–Saturday).
+- **HSL Team (Hogan Smith Law Firm):** 35 hours per workweek, but their week runs **Monday–Sunday** instead of Sunday–Saturday.
+
+This is calculated in the `Combined Work Day Shifts` sheet and aggregated per employee per workweek in `Employee Completed Data` as `Workweek 1 hours` through `Workweek 4 hours`.
+
+### 4. Not on the salary-excluded list
+
+Employees listed on the `Salary Employees Excluded` tab are never eligible regardless of attendance (e.g., Emma Kitson, Carla Thomas, Jaquelin Zapata, etc.).
+
+### 5. No ineligibility carry-over from the previous month
+
+The `Ineligibility Tracking` and `Has Ineligibility from last month` columns track whether an employee was marked ineligible at the end of the prior period. Carry-over ineligibility blocks the current period bonus.
+
+### 6. Not on the >50-hour workweek exception list (informational)
+
+Employees who worked over 50 hours in any workweek are noted in the `Above 50hour Week` sheet. This does **not** automatically disqualify them, but it is surfaced in `Employee Completed Data` for review.
+
+---
+
+## Summary of Disqualifying Conditions
+
+| Condition | Disqualifies? |
+|---|---|
+| Any day < 5 hours worked | Yes |
+| Any unexcused absent day | Yes |
+| Any workweek below 35 hours (non-HSL) | Yes |
+| Any HSL workweek below 35 hours | Yes |
+| Listed on Salary Employees Excluded | Yes |
+| Ineligible carry-over from last month | Yes |
+
+---
+
+## Special Rules for HSL Team
+
+Employees assigned to the Hogan Smith Law Firm team follow different calendar rules. The `HSL Team` tab lists these employees by name. Their workweek is Monday–Sunday rather than Sunday–Saturday. The `Employee Completed Data` sheet stores their weekly totals in the `HSLW1`–`HSLW4` columns alongside the standard weekly columns.
+
+---
+
+## Supporting Reference Tables
+
+| Sheet | Purpose |
+|---|---|
+| `Eligible for Bonus` | Master list of employees who are even eligible to receive the bonus (role-based filter before any attendance check) |
+| `HSL Team` | List of employees under the HSL workweek calendar |
+| `Salary Employees Excluded` | Employees permanently excluded |
+| `Company-Wide Days Off` | Holidays and company-wide off days (not counted against absence totals) |
+| `Individual Days Off` | Approved personal time-off requests (pre-approved absences) |
+| `Weekend Shifts` | Employees with non-standard schedules who work Sat/Sun instead of earlier weekdays |
+| `<7hour Workday Exceptions` | Shifts expected to be under 7 hours that should not count as short-day violations |
+| `Ineligibility Tracking` | Carry-over ineligibility status from prior months |
+
+---
+
+## End-of-Month Process
+
+After running the calculator:
+
+1. Copy columns A & B from `Employee Completed Data` into `Ineligibility Tracking` using **Paste Special → Values Only** (Ctrl+Shift+V). This preserves the carry-over status for the next run without copying live formulas.
+2. Review the `Above 50hour Week` sheet for anomalies.
+3. Finalize the `Eligible for Bonus` column in `Employee Completed Data` — employees with `TRUE` receive the bonus.
+
+---
+
+## Implementation Plan for the Payroll Wizard
+
+### Step 1 — Data Ingestion
+
+Accept an Apploye CSV upload (or API pull if available) with columns: `Date`, `Member`, `Total hours`, `Activity %`. This maps directly to the existing `Import Time & Activity` tab. Normalize date values and map each row to an employee record in the system.
+
+### Step 2 — Define the Period & Workweeks
+
+When a payroll run is initiated, the admin selects a start and end date. The system should:
+
+- Identify the 4 workweeks within the period.
+- Flag which employees are on the HSL calendar (Monday–Sunday weeks) vs. the standard calendar (Sunday–Saturday weeks).
+
+HSL team membership should be stored as a boolean flag on the employee record, mirroring the `HSL Team` tab.
+
+### Step 3 — Compute Per-Employee Attendance Metrics
+
+For each employee in the period, calculate:
+
+- `days_under_5hrs` — count of workdays where `total_hours < 5`, excluding entries covered by the `<7hour Workday Exceptions` list.
+- `absent_days` — count of expected workdays where no hours were logged, after subtracting pre-approved days off.
+- `preapproved_absences` — count pulled from the `Individual Days Off` and `Company-Wide Days Off` tables.
+- `workweek_1_hrs` through `workweek_4_hrs` — sum of hours per workweek bucket.
+- HSL variants of the weekly totals using the Monday–Sunday bucketing.
+
+### Step 4 — Eligibility Check
+
+Run the employee through the following gate logic (any `false` = ineligible):
+
+```
+is_eligible =
+  days_under_5hrs == 0
+  AND absent_days == 0
+  AND workweek_1_hrs >= 35
+  AND workweek_2_hrs >= 35
+  AND workweek_3_hrs >= 35
+  AND workweek_4_hrs >= 35
+  AND employee NOT IN salary_excluded_list
+  AND employee.prior_month_ineligible == false
+  AND employee.name IN eligible_for_bonus_list
+```
+
+For HSL employees, use the HSL weekly totals instead of the standard ones.
+
+### Step 5 — Flag Over-50-Hour Weeks
+
+For informational display only, flag employees where any workweek total exceeds 50 hours. Surface this in the payroll review UI without blocking the bonus.
+
+### Step 6 — Carry-Over Tracking
+
+After finalizing bonuses for the period, write the result back to the employee record:
+
+- `ineligible_next_period = true` if the employee was manually flagged (e.g., special circumstance), otherwise `false`.
+- This value is read at the start of the next run in Step 4.
+
+### Step 7 — Admin Overrides
+
+The system should support:
+
+- Adding an employee to `salary_excluded` permanently.
+- Logging individual approved days off per employee, per date.
+- Flagging a specific short shift as an exception (maps to `<7hour Workday Exceptions`).
+- Adding company-wide off days that are excluded from absence counting.
+
+### Step 8 — Output
+
+Generate a report listing each eligible employee with their 4-week hour totals, absent day count, and short-day count. The payroll wizard should consume this as input to calculate and post the bonus amounts.
+
+---
+
+## Notes on the Current Calculator's Known Limitations
+
+The spreadsheet's "To Do" section noted several pending items that should be accounted for when building the wizard:
+
+- Name inconsistencies exist in the raw Apploye data (e.g., "april galang" vs "April Galang"). The wizard should normalize names before matching.
+- Some employees appear under multiple projects or duplicate rows on the same day; these need to be summed, not double-counted.
+- The calculator currently requires manual copy-paste for carry-over tracking. The wizard should automate this.
