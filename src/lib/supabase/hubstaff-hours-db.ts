@@ -53,28 +53,38 @@ async function deleteAllRowsInTable(supabase: SupabaseClient, table: string): Pr
   throw new Error(`Failed to fully clear ${table}: too many rows or loop limit reached`);
 }
 
+/** Dedupe OpenAPI spec fetches — every hubstaff source_file query used to repeat this. */
+const tableColumnsFromSpecCache = new Map<string, Promise<string[]>>();
+
 /**
  * Fetches column names from the PostgREST OpenAPI spec.
  * Returns them in the order PostgREST exposes them (alphabetical from the spec),
  * which is used as a fallback when the table is empty.
  */
 async function getTableColumnsFromSpec(table: string): Promise<string[]> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (!url || !key) return [];
-  try {
-    const res = await fetch(`${url}/rest/v1/?apikey=${key}`, {
-      headers: { Authorization: `Bearer ${key}` },
-    });
-    if (!res.ok) return [];
-    const spec = (await res.json()) as {
-      definitions?: Record<string, { properties?: Record<string, unknown> }>;
-    };
-    const props = spec.definitions?.[table]?.properties;
-    return props ? Object.keys(props) : [];
-  } catch {
-    return [];
+  let cached = tableColumnsFromSpecCache.get(table);
+  if (!cached) {
+    cached = (async () => {
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+      if (!url || !key) return [];
+      try {
+        const res = await fetch(`${url}/rest/v1/?apikey=${key}`, {
+          headers: { Authorization: `Bearer ${key}` },
+        });
+        if (!res.ok) return [];
+        const spec = (await res.json()) as {
+          definitions?: Record<string, { properties?: Record<string, unknown> }>;
+        };
+        const props = spec.definitions?.[table]?.properties;
+        return props ? Object.keys(props) : [];
+      } catch {
+        return [];
+      }
+    })();
+    tableColumnsFromSpecCache.set(table, cached);
   }
+  return cached;
 }
 
 /** A row is considered empty only if every single column value is null/undefined/blank. */

@@ -458,47 +458,56 @@ Employees can dispute individual failing PAB days (days where they logged < 7 ho
 
 ### Reason codes
 
-Each dispute requires a reason code selected from a predefined list:
+Per Payroll directive (2026-04-17), **Orphanage visit** is the only valid dispute reason. The list is stored in the `app_settings` key `pab_dispute_reason_codes` and is admin-configurable.
 
-- Orphanage visit
-- Doctor/medical
-- Internet outage
-- Power outage
-- Family emergency
-- Other
+### Two-tier approval flow
 
-The list is admin-configurable via the `app_settings` key `pab_dispute_reason_codes`.
+1. Employee submits a dispute from the PAB calendar for a specific date → `status = pending`.
+2. **First approver** (must be `carla@simple.biz` or `franm@simple.biz`) casts an approval vote in the **Disputes tab**. The dispute stays `pending` but the `first_approved_by`, `first_approved_at`, `first_approved_note`, and `first_approved_override_hours` columns are populated.
+3. **Second approver** (must be the *other* authorized approver — self-finalization is blocked) reviews and finalizes. Status moves to `approved`, and the final `override_hours` and `decision_note` are written. The second approver can adjust the proposed override hours before finalizing.
+4. Denial is single-step — either authorized approver can deny immediately. Status moves to `denied`.
+5. The first approver can revoke their own pending first-vote before a second approver finalizes.
 
-### Approval flow
-
-1. Employee submits a dispute from the PAB calendar for a specific date.
-2. The dispute enters `pending` status.
-3. HR reviews disputes from the **Disputes tab** and either approves or denies each one.
+Only `carla@simple.biz` and `franm@simple.biz` are authorized to approve, deny, edit, or revoke. Any other admin can view the queue but sees disabled action buttons.
 
 ### PAB eligibility impact
 
-Only disputes with `approved` status affect PAB eligibility. `pending` and `denied` disputes have no effect on the calculation.
+Only disputes with `approved` status affect PAB eligibility. `pending` (including "1/2 approved") and `denied` disputes have no effect on the calculation.
 
-When a dispute is approved, the passing threshold for that day drops from **7 hours to 4 hours** (14,400 seconds). This reduced threshold applies to both the `dispute_date` itself and `dispute_date + 1` calendar day (the next day), covering two consecutive days per approved dispute.
+When a dispute is approved:
 
-### Withdraw and re-submit
+- The passing threshold for that day drops from **7 hours to 4 hours** (14,400 seconds), applied to both `dispute_date` and `dispute_date + 1` calendar day.
+- If the approver sets `override_hours` (entered as hours + minutes), those hours are added on top of the Hubstaff-logged seconds for both covered days. Example: 6h 30m Hubstaff + 0h 30m override = 7h total → day passes.
 
-Employees can **withdraw** a dispute while it is still in `pending` status. Editing a dispute is not supported — the employee must withdraw the pending dispute and submit a new one.
+The employee's PAB calendar reflects the added time automatically (`EmployeeDashboard.tsx` applies `override_hours` to the matching days in the `pabCalendar` memo).
+
+### Editing decided disputes
+
+Authorized approvers can **edit** an already-decided dispute (approved → denied, change override hours, update note, or clear the override entirely) from the Disputes tab's Edit button. Edits are single-step and fully audit-logged. Pending disputes are not edited — they progress via the approval vote or are withdrawn by the employee.
+
+### Withdraw
+
+Employees can **withdraw** a dispute while it is still in `pending` status (no approvals or first-approved only).
 
 ### Audit log
-
-The following actions are logged:
 
 | Action | Trigger |
 |---|---|
 | `pab_dispute.submitted` | Employee submits a new dispute |
-| `pab_dispute.approved` | HR approves a dispute |
-| `pab_dispute.denied` | HR denies a dispute |
+| `pab_dispute.first_approved` | First approver casts their vote |
+| `pab_dispute.approval_revoked` | First approver revokes their own vote |
+| `pab_dispute.approved` | Second approver finalizes approval |
+| `pab_dispute.denied` | Approver denies the dispute |
+| `pab_dispute.edited` | Approver edits a decided dispute |
 | `pab_dispute.withdrawn` | Employee withdraws a pending dispute |
 
 ### Data model
 
-Disputes are stored in the `pab_day_disputes` table with a unique constraint on `(work_email, dispute_date)` — one dispute per employee per calendar day.
+Disputes are stored in the `pab_day_disputes` table with a unique constraint on `(work_email, dispute_date)` — one dispute per employee per calendar day. Two-tier approval columns: `first_approved_by`, `first_approved_at`, `first_approved_note`, `first_approved_override_hours`.
+
+### Orphanage Visits roster (admin-entered alternative)
+
+Separate from the employee dispute flow, admins can proactively record employee orphanage visits via the **Orphanage Visits** sidebar tab. Rows are inserted into `pab_day_disputes` with `status='approved'`, `reason='orphanage_visit'`, bypassing the two-tier vote. These are intended for cases where accounting knows of the visit in advance and wants to pre-approve the forgiveness. The roster records date only — no `override_hours` are added; it only drops the PAB floor to 4h for the visit day and day after. Employees see their own visits in a read-only panel (`My Orphanage Visits` in the employee sidebar).
 
 ---
 

@@ -16,10 +16,25 @@ export type PabDayDisputeRow = {
   decided_at: string | null;
   decision_note: string | null;
   override_hours: number | null;
+  first_approved_by: string | null;
+  first_approved_at: string | null;
+  first_approved_note: string | null;
+  first_approved_override_hours: number | null;
   created_at: string;
   created_by: string | null;
   updated_at: string;
 };
+
+export const DISPUTE_APPROVERS: readonly string[] = [
+  'carla@simple.biz',
+  'franm@simple.biz',
+];
+
+export function isDisputeApprover(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const e = email.trim().toLowerCase();
+  return DISPUTE_APPROVERS.includes(e);
+}
 
 export type PabDisputeReasonCode = {
   code: string;
@@ -143,44 +158,208 @@ export async function decideDispute(
     decision_note?: string | null;
     override_hours?: number | null;
   },
-): Promise<{ error: string | null }> {
+): Promise<{ error: string | null; stage?: 'first' | 'final' }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { error: 'Supabase not configured' };
+
+  const approver = params.decided_by.trim();
+  const approverLower = approver.toLowerCase();
+  if (!isDisputeApprover(approverLower)) {
+    return { error: 'Not authorized — only Carla or Fran can decide disputes' };
+  }
 
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Dispute not found' };
   if (row.status !== 'pending') return { error: 'Dispute is no longer pending' };
 
-  const updatePayload: Record<string, unknown> = {
-    status: params.status,
-    decided_by: params.decided_by.trim(),
-    decided_at: new Date().toISOString(),
-    decision_note: params.decision_note?.trim() || null,
-    updated_at: new Date().toISOString(),
-  };
-  if (params.status === 'approved' && params.override_hours != null && params.override_hours > 0) {
-    updatePayload.override_hours = params.override_hours;
+  const nowIso = new Date().toISOString();
+
+  // Deny = single-step finalize
+  if (params.status === 'denied') {
+    const { error } = await supabase.from(TABLE).update({
+      status: 'denied',
+      decided_by: approver,
+      decided_at: nowIso,
+      decision_note: params.decision_note?.trim() || null,
+      updated_at: nowIso,
+    }).eq('id', id);
+    if (error) return { error: error.message };
+    void insertAuditLog({
+      user_name: approver, user_role: 'Admin', action: 'pab_dispute.denied',
+      resource: TABLE, resource_id: id,
+      details: {
+        employee: row.work_email, dispute_date: row.dispute_date, reason: row.reason,
+        decided_by: approver, decision_note: params.decision_note ?? null,
+      },
+    });
+    return { error: null, stage: 'final' };
   }
 
-  const { error } = await supabase.from(TABLE).update(updatePayload).eq('id', id);
+  // Approve — two-tier vote
+  const firstByLower = row.first_approved_by?.trim().toLowerCase() ?? null;
+  const proposedOverride =
+    params.override_hours != null && params.override_hours > 0 ? params.override_hours : null;
+
+  if (!firstByLower) {
+    // First vote
+    const { error } = await supabase.from(TABLE).update({
+      first_approved_by: approver,
+      first_approved_at: nowIso,
+      first_approved_note: params.decision_note?.trim() || null,
+      first_approved_override_hours: proposedOverride,
+      updated_at: nowIso,
+    }).eq('id', id);
+    if (error) return { error: error.message };
+    void insertAuditLog({
+      user_name: approver, user_role: 'Admin', action: 'pab_dispute.first_approved',
+      resource: TABLE, resource_id: id,
+      details: {
+        employee: row.work_email, dispute_date: row.dispute_date, reason: row.reason,
+        first_approved_by: approver,
+        first_approved_note: params.decision_note ?? null,
+        first_approved_override_hours: proposedOverride,
+      },
+    });
+    return { error: null, stage: 'first' };
+  }
+
+  if (firstByLower === approverLower) {
+    return { error: 'You already cast the first approval — a different approver must finalize' };
+  }
+
+  // Second distinct approver — finalize
+  const finalOverride = proposedOverride ?? row.first_approved_override_hours ?? null;
+  const combinedNote =
+    params.decision_note?.trim() ||
+    row.first_approved_note ||
+    null;
+
+  const { error } = await supabase.from(TABLE).update({
+    status: 'approved',
+    decided_by: approver,
+    decided_at: nowIso,
+    decision_note: combinedNote,
+    override_hours: finalOverride,
+    updated_at: nowIso,
+  }).eq('id', id);
+  if (error) return { error: error.message };
+
+  void insertAuditLog({
+    user_name: approver, user_role: 'Admin', action: 'pab_dispute.approved',
+    resource: TABLE, resource_id: id,
+    details: {
+      employee: row.work_email, dispute_date: row.dispute_date, reason: row.reason,
+      first_approved_by: row.first_approved_by, decided_by: approver,
+      decision_note: combinedNote, override_hours: finalOverride,
+    },
+  });
+  return { error: null, stage: 'final' };
+}
+
+export async function revokeFirstApproval(
+  id: string,
+  params: { revoked_by: string },
+): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+
+  const actor = params.revoked_by.trim();
+  if (!isDisputeApprover(actor.toLowerCase())) {
+    return { error: 'Not authorized' };
+  }
+
+  const { row, error: fetchErr } = await getDisputeById(id);
+  if (fetchErr) return { error: fetchErr };
+  if (!row) return { error: 'Dispute not found' };
+  if (row.status !== 'pending' || !row.first_approved_by) {
+    return { error: 'No first approval to revoke' };
+  }
+  if (row.first_approved_by.trim().toLowerCase() !== actor.toLowerCase()) {
+    return { error: 'Only the first approver can revoke their own vote' };
+  }
+
+  const { error } = await supabase.from(TABLE).update({
+    first_approved_by: null,
+    first_approved_at: null,
+    first_approved_note: null,
+    first_approved_override_hours: null,
+    updated_at: new Date().toISOString(),
+  }).eq('id', id);
+  if (error) return { error: error.message };
+
+  void insertAuditLog({
+    user_name: actor, user_role: 'Admin', action: 'pab_dispute.approval_revoked',
+    resource: TABLE, resource_id: id,
+    details: { employee: row.work_email, dispute_date: row.dispute_date, revoked_by: actor },
+  });
+  return { error: null };
+}
+
+export async function editDisputeDecision(
+  id: string,
+  params: {
+    status: 'approved' | 'denied';
+    decided_by: string;
+    decision_note?: string | null;
+    override_hours?: number | null;
+  },
+): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+
+  if (!isDisputeApprover(params.decided_by.trim().toLowerCase())) {
+    return { error: 'Not authorized — only Carla or Fran can edit dispute decisions' };
+  }
+
+  const { row, error: fetchErr } = await getDisputeById(id);
+  if (fetchErr) return { error: fetchErr };
+  if (!row) return { error: 'Dispute not found' };
+  if (row.status === 'pending') return { error: 'Use decide for pending disputes' };
+
+  const nowIso = new Date().toISOString();
+  const editor = params.decided_by.trim();
+  const newOverride =
+    params.status === 'approved' && params.override_hours != null && params.override_hours > 0
+      ? params.override_hours
+      : null;
+
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      status: params.status,
+      decided_by: editor,
+      decided_at: nowIso,
+      decision_note: params.decision_note?.trim() || null,
+      override_hours: newOverride,
+      updated_at: nowIso,
+    })
+    .eq('id', id);
 
   if (error) return { error: error.message };
 
   void insertAuditLog({
-    user_name: params.decided_by,
+    user_name: editor,
     user_role: 'Admin',
-    action: params.status === 'approved' ? 'pab_dispute.approved' : 'pab_dispute.denied',
+    action: 'pab_dispute.edited',
     resource: TABLE,
     resource_id: id,
     details: {
       employee: row.work_email,
       dispute_date: row.dispute_date,
       reason: row.reason,
-      status: params.status,
-      decided_by: params.decided_by,
-      decision_note: params.decision_note ?? null,
-      override_hours: params.override_hours ?? null,
+      previous: {
+        status: row.status,
+        override_hours: row.override_hours,
+        decision_note: row.decision_note,
+        decided_by: row.decided_by,
+      },
+      next: {
+        status: params.status,
+        override_hours: newOverride,
+        decision_note: params.decision_note ?? null,
+        decided_by: editor,
+      },
     },
   });
 

@@ -211,18 +211,28 @@ export default function OrphanageVisits() {
   }, []);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-4 sm:p-5 dark:bg-none dark:bg-[#0d1117]">
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-br from-rose-50/50 via-white to-pink-50/30 p-4 sm:p-5 dark:bg-none dark:bg-[#0d1117]">
       <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
-            <CalendarHeart className="h-5 w-5 text-rose-500" />
-            Orphanage Visits
-          </h2>
-          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Record employee orphanage-visit dates. PAB forgives the visit day and the day after (4h floor) automatically.
-          </p>
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-rose-400 to-pink-500 shadow-sm shadow-rose-400/30 dark:from-rose-500 dark:to-pink-600">
+            <CalendarHeart className="h-5 w-5 text-white" aria-hidden />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
+              Orphanage Visits
+            </h2>
+            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+              Proactive roster for known visits. PAB forgives the visit day and day after (4h floor) automatically — no dispute needed.
+            </p>
+          </div>
         </div>
-        <Button variant="outline" size="sm" onClick={fetchVisits} disabled={loading} className="shrink-0">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={fetchVisits}
+          disabled={loading}
+          className="shrink-0 border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/30"
+        >
           <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />
           Refresh
         </Button>

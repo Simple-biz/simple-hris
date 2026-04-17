@@ -14,7 +14,9 @@ import {
   Info,
   Laptop,
   FileText,
+  RefreshCw,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { normEmail } from '@/lib/email/norm-email';
@@ -261,6 +263,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [manualFileSelect, setManualFileSelect] = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   /** Merged row for this employee across ALL uploaded CSVs — used for full-month PAB. */
   const [pabMergedRow, setPabMergedRow] = useState<Record<string, unknown> | null>(null);
   const [pabMergedColumns, setPabMergedColumns] = useState<string[]>([]);
@@ -390,7 +393,9 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   }, [email, aliasEmails]);
 
   // Load hours data for the selected source file
-  const loadHoursData = React.useCallback(async (file: string | null, cancelled?: boolean) => {
+  const loadHoursData = React.useCallback(
+    async (file: string | null, cancelled?: boolean, aliasOverride?: string[]) => {
+    const emailsForMatch = aliasOverride ?? (aliasEmails.length ? aliasEmails : [email]);
     try {
       const url = file
         ? `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`
@@ -408,7 +413,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         setRow(null);
       } else if (json.columns && json.rows) {
         setColumns(json.columns);
-        const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, aliasEmails.length ? aliasEmails : [email]));
+        const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, emailsForMatch));
 
         if (myRow) {
           const dateCols = json.columns.filter(isDateCol);
@@ -460,7 +465,9 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         setRow(null);
       }
     }
-  }, [email, aliasEmails]);
+    },
+    [email, aliasEmails],
+  );
 
   // Reload hours when the selected file changes (skip for "All Time")
   useEffect(() => {
@@ -477,12 +484,38 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   // Fetch ALL source files and merge this employee's daily columns for full-month PAB.
   // When columns are canonical (`monday`, `tuesday`, …) we resolve them to ISO dates
   // using the date range embedded in each source filename so weeks don't overwrite each other.
+  // Requests run in parallel so the calendar is not blocked on N sequential round-trips.
   useEffect(() => {
-    if (sourceFiles.length === 0) return;
+    if (sourceFiles.length === 0) {
+      setPabMergeLoading(false);
+      setPabMergedRow(null);
+      setPabMergedColumns([]);
+      setAllTimeTotalSeconds(0);
+      setAllTimeRegularSec(0);
+      setAllTimeOtSec(0);
+      return;
+    }
     let cancelled = false;
     setPabMergeLoading(true);
+    const emailsMatch = aliasEmails.length ? aliasEmails : [email];
     (async () => {
       try {
+        const responses = await Promise.all(
+          sourceFiles.map((file) =>
+            fetch(
+              `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
+              { cache: 'no-store' },
+            ).then(async (res) => {
+              const json = (await res.json()) as {
+                columns?: string[] | null;
+                rows?: Record<string, unknown>[] | null;
+              };
+              return { file, json };
+            }),
+          ),
+        );
+        if (cancelled) return;
+
         const allCols = new Set<string>();
         let merged: Record<string, unknown> = {};
         let found = false;
@@ -490,19 +523,10 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         let cumulativeRegSec = 0;
         let cumulativeOtSec = 0;
 
-        for (const file of sourceFiles) {
-          const res = await fetch(
-            `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
-            { cache: 'no-store' },
-          );
-          const json = (await res.json()) as {
-            columns?: string[] | null;
-            rows?: Record<string, unknown>[] | null;
-          };
-          if (cancelled) return;
+        for (const { file, json } of responses) {
           if (!json.columns || !json.rows) continue;
 
-          const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, aliasEmails.length ? aliasEmails : [email]));
+          const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, emailsMatch));
           if (!myRow) continue;
           found = true;
 
@@ -534,11 +558,11 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       } catch {
         // PAB degrades gracefully — falls back to single-file check
       } finally {
-        setPabMergeLoading(false);
+        if (!cancelled) setPabMergeLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [sourceFiles, email]);
+  }, [sourceFiles, email, aliasEmails]);
 
   // Compute daily hours breakdown (one bar per calendar day — dedupe ISO vs Mon 3/24 vs monday…)
   const dailyHours = useMemo<DayHours[]>(() => {
@@ -734,6 +758,95 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   useEffect(() => { fetchMyDisputes(); }, [fetchMyDisputes]);
 
+  const refreshDashboard = useCallback(async () => {
+    setDataError(null);
+    setRefreshing(true);
+    try {
+      const [empRes, ratesRes, fxRes, filesRes] = await Promise.all([
+        fetch('/api/employees', { cache: 'no-store' }),
+        fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
+        fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
+        fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, { cache: 'no-store' }),
+      ]);
+
+      const empJson = (await empRes.json()) as {
+        employees?: {
+          work_email?: string | null;
+          personal_email?: string | null;
+          start_date?: string | null;
+          department?: string | null;
+        }[];
+      };
+      const me = (empJson.employees ?? []).find((e) => {
+        const we = normEmail(e.work_email ?? '');
+        const pe = normEmail(e.personal_email ?? '');
+        return we === email || pe === email;
+      });
+      const aliasSet = new Set<string>([email]);
+      if (me) {
+        const we = normEmail(me.work_email ?? '');
+        const pe = normEmail(me.personal_email ?? '');
+        if (we) aliasSet.add(we);
+        if (pe) aliasSet.add(pe);
+      }
+      const aliases = [...aliasSet];
+      setAliasEmails((prev) =>
+        prev.length === aliases.length && prev.every((a, i) => a === aliases[i]) ? prev : aliases,
+      );
+      setEmployeeDeptKey(me?.department != null ? normalizeDeptToKey(String(me.department)) : null);
+      if (!me?.start_date) {
+        setEmployeeStartDate(null);
+      } else {
+        const d = new Date(me.start_date);
+        setEmployeeStartDate(Number.isNaN(d.getTime()) ? null : d);
+      }
+
+      const ratesJson = (await ratesRes.json()) as {
+        rows?: EmployeeHourlyRateRow[];
+        error?: string | null;
+      };
+      const fxJson = (await fxRes.json()) as { value: string | null };
+      const filesJson = (await filesRes.json()) as { files?: string[]; error?: string | null };
+
+      setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
+
+      if (ratesJson.error) {
+        setDataError(ratesJson.error);
+      }
+      const allRates = ratesJson.rows ?? [];
+      const myRate = allRates.find((r) => {
+        const we = normEmail(r.work_email);
+        const pe = normEmail(r.personal_email);
+        return we === email || pe === email;
+      });
+      if (myRate) setRate(myRate);
+
+      const files = filesJson.files ?? [];
+      setSourceFiles(files);
+
+      let nextSelected = selectedFile;
+      if (nextSelected && nextSelected !== '__all__' && !files.includes(nextSelected)) {
+        nextSelected = files.length > 0 ? files[files.length - 1] : null;
+        setSelectedFile(nextSelected);
+      }
+
+      const fileArg = nextSelected === '__all__' || nextSelected === null ? null : nextSelected;
+
+      setFileLoading(true);
+      try {
+        await loadHoursData(fileArg, false, aliases);
+      } finally {
+        setFileLoading(false);
+      }
+
+      fetchMyDisputes();
+    } catch (e) {
+      setDataError(e instanceof Error ? e.message : 'Failed to refresh dashboard');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [email, selectedFile, loadHoursData, fetchMyDisputes]);
+
   const disputesByDate = useMemo(() => {
     const map = new Map<string, import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow>();
     for (const d of myDisputes) map.set(d.dispute_date, d);
@@ -779,6 +892,25 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       const key = pabDateKey(d);
       hoursByDateKey.set(key, Math.max(hoursByDateKey.get(key) ?? 0, maxS));
     }
+
+    // Apply approved dispute override_hours to the dispute date AND the day after
+    // (mirrors PayrollWizard.tsx — "day of or day after" rule).
+    for (const d of myDisputes) {
+      if (d.status !== 'approved') continue;
+      const add = d.override_hours;
+      if (add == null || add <= 0) continue;
+      const addSeconds = add * 3600;
+      const primary = d.dispute_date;
+      hoursByDateKey.set(primary, (hoursByDateKey.get(primary) ?? 0) + addSeconds);
+      const [y, m, day] = primary.split('-').map(Number);
+      if (y && m && day) {
+        const next = new Date(Date.UTC(y, m - 1, day));
+        next.setUTCDate(next.getUTCDate() + 1);
+        const nextKey = next.toISOString().slice(0, 10);
+        hoursByDateKey.set(nextKey, (hoursByDateKey.get(nextKey) ?? 0) + addSeconds);
+      }
+    }
+
     const weeks = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, hoursByDateKey);
 
     // Manual file selection: show the full range for that file's period.
@@ -805,7 +937,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       return weekStart.getTime() <= cutoff.getTime();
     });
     return trimmed.length > 0 ? trimmed : weeks.slice(0, 1);
-  }, [pabAppliesToEmployee, pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect]);
+  }, [pabAppliesToEmployee, pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, myDisputes]);
 
   /** PAB: every expected weekday in the PAB period must be ≥ 7 h. */
   const pabWeekdayHours = pabDailyHours.filter((d) => d.weekday);
@@ -1140,6 +1272,22 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 border-zinc-200 bg-white/80 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-300"
+            disabled={refreshing}
+            onClick={() => void refreshDashboard()}
+            aria-label="Refresh dashboard data"
+          >
+            {refreshing ? (
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw className="size-3.5" aria-hidden />
+            )}
+            Refresh
+          </Button>
           {row && perfectAttendanceBonusStatus === 'eligible' && (
             <Badge
               variant="outline"
@@ -1709,9 +1857,25 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               className="flex min-h-[12rem] flex-1 flex-col border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 lg:min-h-0"
             >
               <CardHeader className="shrink-0 pb-2 pt-3">
-                <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                  PAB Calendar
-                </CardTitle>
+                <div className="flex items-start justify-between gap-2">
+                  <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                    PAB Calendar
+                  </CardTitle>
+                  <button
+                    type="button"
+                    onClick={() => void refreshDashboard()}
+                    disabled={refreshing}
+                    aria-label="Refresh PAB calendar"
+                    title="Refresh PAB calendar"
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-indigo-200 bg-white text-indigo-600 transition-colors hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-400 dark:hover:bg-indigo-950/50"
+                  >
+                    {refreshing ? (
+                      <Loader2 className="size-3 animate-spin" aria-hidden />
+                    ) : (
+                      <RefreshCw className="size-3" aria-hidden />
+                    )}
+                  </button>
+                </div>
                 {pabMonthRange ? (
                   <p className="mt-0.5 flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400">
                     <CalendarDays className="h-3 w-3 shrink-0" />
@@ -1726,8 +1890,8 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                 )}
               </CardHeader>
               <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
-                {pabMergeLoading || fileLoading ? (
-                  /* -------- Skeleton loading state -------- */
+                {pabMergeLoading ? (
+                  /* -------- Skeleton: only while merged Hubstaff loads (not file picker reloads) -------- */
                   <div className="flex flex-1 flex-col gap-0">
                     {/* Skeleton header row */}
                     <div className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1">
@@ -1796,23 +1960,41 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                             const hours = day.seconds / 3600;
                             const dayIso = `${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, '0')}-${String(day.date.getDate()).padStart(2, '0')}`;
                             const dispute = disputesByDate.get(dayIso);
-                            const canDispute = day.hasData && !day.passes && !dispute;
+                            const nowMid = new Date();
+                            const todayMid = new Date(nowMid.getFullYear(), nowMid.getMonth(), nowMid.getDate());
+                            const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
+                            const isFutureOrToday = cellMid.getTime() >= todayMid.getTime();
+                            const canDispute = day.hasData && !day.passes && !dispute && !isFutureOrToday;
                             const cellClickable = canDispute || !!dispute;
 
-                            let cellBorder = day.passes
-                              ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30'
-                              : day.hasData
-                                ? 'border-red-300 bg-red-50 dark:border-red-800/60 dark:bg-red-950/30'
-                                : 'border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900/40';
-                            if (dispute?.status === 'pending') cellBorder = 'border-amber-400 bg-amber-50 dark:border-amber-600/60 dark:bg-amber-950/30';
-                            else if (dispute?.status === 'approved') cellBorder = 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400/40 dark:border-emerald-600/60 dark:bg-emerald-950/30';
-                            else if (dispute?.status === 'denied') cellBorder = 'border-red-400 bg-red-50 ring-1 ring-red-400/40 dark:border-red-600/60 dark:bg-red-950/30';
+                            // Future / today → neutral; otherwise green when passing, red when failing.
+                            // Dispute status overrides the neutral and pass/fail colors.
+                            let cellBorder: string;
+                            if (dispute?.status === 'pending') {
+                              cellBorder =
+                                'border-amber-400 bg-amber-50 ring-1 ring-amber-400/35 dark:border-amber-600/60 dark:bg-amber-950/35';
+                            } else if (dispute?.status === 'approved') {
+                              cellBorder =
+                                'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400/40 dark:border-emerald-600/60 dark:bg-emerald-950/30';
+                            } else if (dispute?.status === 'denied') {
+                              cellBorder =
+                                'border-red-400 bg-red-50 ring-1 ring-red-400/40 dark:border-red-600/60 dark:bg-red-950/30';
+                            } else if (day.passes) {
+                              cellBorder =
+                                'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30';
+                            } else if (isFutureOrToday) {
+                              cellBorder =
+                                'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
+                            } else {
+                              cellBorder =
+                                'border-red-300 bg-red-50 dark:border-red-700/70 dark:bg-red-950/40';
+                            }
 
                             return (
                               <div
                                 key={di}
                                 className={`flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-300 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
+                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
                                 style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
                                 onClick={cellClickable ? () => {
                                   setSelectedDisputeDay({ date: dayIso, seconds: day.seconds });
@@ -1829,11 +2011,13 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                                       ? 'text-amber-700 dark:text-amber-400'
                                       : dispute?.status === 'approved'
                                         ? 'text-emerald-700 dark:text-emerald-400'
-                                        : day.passes
-                                          ? 'text-emerald-700 dark:text-emerald-400'
-                                          : day.hasData
-                                            ? 'text-red-600 dark:text-red-400'
-                                            : 'text-zinc-400 dark:text-zinc-500'
+                                        : dispute?.status === 'denied'
+                                          ? 'text-red-600 dark:text-red-400'
+                                          : day.passes
+                                            ? 'text-emerald-700 dark:text-emerald-400'
+                                            : isFutureOrToday
+                                              ? 'text-zinc-400 dark:text-zinc-500'
+                                              : 'text-red-600 dark:text-red-400'
                                   }`}
                                 >
                                   {day.hasData ? `${hours.toFixed(1)}` : '—'}
@@ -1846,7 +2030,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                                   <XCircle className="h-2 w-2 text-red-500" />
                                 ) : day.passes ? (
                                   <CheckCircle2 className="h-2 w-2 text-emerald-500" />
-                                ) : day.hasData ? (
+                                ) : isFutureOrToday ? null : day.hasData ? (
                                   <XCircle className="h-2 w-2 text-red-400" />
                                 ) : null}
                               </div>
