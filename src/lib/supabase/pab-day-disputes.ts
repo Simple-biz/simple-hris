@@ -187,6 +187,111 @@ export async function decideDispute(
   return { error: null };
 }
 
+export async function adminCreateOrphanageVisit(params: {
+  work_email: string;
+  visit_date: string;
+  note?: string | null;
+  admin_name: string;
+}): Promise<{ id: string | null; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { id: null, error: 'Supabase not configured' };
+
+  const email = normEmail(params.work_email) ?? params.work_email.trim().toLowerCase();
+  const admin = params.admin_name.trim();
+  if (!admin) return { id: null, error: 'admin_name is required' };
+
+  const nowIso = new Date().toISOString();
+  const note = params.note?.trim() || null;
+  const payload = {
+    work_email: email,
+    dispute_date: params.visit_date,
+    reason: 'orphanage_visit',
+    explanation: note,
+    status: 'approved' as const,
+    decided_by: admin,
+    decided_at: nowIso,
+    decision_note: note,
+    created_by: admin,
+    updated_at: nowIso,
+  };
+
+  const { data: existing } = await supabase
+    .from(TABLE)
+    .select('id, status')
+    .eq('work_email', email)
+    .eq('dispute_date', params.visit_date)
+    .maybeSingle();
+
+  let id: string | null = null;
+  if (existing) {
+    const { error } = await supabase
+      .from(TABLE)
+      .update(payload)
+      .eq('id', (existing as { id: string }).id);
+    if (error) return { id: null, error: error.message };
+    id = (existing as { id: string }).id;
+  } else {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .insert(payload)
+      .select('id')
+      .single();
+    if (error) return { id: null, error: error.message };
+    id = (data as { id: string } | null)?.id ?? null;
+  }
+
+  void insertAuditLog({
+    user_name: admin,
+    user_role: 'Admin',
+    action: 'pab_dispute.approved',
+    resource: TABLE,
+    resource_id: id ?? undefined,
+    details: {
+      employee: email,
+      dispute_date: params.visit_date,
+      reason: 'orphanage_visit',
+      status: 'approved',
+      decided_by: admin,
+      decision_note: note,
+      source: 'admin_orphanage_roster',
+    },
+  });
+
+  return { id, error: null };
+}
+
+export async function adminDeleteOrphanageVisit(
+  id: string,
+  params: { admin_name: string },
+): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+
+  const { row, error: fetchErr } = await getDisputeById(id);
+  if (fetchErr) return { error: fetchErr };
+  if (!row) return { error: 'Visit not found' };
+  if (row.reason !== 'orphanage_visit') return { error: 'Not an orphanage visit entry' };
+
+  const { error } = await supabase.from(TABLE).delete().eq('id', id);
+  if (error) return { error: error.message };
+
+  void insertAuditLog({
+    user_name: params.admin_name,
+    user_role: 'Admin',
+    action: 'pab_dispute.withdrawn',
+    resource: TABLE,
+    resource_id: id,
+    details: {
+      employee: row.work_email,
+      dispute_date: row.dispute_date,
+      reason: 'orphanage_visit',
+      source: 'admin_orphanage_roster',
+    },
+  });
+
+  return { error: null };
+}
+
 export async function withdrawDispute(
   id: string,
   params: { employee_email: string },

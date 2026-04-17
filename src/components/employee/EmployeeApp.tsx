@@ -8,6 +8,7 @@ import EmployeeSidebar from './EmployeeSidebar';
 import EmployeeDashboard from './EmployeeDashboard';
 import EmployeeProfile from './EmployeeProfile';
 import EmployeeLeaves from './EmployeeLeaves';
+import EmployeeOrphanageVisits from './EmployeeOrphanageVisits';
 import EmployeeSettings from './EmployeeSettings';
 import { Toaster } from '@/components/ui/sonner';
 import { FileText, Clock } from 'lucide-react';
@@ -160,6 +161,8 @@ export default function EmployeeApp() {
             </p>
           </div>
         );
+      case 'orphanage-visits':
+        return <EmployeeOrphanageVisits employeeEmail={employeeEmail} />;
       case 'settings':
         return <EmployeeSettings employeeEmail={employeeEmail} />;
       default:

@@ -8,6 +8,7 @@ import {
   Building2,
   AlertCircle,
   CalendarDays,
+  CalendarHeart,
   Settings,
   ChevronRight,
   LogOut,
@@ -32,6 +33,7 @@ const navItems = [
   { id: 'hogan-suite', label: 'Hogan Suite', icon: Building2 },
   { id: 'leave-requests', label: 'Leave requests', icon: CalendarDays },
   { id: 'disputes', label: 'Disputes', icon: AlertCircle },
+  { id: 'orphanage-visits', label: 'Orphanage Visits', icon: CalendarHeart },
   { id: 'settings', label: 'System Settings', icon: Settings },
 ];
 

@@ -10,6 +10,7 @@ import { Toaster } from '@/components/ui/sonner';
 import SystemSettings from './components/SystemSettings';
 import LeaveRequestsPanel from './components/LeaveRequestsPanel';
 import PabDisputeQueue from './components/payroll/PabDisputeQueue';
+import OrphanageVisits from './components/payroll/OrphanageVisits';
 export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const { resolvedTheme } = useTheme();
@@ -44,6 +45,8 @@ export default function App() {
         );
       case 'disputes':
         return <PabDisputeQueue />;
+      case 'orphanage-visits':
+        return <OrphanageVisits />;
       case 'settings':
         return <SystemSettings />;
       case 'leave-requests':

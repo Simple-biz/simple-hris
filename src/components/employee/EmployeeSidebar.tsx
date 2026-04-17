@@ -8,6 +8,7 @@ import {
   FileText,
   Clock,
   CalendarDays,
+  CalendarHeart,
   Moon,
   Sun,
   LogOut,
@@ -40,6 +41,7 @@ const navItems = [
   { id: 'hours', label: 'My Hours', icon: Clock },
   { id: 'leaves', label: 'Leave', icon: CalendarDays },
   { id: 'disputes', label: 'My Disputes', icon: FileText },
+  { id: 'orphanage-visits', label: 'Orphanage Visits', icon: CalendarHeart },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
