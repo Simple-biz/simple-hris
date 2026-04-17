@@ -154,6 +154,9 @@ export default function DisputeDialog({
                 {existingDispute.decided_at && (
                   <div><span className="text-zinc-500">Date:</span> {new Date(existingDispute.decided_at).toLocaleDateString('en-US')}</div>
                 )}
+                {existingDispute.override_hours != null && existingDispute.override_hours > 0 && (
+                  <div><span className="text-zinc-500">Additional hours:</span> <span className="font-semibold text-emerald-700 dark:text-emerald-400">+{existingDispute.override_hours}h</span> (added to Hubstaff hours)</div>
+                )}
                 {existingDispute.decision_note && (
                   <div className="mt-1"><span className="text-zinc-500">Note:</span> {existingDispute.decision_note}</div>
                 )}

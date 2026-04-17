@@ -900,7 +900,7 @@ export default function PayrollWizard() {
 
   const pabPeriodSettings = usePabPeriodSettings();
 
-  const [approvedDisputeDates, setApprovedDisputeDates] = useState<Map<string, Set<string>>>(new Map());
+  const [approvedDisputeDates, setApprovedDisputeDates] = useState<Map<string, Map<string, number | null>>>(new Map());
 
   const fileInputWeeklyRef = useRef<HTMLInputElement>(null);
 
@@ -1260,18 +1260,18 @@ export default function PayrollWizard() {
     const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
     fetch(`/api/pab-disputes?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
       .then(r => r.json())
-      .then((json: { rows: { work_email: string; dispute_date: string }[] }) => {
-        const map = new Map<string, Set<string>>();
+      .then((json: { rows: { work_email: string; dispute_date: string; override_hours: number | null }[] }) => {
+        const map = new Map<string, Map<string, number | null>>();
         for (const row of json.rows ?? []) {
           const em = (row.work_email ?? '').trim().toLowerCase();
           if (!em) continue;
-          if (!map.has(em)) map.set(em, new Set());
-          const set = map.get(em)!;
-          set.add(row.dispute_date);
+          if (!map.has(em)) map.set(em, new Map());
+          const dateMap = map.get(em)!;
+          dateMap.set(row.dispute_date, row.override_hours);
           const next = new Date(row.dispute_date + 'T00:00:00');
           next.setDate(next.getDate() + 1);
           const nextIso = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
-          set.add(nextIso);
+          if (!dateMap.has(nextIso)) dateMap.set(nextIso, row.override_hours);
         }
         setApprovedDisputeDates(map);
       })
@@ -1312,10 +1312,12 @@ export default function PayrollWizard() {
       let perfect = true;
       const forgivenDates = approvedDisputeDates.get(email);
       for (const group of weekdayColumnGroups) {
-        const seconds = maxSecondsAcrossWeekdayGroup(row, group);
-        if (seconds < 7 * 3600) {
-          const groupDate = isoDateFromColumnGroup(group);
-          const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600);
+        const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
+        const groupDate = isoDateFromColumnGroup(group);
+        const addedHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
+        const effectiveSeconds = rawSeconds + (addedHours != null && addedHours > 0 ? addedHours * 3600 : 0);
+        if (effectiveSeconds < 7 * 3600) {
+          const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && effectiveSeconds >= 4 * 3600);
           if (!forgiven) {
             perfect = false;
             break;
@@ -1357,8 +1359,10 @@ export default function PayrollWizard() {
         email,
         weekdayColumnGroups.map(group => {
           const col = pickPreferredHubstaffColumn(group);
-          const seconds = maxSecondsAcrossWeekdayGroup(row, group);
+          const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
           const groupDate = isoDateFromColumnGroup(group);
+          const addedHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
+          const seconds = rawSeconds + (addedHours != null && addedHours > 0 ? addedHours * 3600 : 0);
           const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600 && seconds < 7 * 3600);
           return { col, seconds, passes: seconds >= 7 * 3600 || forgiven, forgivenByDispute: forgiven };
         }),

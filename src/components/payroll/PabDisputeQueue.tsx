@@ -55,6 +55,7 @@ export default function PabDisputeQueue() {
 
   const [decideDialog, setDecideDialog] = useState<{ dispute: PabDayDisputeRow; action: 'approve' | 'deny' } | null>(null);
   const [decisionNote, setDecisionNote] = useState('');
+  const [overrideHours, setOverrideHours] = useState('');
   const [deciding, setDeciding] = useState(false);
 
   const fetchDisputes = useCallback(async () => {
@@ -114,6 +115,7 @@ export default function PabDisputeQueue() {
     if (!decideDialog) return;
     setDeciding(true);
     try {
+      const oh = parseFloat(overrideHours);
       const res = await fetch(`/api/pab-disputes/${decideDialog.dispute.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -121,6 +123,7 @@ export default function PabDisputeQueue() {
           action: decideDialog.action,
           decided_by: 'Fran M',
           decision_note: decisionNote.trim() || null,
+          override_hours: decideDialog.action === 'approve' && Number.isFinite(oh) && oh > 0 ? oh : null,
         }),
       });
       const json = await res.json();
@@ -287,7 +290,7 @@ export default function PabDisputeQueue() {
                             size="sm"
                             variant="outline"
                             className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-400"
-                            onClick={() => { setDecideDialog({ dispute: d, action: 'approve' }); setDecisionNote(''); }}
+                            onClick={() => { setDecideDialog({ dispute: d, action: 'approve' }); setDecisionNote(''); setOverrideHours(''); }}
                           >
                             Approve
                           </Button>
@@ -295,7 +298,7 @@ export default function PabDisputeQueue() {
                             size="sm"
                             variant="outline"
                             className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-400"
-                            onClick={() => { setDecideDialog({ dispute: d, action: 'deny' }); setDecisionNote(''); }}
+                            onClick={() => { setDecideDialog({ dispute: d, action: 'deny' }); setDecisionNote(''); setOverrideHours(''); }}
                           >
                             Deny
                           </Button>
@@ -324,15 +327,35 @@ export default function PabDisputeQueue() {
                 {decideDialog.dispute.work_email} — {decideDialog.dispute.dispute_date} — {reasonLabel(decideDialog.dispute.reason)}
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-2">
-              <Label className="text-xs">Decision note (optional)</Label>
-              <textarea
-                value={decisionNote}
-                onChange={e => setDecisionNote(e.target.value)}
-                rows={2}
-                placeholder="Optional note..."
-                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              />
+            <div className="space-y-3">
+              {decideDialog.action === 'approve' && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Additional hours (e.g. time at orphanage)</Label>
+                  <Input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    max="16"
+                    placeholder="e.g. 4 — added to Hubstaff hours for PAB"
+                    value={overrideHours}
+                    onChange={e => setOverrideHours(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                  <p className="text-[10px] text-zinc-500">
+                    These hours are added on top of the Hubstaff-logged hours for PAB calculation. E.g. 4h Hubstaff + 4h visit = 8h total. Original Hubstaff data stays untouched.
+                  </p>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Decision note (optional)</Label>
+                <textarea
+                  value={decisionNote}
+                  onChange={e => setDecisionNote(e.target.value)}
+                  rows={2}
+                  placeholder="Optional note..."
+                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                />
+              </div>
             </div>
             <DialogFooter className="gap-2">
               <Button variant="outline" size="sm" onClick={() => setDecideDialog(null)} disabled={deciding}>

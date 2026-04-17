@@ -17,6 +17,7 @@ export async function PATCH(
       action?: string;
       decided_by?: string;
       decision_note?: string | null;
+      override_hours?: number | null;
     };
 
     if (body.action !== 'approve' && body.action !== 'deny') {
@@ -33,6 +34,7 @@ export async function PATCH(
       status: status as 'approved' | 'denied',
       decided_by,
       decision_note: body.decision_note,
+      override_hours: body.override_hours,
     });
 
     if (error) {

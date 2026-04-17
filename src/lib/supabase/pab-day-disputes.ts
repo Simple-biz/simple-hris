@@ -15,6 +15,7 @@ export type PabDayDisputeRow = {
   decided_by: string | null;
   decided_at: string | null;
   decision_note: string | null;
+  override_hours: number | null;
   created_at: string;
   created_by: string | null;
   updated_at: string;
@@ -140,6 +141,7 @@ export async function decideDispute(
     status: 'approved' | 'denied';
     decided_by: string;
     decision_note?: string | null;
+    override_hours?: number | null;
   },
 ): Promise<{ error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
@@ -150,16 +152,18 @@ export async function decideDispute(
   if (!row) return { error: 'Dispute not found' };
   if (row.status !== 'pending') return { error: 'Dispute is no longer pending' };
 
-  const { error } = await supabase
-    .from(TABLE)
-    .update({
-      status: params.status,
-      decided_by: params.decided_by.trim(),
-      decided_at: new Date().toISOString(),
-      decision_note: params.decision_note?.trim() || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', id);
+  const updatePayload: Record<string, unknown> = {
+    status: params.status,
+    decided_by: params.decided_by.trim(),
+    decided_at: new Date().toISOString(),
+    decision_note: params.decision_note?.trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+  if (params.status === 'approved' && params.override_hours != null && params.override_hours > 0) {
+    updatePayload.override_hours = params.override_hours;
+  }
+
+  const { error } = await supabase.from(TABLE).update(updatePayload).eq('id', id);
 
   if (error) return { error: error.message };
 
@@ -176,6 +180,7 @@ export async function decideDispute(
       status: params.status,
       decided_by: params.decided_by,
       decision_note: params.decision_note ?? null,
+      override_hours: params.override_hours ?? null,
     },
   });
 
