@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  Eye,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -46,7 +47,7 @@ import {
 import { fetchPabPeriodSettings, isDeptInPabScope, isValidManualPabRange } from '@/lib/pab-period-settings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 10;
 
 /** Generates a page number array with ellipsis markers (represented as -1). */
 function buildPageRange(current: number, total: number): (number | -1)[] {
@@ -102,7 +103,11 @@ function mergePayrollIdentity(rows: PayrollHubstaffRow[]): Record<string, { name
 
 type OverviewEmployeeRow = EmployeeRow & { recordSource: 'master' | 'hubstaff' };
 
-export default function Overview() {
+interface OverviewProps {
+  onViewRates?: (email: string) => void;
+}
+
+export default function Overview({ onViewRates }: OverviewProps = {}) {
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [employeesError, setEmployeesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -594,8 +599,8 @@ export default function Overview() {
   ];
 
   return (
-    <div className="min-h-full space-y-8 bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-8 dark:bg-none dark:bg-[#0d1117]">
-      <div className="flex items-center justify-between">
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-5 dark:bg-none dark:bg-[#0d1117]">
+      <div className="flex shrink-0 items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">System Overview</h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-500">Real-time HRIS and Payroll analytics</p>
@@ -618,7 +623,7 @@ export default function Overview() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid shrink-0 grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat, i) => (
           <Card
             key={i}
@@ -650,15 +655,15 @@ export default function Overview() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-        <Card className="border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between gap-4">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-3">
+        <Card className="flex min-h-0 flex-col overflow-hidden border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:col-span-2">
+          <CardHeader className="shrink-0 flex flex-row items-center justify-between gap-4 pb-2">
             <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Employees</CardTitle>
             <Badge variant="outline" className="border-blue-500/20 bg-blue-500/10 font-mono text-[10px] text-blue-700 dark:border-blue-500/30 dark:text-blue-400">
               master + Hubstaff fallback
             </Badge>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500 dark:text-zinc-400">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -675,20 +680,20 @@ export default function Overview() {
                 so payroll can list workers.
               </p>
             ) : (
-              <div className="space-y-4">
+              <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
                 {employeesError && mergedEmployees.length > 0 && (
-                  <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200/90">
+                  <p className="shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200/90">
                     Master list could not be loaded ({employeesError}). Showing Hubstaff-derived rows where available.
                   </p>
                 )}
                 {employees.length === 0 && mergedEmployees.some((r) => r.recordSource === 'hubstaff') && (
-                  <p className="rounded-lg border border-sky-200/80 bg-sky-50/80 px-3 py-2 text-xs text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-200">
+                  <p className="shrink-0 rounded-lg border border-sky-200/80 bg-sky-50/80 px-3 py-2 text-xs text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-200">
                     No <span className="font-mono">global_master_list</span> rows loaded — showing names and departments from the selected Hubstaff payroll
                     export only. Add master records to fill IDs and start dates.
                   </p>
                 )}
                 {/* Filters */}
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-end">
                   <div className="flex-1 space-y-1.5">
                     <Label htmlFor="employee-search" className="text-xs text-zinc-600 dark:text-zinc-500">
                       Search
@@ -729,9 +734,9 @@ export default function Overview() {
                 </div>
 
                 {/* Table */}
-                <div className="rounded-md border border-zinc-200 dark:border-zinc-800">
+                <div className="min-h-0 flex-1 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
                   <Table>
-                    <TableHeader className="bg-gradient-to-r from-orange-50/80 to-blue-50/40 dark:from-blue-950/40 dark:to-blue-950/20">
+                    <TableHeader className="sticky top-0 z-10 bg-gradient-to-r from-orange-50/95 to-blue-50/60 backdrop-blur-sm dark:from-blue-950/90 dark:to-blue-950/70">
                       <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
                         <TableHead className="text-zinc-600 dark:text-zinc-400">Employee ID</TableHead>
                         <TableHead className="text-zinc-600 dark:text-zinc-400">Source</TableHead>
@@ -739,12 +744,13 @@ export default function Overview() {
                         <TableHead className="text-zinc-600 dark:text-zinc-400">Name</TableHead>
                         <TableHead className="text-zinc-600 dark:text-zinc-400">Email</TableHead>
                         <TableHead className="text-right text-zinc-600 dark:text-zinc-400">Start Date</TableHead>
+                        <TableHead className="w-[90px] text-right text-zinc-600 dark:text-zinc-400">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {pageRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="py-8 text-center text-zinc-600 dark:text-zinc-500">
+                          <TableCell colSpan={7} className="py-8 text-center text-zinc-600 dark:text-zinc-500">
                             No employees match your search or filter.
                           </TableCell>
                         </TableRow>
@@ -788,6 +794,25 @@ export default function Overview() {
                             <TableCell className="text-right text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
                               {formatStartDate(row.start_date)}
                             </TableCell>
+                            <TableCell className="text-right">
+                              {(() => {
+                                const email = row.work_email ?? row.personal_email ?? '';
+                                const disabled = !email || !onViewRates;
+                                return (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={disabled}
+                                    onClick={() => email && onViewRates?.(email)}
+                                    className="h-7 border-orange-300 px-2 text-[11px] text-orange-700 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-orange-700 dark:text-orange-400"
+                                  >
+                                    <Eye className="mr-1 h-3 w-3" />
+                                    View
+                                  </Button>
+                                );
+                              })()}
+                            </TableCell>
                           </TableRow>
                         ))
                       )}
@@ -796,7 +821,7 @@ export default function Overview() {
                 </div>
 
                 {/* Pagination */}
-                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 pt-1">
                   <p className="text-xs text-zinc-500 dark:text-zinc-500">
                     {filteredEmployees.length === 0 ? (
                       'No results'
@@ -905,11 +930,11 @@ export default function Overview() {
           </CardContent>
         </Card>
 
-        <Card className="border-orange-100/80 bg-gradient-to-br from-white to-orange-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5">
-          <CardHeader>
+        <Card className="flex min-h-0 flex-col overflow-hidden border-orange-100/80 bg-gradient-to-br from-white to-orange-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5">
+          <CardHeader className="shrink-0 pb-2">
             <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Bonus & Status</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-5">
+          <CardContent className="min-h-0 flex-1 space-y-5 overflow-y-auto">
             {/* PAB Eligibility */}
             <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
               <div className="mb-2.5 flex items-center gap-2">

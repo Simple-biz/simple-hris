@@ -22,7 +22,7 @@ const ACCOUNTING_ROLES: Role[] = [
 export const VIEW_ROUTES: Record<AppView, string> = {
   employee: '/employee',
   admin: '/admin',
-  accounting: '/',
+  accounting: '/accounting',
 };
 
 export const VIEW_LABELS: Record<AppView, string> = {

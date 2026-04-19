@@ -39,7 +39,7 @@ export default function LoginPage() {
     }
 
     const base = VIEW_ROUTES[target];
-    const url = target === 'employee' ? `${base}?email=${encodeURIComponent(email)}` : base;
+    const url = `${base}?email=${encodeURIComponent(email)}`;
     router.push(url);
   };
 

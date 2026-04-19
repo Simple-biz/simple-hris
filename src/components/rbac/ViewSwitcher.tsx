@@ -40,7 +40,7 @@ export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) 
       /* ignore */
     }
     const base = VIEW_ROUTES[view];
-    const url = view === 'employee' && email ? `${base}?email=${encodeURIComponent(email)}` : base;
+    const url = email ? `${base}?email=${encodeURIComponent(email)}` : base;
     window.setTimeout(() => {
       withViewTransition(() => router.push(url));
     }, 520);

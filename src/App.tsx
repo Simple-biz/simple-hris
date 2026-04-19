@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import Sidebar from './components/Sidebar';
 import Overview from './components/Overview';
@@ -11,23 +12,52 @@ import SystemSettings from './components/SystemSettings';
 import LeaveRequestsPanel from './components/LeaveRequestsPanel';
 import PabDisputeQueue from './components/payroll/PabDisputeQueue';
 import OrphanageVisits from './components/payroll/OrphanageVisits';
+import { normEmail } from '@/lib/email/norm-email';
+import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+
+function isPlausibleEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [focusRatesEmail, setFocusRatesEmail] = useState<string | null>(null);
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const searchParams = useSearchParams();
+  const emailFromQuery = searchParams.get('email');
+
+  const handleViewRates = (email: string) => {
+    setFocusRatesEmail(email);
+    setActiveTab('rates');
+  };
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    try {
+      const q = emailFromQuery?.trim() ?? '';
+      if (q && isPlausibleEmail(q)) {
+        const normalized = normEmail(q) ?? q.toLowerCase();
+        sessionStorage.setItem(SESSION_EMAIL_KEY, normalized);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [emailFromQuery]);
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
   const renderContent = () => {
     switch (activeTab) {
       case 'overview':
-        return <Overview />;
+        return <Overview onViewRates={handleViewRates} />;
       case 'rates':
-        return <Rates />;
+        return (
+          <Rates
+            focusEmail={focusRatesEmail}
+            onFocusConsumed={() => setFocusRatesEmail(null)}
+          />
+        );
       case 'payroll-wizard':
         return <PayrollWizard />;
       case 'hogan-suite':

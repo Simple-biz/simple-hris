@@ -36,6 +36,30 @@ export function isDisputeApprover(email: string | null | undefined): boolean {
   return DISPUTE_APPROVERS.includes(e);
 }
 
+export const DISPUTE_ACTOR_ROLES: readonly string[] = [
+  'payroll_coordinator',
+  'payroll_manager',
+  'finance',
+  'hr_coordinator',
+  'admin',
+];
+
+export async function canActOnDisputes(email: string | null | undefined): Promise<boolean> {
+  if (!email) return false;
+  const e = email.trim().toLowerCase();
+  if (!e) return false;
+  if (DISPUTE_APPROVERS.includes(e)) return true;
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return false;
+  const { data, error } = await supabase
+    .from('employee_roles')
+    .select('role')
+    .ilike('work_email', e)
+    .is('revoked_at', null);
+  if (error || !data) return false;
+  return data.some((r) => DISPUTE_ACTOR_ROLES.includes((r as { role: string }).role));
+}
+
 export type PabDisputeReasonCode = {
   code: string;
   label: string;
@@ -164,8 +188,8 @@ export async function decideDispute(
 
   const approver = params.decided_by.trim();
   const approverLower = approver.toLowerCase();
-  if (!isDisputeApprover(approverLower)) {
-    return { error: 'Not authorized — only Carla or Fran can decide disputes' };
+  if (!(await canActOnDisputes(approverLower))) {
+    return { error: 'Not authorized — only Accounting roles can decide disputes' };
   }
 
   const { row, error: fetchErr } = await getDisputeById(id);
@@ -174,84 +198,32 @@ export async function decideDispute(
   if (row.status !== 'pending') return { error: 'Dispute is no longer pending' };
 
   const nowIso = new Date().toISOString();
-
-  // Deny = single-step finalize
-  if (params.status === 'denied') {
-    const { error } = await supabase.from(TABLE).update({
-      status: 'denied',
-      decided_by: approver,
-      decided_at: nowIso,
-      decision_note: params.decision_note?.trim() || null,
-      updated_at: nowIso,
-    }).eq('id', id);
-    if (error) return { error: error.message };
-    void insertAuditLog({
-      user_name: approver, user_role: 'Admin', action: 'pab_dispute.denied',
-      resource: TABLE, resource_id: id,
-      details: {
-        employee: row.work_email, dispute_date: row.dispute_date, reason: row.reason,
-        decided_by: approver, decision_note: params.decision_note ?? null,
-      },
-    });
-    return { error: null, stage: 'final' };
-  }
-
-  // Approve — two-tier vote
-  const firstByLower = row.first_approved_by?.trim().toLowerCase() ?? null;
   const proposedOverride =
     params.override_hours != null && params.override_hours > 0 ? params.override_hours : null;
 
-  if (!firstByLower) {
-    // First vote
-    const { error } = await supabase.from(TABLE).update({
-      first_approved_by: approver,
-      first_approved_at: nowIso,
-      first_approved_note: params.decision_note?.trim() || null,
-      first_approved_override_hours: proposedOverride,
-      updated_at: nowIso,
-    }).eq('id', id);
-    if (error) return { error: error.message };
-    void insertAuditLog({
-      user_name: approver, user_role: 'Admin', action: 'pab_dispute.first_approved',
-      resource: TABLE, resource_id: id,
-      details: {
-        employee: row.work_email, dispute_date: row.dispute_date, reason: row.reason,
-        first_approved_by: approver,
-        first_approved_note: params.decision_note ?? null,
-        first_approved_override_hours: proposedOverride,
-      },
-    });
-    return { error: null, stage: 'first' };
-  }
-
-  if (firstByLower === approverLower) {
-    return { error: 'You already cast the first approval — a different approver must finalize' };
-  }
-
-  // Second distinct approver — finalize
-  const finalOverride = proposedOverride ?? row.first_approved_override_hours ?? null;
-  const combinedNote =
-    params.decision_note?.trim() ||
-    row.first_approved_note ||
-    null;
-
   const { error } = await supabase.from(TABLE).update({
-    status: 'approved',
+    status: params.status,
     decided_by: approver,
     decided_at: nowIso,
-    decision_note: combinedNote,
-    override_hours: finalOverride,
+    decision_note: params.decision_note?.trim() || null,
+    override_hours: params.status === 'approved' ? proposedOverride : null,
     updated_at: nowIso,
   }).eq('id', id);
   if (error) return { error: error.message };
 
   void insertAuditLog({
-    user_name: approver, user_role: 'Admin', action: 'pab_dispute.approved',
-    resource: TABLE, resource_id: id,
+    user_name: approver,
+    user_role: 'Admin',
+    action: params.status === 'approved' ? 'pab_dispute.approved' : 'pab_dispute.denied',
+    resource: TABLE,
+    resource_id: id,
     details: {
-      employee: row.work_email, dispute_date: row.dispute_date, reason: row.reason,
-      first_approved_by: row.first_approved_by, decided_by: approver,
-      decision_note: combinedNote, override_hours: finalOverride,
+      employee: row.work_email,
+      dispute_date: row.dispute_date,
+      reason: row.reason,
+      decided_by: approver,
+      decision_note: params.decision_note ?? null,
+      override_hours: params.status === 'approved' ? proposedOverride : null,
     },
   });
   return { error: null, stage: 'final' };
@@ -265,7 +237,7 @@ export async function revokeFirstApproval(
   if (!supabase) return { error: 'Supabase not configured' };
 
   const actor = params.revoked_by.trim();
-  if (!isDisputeApprover(actor.toLowerCase())) {
+  if (!(await canActOnDisputes(actor.toLowerCase()))) {
     return { error: 'Not authorized' };
   }
 
@@ -308,8 +280,8 @@ export async function editDisputeDecision(
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { error: 'Supabase not configured' };
 
-  if (!isDisputeApprover(params.decided_by.trim().toLowerCase())) {
-    return { error: 'Not authorized — only Carla or Fran can edit dispute decisions' };
+  if (!(await canActOnDisputes(params.decided_by.trim().toLowerCase()))) {
+    return { error: 'Not authorized — only Accounting roles can edit dispute decisions' };
   }
 
   const { row, error: fetchErr } = await getDisputeById(id);

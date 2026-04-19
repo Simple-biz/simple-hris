@@ -893,22 +893,19 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       hoursByDateKey.set(key, Math.max(hoursByDateKey.get(key) ?? 0, maxS));
     }
 
-    // Apply approved dispute override_hours to the dispute date AND the day after
-    // (mirrors PayrollWizard.tsx — "day of or day after" rule).
+    // Apply approved dispute override_hours as a SET (replaces Hubstaff hours for that day).
+    // Accounting enters the total hours that should count for PAB on dispute_date — this replaces
+    // whatever Hubstaff logged. No "day after" rule: the dispute applies to its exact date.
+    // Note: dispute_date is ISO "YYYY-MM-DD" but hoursByDateKey uses pabDateKey ("YYYY-M-D", no
+    // zero-padding). Convert before writing or the override silently falls through.
     for (const d of myDisputes) {
       if (d.status !== 'approved') continue;
-      const add = d.override_hours;
-      if (add == null || add <= 0) continue;
-      const addSeconds = add * 3600;
-      const primary = d.dispute_date;
-      hoursByDateKey.set(primary, (hoursByDateKey.get(primary) ?? 0) + addSeconds);
-      const [y, m, day] = primary.split('-').map(Number);
-      if (y && m && day) {
-        const next = new Date(Date.UTC(y, m - 1, day));
-        next.setUTCDate(next.getUTCDate() + 1);
-        const nextKey = next.toISOString().slice(0, 10);
-        hoursByDateKey.set(nextKey, (hoursByDateKey.get(nextKey) ?? 0) + addSeconds);
-      }
+      const set = d.override_hours;
+      if (set == null || set <= 0) continue;
+      const [y, m, day] = d.dispute_date.split('-').map(Number);
+      if (!y || !m || !day) continue;
+      const key = `${y}-${m}-${day}`;
+      hoursByDateKey.set(key, set * 3600);
     }
 
     const weeks = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, hoursByDateKey);
@@ -1967,22 +1964,24 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                             const canDispute = day.hasData && !day.passes && !dispute && !isFutureOrToday;
                             const cellClickable = canDispute || !!dispute;
 
-                            // Future / today → neutral; otherwise green when passing, red when failing.
-                            // Dispute status overrides the neutral and pass/fail colors.
+                            // Effective pass: either the day hit 7h on its own, OR an approved
+                            // dispute brought it into the 4–7h "forgivable" zone. An approved
+                            // dispute below 4h does NOT pass — the day still counts as a PAB fail.
+                            const forgiven =
+                              dispute?.status === 'approved' && !day.passes && day.seconds >= 4 * 3600;
+                            const effectivelyPasses = day.passes || forgiven;
+
+                            // Future / today with no data → neutral; pending dispute → amber;
+                            // otherwise colour strictly by whether PAB is effectively passing.
                             let cellBorder: string;
                             if (dispute?.status === 'pending') {
                               cellBorder =
                                 'border-amber-400 bg-amber-50 ring-1 ring-amber-400/35 dark:border-amber-600/60 dark:bg-amber-950/35';
-                            } else if (dispute?.status === 'approved') {
-                              cellBorder =
-                                'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400/40 dark:border-emerald-600/60 dark:bg-emerald-950/30';
-                            } else if (dispute?.status === 'denied') {
-                              cellBorder =
-                                'border-red-400 bg-red-50 ring-1 ring-red-400/40 dark:border-red-600/60 dark:bg-red-950/30';
-                            } else if (day.passes) {
-                              cellBorder =
-                                'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30';
-                            } else if (isFutureOrToday) {
+                            } else if (effectivelyPasses) {
+                              cellBorder = forgiven
+                                ? 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400/40 dark:border-emerald-600/60 dark:bg-emerald-950/30'
+                                : 'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30';
+                            } else if (isFutureOrToday && !day.hasData) {
                               cellBorder =
                                 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
                             } else {
@@ -2009,28 +2008,20 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                                   className={`font-mono text-[10px] font-bold leading-none ${
                                     dispute?.status === 'pending'
                                       ? 'text-amber-700 dark:text-amber-400'
-                                      : dispute?.status === 'approved'
+                                      : effectivelyPasses
                                         ? 'text-emerald-700 dark:text-emerald-400'
-                                        : dispute?.status === 'denied'
-                                          ? 'text-red-600 dark:text-red-400'
-                                          : day.passes
-                                            ? 'text-emerald-700 dark:text-emerald-400'
-                                            : isFutureOrToday
-                                              ? 'text-zinc-400 dark:text-zinc-500'
-                                              : 'text-red-600 dark:text-red-400'
+                                        : isFutureOrToday && !day.hasData
+                                          ? 'text-zinc-400 dark:text-zinc-500'
+                                          : 'text-red-600 dark:text-red-400'
                                   }`}
                                 >
                                   {day.hasData ? `${hours.toFixed(1)}` : '—'}
                                 </span>
                                 {dispute?.status === 'pending' ? (
                                   <Clock className="h-2 w-2 text-amber-500" />
-                                ) : dispute?.status === 'approved' ? (
+                                ) : effectivelyPasses ? (
                                   <CheckCircle2 className="h-2 w-2 text-emerald-500" />
-                                ) : dispute?.status === 'denied' ? (
-                                  <XCircle className="h-2 w-2 text-red-500" />
-                                ) : day.passes ? (
-                                  <CheckCircle2 className="h-2 w-2 text-emerald-500" />
-                                ) : isFutureOrToday ? null : day.hasData ? (
+                                ) : isFutureOrToday && !day.hasData ? null : day.hasData ? (
                                   <XCircle className="h-2 w-2 text-red-400" />
                                 ) : null}
                               </div>

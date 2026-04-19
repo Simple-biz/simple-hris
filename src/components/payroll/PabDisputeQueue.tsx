@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { normEmail } from '@/lib/email/norm-email';
 import {
   AlertCircle,
   CheckCircle2,
@@ -38,12 +40,12 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { PabDayDisputeRow, PabDisputeReasonCode } from '@/lib/supabase/pab-day-disputes';
-import { DISPUTE_APPROVERS, isDisputeApprover } from '@/lib/supabase/pab-day-disputes';
+import { DISPUTE_ACTOR_ROLES } from '@/lib/supabase/pab-day-disputes';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 
 const PAGE_SIZE = 15;
 
-function formatAddedTime(hours: number | null | undefined): string | null {
+function formatHours(hours: number | null | undefined): string | null {
   if (hours == null || hours <= 0) return null;
   const totalMins = Math.round(hours * 60);
   const h = Math.floor(totalMins / 60);
@@ -61,13 +63,35 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
 
 export default function PabDisputeQueue() {
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [canApprove, setCanApprove] = useState(false);
+  const searchParams = useSearchParams();
+  const emailFromQuery = searchParams.get('email');
   useEffect(() => {
     try {
+      const q = emailFromQuery?.trim() ?? '';
+      if (q && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q)) {
+        const normalized = normEmail(q) ?? q.toLowerCase();
+        sessionStorage.setItem(SESSION_EMAIL_KEY, normalized);
+        setCurrentUser(normalized);
+        return;
+      }
       const e = sessionStorage.getItem(SESSION_EMAIL_KEY);
       setCurrentUser(e ? e.trim().toLowerCase() : null);
     } catch { /* ignore */ }
-  }, []);
-  const canApprove = isDisputeApprover(currentUser);
+  }, [emailFromQuery]);
+  useEffect(() => {
+    if (!currentUser) { setCanApprove(false); return; }
+    let cancelled = false;
+    fetch(`/api/employee-roles?email=${encodeURIComponent(currentUser)}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then((j: { rows?: { role: string }[] }) => {
+        if (cancelled) return;
+        const roles = (j.rows ?? []).map(r => r.role);
+        setCanApprove(roles.some(r => DISPUTE_ACTOR_ROLES.includes(r)));
+      })
+      .catch(() => { if (!cancelled) setCanApprove(false); });
+    return () => { cancelled = true; };
+  }, [currentUser]);
 
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
   const [reasonCodes, setReasonCodes] = useState<PabDisputeReasonCode[]>([]);
@@ -205,14 +229,7 @@ export default function PabDisputeQueue() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Failed');
-      const stage = json?.stage as 'first' | 'final' | null | undefined;
-      if (decideDialog.action === 'approve' && stage === 'first') {
-        toast.success('First approval recorded — needs a second approver to finalize');
-      } else if (decideDialog.action === 'approve') {
-        toast.success('Dispute approved');
-      } else {
-        toast.success('Dispute denied');
-      }
+      toast.success(decideDialog.action === 'approve' ? 'Dispute approved' : 'Dispute denied');
       setDecideDialog(null);
       setDecisionNote('');
       setOverrideHrs('');
@@ -224,22 +241,6 @@ export default function PabDisputeQueue() {
       setDeciding(false);
     }
   }, [decideDialog, decisionNote, overrideHrs, overrideMins, currentUser, fetchDisputes]);
-
-  const handleRevokeFirst = useCallback(async (row: PabDayDisputeRow) => {
-    try {
-      const res = await fetch(`/api/pab-disputes/${row.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'revoke_first', decided_by: currentUser ?? '' }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? 'Failed');
-      toast.success('First approval revoked');
-      fetchDisputes();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to revoke');
-    }
-  }, [currentUser, fetchDisputes]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-br from-white via-indigo-50/40 to-violet-50/20 p-4 sm:p-5 dark:bg-none dark:bg-[#0d1117]">
@@ -253,7 +254,7 @@ export default function PabDisputeQueue() {
               PAB Disputes
             </h2>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-              Two-tier approval queue for short-day disputes. Carla and Fran both must approve before a day is forgiven.
+              Approval queue for short-day disputes. Any Accounting user can approve or deny.
             </p>
           </div>
         </div>
@@ -274,13 +275,11 @@ export default function PabDisputeQueue() {
       >
         {canApprove ? (
           <>
-            Signed in as <span className="font-semibold">{currentUser}</span>. Approvals need two distinct approvers:{' '}
-            <span className="font-mono">{DISPUTE_APPROVERS.join(', ')}</span>. Deny is single-step.
+            Signed in as <span className="font-semibold">{currentUser}</span>. Any Accounting user can approve or deny.
           </>
         ) : (
           <>
-            You can review disputes but not act on them. Only{' '}
-            <span className="font-mono">{DISPUTE_APPROVERS.join(', ')}</span> can approve, deny, or edit.
+            You can review disputes but not act on them. Only users with an Accounting role can approve, deny, or edit.
           </>
         )}
       </div>
@@ -384,7 +383,7 @@ export default function PabDisputeQueue() {
                   <TableHead className="text-zinc-600 dark:text-zinc-400">Reason</TableHead>
                   <TableHead className="text-zinc-600 dark:text-zinc-400">Explanation</TableHead>
                   <TableHead className="text-zinc-600 dark:text-zinc-400">Status</TableHead>
-                  <TableHead className="text-zinc-600 dark:text-zinc-400">Added time</TableHead>
+                  <TableHead className="text-zinc-600 dark:text-zinc-400">Set hours</TableHead>
                   <TableHead className="text-zinc-600 dark:text-zinc-400">Decision</TableHead>
                   <TableHead className="w-[140px] text-right text-zinc-600 dark:text-zinc-400">Action</TableHead>
                 </TableRow>
@@ -405,17 +404,12 @@ export default function PabDisputeQueue() {
                         <Badge variant="outline" className={cn('text-[10px]', STATUS_BADGE[d.status]?.className)}>
                           {STATUS_BADGE[d.status]?.label ?? d.status}
                         </Badge>
-                        {d.status === 'pending' && d.first_approved_by && (
-                          <span className="font-mono text-[9px] text-indigo-600 dark:text-indigo-400" title={`First approved by ${d.first_approved_by}`}>
-                            1/2 · {d.first_approved_by.split('@')[0]}
-                          </span>
-                        )}
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
-                      {formatAddedTime(d.override_hours) ? (
+                      {formatHours(d.override_hours) ? (
                         <span className="rounded-md bg-emerald-50 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
-                          +{formatAddedTime(d.override_hours)}
+                          {formatHours(d.override_hours)}
                         </span>
                       ) : (
                         <span className="text-[10px] text-zinc-400">—</span>
@@ -430,68 +424,40 @@ export default function PabDisputeQueue() {
                       ) : '—'}
                     </TableCell>
                     <TableCell className="text-right">
-                      {d.status === 'pending' ? (() => {
-                        const firstLower = d.first_approved_by?.trim().toLowerCase() ?? null;
-                        const iAmFirst = !!firstLower && firstLower === currentUser;
-                        const approveLabel = !d.first_approved_by
-                          ? 'Approve'
-                          : iAmFirst
-                            ? 'Awaiting 2nd'
-                            : 'Finalize';
-                        const approveDisabled = !canApprove || iAmFirst;
-                        const approveTooltip = !canApprove
-                          ? 'Only Carla or Fran can approve'
-                          : iAmFirst
-                            ? 'You already cast the first approval — the other approver must finalize'
-                            : undefined;
-                        return (
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={approveDisabled}
-                              title={approveTooltip}
-                              className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
-                              onClick={() => {
-                                setDecideDialog({ dispute: d, action: 'approve' });
-                                setDecisionNote(d.first_approved_note ?? '');
-                                const oh = d.first_approved_override_hours ?? 0;
-                                const totalMins = Math.round(oh * 60);
-                                setOverrideHrs(totalMins > 0 ? String(Math.floor(totalMins / 60)) : '');
-                                setOverrideMins(totalMins > 0 ? String(totalMins % 60) : '');
-                              }}
-                            >
-                              {approveLabel}
-                            </Button>
-                            {iAmFirst && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 border-amber-300 px-2 text-[11px] text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400"
-                                onClick={() => handleRevokeFirst(d)}
-                                title="Revoke your first approval"
-                              >
-                                Revoke
-                              </Button>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={!canApprove}
-                              title={!canApprove ? 'Only Carla or Fran can deny' : undefined}
-                              className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
-                              onClick={() => { setDecideDialog({ dispute: d, action: 'deny' }); setDecisionNote(''); setOverrideHrs(''); setOverrideMins(''); }}
-                            >
-                              Deny
-                            </Button>
-                          </div>
-                        );
-                      })() : (
+                      {d.status === 'pending' ? (
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!canApprove}
+                            title={!canApprove ? 'Only Accounting roles can approve' : undefined}
+                            className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
+                            onClick={() => {
+                              setDecideDialog({ dispute: d, action: 'approve' });
+                              setDecisionNote('');
+                              setOverrideHrs('');
+                              setOverrideMins('');
+                            }}
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!canApprove}
+                            title={!canApprove ? 'Only Accounting roles can deny' : undefined}
+                            className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
+                            onClick={() => { setDecideDialog({ dispute: d, action: 'deny' }); setDecisionNote(''); setOverrideHrs(''); setOverrideMins(''); }}
+                          >
+                            Deny
+                          </Button>
+                        </div>
+                      ) : (
                         <Button
                           size="sm"
                           variant="outline"
                           disabled={!canApprove}
-                          title={!canApprove ? 'Only Carla or Fran can edit' : undefined}
+                          title={!canApprove ? 'Only Accounting roles can edit' : undefined}
                           className="h-7 border-zinc-300 px-2 text-[11px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300"
                           onClick={() => openEdit(d)}
                         >
@@ -509,36 +475,21 @@ export default function PabDisputeQueue() {
       )}
 
       {/* Decide confirmation dialog */}
-      {decideDialog && (() => {
-        const firstBy = decideDialog.dispute.first_approved_by;
-        const isFinalizing = decideDialog.action === 'approve' && !!firstBy;
-        const title = decideDialog.action === 'deny'
-          ? 'Deny dispute'
-          : isFinalizing
-            ? 'Finalize approval (2/2)'
-            : 'Cast first approval (1/2)';
-        return (
+      {decideDialog && (
         <Dialog open onOpenChange={() => { setDecideDialog(null); setDecisionNote(''); }}>
           <DialogContent className="max-w-sm">
             <DialogHeader>
-              <DialogTitle className="text-sm">{title}</DialogTitle>
+              <DialogTitle className="text-sm">
+                {decideDialog.action === 'deny' ? 'Deny dispute' : 'Approve dispute'}
+              </DialogTitle>
               <DialogDescription className="text-xs">
                 {decideDialog.dispute.work_email} — {decideDialog.dispute.dispute_date} — {reasonLabel(decideDialog.dispute.reason)}
-                {isFinalizing && (
-                  <span className="mt-1 block rounded-md border border-indigo-200 bg-indigo-50/60 px-2 py-1 text-[10px] text-indigo-700 dark:border-indigo-900/60 dark:bg-indigo-950/20 dark:text-indigo-300">
-                    First approved by <span className="font-semibold">{firstBy}</span>
-                    {decideDialog.dispute.first_approved_override_hours != null && decideDialog.dispute.first_approved_override_hours > 0 && (
-                      <> · proposed +{formatAddedTime(decideDialog.dispute.first_approved_override_hours)}</>
-                    )}
-                    . You can adjust and confirm, or deny instead.
-                  </span>
-                )}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
               {decideDialog.action === 'approve' && (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Additional time (e.g. time at orphanage)</Label>
+                  <Label className="text-xs">Set total hours for this day</Label>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1">
                       <Input
@@ -568,7 +519,7 @@ export default function PabDisputeQueue() {
                     </div>
                   </div>
                   <p className="text-[10px] text-zinc-500">
-                    Added on top of Hubstaff-logged time for PAB. E.g. 6h 30m Hubstaff + 0h 30m added = 7h total. Original Hubstaff data stays untouched.
+                    Replaces Hubstaff hours for this day. E.g. set 7h to make the PAB calendar show 7h for this date, regardless of what Hubstaff logged. Original Hubstaff data stays untouched.
                   </p>
                 </div>
               )}
@@ -594,17 +545,12 @@ export default function PabDisputeQueue() {
                 className={decideDialog.action === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}
               >
                 {deciding && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-                {decideDialog.action === 'deny'
-                  ? 'Deny'
-                  : isFinalizing
-                    ? 'Finalize approval'
-                    : 'Cast first approval'}
+                {decideDialog.action === 'deny' ? 'Deny' : 'Approve'}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
-        );
-      })()}
+      )}
 
       {/* Edit dialog */}
       {editDialog && (
@@ -640,59 +586,97 @@ export default function PabDisputeQueue() {
                   </Button>
                 </div>
               </div>
-              {editStatus === 'approved' && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">Additional time</Label>
-                    {formatAddedTime(editDialog.override_hours) && (
-                      <span className="font-mono text-[10px] text-zinc-500">
-                        On record: <span className="font-semibold text-emerald-700 dark:text-emerald-400">+{formatAddedTime(editDialog.override_hours)}</span>
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        step="1"
-                        min="0"
-                        max="16"
-                        placeholder="0"
-                        value={editHrs}
-                        onChange={e => setEditHrs(e.target.value)}
-                        className="h-9 w-20 text-sm"
-                      />
-                      <span className="text-xs text-zinc-500">hrs</span>
+              {editStatus === 'approved' && (() => {
+                const prevHours = editDialog.override_hours ?? 0;
+                const hrs = parseInt(editHrs, 10);
+                const mins = parseInt(editMins, 10);
+                const safeHrs = Number.isFinite(hrs) && hrs >= 0 ? hrs : 0;
+                const safeMins = Number.isFinite(mins) && mins >= 0 ? mins : 0;
+                const nextHours = safeHrs + safeMins / 60;
+                const deltaHours = nextHours - prevHours;
+                const hasChange = Math.abs(deltaHours) > 1 / 3600; // more than 1 sec diff
+                const prevLabel = formatHours(prevHours) ?? '—';
+                const nextLabel = formatHours(nextHours) ?? '—';
+                const deltaLabel = formatHours(Math.abs(deltaHours));
+                return (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Set total hours for this day</Label>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          step="1"
+                          min="0"
+                          max="16"
+                          placeholder="0"
+                          value={editHrs}
+                          onChange={e => setEditHrs(e.target.value)}
+                          className="h-9 w-20 text-sm"
+                        />
+                        <span className="text-xs text-zinc-500">hrs</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          step="1"
+                          min="0"
+                          max="59"
+                          placeholder="0"
+                          value={editMins}
+                          onChange={e => setEditMins(e.target.value)}
+                          className="h-9 w-20 text-sm"
+                        />
+                        <span className="text-xs text-zinc-500">mins</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => { setEditHrs(''); setEditMins(''); }}
+                        disabled={!editHrs && !editMins}
+                        className="h-9 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:border-zinc-200 disabled:text-zinc-400 dark:border-rose-700 dark:text-rose-400"
+                      >
+                        Clear
+                      </Button>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        step="1"
-                        min="0"
-                        max="59"
-                        placeholder="0"
-                        value={editMins}
-                        onChange={e => setEditMins(e.target.value)}
-                        className="h-9 w-20 text-sm"
-                      />
-                      <span className="text-xs text-zinc-500">mins</span>
+                    {/* Before → after preview */}
+                    <div className="rounded-md border border-zinc-200 bg-zinc-50/60 px-2.5 py-2 text-[11px] dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <div className="flex items-center justify-between gap-2 font-mono">
+                        <span className="text-zinc-500">Before</span>
+                        <span className={cn('font-semibold', prevHours > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-400')}>
+                          {prevHours > 0 ? prevLabel : 'uses Hubstaff'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 font-mono">
+                        <span className="text-zinc-500">After</span>
+                        <span className={cn('font-semibold', nextHours > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-zinc-400')}>
+                          {nextHours > 0 ? nextLabel : 'uses Hubstaff'}
+                        </span>
+                      </div>
+                      {hasChange && (
+                        <div className="mt-1 flex items-center justify-between gap-2 border-t border-zinc-200 pt-1 font-mono dark:border-zinc-800">
+                          <span className="text-zinc-500">Change</span>
+                          <span
+                            className={cn(
+                              'font-semibold',
+                              deltaHours > 0
+                                ? 'text-emerald-700 dark:text-emerald-400'
+                                : 'text-rose-700 dark:text-rose-400',
+                            )}
+                          >
+                            {deltaHours > 0 ? '+' : '−'}{deltaLabel}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => { setEditHrs(''); setEditMins(''); }}
-                      disabled={!editHrs && !editMins}
-                      className="h-9 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:border-zinc-200 disabled:text-zinc-400 dark:border-rose-700 dark:text-rose-400"
-                    >
-                      Clear
-                    </Button>
+                    <p className="text-[10px] text-zinc-500">
+                      {prevHours > 0 && nextHours === 0
+                        ? `Saving will clear the override — the PAB calendar will use Hubstaff hours for this day again.`
+                        : 'Click "Clear" then Save to remove the override entirely. Employee calendar updates on save.'}
+                    </p>
                   </div>
-                  <p className="text-[10px] text-zinc-500">
-                    Click "Clear" then Save to remove the added time entirely. Employee calendar updates on save.
-                  </p>
-                </div>
-              )}
+                );
+              })()}
               <div className="space-y-1.5">
                 <Label className="text-xs">Decision note</Label>
                 <textarea

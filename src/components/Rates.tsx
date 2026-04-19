@@ -320,7 +320,12 @@ const dialogEase = [0.22, 1, 0.36, 1] as const;
 
 const PAGE_SIZE = 12;
 
-export default function Rates() {
+interface RatesProps {
+  focusEmail?: string | null;
+  onFocusConsumed?: () => void;
+}
+
+export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) {
   const [profiles, setProfiles] = useState<EmployeeRateProfile[]>([]);
   const [employeeIdMap, setEmployeeIdMap] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
@@ -621,6 +626,26 @@ export default function Rates() {
     setEditOtRate(normalizeRateForEdit(pickRawFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])));
   }
 
+  useEffect(() => {
+    if (!focusEmail || profiles.length === 0) return;
+    const target = normEmail(focusEmail);
+    if (!target) return;
+    const match = profiles.find((p) => {
+      const m = buildNormFieldMap(p.fields);
+      const emails = [
+        pickFromMap(m, ["Email", "email", "Work Email", "work_email", "Work_Email"]),
+        pickFromMap(m, ["Personal Email", "personal_email", "Personal_Email"]),
+        p.subtitle ?? "",
+      ];
+      return emails.some((e) => normEmail(e) === target);
+    });
+    if (match) {
+      openProfile(match);
+      setSearchQuery(focusEmail);
+    }
+    onFocusConsumed?.();
+  }, [focusEmail, profiles, onFocusConsumed]);
+
   async function handleSaveRates() {
     if (!activeProfile) return;
     setIsSaving(true);
@@ -862,9 +887,42 @@ export default function Rates() {
           </div>
 
           {loading ? (
-            <div className="flex flex-1 items-center justify-center gap-2 py-8 text-sm text-zinc-500 dark:text-zinc-400">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading rates…
+            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+              {/* Pagination bar skeleton */}
+              <div className="flex shrink-0 items-center justify-between text-xs">
+                <div className="h-4 w-40 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="flex items-center gap-1">
+                  <div className="h-8 w-8 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="h-4 w-12 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+                  <div className="h-8 w-8 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                </div>
+              </div>
+              {/* Table skeleton */}
+              <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800">
+                <div className="flex items-center gap-4 border-b border-zinc-200 bg-gradient-to-r from-orange-50/95 to-blue-50/60 px-3 py-2 dark:border-zinc-800 dark:from-blue-950/90 dark:to-blue-950/70">
+                  {['w-16', 'w-24', 'w-20', 'w-24', 'w-28', 'ml-auto w-16', 'w-16', 'w-16', 'w-20'].map((w, i) => (
+                    <div key={i} className={cn('h-3 animate-pulse rounded bg-zinc-300/80 dark:bg-zinc-700/80', w)} />
+                  ))}
+                </div>
+                <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                  {Array.from({ length: PAGE_SIZE }, (_, i) => (
+                    <div key={i} className="flex items-center gap-4 px-3 py-3">
+                      <div className="h-5 w-16 shrink-0 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" style={{ animationDelay: `${i * 40}ms` }} />
+                      <div className="flex min-w-[11rem] flex-1 items-center gap-2.5">
+                        <div className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+                        <div className="h-3.5 flex-1 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" style={{ animationDelay: `${i * 40 + 20}ms` }} />
+                      </div>
+                      <div className="h-5 w-24 shrink-0 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+                      <div className="h-5 w-24 shrink-0 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+                      <div className="h-3 w-40 shrink-0 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+                      <div className="ml-auto h-3 w-12 shrink-0 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                      <div className="h-3 w-12 shrink-0 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                      <div className="h-5 w-20 shrink-0 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+                      <div className="h-7 w-20 shrink-0 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           ) : error ? (
             <p className="shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200/90">

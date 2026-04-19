@@ -1,4 +1,7 @@
+'use client';
+
 import React from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
@@ -20,6 +23,11 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { normEmail } from '@/lib/email/norm-email';
+
+function isPlausibleEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
 
 interface SidebarProps {
   activeTab: string;
@@ -41,14 +49,37 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   const [email, setEmail] = React.useState<string | null>(null);
+  const [roles, setRoles] = React.useState<string[]>([]);
+  const searchParams = useSearchParams();
+  const emailFromQuery = searchParams.get('email');
   React.useEffect(() => {
     setMounted(true);
     try {
+      const q = emailFromQuery?.trim() ?? '';
+      if (q && isPlausibleEmail(q)) {
+        const normalized = normEmail(q) ?? q.toLowerCase();
+        sessionStorage.setItem(SESSION_EMAIL_KEY, normalized);
+        setEmail(normalized);
+        return;
+      }
       setEmail(sessionStorage.getItem(SESSION_EMAIL_KEY));
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [emailFromQuery]);
+  React.useEffect(() => {
+    const e = (email || '').trim();
+    if (!e) { setRoles([]); return; }
+    let cancelled = false;
+    fetch(`/api/employee-roles?email=${encodeURIComponent(e)}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then((j: { rows?: { role: string }[] }) => {
+        if (cancelled) return;
+        setRoles((j.rows ?? []).map(r => r.role));
+      })
+      .catch(() => { if (!cancelled) setRoles([]); });
+    return () => { cancelled = true; };
+  }, [email]);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
   return (
@@ -118,12 +149,17 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
           </div>
         </button>
         <div className="mb-4 flex items-center gap-3 px-3 py-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-blue-500 text-xs font-bold text-white shadow-sm">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-blue-500 text-xs font-bold text-white shadow-sm">
             {(email || '?').slice(0, 2).toUpperCase()}
           </div>
           <div className="flex min-w-0 flex-col overflow-hidden">
-            <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">{email || 'Not signed in'}</span>
-            <span className="truncate text-xs text-zinc-500 dark:text-zinc-500">Accounting view</span>
+            <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200" title={email ?? undefined}>{email || 'Not signed in'}</span>
+            <span className="truncate text-xs text-zinc-500 dark:text-zinc-500">
+              Accounting view
+              {roles.length > 0 && (
+                <> · <span className="font-mono text-[10px] text-orange-600 dark:text-orange-400" title={roles.join(', ')}>{roles.join(', ')}</span></>
+              )}
+            </span>
           </div>
         </div>
         <Button

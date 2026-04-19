@@ -1266,12 +1266,7 @@ export default function PayrollWizard() {
           const em = (row.work_email ?? '').trim().toLowerCase();
           if (!em) continue;
           if (!map.has(em)) map.set(em, new Map());
-          const dateMap = map.get(em)!;
-          dateMap.set(row.dispute_date, row.override_hours);
-          const next = new Date(row.dispute_date + 'T00:00:00');
-          next.setDate(next.getDate() + 1);
-          const nextIso = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
-          if (!dateMap.has(nextIso)) dateMap.set(nextIso, row.override_hours);
+          map.get(em)!.set(row.dispute_date, row.override_hours);
         }
         setApprovedDisputeDates(map);
       })
@@ -1314,8 +1309,10 @@ export default function PayrollWizard() {
       for (const group of weekdayColumnGroups) {
         const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
         const groupDate = isoDateFromColumnGroup(group);
-        const addedHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
-        const effectiveSeconds = rawSeconds + (addedHours != null && addedHours > 0 ? addedHours * 3600 : 0);
+        const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
+        // SET semantics: override_hours replaces Hubstaff hours for the day, not add to them.
+        const effectiveSeconds =
+          overrideHours != null && overrideHours > 0 ? overrideHours * 3600 : rawSeconds;
         if (effectiveSeconds < 7 * 3600) {
           const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && effectiveSeconds >= 4 * 3600);
           if (!forgiven) {
@@ -1361,8 +1358,10 @@ export default function PayrollWizard() {
           const col = pickPreferredHubstaffColumn(group);
           const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
           const groupDate = isoDateFromColumnGroup(group);
-          const addedHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
-          const seconds = rawSeconds + (addedHours != null && addedHours > 0 ? addedHours * 3600 : 0);
+          const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
+          // SET semantics: override_hours replaces Hubstaff hours for the day.
+          const seconds =
+            overrideHours != null && overrideHours > 0 ? overrideHours * 3600 : rawSeconds;
           const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600 && seconds < 7 * 3600);
           return { col, seconds, passes: seconds >= 7 * 3600 || forgiven, forgivenByDispute: forgiven };
         }),

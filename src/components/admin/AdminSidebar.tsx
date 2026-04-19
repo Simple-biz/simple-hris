@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
@@ -18,6 +19,11 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { normEmail } from '@/lib/email/norm-email';
+
+function isPlausibleEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
 
 interface AdminSidebarProps {
   activeTab: string;
@@ -35,14 +41,23 @@ export default function AdminSidebar({ activeTab, setActiveTab }: AdminSidebarPr
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   const [email, setEmail] = React.useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const emailFromQuery = searchParams.get('email');
   React.useEffect(() => {
     setMounted(true);
     try {
+      const q = emailFromQuery?.trim() ?? '';
+      if (q && isPlausibleEmail(q)) {
+        const normalized = normEmail(q) ?? q.toLowerCase();
+        sessionStorage.setItem(SESSION_EMAIL_KEY, normalized);
+        setEmail(normalized);
+        return;
+      }
       setEmail(sessionStorage.getItem(SESSION_EMAIL_KEY));
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [emailFromQuery]);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
   return (
