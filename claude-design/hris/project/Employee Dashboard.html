@@ -1,0 +1,1066 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>My Dashboard · Simple HRIS</title>
+<meta name="viewport" content="width=1440" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/lucide@0.462.0/dist/umd/lucide.min.js"></script>
+<style>
+  /* --- Tokens lifted from simple-hris/src/index.css --- */
+  :root {
+    --radius: 0.75rem;
+    --border: #e4e7eb;     /* 214 32% 91% */
+    --muted: #eff4f9;      /* 210 40% 96% */
+    --muted-foreground: #64748b;
+    --orange-50: #fff7ed;
+    --orange-100: #ffedd5;
+    --orange-200: #fed7aa;
+    --orange-300: #fdba74;
+    --orange-400: #fb923c;
+    --orange-500: #f97316;
+    --orange-600: #ea580c;
+    --orange-700: #c2410c;
+    --orange-900: #7c2d12;
+    --blue-50: #eff6ff;
+    --blue-500: #3b82f6;
+    --blue-600: #2563eb;
+    --blue-700: #1d4ed8;
+    --indigo-50: #eef2ff;
+    --indigo-100: #e0e7ff;
+    --indigo-200: #c7d2fe;
+    --indigo-300: #a5b4fc;
+    --indigo-400: #818cf8;
+    --indigo-500: #6366f1;
+    --indigo-600: #4f46e5;
+    --indigo-700: #4338ca;
+    --indigo-800: #3730a3;
+    --emerald-50: #ecfdf5;
+    --emerald-100: #d1fae5;
+    --emerald-200: #a7f3d0;
+    --emerald-300: #6ee7b7;
+    --emerald-400: #34d399;
+    --emerald-500: #10b981;
+    --emerald-600: #059669;
+    --emerald-700: #047857;
+    --amber-50: #fffbeb;
+    --amber-100: #fef3c7;
+    --amber-200: #fde68a;
+    --amber-300: #fcd34d;
+    --amber-400: #fbbf24;
+    --amber-500: #f59e0b;
+    --amber-600: #d97706;
+    --amber-700: #b45309;
+    --amber-800: #92400e;
+    --amber-900: #78350f;
+    --red-300: #fca5a5;
+    --red-400: #f87171;
+    --red-500: #ef4444;
+    --red-600: #dc2626;
+    --red-700: #b91c1c;
+    --sky-50: #f0f9ff;
+    --sky-500: #0ea5e9;
+    --sky-600: #0284c7;
+    --sky-700: #0369a1;
+    --sky-800: #075985;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-300: #d4d4d8;
+    --zinc-400: #a1a1aa;
+    --zinc-500: #71717a;
+    --zinc-600: #52525b;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    color: var(--zinc-900);
+    background: #fff;
+    -webkit-font-smoothing: antialiased;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+  /* Layout */
+  .app {
+    display: flex;
+    height: 100vh;
+    min-height: 800px;
+    background: #fff;
+  }
+
+  /* ========== Sidebar ========== */
+  .sidebar {
+    width: 256px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--orange-100);
+    background: linear-gradient(to bottom, #fff, rgba(255,247,237,0.4));
+    color: var(--zinc-600);
+  }
+  .sidebar-top { padding: 24px; }
+  .logo-row {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 32px;
+  }
+  .logo-icon {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--orange-500), var(--orange-600));
+    box-shadow: 0 4px 12px -2px rgba(249,115,22,0.3);
+    display: flex; align-items: center; justify-content: center;
+    color: white;
+  }
+  .logo-chip {
+    background: white;
+    padding: 4px 8px;
+    border-radius: 6px;
+    display: flex; align-items: center;
+  }
+  .logo-chip img { height: 20px; width: auto; display: block; }
+
+  .nav { display: flex; flex-direction: column; gap: 4px; padding: 0 8px; margin: 0 -8px; }
+  .nav button {
+    all: unset;
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 14px; font-weight: 500;
+    cursor: pointer;
+    color: var(--zinc-600);
+    transition: all 200ms;
+  }
+  .nav button:hover { background: var(--orange-50); color: var(--zinc-900); }
+  .nav button.active {
+    background: linear-gradient(to right, var(--orange-100), var(--orange-50));
+    color: var(--orange-900);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .nav button.active .nav-icon { color: var(--orange-500); }
+  .nav-icon { width: 16px; height: 16px; color: var(--zinc-500); flex-shrink: 0; }
+  .nav-chevron { margin-left: auto; width: 12px; height: 12px; color: var(--orange-400); }
+
+  .sidebar-bottom {
+    margin-top: auto;
+    border-top: 1px solid var(--orange-100);
+    padding: 16px;
+  }
+  .view-switcher {
+    font-size: 11px;
+    color: var(--zinc-500);
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--zinc-200);
+    background: white;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .view-switcher .vs-label { display:flex; align-items:center; gap:6px; }
+  .view-switcher .vs-pill {
+    padding: 2px 8px;
+    background: var(--orange-100);
+    color: var(--orange-700);
+    border-radius: 9999px;
+    font-weight: 600;
+    font-size: 10px;
+  }
+  .theme-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--orange-100);
+    background: rgba(255,237,213,0.6);
+    cursor: pointer;
+    margin-bottom: 8px;
+  }
+  .theme-toggle .tt-left { display:flex; align-items:center; gap:8px; color: var(--zinc-700); font-size: 12px; font-weight: 500; }
+  .theme-toggle .tt-icon-box {
+    width: 24px; height: 24px;
+    background: white;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    color: var(--blue-500);
+  }
+  .user-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 12px; margin-bottom: 16px;
+  }
+  .avatar {
+    width: 36px; height: 36px;
+    border-radius: 9999px;
+    background: linear-gradient(135deg, var(--orange-400), var(--orange-500));
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 12px;
+    flex-shrink: 0;
+  }
+  .user-name { font-size: 14px; font-weight: 500; color: var(--zinc-900); }
+  .user-sub { font-size: 10px; color: var(--zinc-500); }
+  .logout-btn {
+    width: 100%;
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 12px; border-radius: 6px;
+    background: transparent; border: none;
+    color: var(--zinc-600); font-size: 14px; font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+  }
+  .logout-btn:hover { background: rgba(239,68,68,0.1); color: var(--red-600); }
+
+  /* ========== Main ========== */
+  main {
+    flex: 1;
+    min-width: 0;
+    display: flex; flex-direction: column;
+    overflow: auto;
+    background: linear-gradient(135deg, #fff, rgba(255,237,213,0.3), rgba(219,234,254,0.2));
+    padding: 16px 20px 24px;
+    gap: 12px;
+  }
+
+  /* ---------- Header ---------- */
+  .header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .header h1 {
+    font-size: 24px; font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--zinc-900);
+    margin: 0;
+  }
+  .header .subtitle {
+    font-size: 13px;
+    color: var(--zinc-600);
+    margin-top: 2px;
+    max-width: 820px;
+  }
+  .pab-line {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--indigo-800);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .pab-line .sep { color: var(--zinc-400); }
+  .pab-line strong { font-weight: 600; }
+
+  .file-select {
+    margin-top: 8px;
+    display: flex; flex-direction: column; gap: 4px;
+    max-width: 560px;
+  }
+  .file-select-row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .file-select select {
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--zinc-200);
+    background: white;
+    padding: 0 24px 0 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--zinc-700);
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+  }
+  .file-select .hint {
+    padding-left: 20px;
+    font-size: 10px;
+    color: var(--zinc-500);
+  }
+
+  .header-right {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
+  }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 12px;
+    border-radius: 9999px;
+    border: 1px solid;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    height: 24px;
+  }
+  .badge svg { width: 12px; height: 12px; }
+  .badge-eligible {
+    border-color: rgba(16,185,129,0.3);
+    background: rgba(16,185,129,0.1);
+    color: var(--emerald-700);
+  }
+  .badge-tech {
+    border-color: rgba(14,165,233,0.25);
+    background: rgba(14,165,233,0.1);
+    color: var(--sky-800);
+  }
+  .badge-pab-chip {
+    border-color: rgba(249,115,22,0.2);
+    background: linear-gradient(to right, rgba(249,115,22,0.1), rgba(59,130,246,0.1));
+    color: var(--orange-700);
+  }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 10px;
+    border-radius: 6px;
+    border: 1px solid var(--zinc-200);
+    background: rgba(255,255,255,0.8);
+    color: var(--zinc-700);
+    font-size: 12px; font-weight: 500;
+    cursor: pointer;
+  }
+  .btn svg { width: 14px; height: 14px; }
+
+  /* ---------- Card ---------- */
+  .card {
+    border-radius: 12px;
+    border: 1px solid var(--zinc-200);
+    background: white;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    display: flex; flex-direction: column;
+  }
+  .card-header {
+    padding: 12px 16px 8px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 600;
+    color: var(--zinc-900);
+    margin: 0;
+  }
+  .card-subtitle {
+    font-size: 11px;
+    color: var(--zinc-500);
+    margin-top: 4px;
+    line-height: 1.5;
+    font-weight: 400;
+  }
+  .card-body { padding: 0 16px 14px; }
+
+  /* ---------- Monthly PAB & other bonuses ---------- */
+  .pab-summary-card {
+    border: 1px solid rgba(199,210,254,0.8);
+    background: linear-gradient(135deg, #fff, rgba(238,242,255,0.2));
+  }
+  .bonus-row {
+    display: flex; gap: 12px;
+    padding: 12px;
+    border: 1px solid rgba(228,228,231,0.9);
+    background: rgba(255,255,255,0.8);
+    border-radius: 8px;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  .bonus-row + .bonus-row { margin-top: 8px; }
+  .bonus-row-left { display: flex; gap: 12px; flex: 1; min-width: 0; }
+  .bonus-icon-circle {
+    width: 32px; height: 32px;
+    border-radius: 9999px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .bonus-icon-circle.amber { background: rgba(245,158,11,0.15); color: var(--amber-600); }
+  .bonus-icon-circle.sky { background: rgba(14,165,233,0.15); color: var(--sky-600); }
+  .bonus-icon-circle svg { width: 16px; height: 16px; }
+  .bonus-title {
+    font-size: 12px; font-weight: 500; color: var(--zinc-900);
+    margin: 0 0 2px;
+  }
+  .bonus-meta {
+    font-size: 10px; color: var(--indigo-600);
+    display: flex; align-items: flex-start; gap: 4px;
+  }
+  .bonus-meta svg { width: 12px; height: 12px; margin-top: 2px; flex-shrink: 0; }
+  .bonus-desc {
+    font-size: 12px; font-weight: 500;
+    line-height: 1.5;
+    margin: 4px 0 0;
+  }
+  .bonus-desc.amber { color: var(--amber-800); }
+  .bonus-desc.muted { color: var(--zinc-600); }
+
+  .status-pill {
+    display: inline-flex; align-items: center;
+    padding: 4px 12px;
+    border-radius: 9999px;
+    border: 1px solid;
+    font-size: 12px; font-weight: 500;
+    flex-shrink: 0;
+    height: 24px;
+    line-height: 1;
+  }
+  .status-pill.amber { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.1); color: var(--amber-900); }
+  .status-pill.sky { border-color: rgba(14,165,233,0.35); background: rgba(14,165,233,0.1); color: var(--sky-800); }
+
+  /* ---------- Stats row (6 cards) ---------- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+  }
+  .stat {
+    border-radius: 12px;
+    border: 1px solid rgba(255,237,213,0.8);
+    background: linear-gradient(135deg, #fff, rgba(255,247,237,0.3));
+    padding: 12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    display: flex; flex-direction: column;
+    min-width: 0;
+  }
+  .stat.indigo { border-color: rgba(199,210,254,0.8); background: linear-gradient(135deg, #fff, rgba(238,242,255,0.3)); }
+  .stat.sky { border-color: rgba(186,230,253,0.8); background: linear-gradient(135deg, #fff, rgba(240,249,255,0.3)); }
+  .stat.emerald { border-color: rgba(167,243,208,0.8); background: linear-gradient(135deg, #fff, rgba(236,253,245,0.3)); }
+  .stat-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .stat-label {
+    font-size: 11px; font-weight: 500;
+    color: var(--zinc-600);
+    text-transform: none;
+  }
+  .stat-icon { width: 14px; height: 14px; color: var(--zinc-500); flex-shrink: 0; }
+  .stat-icon.indigo { color: var(--indigo-500); }
+  .stat-icon.sky { color: var(--sky-500); }
+  .stat-icon.emerald { color: var(--emerald-500); }
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--zinc-900);
+    word-break: break-word;
+  }
+  .stat-value.indigo { color: var(--indigo-700); }
+  .stat-value.sky { color: var(--sky-700); }
+  .stat-value.emerald { color: var(--emerald-700); }
+  .stat-value.muted { color: var(--zinc-400); }
+  .stat-hint {
+    margin-top: 6px;
+    font-size: 10px; line-height: 1.3;
+    color: var(--zinc-500);
+  }
+
+  /* ---------- Bottom row: 3 cards ---------- */
+  .bottom-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 320px;
+    gap: 16px;
+    min-height: 340px;
+  }
+  .bottom-row > .card { min-height: 0; }
+
+  /* --- Daily Hours bar chart --- */
+  .daily-card {
+    border-color: rgba(255,237,213,0.8);
+    background: linear-gradient(135deg, #fff, rgba(219,234,254,0.2));
+  }
+  .daily-bars {
+    flex: 1; overflow-y: auto; padding-right: 6px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .day-row {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .day-label {
+    width: 40px; flex-shrink: 0;
+    text-align: right;
+    font-size: 12px; font-weight: 500;
+    color: var(--zinc-700);
+  }
+  .day-label.weekend { color: var(--zinc-400); }
+  .bar-track {
+    position: relative;
+    flex: 1; height: 24px;
+    border-radius: 6px;
+    background: var(--zinc-100);
+    overflow: hidden;
+  }
+  .bar-fill {
+    position: absolute; inset: 0;
+    border-radius: 6px;
+  }
+  .bar-fill.ok { background: linear-gradient(to right, var(--emerald-400), var(--emerald-500)); }
+  .bar-fill.under { background: linear-gradient(to right, var(--amber-400), var(--amber-500)); }
+  .bar-fill.weekend { background: linear-gradient(to right, var(--zinc-300), var(--zinc-400)); }
+  .threshold {
+    position: absolute; inset-block: 0;
+    width: 1px;
+    background: rgba(248,113,113,0.5);
+  }
+  .bar-value {
+    position: absolute; left: 8px; top: 50%;
+    transform: translateY(-50%);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; font-weight: 500; color: white;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.3);
+  }
+  .day-total {
+    width: 56px; flex-shrink: 0;
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--zinc-500);
+  }
+
+  .legend {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--zinc-200);
+    display: flex; flex-wrap: wrap;
+    gap: 6px 12px;
+    font-size: 10px; color: var(--zinc-500);
+    align-items: center;
+  }
+  .legend-item { display: inline-flex; align-items: center; gap: 4px; }
+  .dot { width: 8px; height: 8px; border-radius: 9999px; display: inline-block; }
+  .dot.emerald { background: var(--emerald-500); }
+  .dot.amber { background: var(--amber-500); }
+  .dot.zinc { background: var(--zinc-400); }
+  .dot.red { background: var(--red-400); }
+  .dot.forgiven { background: var(--emerald-500); box-shadow: 0 0 0 1px var(--emerald-400); }
+  .line-sample { width: 12px; height: 2px; background: rgba(248,113,113,0.5); display: inline-block; }
+
+  /* --- PAB Calendar --- */
+  .pab-card {
+    border-color: rgba(199,210,254,0.8);
+    background: linear-gradient(135deg, #fff, rgba(238,242,255,0.2));
+  }
+  .pab-head {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+  }
+  .pab-date-line {
+    margin-top: 2px;
+    font-size: 10px;
+    color: var(--indigo-600);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .pab-date-line svg { width: 12px; height: 12px; flex-shrink: 0; }
+
+  .refresh-mini {
+    width: 24px; height: 24px; flex-shrink: 0;
+    border-radius: 6px;
+    border: 1px solid var(--indigo-200);
+    background: white;
+    color: var(--indigo-600);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  .refresh-mini svg { width: 12px; height: 12px; }
+
+  .pab-grid-wrap {
+    flex: 1;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    padding-top: 2px;
+  }
+  .pab-header-row, .pab-week-row {
+    display: grid;
+    grid-template-columns: 24px repeat(5, 1fr);
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+  .pab-header-row .pab-head-cell {
+    text-align: center;
+    font-size: 8px; font-weight: 700;
+    color: var(--zinc-400);
+  }
+  .pab-week-number {
+    display: flex; align-items: center; justify-content: flex-end;
+    font-size: 8px; font-weight: 500;
+    color: var(--zinc-400);
+  }
+  .pab-cell {
+    height: 40px;
+    border-radius: 6px;
+    border: 1px solid;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 1px;
+    transition: all 300ms;
+  }
+  .pab-cell .pab-date {
+    font-size: 7px; line-height: 1;
+    color: var(--zinc-400);
+  }
+  .pab-cell .pab-hours {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; font-weight: 700; line-height: 1;
+  }
+  .pab-cell svg { width: 8px; height: 8px; }
+  .pab-cell.dim {
+    border-style: dashed;
+    border-color: var(--zinc-200);
+    background: rgba(250,250,250,0.5);
+  }
+  .pab-cell.dim .pab-hours,
+  .pab-cell.dim .pab-date { color: var(--zinc-300); }
+  .pab-cell.pass {
+    border-color: var(--emerald-300);
+    background: var(--emerald-50);
+  }
+  .pab-cell.pass .pab-hours { color: var(--emerald-700); }
+  .pab-cell.pass svg { color: var(--emerald-500); }
+  .pab-cell.fail {
+    border-color: var(--red-300);
+    background: rgba(254,226,226,0.5);
+  }
+  .pab-cell.fail .pab-hours { color: var(--red-600); }
+  .pab-cell.fail svg { color: var(--red-400); }
+  .pab-cell.pending {
+    border-color: var(--amber-400);
+    background: var(--amber-50);
+    box-shadow: 0 0 0 1px rgba(251,191,36,0.35);
+  }
+  .pab-cell.pending .pab-hours { color: var(--amber-700); }
+  .pab-cell.pending svg { color: var(--amber-500); }
+  .pab-cell.forgiven {
+    border-color: var(--emerald-400);
+    background: var(--emerald-50);
+    box-shadow: 0 0 0 1px rgba(52,211,153,0.4);
+  }
+  .pab-cell.future {
+    border-color: var(--zinc-200);
+    background: #fff;
+  }
+  .pab-cell.future .pab-hours { color: var(--zinc-400); }
+
+  /* --- Pay summary --- */
+  .pay-summary {
+    border-color: rgba(255,237,213,0.8);
+    background: linear-gradient(135deg, #fff, rgba(255,247,237,0.2));
+  }
+  .pay-lines { display: flex; flex-direction: column; gap: 12px; }
+  .pay-line { display: flex; justify-content: space-between; gap: 8px; }
+  .pay-line .label { font-size: 12px; color: var(--zinc-500); }
+  .pay-line .label.indigo { color: var(--indigo-600); }
+  .pay-line .label.sky { color: var(--sky-600); }
+  .pay-line .value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px; color: var(--zinc-700);
+    text-align: right;
+    word-break: break-word;
+  }
+  .pay-line .value.muted { color: var(--zinc-400); }
+  .pay-line .value.indigo { color: var(--indigo-600); font-weight: 500; }
+  .pay-line .value.sky { color: var(--sky-600); font-weight: 500; }
+  .divider { height: 1px; background: var(--zinc-200); margin: 0; }
+  .total-line .label { font-size: 14px; font-weight: 500; color: var(--zinc-900); }
+  .total-line .value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px; font-weight: 700;
+    color: var(--emerald-700);
+    text-align: right;
+  }
+  .usd-line {
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--blue-500);
+  }
+  .fx-note {
+    margin-top: 12px;
+    padding: 6px 10px;
+    border: 1px solid var(--zinc-200);
+    background: rgba(250,250,250,0.8);
+    border-radius: 8px;
+    font-size: 10px;
+    color: var(--zinc-500);
+    line-height: 1.5;
+  }
+  .fx-note .fx-rate { font-family: 'JetBrains Mono', monospace; font-weight: 500; color: var(--zinc-700); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--orange-200); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--orange-300); }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="sidebar-top">
+      <div class="logo-row">
+        <div class="logo-icon"><i data-lucide="user"></i></div>
+        <div class="logo-chip"><img src="assets/simple-logo.png" alt="Simple HRIS" /></div>
+      </div>
+      <nav class="nav">
+        <button class="active"><i data-lucide="layout-dashboard" class="nav-icon"></i>My Dashboard<i data-lucide="chevron-right" class="nav-chevron"></i></button>
+        <button><i data-lucide="user-circle" class="nav-icon"></i>Profile</button>
+        <button><i data-lucide="clock" class="nav-icon"></i>My Hours</button>
+        <button><i data-lucide="calendar-days" class="nav-icon"></i>Leave</button>
+        <button><i data-lucide="file-text" class="nav-icon"></i>My Disputes</button>
+        <button><i data-lucide="calendar-heart" class="nav-icon"></i>Orphanage Visits</button>
+        <button><i data-lucide="settings" class="nav-icon"></i>Settings</button>
+      </nav>
+    </div>
+
+    <div class="sidebar-bottom">
+      <div class="view-switcher">
+        <span class="vs-label"><i data-lucide="eye" style="width:12px;height:12px;"></i>Viewing as</span>
+        <span class="vs-pill">Employee</span>
+      </div>
+      <button class="theme-toggle" aria-label="Toggle dark mode">
+        <span class="tt-left"><i data-lucide="sun" style="width:16px;height:16px;"></i>Light mode</span>
+        <span class="tt-icon-box"><i data-lucide="moon" style="width:14px;height:14px;"></i></span>
+      </button>
+      <div class="user-row">
+        <div class="avatar">MR</div>
+        <div>
+          <div class="user-name">Maria Reyes</div>
+          <div class="user-sub">Customer Support · EMP‑0427</div>
+        </div>
+      </div>
+      <button class="logout-btn"><i data-lucide="log-out" style="width:16px;height:16px;"></i>Log Out</button>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main>
+    <!-- Header -->
+    <div class="header">
+      <div>
+        <h1>My Dashboard</h1>
+        <p class="subtitle">Hours, pay, and monthly Perfect Attendance (PAB). Pay totals follow the Hubstaff file you select; PAB uses all uploads for the month.</p>
+        <p class="pab-line">
+          <i data-lucide="calendar-days" style="width:14px;height:14px;color:var(--indigo-500);"></i>
+          <span><strong>PAB period starts</strong> Mar 9, 2026 <span class="sep">·</span> <strong>ends</strong> Apr 3, 2026</span>
+        </p>
+        <div class="file-select">
+          <div class="file-select-row">
+            <i data-lucide="file-text" style="width:14px;height:14px;color:var(--orange-500);flex-shrink:0;"></i>
+            <select>
+              <option>hubstaff_hours_2026-03-24_to_2026-03-30.csv (latest)</option>
+              <option>hubstaff_hours_2026-03-17_to_2026-03-23.csv</option>
+              <option>hubstaff_hours_2026-03-10_to_2026-03-16.csv</option>
+              <option>All Time (all uploads combined)</option>
+            </select>
+          </div>
+          <p class="hint">Monthly PAB merges every upload — this file only drives the hours/pay cards below.</p>
+        </div>
+      </div>
+      <div class="header-right">
+        <button class="btn"><i data-lucide="refresh-cw"></i>Refresh</button>
+        <span class="badge badge-eligible"><i data-lucide="award"></i>PAB eligible · Mar</span>
+        <span class="badge badge-tech"><i data-lucide="laptop"></i>Tech bonus (₱1,850)</span>
+        <span class="badge badge-pab-chip"><i data-lucide="calendar-days"></i>PAB · starts Mar 9, 2026</span>
+      </div>
+    </div>
+
+    <!-- Monthly PAB & other bonuses -->
+    <section class="card pab-summary-card">
+      <div class="card-header">
+        <h2 class="card-title">Monthly PAB &amp; other bonuses</h2>
+        <p class="card-subtitle">
+          PAB uses every Mon–Fri in the PAB period below (merged Hubstaff uploads); each day must be ≥ 7 hours. If the month doesn't start on a Monday, the first week is skipped and counting starts on the <strong style="color:var(--zinc-600);font-weight:500;">second Monday</strong> (e.g. March 2026: Mar 9–Apr 3). Figures here are estimates until payroll confirms them.
+        </p>
+      </div>
+      <div class="card-body">
+        <!-- PAB row -->
+        <div class="bonus-row">
+          <div class="bonus-row-left">
+            <div class="bonus-icon-circle amber"><i data-lucide="x-circle"></i></div>
+            <div style="min-width:0;">
+              <p class="bonus-title">Monthly period Perfect Attendance Bonus · ₱5,000</p>
+              <p class="bonus-meta">
+                <i data-lucide="calendar-days"></i>
+                <span><strong>March 2026</strong> · <strong style="font-weight:500;">Start</strong> Mar 9, 2026 · <strong style="font-weight:500;">End</strong> Apr 3, 2026 · 20 Mon–Fri days in this PAB month</span>
+              </p>
+              <p class="bonus-desc amber">
+                No longer Eligible for PAB, Try again next month — <span style="font-weight:400;">violated on Mar 18, 2026</span>
+              </p>
+            </div>
+          </div>
+          <span class="status-pill amber">Not eligible</span>
+        </div>
+
+        <!-- Tech bonus row -->
+        <div class="bonus-row" style="background:var(--sky-50);border-color:rgba(186,230,253,0.6);">
+          <div class="bonus-row-left">
+            <div class="bonus-icon-circle sky"><i data-lucide="laptop"></i></div>
+            <div style="min-width:0;">
+              <p class="bonus-title">Technology Bonus · ₱1,850</p>
+              <p class="bonus-desc muted" style="font-weight:400;">
+                You're past your 30-day service mark. ₱1,850 is paid on the 3rd paycheck of each month to help cover your technology expenses (equipment, internet).
+              </p>
+            </div>
+          </div>
+          <span class="status-pill sky">Eligible</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Stats: 6 cards -->
+    <section class="stats">
+      <div class="stat">
+        <div class="stat-head">
+          <span class="stat-label">Total Hours</span>
+          <i data-lucide="clock" class="stat-icon"></i>
+        </div>
+        <div class="stat-value mono">38.42h</div>
+        <p class="stat-hint">Reg 38.4h + OT 0.0h</p>
+      </div>
+      <div class="stat">
+        <div class="stat-head">
+          <span class="stat-label">Regular Pay</span>
+          <i data-lucide="dollar-sign" class="stat-icon"></i>
+        </div>
+        <div class="stat-value mono">₱11,909.02</div>
+        <p class="stat-hint">₱310.00/hr × 38.4h</p>
+      </div>
+      <div class="stat">
+        <div class="stat-head">
+          <span class="stat-label">Overtime Pay</span>
+          <i data-lucide="trending-up" class="stat-icon"></i>
+        </div>
+        <div class="stat-value mono">₱0.00</div>
+        <p class="stat-hint">No overtime in this file</p>
+      </div>
+      <div class="stat indigo">
+        <div class="stat-head">
+          <span class="stat-label">PAB</span>
+          <i data-lucide="award" class="stat-icon indigo"></i>
+        </div>
+        <div class="stat-value mono muted">₱0.00</div>
+        <p class="stat-hint">Not eligible</p>
+      </div>
+      <div class="stat sky">
+        <div class="stat-head">
+          <span class="stat-label">Tech Bonus</span>
+          <i data-lucide="laptop" class="stat-icon sky"></i>
+        </div>
+        <div class="stat-value mono muted">₱0.00</div>
+        <p class="stat-hint">Unlocks on week 3 of PAB</p>
+      </div>
+      <div class="stat emerald">
+        <div class="stat-head">
+          <span class="stat-label">Initial Pay</span>
+          <i data-lucide="dollar-sign" class="stat-icon emerald"></i>
+        </div>
+        <div class="stat-value mono emerald">₱11,909.02</div>
+        <p class="stat-hint">≈ $204.98 USD</p>
+      </div>
+    </section>
+
+    <!-- Bottom row -->
+    <section class="bottom-row">
+
+      <!-- Daily Hours -->
+      <div class="card daily-card">
+        <div class="card-header">
+          <h2 class="card-title" style="font-weight:500;color:var(--zinc-600);font-size:12px;">Daily Hours Breakdown</h2>
+        </div>
+        <div class="card-body" style="flex:1;display:flex;flex-direction:column;min-height:0;">
+          <div class="daily-bars" id="daily-bars"></div>
+          <div class="legend">
+            <span class="legend-item"><span class="dot emerald"></span>≥ 7h (PA)</span>
+            <span class="legend-item"><span class="dot amber"></span>&lt; 7h</span>
+            <span class="legend-item"><span class="dot zinc"></span>Weekend</span>
+            <span class="legend-item"><span class="line-sample"></span>7h line</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAB Calendar -->
+      <div class="card pab-card">
+        <div class="card-header">
+          <div class="pab-head">
+            <div>
+              <h2 class="card-title" style="font-weight:500;color:var(--zinc-600);font-size:12px;">PAB Calendar</h2>
+              <p class="pab-date-line">
+                <i data-lucide="calendar-days"></i>
+                <span><strong>March 2026</strong> · Mar 9, 2026 – Apr 3, 2026</span>
+              </p>
+            </div>
+            <button class="refresh-mini" aria-label="Refresh PAB calendar"><i data-lucide="refresh-cw"></i></button>
+          </div>
+        </div>
+        <div class="card-body" style="flex:1;display:flex;flex-direction:column;min-height:0;">
+          <div class="pab-grid-wrap" id="pab-grid"></div>
+          <div class="legend">
+            <span class="legend-item"><span class="dot emerald"></span>≥ 7h</span>
+            <span class="legend-item"><span class="dot red"></span>&lt; 7h</span>
+            <span class="legend-item"><span class="dot zinc"></span>N/A</span>
+            <span class="legend-item"><span class="dot amber"></span>Pending</span>
+            <span class="legend-item"><span class="dot forgiven"></span>Forgiven</span>
+            <span style="margin-left:auto;font-weight:500;color:var(--red-500);">PAB Not Met</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pay Summary -->
+      <div class="card pay-summary">
+        <div class="card-header">
+          <h2 class="card-title" style="font-weight:500;color:var(--zinc-600);font-size:12px;">Pay Summary</h2>
+        </div>
+        <div class="card-body" style="flex:1;display:flex;flex-direction:column;gap:12px;overflow:auto;">
+          <div class="pay-lines">
+            <div class="pay-line">
+              <span class="label">Regular Pay</span>
+              <span class="value">₱11,909.02</span>
+            </div>
+            <div class="pay-line">
+              <span class="label">OT Pay</span>
+              <span class="value">₱0.00</span>
+            </div>
+            <div class="pay-line">
+              <span class="label indigo">PAB</span>
+              <span class="value muted">₱0.00</span>
+            </div>
+            <div class="pay-line">
+              <span class="label sky">Tech Bonus (locked)</span>
+              <span class="value muted">₱0.00</span>
+            </div>
+            <div class="divider"></div>
+            <div class="pay-line total-line">
+              <span class="label">Total</span>
+              <span class="value">₱11,909.02</span>
+            </div>
+            <div class="usd-line">≈ $204.98 USD</div>
+          </div>
+          <div class="fx-note">
+            Exchange rate: <span class="fx-rate">₱58.10</span> = $1 USD (default from policy: ₱58,100 ÷ 10^3). Bonuses are applied during payroll processing and may vary.
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  // ---------- Daily hours (current pay period Mar 24–30, 2026) ----------
+  const days = [
+    { label: 'Mon', weekday: true,  seconds: 8.10 * 3600 }, // 3/23
+    { label: 'Tue', weekday: true,  seconds: 7.85 * 3600 }, // 3/24
+    { label: 'Wed', weekday: true,  seconds: 7.42 * 3600 }, // 3/25
+    { label: 'Thu', weekday: true,  seconds: 8.05 * 3600 }, // 3/26
+    { label: 'Fri', weekday: true,  seconds: 7.20 * 3600 }, // 3/27
+    { label: 'Sat', weekday: false, seconds: 0 },
+    { label: 'Sun', weekday: false, seconds: 0 },
+  ];
+  // Reorder so Mon..Fri..Sat..Sun (matches source)
+  const maxSec = Math.max(...days.map(d => d.seconds), 8 * 3600);
+  const thresholdPct = (7 * 3600 / maxSec) * 100;
+  const secondsToDisplay = s => {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return `${h}h ${m}m`;
+  };
+  const barsEl = document.getElementById('daily-bars');
+  days.forEach(day => {
+    const hours = day.seconds / 3600;
+    const pct = (day.seconds / maxSec) * 100;
+    const meetsPA = day.weekday && day.seconds >= 7 * 3600;
+    const belowPA = day.weekday && day.seconds > 0 && day.seconds < 7 * 3600;
+    const fillClass = meetsPA ? 'ok' : belowPA ? 'under' : day.weekday ? 'under' : 'weekend';
+    const row = document.createElement('div');
+    row.className = 'day-row';
+    row.innerHTML = `
+      <span class="day-label ${day.weekday ? '' : 'weekend'}">${day.label}</span>
+      <div class="bar-track">
+        <div class="bar-fill ${fillClass}" style="width:${Math.max(pct, day.seconds > 0 ? 2 : 0)}%"></div>
+        ${day.weekday ? `<div class="threshold" style="left:${thresholdPct}%"></div>` : ''}
+        ${hours > 0.5 ? `<span class="bar-value">${hours.toFixed(1)}h</span>` : ''}
+      </div>
+      <span class="day-total">${secondsToDisplay(day.seconds)}</span>
+    `;
+    barsEl.appendChild(row);
+  });
+
+  // ---------- PAB Calendar: Mar 9, 2026 – Apr 3, 2026 (4 Mon-Fri weeks) ----------
+  // Data tuned so Week 2 Wed (Mar 18) is the violation (below 7h)
+  const weeks = [
+    // Week 1: Mar 9–13
+    [
+      { d: 9,  h: 7.8, state: 'pass' },
+      { d: 10, h: 8.1, state: 'pass' },
+      { d: 11, h: 7.5, state: 'pass' },
+      { d: 12, h: 8.0, state: 'pass' },
+      { d: 13, h: 7.6, state: 'pass' },
+    ],
+    // Week 2: Mar 16–20 (Wed Mar 18 violation)
+    [
+      { d: 16, h: 7.4, state: 'pass' },
+      { d: 17, h: 7.9, state: 'pass' },
+      { d: 18, h: 5.2, state: 'fail' },
+      { d: 19, h: 7.7, state: 'pass' },
+      { d: 20, h: 7.3, state: 'pass' },
+    ],
+    // Week 3: Mar 23–27
+    [
+      { d: 23, h: 8.1, state: 'pass' },
+      { d: 24, h: 7.8, state: 'pass' },
+      { d: 25, h: 7.4, state: 'pass' },
+      { d: 26, h: 8.0, state: 'pass' },
+      { d: 27, h: 7.2, state: 'pass' },
+    ],
+    // Week 4: Mar 30 – Apr 3 (Mon Mar 30, future)
+    [
+      { d: 30, h: 0, state: 'future', label: '3/30' },
+      { d: 31, h: 0, state: 'future', label: '3/31' },
+      { d: 1,  h: 0, state: 'future', label: '4/1', month: 4 },
+      { d: 2,  h: 0, state: 'future', label: '4/2', month: 4 },
+      { d: 3,  h: 0, state: 'future', label: '4/3', month: 4 },
+    ],
+  ];
+
+  const gridEl = document.getElementById('pab-grid');
+  // Header row
+  const hrow = document.createElement('div');
+  hrow.className = 'pab-header-row';
+  hrow.innerHTML = `<div></div>` + ['M','T','W','T','F'].map(d => `<div class="pab-head-cell">${d}</div>`).join('');
+  gridEl.appendChild(hrow);
+
+  weeks.forEach((week, wi) => {
+    const wrow = document.createElement('div');
+    wrow.className = 'pab-week-row';
+    const weekNum = wi + 1;
+    let html = `<div class="pab-week-number">${weekNum}</div>`;
+    week.forEach(day => {
+      const month = day.month || 3;
+      const label = day.label || `${month}/${day.d}`;
+      let cls = day.state;
+      let icon = '';
+      if (day.state === 'pass') icon = '<i data-lucide="check-circle-2"></i>';
+      else if (day.state === 'fail') icon = '<i data-lucide="x-circle"></i>';
+      else if (day.state === 'pending') icon = '<i data-lucide="clock"></i>';
+      const hoursStr = day.state === 'future' ? '—' : day.h.toFixed(1);
+      html += `
+        <div class="pab-cell ${cls}">
+          <span class="pab-date">${label}</span>
+          <span class="pab-hours">${hoursStr}</span>
+          ${icon}
+        </div>
+      `;
+    });
+    wrow.innerHTML = html;
+    gridEl.appendChild(wrow);
+  });
+
+  // Render lucide icons
+  lucide.createIcons();
+</script>
+</body>
+</html>

@@ -1,11 +1,12 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { mapHubstaffHoursRow } from "@/lib/supabase/hubstaff-hours";
 import {
-  appendHubstaffHoursFromCsvText,
   deleteHubstaffRowsBySourceFile,
   fetchHubstaffRowsOrdered,
   fetchHubstaffRowsBySourceFile,
+  getCurrentHubstaffUploadId,
   getUploadedSourceFiles,
+  listHubstaffUploads,
   replaceHubstaffHoursFromCsvText,
   rowsToPayrollRows,
   sortHubstaffColumnsForDisplay,
@@ -26,14 +27,39 @@ export const runtime = "nodejs";
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
 
-  // Return list of distinct uploaded source files
+  // Return list of uploaded source files. Shape:
+  //   {
+  //     files:   string[] (newest first, for legacy consumers),
+  //     uploads: { id, source_file, uploaded_at, uploaded_by, row_count, is_current }[]
+  //   }
+  // `uploads` is the richer row set from `hubstaff_uploads`; Payroll Wizard uses
+  // this to show filename + timestamp + current-upload badge. Falls back to the
+  // legacy source_file scan if the archive table is empty / unavailable.
   if (searchParams.get("source_files") === "1") {
     try {
-      const files = await getUploadedSourceFiles();
-      return NextResponse.json({ files, error: null });
+      let uploads: Awaited<ReturnType<typeof listHubstaffUploads>> = [];
+      try {
+        uploads = await listHubstaffUploads();
+      } catch (uploadsErr) {
+        console.warn("[GET /api/hubstaff-hours] listHubstaffUploads failed:", uploadsErr);
+      }
+      let files: string[];
+      if (uploads.length > 0) {
+        const seen = new Set<string>();
+        files = [];
+        for (const u of uploads) {
+          const f = (u.source_file ?? "").trim();
+          if (!f || seen.has(f)) continue;
+          seen.add(f);
+          files.push(f);
+        }
+      } else {
+        files = await getUploadedSourceFiles();
+      }
+      return NextResponse.json({ files, uploads, error: null });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return NextResponse.json({ files: [], error: msg });
+      return NextResponse.json({ files: [], uploads: [], error: msg });
     }
   }
 
@@ -62,12 +88,18 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Anon key path: also return raw rows so PA daily-column detection works in the UI
+  // Anon key path: also return raw rows so PA daily-column detection works in the UI.
+  // Filter to the current upload so the wizard never sees stale archived data.
   try {
     const supabase = createSupabaseServerClient();
+    if (!supabase) throw new Error("Supabase client unavailable");
     const table =
       process.env.NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE?.trim() || "hubstaff_hours";
-    const { data, error } = await supabase!.from(table).select("*");
+
+    const currentUploadId = await getCurrentHubstaffUploadId(supabase);
+    let q = supabase.from(table).select("*");
+    if (currentUploadId) q = q.eq("upload_id", currentUploadId);
+    const { data, error } = await q;
     if (error) throw new Error(error.message);
 
     const rawRows = ((data ?? []) as Record<string, unknown>[]).filter((r) =>
@@ -141,12 +173,10 @@ export async function POST(req: NextRequest) {
     }
 
     const text = await (file as Blob).text();
-    const mode = form.get("mode");
     const fileName = (file as File).name || form.get("fileName")?.toString() || undefined;
-    const replace = mode === "replace";
-    const { rowCount } = replace
-      ? await replaceHubstaffHoursFromCsvText(text)
-      : await appendHubstaffHoursFromCsvText(text, fileName);
+    // `mode` is retained in the form payload for back-compat but ignored: every upload
+    // is archived and promoted to current. Latest always wins in the Payroll Wizard.
+    const { rowCount, uploadId } = await replaceHubstaffHoursFromCsvText(text, fileName);
 
     void insertAuditLog({
       user_name:   SYSTEM_USER.name,
@@ -154,11 +184,11 @@ export async function POST(req: NextRequest) {
       action:      'csv.upload',
       resource:    'hubstaff_hours',
       resource_id: fileName ?? null,
-      details:     { file: fileName ?? 'unknown', rows: rowCount, mode: replace ? 'replace' : 'append' },
+      details:     { file: fileName ?? 'unknown', rows: rowCount, upload_id: uploadId },
       ip_address:  clientIp(req),
     });
 
-    return NextResponse.json({ success: true, rowCount });
+    return NextResponse.json({ success: true, rowCount, uploadId });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[POST /api/hubstaff-hours]", msg);

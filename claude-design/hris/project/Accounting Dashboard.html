@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Overview · Accounting · Simple HRIS</title>
+<meta name="viewport" content="width=1440" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/lucide@0.462.0/dist/umd/lucide.min.js"></script>
+<style>
+  :root {
+    --ink: #18181b;
+    --ink-2: #3f3f46;
+    --ink-3: #71717a;
+    --ink-4: #a1a1aa;
+    --line: #ececec;
+    --line-2: #f3f3f3;
+    --bg: #fafaf8;
+    --card: #ffffff;
+    --orange: #ea580c;
+    --orange-soft: #fff1e6;
+    --green: #047857;
+    --green-soft: #e8f5ee;
+    --red: #b91c1c;
+    --red-soft: #fbeaea;
+    --amber: #b45309;
+    --amber-soft: #fbf3e1;
+    --blue: #1d4ed8;
+    --blue-soft: #eaf0fd;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    font-size: 14px;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+  .app { display: flex; min-height: 100vh; }
+
+  /* ---------- Sidebar (same as v2) ---------- */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    padding: 28px 20px;
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column;
+    background: var(--card);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 40px; padding: 0 4px; }
+  .brand-mark {
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    background: var(--orange);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+    letter-spacing: -0.02em;
+  }
+  .brand-name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+  .nav-label {
+    font-size: 10.5px; font-weight: 500; color: var(--ink-4);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 0 10px; margin: 0 0 6px;
+  }
+  .nav { display: flex; flex-direction: column; gap: 1px; }
+  .nav a {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+    text-decoration: none; cursor: pointer;
+    font-weight: 450;
+  }
+  .nav a svg { width: 15px; height: 15px; color: var(--ink-4); }
+  .nav a:hover { background: var(--line-2); color: var(--ink); }
+  .nav a.active { background: var(--ink); color: white; }
+  .nav a.active svg { color: rgba(255,255,255,0.75); }
+  .nav-divider { height: 1px; background: var(--line); margin: 20px 10px; }
+  .nav a .count {
+    margin-left: auto;
+    font-size: 10.5px;
+    background: var(--line-2);
+    color: var(--ink-3);
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .nav a.active .count { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.9); }
+  .nav a .count.alert { background: var(--amber-soft); color: var(--amber); }
+
+  .sidebar-foot {
+    margin-top: auto;
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--bg);
+  }
+  .avatar {
+    width: 28px; height: 28px;
+    border-radius: 9999px;
+    background: var(--ink);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 11px;
+  }
+  .sidebar-foot .nm { font-size: 13px; font-weight: 500; line-height: 1.2; }
+  .sidebar-foot .rl { font-size: 11px; color: var(--ink-3); line-height: 1.2; margin-top: 1px; }
+  .sidebar-foot .menu { margin-left: auto; color: var(--ink-4); display: flex; align-items: center; cursor: pointer; }
+
+  /* ---------- Main ---------- */
+  main {
+    flex: 1;
+    padding: 48px 56px 72px;
+    max-width: 1360px;
+    min-width: 0;
+  }
+
+  /* Top meta */
+  .top-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 32px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+  }
+  .crumb { display: flex; align-items: center; gap: 8px; }
+  .crumb .sep { color: var(--ink-4); }
+  .crumb strong { color: var(--ink); font-weight: 500; }
+  .actions { display: flex; align-items: center; gap: 8px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px 5px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--ink-2);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .pill svg { width: 13px; height: 13px; color: var(--ink-4); }
+  .pill.ghost { border: 1px solid transparent; background: transparent; color: var(--ink-3); }
+  .pill.ghost:hover { background: var(--line-2); color: var(--ink); }
+  .pill.primary {
+    background: var(--ink); color: white; border-color: var(--ink);
+  }
+  .pill.primary svg { color: rgba(255,255,255,0.75); }
+
+  /* Hero */
+  .hero {
+    padding: 4px 0 40px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 40px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 64px;
+    align-items: end;
+  }
+  .hero-greet { font-size: 13px; color: var(--ink-3); font-weight: 450; margin-bottom: 20px; }
+  .hero-greet strong { color: var(--ink); font-weight: 600; }
+  .hero-label {
+    font-size: 12.5px; color: var(--ink-3);
+    margin-bottom: 14px; font-weight: 500;
+  }
+  .hero-amount {
+    font-size: 80px; font-weight: 600;
+    letter-spacing: -0.04em; line-height: 1;
+    color: var(--ink);
+    font-feature-settings: 'ss01','cv11','tnum';
+  }
+  .hero-amount .cur { color: var(--ink-4); font-weight: 500; margin-right: 6px; }
+  .hero-sub {
+    margin-top: 16px;
+    font-size: 13px; color: var(--ink-3);
+    display: flex; align-items: center; gap: 14px;
+    flex-wrap: wrap;
+  }
+  .hero-sub .dot-sep { color: var(--ink-4); }
+  .hero-sub strong { color: var(--ink); font-weight: 600; }
+
+  .hero-right {
+    display: flex; flex-direction: column;
+    align-items: flex-end; gap: 12px;
+    min-width: 280px;
+  }
+  .period {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    font-weight: 500;
+  }
+  .period strong { color: var(--ink); font-weight: 600; }
+
+  .reco-summary {
+    display: grid;
+    grid-template-columns: auto auto;
+    gap: 6px 22px;
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+  .reco-summary .k {
+    display: flex; align-items: center; gap: 8px;
+    white-space: nowrap;
+  }
+  .reco-summary .k svg { width: 12px; height: 12px; color: var(--ink-4); }
+  .reco-summary .v {
+    text-align: right;
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .reco-summary .v.ok { color: var(--ink); }
+  .reco-summary .v.warn { color: var(--amber); }
+
+  /* ---------- Attention row ---------- */
+  .attention {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-bottom: 56px;
+  }
+  .att-card {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--card);
+    padding: 20px 22px;
+    position: relative;
+    transition: all 150ms;
+    cursor: pointer;
+  }
+  .att-card:hover { border-color: var(--ink-4); }
+  .att-card .att-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 18px;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .att-card .att-head svg { width: 14px; height: 14px; }
+  .att-card .att-head .tag {
+    text-transform: none;
+    letter-spacing: 0;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 500;
+  }
+  .att-card .att-value {
+    font-size: 30px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1;
+    color: var(--ink);
+    font-feature-settings: 'ss01','cv11','tnum';
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .att-card .att-value .unit { font-size: 14px; font-weight: 500; color: var(--ink-3); }
+  .att-card .att-sub {
+    margin-top: 10px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .att-card .att-sub strong { color: var(--ink-2); font-weight: 600; }
+  .att-card.warn {
+    background: var(--amber-soft);
+    border-color: transparent;
+  }
+  .att-card.warn .att-value { color: var(--amber); }
+  .att-card.warn .att-head { color: var(--amber); }
+  .att-card .att-cta {
+    margin-top: 14px;
+    font-size: 12px;
+    color: var(--ink);
+    font-weight: 500;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .att-card .att-cta svg { width: 13px; height: 13px; }
+  .att-card.warn .att-cta { color: var(--amber); }
+
+  /* ---------- Sections ---------- */
+  .section + .section { margin-top: 56px; }
+  .section-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .section-title {
+    font-size: 14px; font-weight: 600; color: var(--ink);
+    letter-spacing: -0.005em; margin: 0;
+  }
+  .section-sub { font-size: 12.5px; color: var(--ink-3); font-weight: 450; }
+
+  /* ---------- Bonuses strip ---------- */
+  .bonuses {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    align-items: start;
+  }
+  .bonus-block {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 28px;
+    align-items: center;
+  }
+  .bonus-visual {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 10px;
+  }
+  .donut {
+    width: 96px; height: 96px;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .donut svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); }
+  .donut-center {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+  .donut-center .pct-sub { font-size: 10px; color: var(--ink-3); font-weight: 500; margin-top: 1px; }
+  .donut-label {
+    font-size: 11px;
+    color: var(--ink-3);
+    font-weight: 500;
+  }
+
+  .bonus-body .b-title {
+    font-size: 13px; font-weight: 600; color: var(--ink);
+    margin: 0 0 4px;
+  }
+  .bonus-body .b-period {
+    font-size: 12px; color: var(--ink-3);
+    margin: 0 0 14px;
+  }
+  .bonus-body .b-breakdown {
+    display: grid; grid-template-columns: auto auto; gap: 4px 18px;
+    font-size: 13px; color: var(--ink-3);
+  }
+  .bonus-body .b-breakdown .k { display: flex; align-items: center; gap: 8px; }
+  .bonus-body .b-breakdown .k .sw {
+    width: 8px; height: 8px; border-radius: 9999px;
+    display: inline-block;
+    background: var(--ink-4);
+  }
+  .bonus-body .b-breakdown .k .sw.ok { background: var(--green); }
+  .bonus-body .b-breakdown .k .sw.fail { background: var(--red); }
+  .bonus-body .b-breakdown .k .sw.pend { background: var(--amber); }
+  .bonus-body .b-breakdown .v {
+    text-align: right;
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .bonus-body .b-foot {
+    margin-top: 14px;
+    font-size: 11.5px;
+    color: var(--ink-4);
+    line-height: 1.5;
+  }
+  .bonus-divider {
+    width: 1px;
+    background: var(--line);
+    align-self: stretch;
+  }
+
+  /* ---------- Employees table ---------- */
+  .table-wrap {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--card);
+    overflow: hidden;
+  }
+  .toolbar {
+    padding: 14px 18px;
+    display: flex; align-items: center; gap: 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .search {
+    flex: 1;
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: var(--bg);
+    border: 1px solid transparent;
+    max-width: 360px;
+  }
+  .search svg { width: 14px; height: 14px; color: var(--ink-4); flex-shrink: 0; }
+  .search input {
+    flex: 1;
+    border: 0; background: transparent; outline: 0;
+    font-family: inherit; font-size: 13px;
+    color: var(--ink);
+  }
+  .search input::placeholder { color: var(--ink-4); }
+  .search kbd {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    color: var(--ink-3);
+  }
+  .filter-select {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    font-size: 12.5px;
+    color: var(--ink-2);
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .filter-select svg { width: 13px; height: 13px; color: var(--ink-4); }
+  .toolbar .meta {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+  .toolbar .meta strong { color: var(--ink); font-weight: 600; }
+
+  table.emp {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.emp thead th {
+    text-align: left;
+    font-weight: 500;
+    font-size: 11px;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+  }
+  table.emp thead th.num { text-align: right; }
+  table.emp tbody td {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line-2);
+    vertical-align: middle;
+  }
+  table.emp tbody tr:last-child td { border-bottom: 0; }
+  table.emp tbody tr:hover td { background: var(--bg); }
+  .emp-id {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: var(--ink-3);
+  }
+  .name-cell { display: flex; align-items: center; gap: 12px; }
+  .avatar-sm {
+    width: 28px; height: 28px;
+    border-radius: 9999px;
+    background: var(--line-2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600;
+    color: var(--ink-2);
+    flex-shrink: 0;
+  }
+  .name-cell .n { font-weight: 500; color: var(--ink); line-height: 1.2; }
+  .name-cell .em { font-size: 11.5px; color: var(--ink-3); line-height: 1.3; margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+  .dept {
+    display: inline-flex; align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 500;
+    background: var(--line-2);
+    color: var(--ink-2);
+  }
+  .src-chip {
+    font-size: 10.5px;
+    color: var(--ink-3);
+    font-weight: 500;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .src-chip .sw { width: 5px; height: 5px; border-radius: 9999px; background: var(--green); }
+  .src-chip.hubstaff .sw { background: var(--blue); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .num.mute { color: var(--ink-3); }
+  .num.warn { color: var(--amber); }
+  .row-action {
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    background: transparent; border: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--ink-4); cursor: pointer;
+  }
+  .row-action:hover { background: var(--line-2); color: var(--ink-2); }
+  .row-action svg { width: 14px; height: 14px; }
+
+  /* pagination */
+  .pager {
+    padding: 12px 18px;
+    border-top: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12.5px; color: var(--ink-3);
+    background: var(--bg);
+  }
+  .pager .nums { display: flex; gap: 2px; }
+  .pager button {
+    font-family: inherit;
+    height: 28px; min-width: 28px; padding: 0 8px;
+    border-radius: 6px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--ink-3);
+    font-size: 12.5px; font-weight: 500;
+    cursor: pointer;
+  }
+  .pager button:hover:not(:disabled) { background: var(--card); border-color: var(--line); color: var(--ink); }
+  .pager button.sel { background: var(--ink); color: white; border-color: var(--ink); }
+  .pager button:disabled { opacity: 0.35; cursor: default; }
+  .pager .edge { display: inline-flex; align-items: center; justify-content: center; }
+  .pager .edge svg { width: 14px; height: 14px; }
+
+  /* footnote */
+  .footnote {
+    margin-top: 56px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-4);
+    display: flex; justify-content: space-between; gap: 24px;
+    line-height: 1.5;
+  }
+  .footnote .mono-inline { font-family: 'JetBrains Mono', monospace; color: var(--ink-3); }
+
+  /* tweaks panel */
+  #tweaks-panel {
+    position: fixed;
+    right: 20px; bottom: 20px;
+    width: 260px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 20px 40px -15px rgba(0,0,0,0.15);
+    padding: 14px 16px 16px;
+    font-size: 12px;
+    display: none;
+    z-index: 50;
+  }
+  #tweaks-panel.on { display: block; }
+  #tweaks-panel h4 {
+    margin: 0 0 12px;
+    font-size: 11px; font-weight: 600;
+    color: var(--ink-3);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  #tweaks-panel label {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 6px 0;
+    color: var(--ink-2); font-weight: 500;
+  }
+  #tweaks-panel .options { display: flex; gap: 4px; }
+  #tweaks-panel .options button {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    border-radius: 5px;
+    font-size: 11px; font-family: inherit;
+    cursor: pointer; color: var(--ink-3);
+  }
+  #tweaks-panel .options button.sel {
+    background: var(--ink); border-color: var(--ink); color: white;
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ============ Sidebar ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">s</div>
+      <div class="brand-name">simple·hris</div>
+    </div>
+
+    <p class="nav-label">Accounting</p>
+    <nav class="nav">
+      <a class="active"><i data-lucide="layout-dashboard"></i>Overview</a>
+      <a><i data-lucide="dollar-sign"></i>Rates</a>
+      <a><i data-lucide="wand-2"></i>Payroll wizard</a>
+      <a><i data-lucide="building-2"></i>Hogan suite</a>
+    </nav>
+
+    <div class="nav-divider"></div>
+
+    <p class="nav-label">Approvals</p>
+    <nav class="nav">
+      <a><i data-lucide="calendar-days"></i>Leave requests<span class="count">4</span></a>
+      <a><i data-lucide="alert-circle"></i>Disputes<span class="count alert">7</span></a>
+      <a><i data-lucide="heart"></i>Orphanage visits</a>
+    </nav>
+
+    <div class="nav-divider"></div>
+
+    <nav class="nav">
+      <a><i data-lucide="settings"></i>System settings</a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="avatar">AK</div>
+      <div>
+        <div class="nm">Angela Kwan</div>
+        <div class="rl">Finance lead · Accounting</div>
+      </div>
+      <span class="menu"><i data-lucide="more-horizontal" style="width:16px;height:16px;"></i></span>
+    </div>
+  </aside>
+
+  <!-- ============ Main ============ -->
+  <main>
+
+    <!-- Top meta -->
+    <div class="top-meta">
+      <div class="crumb">
+        <span>Accounting</span>
+        <span class="sep">/</span>
+        <strong>Overview</strong>
+      </div>
+      <div class="actions">
+        <button class="pill ghost"><i data-lucide="refresh-cw"></i>Synced 4m ago</button>
+        <button class="pill"><i data-lucide="file-text"></i><span class="mono" style="font-size:11.5px;">hubstaff_2026-03-24_to_03-30</span><i data-lucide="chevron-down"></i></button>
+        <button class="pill primary"><i data-lucide="wand-2"></i>Run payroll</button>
+      </div>
+    </div>
+
+    <!-- Hero -->
+    <section class="hero">
+      <div>
+        <p class="hero-greet">Good morning, <strong>Angela</strong>.</p>
+        <p class="hero-label">Total payout for this pay run</p>
+        <div class="hero-amount"><span class="cur">₱</span><span class="mono">3,842,190.04</span></div>
+        <p class="hero-sub">
+          <span><strong>142</strong> active workers</span>
+          <span class="dot-sep">·</span>
+          <span>≈ <strong>$66,130</strong> USD</span>
+          <span class="dot-sep">·</span>
+          <span>Initial pay · bonuses applied at payroll</span>
+        </p>
+      </div>
+      <div class="hero-right">
+        <div class="period"><strong>Mar 24 – 30, 2026</strong> · week 13</div>
+        <div class="reco-summary">
+          <div class="k"><i data-lucide="users"></i>Master list</div>
+          <div class="v mono">156</div>
+          <div class="k"><i data-lucide="activity"></i>In this payroll</div>
+          <div class="v mono">142</div>
+          <div class="k"><i data-lucide="alert-triangle"></i>Reconcile gaps</div>
+          <div class="v mono warn">17</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Attention row: 3 things this payroll needs from you -->
+    <section class="attention">
+
+      <div class="att-card warn">
+        <div class="att-head">
+          <span><i data-lucide="alert-circle" style="vertical-align:-2px;margin-right:5px;"></i>Needs your decision</span>
+          <span class="tag" style="background:#fff;color:var(--amber);">overdue 2d</span>
+        </div>
+        <div class="att-value">7 <span class="unit">disputes pending</span></div>
+        <p class="att-sub"><strong>3</strong> short-day PAB · <strong>4</strong> hour corrections</p>
+        <div class="att-cta">Review queue <i data-lucide="arrow-right"></i></div>
+      </div>
+
+      <div class="att-card">
+        <div class="att-head">
+          <span><i data-lucide="file-warning" style="vertical-align:-2px;margin-right:5px;"></i>Reconciliation</span>
+          <span class="tag" style="background:var(--line-2);color:var(--ink-3);">2 sources</span>
+        </div>
+        <div class="att-value">17 <span class="unit">mismatches</span></div>
+        <p class="att-sub"><strong>14</strong> in payroll not on master · <strong>3</strong> on master not in payroll</p>
+        <div class="att-cta">Reconcile <i data-lucide="arrow-right"></i></div>
+      </div>
+
+      <div class="att-card">
+        <div class="att-head">
+          <span><i data-lucide="calendar-days" style="vertical-align:-2px;margin-right:5px;"></i>Leave &amp; visits</span>
+          <span class="tag" style="background:var(--line-2);color:var(--ink-3);">this week</span>
+        </div>
+        <div class="att-value">4 <span class="unit">pending</span></div>
+        <p class="att-sub"><strong>4</strong> leave requests · <strong>0</strong> orphanage visits</p>
+        <div class="att-cta">Open requests <i data-lucide="arrow-right"></i></div>
+      </div>
+
+    </section>
+
+    <!-- Bonuses -->
+    <section class="section">
+      <div class="section-head">
+        <h2 class="section-title">Monthly bonuses</h2>
+        <span class="section-sub">March 2026 · Mar 9 – Apr 3 · merged from all Hubstaff uploads</span>
+      </div>
+
+      <div class="bonuses">
+
+        <!-- PAB -->
+        <div class="bonus-block">
+          <div class="bonus-visual">
+            <div class="donut">
+              <svg viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r="15.915" fill="none" stroke="var(--line)" stroke-width="3.2"/>
+                <!-- 113/142 ≈ 79.6% -->
+                <circle cx="18" cy="18" r="15.915" fill="none" stroke="var(--green)" stroke-width="3.2"
+                        stroke-dasharray="79.6 100" stroke-linecap="round"/>
+              </svg>
+              <div class="donut-center">
+                <span>80%</span>
+                <span class="pct-sub">113 / 142</span>
+              </div>
+            </div>
+            <span class="donut-label">Perfect Attendance</span>
+          </div>
+          <div class="bonus-body">
+            <h4 class="b-title">Perfect Attendance Bonus · ₱5,000</h4>
+            <p class="b-period">Mar 9 – Apr 3 · 20 working days · 3 of 4 weeks complete</p>
+            <div class="b-breakdown">
+              <div class="k"><span class="sw ok"></span>Eligible</div>
+              <div class="v mono">113</div>
+              <div class="k"><span class="sw fail"></span>Already voided</div>
+              <div class="v mono">24</div>
+              <div class="k"><span class="sw pend"></span>Still in play</div>
+              <div class="v mono">5</div>
+            </div>
+            <p class="b-foot">Accrues ₱565,000 if all eligible employees hold through Apr 3.</p>
+          </div>
+        </div>
+
+        <!-- Tech Bonus -->
+        <div class="bonus-block">
+          <div class="bonus-visual">
+            <div class="donut">
+              <svg viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r="15.915" fill="none" stroke="var(--line)" stroke-width="3.2"/>
+                <!-- 129/142 ≈ 90.8% -->
+                <circle cx="18" cy="18" r="15.915" fill="none" stroke="var(--ink)" stroke-width="3.2"
+                        stroke-dasharray="90.8 100" stroke-linecap="round"/>
+              </svg>
+              <div class="donut-center">
+                <span>91%</span>
+                <span class="pct-sub">129 / 142</span>
+              </div>
+            </div>
+            <span class="donut-label">Technology</span>
+          </div>
+          <div class="bonus-body">
+            <h4 class="b-title">Technology Bonus · ₱1,850</h4>
+            <p class="b-period">Paid on 3rd paycheck of each month · after 30 days of service</p>
+            <div class="b-breakdown">
+              <div class="k"><span class="sw ok"></span>Eligible</div>
+              <div class="v mono">129</div>
+              <div class="k"><span class="sw pend"></span>Pending 30d</div>
+              <div class="v mono">11</div>
+              <div class="k"><span class="sw"></span>No start date</div>
+              <div class="v mono">2</div>
+            </div>
+            <p class="b-foot">Accrues ₱238,650 on the 3rd paycheck of March.</p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Employees -->
+    <section class="section">
+      <div class="section-head">
+        <h2 class="section-title">Workers in this payroll run</h2>
+        <span class="section-sub">Master list + Hubstaff fallback</span>
+      </div>
+
+      <div class="table-wrap">
+        <div class="toolbar">
+          <div class="search">
+            <i data-lucide="search"></i>
+            <input type="text" placeholder="Search name, email, department…" />
+            <kbd>⌘K</kbd>
+          </div>
+          <button class="filter-select">All departments <i data-lucide="chevron-down"></i></button>
+          <button class="filter-select">Source: Any <i data-lucide="chevron-down"></i></button>
+          <div class="meta"><strong>142</strong> workers · page 1 of 15</div>
+        </div>
+
+        <table class="emp">
+          <thead>
+            <tr>
+              <th style="width:44%;">Worker</th>
+              <th>Department</th>
+              <th>Source</th>
+              <th>Start date</th>
+              <th class="num">Hours</th>
+              <th class="num">Initial pay</th>
+              <th style="width:56px;"></th>
+            </tr>
+          </thead>
+          <tbody id="emp-tbody"></tbody>
+        </table>
+
+        <div class="pager">
+          <div>Showing <strong style="color:var(--ink);font-weight:500;">1–10</strong> of 142</div>
+          <div class="nums">
+            <button class="edge" disabled><i data-lucide="chevrons-left"></i></button>
+            <button class="edge" disabled><i data-lucide="chevron-left"></i></button>
+            <button class="sel">1</button>
+            <button>2</button>
+            <button>3</button>
+            <button>4</button>
+            <button>…</button>
+            <button>15</button>
+            <button class="edge"><i data-lucide="chevron-right"></i></button>
+            <button class="edge"><i data-lucide="chevrons-right"></i></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="footnote">
+      <div>
+        Source: <span class="mono-inline">hubstaff_hours_2026-03-24_to_2026-03-30.csv</span> · <span class="mono-inline">global_master_list</span> · synced 4 min ago
+      </div>
+      <div>
+        FX rate ₱58.10/USD · bonuses applied during payroll processing
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div id="tweaks-panel">
+  <h4>Tweaks</h4>
+  <label>Accent
+    <div class="options" data-key="accent">
+      <button data-v="orange" class="sel">Orange</button>
+      <button data-v="mono">None</button>
+      <button data-v="indigo">Indigo</button>
+    </div>
+  </label>
+  <label>Density
+    <div class="options" data-key="density">
+      <button data-v="airy" class="sel">Airy</button>
+      <button data-v="tight">Tight</button>
+    </div>
+  </label>
+  <label>Show attention row
+    <div class="options" data-key="attention">
+      <button data-v="on" class="sel">On</button>
+      <button data-v="off">Off</button>
+    </div>
+  </label>
+</div>
+
+<script>
+  // =============== Employees table ===============
+  const rows = [
+    { id: 'EMP-0427', name: 'Maria Reyes',        email: 'maria.reyes@simplehris.ph',      dept: 'Support',      src: 'master',   start: 'Jan 14, 2025', hours: '38.42h', pay: '₱11,909.02', payMute: false },
+    { id: 'EMP-0312', name: 'Juan Dela Cruz',      email: 'juan.delacruz@simplehris.ph',    dept: 'Accounting',   src: 'master',   start: 'Aug 02, 2024', hours: '40.00h', pay: '₱14,240.00', payMute: false },
+    { id: 'EMP-0518', name: 'Lerma Santos',        email: 'lerma.santos@simplehris.ph',     dept: 'Edit',         src: 'master',   start: 'Mar 06, 2025', hours: '37.55h', pay: '₱11,610.80', payMute: false },
+    { id: '—',        name: 'Oliver Tan',          email: 'oliver.tan@contractor.io',        dept: 'Devs',         src: 'hubstaff', start: '—',            hours: '41.20h', pay: '—',          payMute: true  },
+    { id: 'EMP-0241', name: 'Rhea Navarro',        email: 'rhea.navarro@simplehris.ph',     dept: 'Lead Gen',     src: 'master',   start: 'Nov 19, 2023', hours: '38.00h', pay: '₱11,780.00', payMute: false },
+    { id: 'EMP-0489', name: 'Paolo Villanueva',    email: 'paolo.v@simplehris.ph',           dept: 'Accounting',   src: 'master',   start: 'Jul 11, 2024', hours: '39.30h', pay: '₱12,183.00', payMute: false },
+    { id: 'EMP-0602', name: 'Kristine Lopez',      email: 'kristine.lopez@simplehris.ph',   dept: 'Support',      src: 'master',   start: 'Feb 24, 2026', hours: '32.05h', pay: '₱9,935.50',  payMute: false },
+    { id: '—',        name: 'Samantha Cruz',       email: 'sam.cruz@freelance.ph',           dept: 'Edit',         src: 'hubstaff', start: '—',            hours: '36.00h', pay: '—',          payMute: true  },
+    { id: 'EMP-0156', name: 'Miguel Ramos',        email: 'miguel.ramos@simplehris.ph',     dept: 'Devs',         src: 'master',   start: 'May 02, 2023', hours: '40.00h', pay: '₱15,200.00', payMute: false },
+    { id: 'EMP-0571', name: 'Bea Dimaculangan',    email: 'bea.dima@simplehris.ph',          dept: 'Accounting',   src: 'master',   start: 'Sep 30, 2025', hours: '38.75h', pay: '₱12,012.50', payMute: false },
+  ];
+
+  const initials = n => n.split(' ').map(p => p[0]).slice(0,2).join('').toUpperCase();
+  const tbody = document.getElementById('emp-tbody');
+  rows.forEach(r => {
+    tbody.insertAdjacentHTML('beforeend', `
+      <tr>
+        <td>
+          <div class="name-cell">
+            <span class="avatar-sm">${initials(r.name)}</span>
+            <div>
+              <div class="n">${r.name}</div>
+              <div class="em">${r.email}</div>
+            </div>
+          </div>
+        </td>
+        <td><span class="dept">${r.dept}</span></td>
+        <td>
+          <span class="src-chip ${r.src === 'hubstaff' ? 'hubstaff' : ''}">
+            <span class="sw"></span>${r.src === 'hubstaff' ? 'Hubstaff' : 'Master'}
+          </span>
+        </td>
+        <td style="color:var(--ink-3);font-size:12.5px;">${r.start}</td>
+        <td class="num mono">${r.hours}</td>
+        <td class="num mono ${r.payMute ? 'mute' : ''}">${r.pay}</td>
+        <td style="text-align:right;">
+          <button class="row-action" title="View rates"><i data-lucide="chevron-right"></i></button>
+        </td>
+      </tr>
+    `);
+  });
+
+  lucide.createIcons();
+
+  // =============== Tweaks ===============
+  const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "accent": "orange",
+    "density": "airy",
+    "attention": "on"
+  }/*EDITMODE-END*/;
+
+  const state = { ...TWEAK_DEFAULTS };
+
+  function applyTweaks() {
+    const accents = {
+      orange: { main: '#ea580c' },
+      indigo: { main: '#4f46e5' },
+      mono:   { main: '#18181b' },
+    };
+    const a = accents[state.accent] || accents.orange;
+    document.documentElement.style.setProperty('--orange', a.main);
+    document.querySelector('.brand-mark').style.background = a.main;
+
+    const main = document.querySelector('main');
+    if (state.density === 'tight') {
+      main.style.padding = '32px 40px 56px';
+      document.querySelectorAll('.section').forEach(s => s.style.marginTop = '36px');
+      document.querySelector('.attention').style.marginBottom = '36px';
+    } else {
+      main.style.padding = '48px 56px 72px';
+      document.querySelectorAll('.section').forEach(s => s.style.marginTop = '');
+      document.querySelector('.attention').style.marginBottom = '';
+    }
+
+    document.querySelector('.attention').style.display = state.attention === 'off' ? 'none' : '';
+  }
+  applyTweaks();
+
+  document.querySelectorAll('#tweaks-panel .options').forEach(group => {
+    const key = group.dataset.key;
+    group.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      state[key] = btn.dataset.v;
+      group.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b === btn));
+      applyTweaks();
+      try {
+        window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [key]: state[key] } }, '*');
+      } catch {}
+    });
+  });
+
+  window.addEventListener('message', e => {
+    if (e.data?.type === '__activate_edit_mode') document.getElementById('tweaks-panel').classList.add('on');
+    else if (e.data?.type === '__deactivate_edit_mode') document.getElementById('tweaks-panel').classList.remove('on');
+  });
+  try { window.parent.postMessage({ type: '__edit_mode_available' }, '*'); } catch {}
+</script>
+</body>
+</html>

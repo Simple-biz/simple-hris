@@ -38,7 +38,13 @@
       "Bash(rm tscout.txt)",
       "Bash(python -c \"import openpyxl; wb=openpyxl.load_workbook\\('references/NEW Payroll Dashboard.xlsx', data_only=True\\); print\\('SHEETS:'\\); [print\\(' -', s\\) for s in wb.sheetnames]\")",
       "Bash(python -c ' *)",
-      "Bash(python)"
+      "Bash(python)",
+      "Bash(echo \"exit=$?\")",
+      "WebFetch(domain:api.anthropic.com)",
+      "Bash(npm run *)",
+      "Bash(awk -F',' 'NR>3 && $5!~/@/ {print NR\": \"$0}' 'C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\references\\\\Global Master List - MASTERLIST.csv')",
+      "Bash(awk -F',' 'NR>3' 'C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\references\\\\Global Master List - MASTERLIST.csv')",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }

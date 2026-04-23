@@ -5,9 +5,13 @@ import { useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
-  ChevronRight,
+  Database,
+  KeyRound,
+  LayoutDashboard,
   LogOut,
   Moon,
+  MoreHorizontal,
+  Settings,
   ShieldCheck,
   Sun,
   UserCog,
@@ -25,26 +29,58 @@ function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
 
-interface AdminSidebarProps {
+export type AdminSidebarProps = {
   activeTab: string;
   setActiveTab: (tab: string) => void;
-}
+  /** When set (e.g. from parent), used for the footer identity row */
+  viewerEmail?: string | null;
+  /** Optional counts for nav badges (from live data) */
+  counts?: {
+    roles?: number;
+    employees?: number;
+    webhookAlert?: number;
+  };
+};
 
-const navItems = [
-  { id: 'roles',      label: 'Roles & Permissions', icon: UserCog },
-  { id: 'employees',  label: 'Employees',           icon: Users },
-  { id: 'webhooks',   label: 'Webhooks',            icon: Webhook },
-  { id: 'audit',      label: 'Audit Log',           icon: ShieldCheck },
+const systemNav: Array<{
+  id: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  badge?: 'count' | 'alert';
+}> = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'roles', label: 'Roles & permissions', icon: UserCog, badge: 'count' },
+  { id: 'employees', label: 'Employees', icon: Users, badge: 'count' },
+  { id: 'webhooks', label: 'Webhooks', icon: Webhook, badge: 'alert' },
 ];
 
-export default function AdminSidebar({ activeTab, setActiveTab }: AdminSidebarProps) {
+const securityNav: Array<{ id: string; label: string; icon: typeof ShieldCheck }> = [
+  { id: 'audit', label: 'Audit log', icon: ShieldCheck },
+  { id: 'api-tokens', label: 'API tokens', icon: KeyRound },
+  { id: 'backups', label: 'Backups', icon: Database },
+];
+
+export default function AdminSidebar({
+  activeTab,
+  setActiveTab,
+  viewerEmail: viewerEmailProp,
+  counts,
+}: AdminSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
-  const [email, setEmail] = React.useState<string | null>(null);
+  const [email, setEmail] = React.useState<string | null>(viewerEmailProp ?? null);
   const searchParams = useSearchParams();
   const emailFromQuery = searchParams.get('email');
+
   React.useEffect(() => {
     setMounted(true);
+  }, []);
+
+  React.useEffect(() => {
+    if (viewerEmailProp !== undefined) {
+      setEmail(viewerEmailProp);
+      return;
+    }
     try {
       const q = emailFromQuery?.trim() ?? '';
       if (q && isPlausibleEmail(q)) {
@@ -57,86 +93,159 @@ export default function AdminSidebar({ activeTab, setActiveTab }: AdminSidebarPr
     } catch {
       /* ignore */
     }
-  }, [emailFromQuery]);
+  }, [emailFromQuery, viewerEmailProp]);
+
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
+  const displayName = email?.includes('@') ? email.split('@')[0]!.replace(/[._-]/g, ' ') : email || 'Admin';
+  const titleName = displayName
+    .split(' ')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+
+  const navBtn = (id: string, label: string, Icon: typeof LayoutDashboard, extra?: React.ReactNode) => (
+    <button
+      key={id}
+      type="button"
+      onClick={() => setActiveTab(id)}
+      className={cn(
+        'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] text-[#3f3f46] transition-colors',
+        activeTab === id ? 'bg-[#18181b] font-medium text-white' : 'hover:bg-[#f3f3f3] hover:text-[#18181b]',
+      )}
+    >
+      <Icon
+        className={cn(
+          'h-[15px] w-[15px] shrink-0',
+          activeTab === id ? 'text-white/75' : 'text-[#a1a1aa]',
+        )}
+      />
+      <span className="truncate text-left">{label}</span>
+      {extra}
+    </button>
+  );
+
   return (
-    <div className="flex h-screen w-64 shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400">
-      <div className="p-6">
-        <div className="mb-8 flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/30">
-            <ShieldCheck className="h-5 w-5 text-white" />
+    <aside className="flex h-screen w-[220px] shrink-0 flex-col border-r border-[#ececec] bg-white dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex flex-1 flex-col px-5 pb-4 pt-7">
+        <div className="mb-10 flex items-center gap-2.5 px-1">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-[#18181b] text-sm font-bold tracking-[-0.02em] text-white dark:bg-zinc-100 dark:text-zinc-900">
+            s
           </div>
-          <div className="flex flex-col leading-tight">
-            <span className="text-sm font-semibold text-zinc-900 dark:text-white">Admin</span>
-            <span className="text-[11px] text-zinc-500 dark:text-zinc-400">Simple HRIS</span>
+          <div className="flex min-w-0 flex-col leading-tight">
+            <span className="text-[13.5px] font-semibold tracking-[-0.01em] text-[#18181b] dark:text-zinc-100">
+              simple·hris
+            </span>
+            <span className="mt-0.5 text-[10.5px] tracking-[0.02em] text-[#71717a] dark:text-zinc-500">Admin</span>
           </div>
         </div>
 
-        <ScrollArea className="-mx-2 flex-1">
-          <nav className="space-y-1 px-2">
-            {navItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                className={cn(
-                  'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200',
-                  activeTab === item.id
-                    ? 'bg-gradient-to-r from-orange-100 to-orange-50 text-orange-900 shadow-sm dark:from-blue-950/70 dark:to-blue-950/40 dark:text-white'
-                    : 'hover:bg-orange-50 hover:text-zinc-900 dark:hover:bg-blue-950/30 dark:hover:text-zinc-200',
-                )}
-              >
-                <item.icon
-                  className={cn(
-                    'h-4 w-4',
-                    activeTab === item.id
-                      ? 'text-orange-500 dark:text-orange-400'
-                      : 'text-zinc-500 group-hover:text-orange-500 dark:text-zinc-500 dark:group-hover:text-orange-400',
-                  )}
-                />
-                {item.label}
-                {activeTab === item.id && (
-                  <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70" />
-                )}
-              </button>
-            ))}
+        <ScrollArea className="min-h-0 flex-1 pr-2">
+          <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
+            System
+          </p>
+          <nav className="flex flex-col gap-px">
+            {systemNav.map((item) => {
+              let badge: React.ReactNode = null;
+              if (item.badge === 'count' && item.id === 'roles' && counts?.roles != null) {
+                badge = (
+                  <span
+                    className={cn(
+                      'ml-auto rounded-full px-1.5 py-px text-[10.5px] font-semibold tabular-nums',
+                      activeTab === item.id
+                        ? 'bg-white/15 text-white/90'
+                        : 'bg-[#f3f3f3] text-[#71717a] dark:bg-zinc-800 dark:text-zinc-400',
+                    )}
+                  >
+                    {counts.roles}
+                  </span>
+                );
+              }
+              if (item.badge === 'count' && item.id === 'employees' && counts?.employees != null) {
+                badge = (
+                  <span
+                    className={cn(
+                      'ml-auto rounded-full px-1.5 py-px text-[10.5px] font-semibold tabular-nums',
+                      activeTab === item.id
+                        ? 'bg-white/15 text-white/90'
+                        : 'bg-[#f3f3f3] text-[#71717a] dark:bg-zinc-800 dark:text-zinc-400',
+                    )}
+                  >
+                    {counts.employees}
+                  </span>
+                );
+              }
+              if (item.badge === 'alert' && counts?.webhookAlert != null && counts.webhookAlert > 0) {
+                badge = (
+                  <span
+                    className={cn(
+                      'ml-auto rounded-full px-1.5 py-px text-[10.5px] font-semibold tabular-nums',
+                      activeTab === item.id
+                        ? 'bg-white/15 text-white/90'
+                        : 'bg-[#fbf3e1] text-[#b45309] dark:bg-amber-950/50 dark:text-amber-400',
+                    )}
+                  >
+                    {counts.webhookAlert}
+                  </span>
+                );
+              }
+              return navBtn(item.id, item.label, item.icon, badge);
+            })}
           </nav>
 
+          <div className="my-5 mx-2.5 h-px bg-[#ececec] dark:bg-zinc-800" />
+
+          <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
+            Security
+          </p>
+          <nav className="flex flex-col gap-px">
+            {securityNav.map((item) => navBtn(item.id, item.label, item.icon))}
+          </nav>
+
+          <div className="my-5 mx-2.5 h-px bg-[#ececec] dark:bg-zinc-800" />
+
+          <nav className="flex flex-col gap-px">{navBtn('settings', 'System settings', Settings)}</nav>
+
+          <div className="mt-6 border-t border-[#ececec] pt-4 dark:border-zinc-800">
+            <ViewSwitcher email={email} currentView="admin" />
+            <button
+              type="button"
+              onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
+              className="mb-2 mt-3 flex w-full items-center justify-between rounded-md border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-left transition-colors hover:bg-[#f3f3f3] dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+              aria-label="Toggle dark mode"
+            >
+              <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
+                {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+                {isDark ? 'Dark' : 'Light'}
+              </div>
+              <span className="text-[#a1a1aa]">{isDark ? '☀' : '☾'}</span>
+            </button>
+          </div>
         </ScrollArea>
       </div>
 
-      <div className="mt-auto border-t border-orange-100 p-4 dark:border-blue-950/60">
-        <ViewSwitcher email={email} currentView="admin" />
-        <button
-          onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
-          className="mb-2 flex w-full items-center justify-between rounded-md border border-orange-100 bg-orange-50/60 px-3 py-2 transition-colors hover:bg-orange-100/80 dark:border-blue-950/60 dark:bg-blue-950/20 dark:hover:bg-blue-950/40"
-          aria-label="Toggle dark mode"
-        >
-          <div className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300">
-            {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-            <span className="text-xs font-medium">{isDark ? 'Dark mode' : 'Light mode'}</span>
-          </div>
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-white shadow-sm dark:bg-blue-950/60">
-            {isDark ? <Sun className="h-3.5 w-3.5 text-orange-400" /> : <Moon className="h-3.5 w-3.5 text-blue-500" />}
-          </div>
-        </button>
-        <div className="mb-3 flex items-center gap-3 px-3 py-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-blue-500 text-xs font-bold text-white shadow-sm">
+      <div className="mt-auto border-t border-[#ececec] p-5 dark:border-zinc-800">
+        <div className="flex items-center gap-2.5 rounded-md border border-[#ececec] bg-[#fafaf8] px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#18181b] text-[11px] font-semibold text-white dark:bg-zinc-200 dark:text-zinc-900">
             {(email || '?').slice(0, 2).toUpperCase()}
           </div>
-          <div className="flex min-w-0 flex-col overflow-hidden">
-            <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200">{email || 'Not signed in'}</span>
-            <span className="truncate text-xs text-zinc-500 dark:text-zinc-500">Admin view</span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13px] font-medium leading-tight text-[#18181b] dark:text-zinc-100">
+              {titleName}
+            </div>
+            <div className="mt-px truncate text-[11px] leading-tight text-[#71717a] dark:text-zinc-500">
+              Admin · root
+            </div>
           </div>
+          <MoreHorizontal className="h-4 w-4 shrink-0 cursor-pointer text-[#a1a1aa]" aria-hidden />
         </div>
         <Button
           variant="ghost"
-          className="w-full justify-start gap-3 text-zinc-600 hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
+          className="mt-3 w-full justify-start gap-3 text-[#71717a] hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
         >
           <LogOut className="h-4 w-4" />
           Sign Out
         </Button>
       </div>
-    </div>
+    </aside>
   );
 }

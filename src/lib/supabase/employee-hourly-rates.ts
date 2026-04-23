@@ -136,15 +136,26 @@ export async function getEmployeeHourlyRatesRows(): Promise<{
     process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() ||
     "employee_hourly_rates";
 
-  const { data, error } = await supabase.from(table).select("*");
-
-  if (error) {
-    return { rows: [], error: error.message };
+  // PostgREST silently caps `.select("*")` at 1000 rows by default. The rates
+  // table now exceeds that (multi-upload history), so we paginate to pull
+  // everything. Without this, employees near the end of the table (by internal
+  // id order) were missing from the Payroll Wizard's rate lookup.
+  const PAGE = 1000;
+  const raw: RawRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .range(from, from + PAGE - 1);
+    if (error) return { rows: [], error: error.message };
+    const page = (data ?? []) as RawRow[];
+    raw.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
   }
 
-  const raw = (data ?? []) as RawRow[];
   const rows = raw.map(mapEmployeeHourlyRateRow).filter((row) => !isRowEmpty(row));
-
   return { rows, error: null };
 }
 

@@ -50,7 +50,7 @@ export default function App() {
   const renderContent = () => {
     switch (activeTab) {
       case 'overview':
-        return <Overview onViewRates={handleViewRates} />;
+        return <Overview onViewRates={handleViewRates} onNavigate={setActiveTab} />;
       case 'rates':
         return (
           <Rates

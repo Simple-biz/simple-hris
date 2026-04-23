@@ -1,5 +1,6 @@
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { getCurrentMasterListUploadId } from "@/lib/supabase/global-master-list-db";
 import { NextResponse } from "next/server";
 
 const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
@@ -46,12 +47,20 @@ export async function POST(req: Request) {
     const { error: ratesError } = await supabase.from(ratesTable).insert(ratesRow);
     if (ratesError) errors.push(`${ratesTable}: ${ratesError.message}`);
 
-    // Insert into global_master_list
-    const masterRow: Record<string, string | null> = {};
+    // Insert into global_master_list. Tag the row with the current master_list_uploads
+    // id as both first_seen and last_seen so it shows up in the `active_employees` view.
+    const masterRow: Record<string, string | number | null> = {};
     if (name) masterRow["Name"] = name;
     if (department) masterRow["Department"] = department;
+    if (workEmail) masterRow["Work Email"] = workEmail;
     if (personalEmail) masterRow["Personal Email"] = personalEmail;
     if (startDate) masterRow["Start Date"] = startDate;
+
+    const currentUploadId = await getCurrentMasterListUploadId(supabase);
+    if (currentUploadId) {
+      masterRow["first_seen_upload_id"] = currentUploadId;
+      masterRow["last_seen_upload_id"] = currentUploadId;
+    }
 
     const { error: masterError } = await supabase.from(masterTable).insert(masterRow);
     if (masterError) errors.push(`${masterTable}: ${masterError.message}`);

@@ -1,24 +1,99 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, Loader2, Plus, Search, ShieldCheck, UserCog, X } from 'lucide-react';
+import {
+  Briefcase,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Crown,
+  Eye,
+  Loader2,
+  Plus,
+  Search,
+  ShieldCheck,
+  UserCog,
+  Users,
+  X,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 
 const ROLES = [
-  { key: 'viewer',               label: 'Viewer',               blurb: 'Read-only dashboard access.' },
-  { key: 'hr_coordinator',       label: 'HR Coordinator',       blurb: 'Edit employee profiles.' },
-  { key: 'payroll_coordinator',  label: 'Payroll Coordinator',  blurb: 'Upload CSVs, pre-flight payroll.' },
-  { key: 'payroll_manager',      label: 'Payroll Manager',      blurb: 'Edit rates, dispatch payroll.' },
-  { key: 'finance',              label: 'Finance / Accounting', blurb: 'Access the Accounting Dashboard.' },
-  { key: 'admin',                label: 'Admin',                blurb: 'Full system access.' },
+  { key: 'viewer', label: 'Viewer', blurb: 'Read-only dashboard access.' },
+  { key: 'hr_coordinator', label: 'HR Coordinator', blurb: 'Edit employee profiles.' },
+  { key: 'payroll_coordinator', label: 'Payroll Coordinator', blurb: 'Upload CSVs, pre-flight payroll.' },
+  { key: 'payroll_manager', label: 'Payroll Manager', blurb: 'Edit rates, dispatch payroll.' },
+  { key: 'finance', label: 'Finance / Accounting', blurb: 'Access the Accounting Dashboard.' },
+  { key: 'admin', label: 'Admin', blurb: 'Full system access.' },
 ] as const;
 
 type RoleKey = (typeof ROLES)[number]['key'];
+
+const ROLE_BY_KEY = Object.fromEntries(ROLES.map((r) => [r.key, r])) as Record<RoleKey, (typeof ROLES)[number]>;
+
+const ROLE_GROUPS: { title: string; caption: string; keys: RoleKey[] }[] = [
+  { title: 'Baseline', caption: 'Who can see what', keys: ['viewer'] },
+  { title: 'Coordinators', caption: 'HR & payroll inputs', keys: ['hr_coordinator', 'payroll_coordinator'] },
+  { title: 'Management', caption: 'Rates, dispatch & books', keys: ['payroll_manager', 'finance'] },
+  { title: 'System', caption: 'Full control', keys: ['admin'] },
+];
+
+function rolePillClasses(role: RoleKey): string {
+  const map: Record<RoleKey, string> = {
+    viewer:
+      'border-zinc-200/90 bg-zinc-100/90 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800/80 dark:text-zinc-200',
+    hr_coordinator:
+      'border-emerald-500/35 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300/95 dark:border-emerald-600/40',
+    payroll_coordinator:
+      'border-violet-500/35 bg-violet-500/10 text-violet-800 dark:text-violet-300/95 dark:border-violet-600/40',
+    payroll_manager:
+      'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200/95 dark:border-amber-600/45',
+    finance:
+      'border-sky-500/35 bg-sky-500/10 text-sky-900 dark:text-sky-200/95 dark:border-sky-600/40',
+    admin:
+      'border-rose-500/40 bg-rose-500/10 text-rose-900 dark:text-rose-200/95 dark:border-rose-600/45',
+  };
+  return map[role];
+}
+
+function roleRowAccent(role: RoleKey): string {
+  const map: Record<RoleKey, string> = {
+    viewer: 'border-l-zinc-400 dark:border-l-zinc-500',
+    hr_coordinator: 'border-l-emerald-500',
+    payroll_coordinator: 'border-l-violet-500',
+    payroll_manager: 'border-l-amber-500',
+    finance: 'border-l-sky-500',
+    admin: 'border-l-rose-500',
+  };
+  return map[role];
+}
+
+function employeeIdentityEmail(e: EmployeeRow | null): string {
+  if (!e) return '';
+  return (e.work_email?.trim() || e.personal_email?.trim() || '').trim();
+}
+
+function initialsFromEmployee(e: EmployeeRow): string {
+  const base = (e.name?.trim() || e.work_email || e.personal_email || '?').replace(/\s+/g, ' ');
+  const parts = base.split(' ').filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase().slice(0, 2);
+  return base.slice(0, 2).toUpperCase();
+}
+
+function assignmentsForEmployee(e: EmployeeRow, all: RoleRow[]): RoleRow[] {
+  const we = (e.work_email ?? '').toLowerCase();
+  const pe = (e.personal_email ?? '').toLowerCase();
+  return all.filter((a) => {
+    const ae = a.work_email.toLowerCase();
+    return ae === we || (pe !== '' && ae === pe);
+  });
+}
 
 interface RoleRow {
   id: string;
@@ -28,7 +103,7 @@ interface RoleRow {
   assigned_at: string;
 }
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 10;
 
 export default function AdminRoles() {
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
@@ -65,20 +140,16 @@ export default function AdminRoles() {
         };
         const rolesJson = (await rolesRes.json()) as { rows?: RoleRow[] };
 
-        // Merge all sources by lowercased work/personal email so employees that
-        // only exist in hubstaff_hours or employee_hourly_rates still appear.
         const merged = new Map<string, EmployeeRow>();
         const keyFor = (we: string | null | undefined, pe: string | null | undefined, nm?: string | null) =>
           (we ?? pe ?? nm ?? '').toString().trim().toLowerCase();
 
-        // 1) Primary source: global_master_list
         for (const e of empJson.employees ?? []) {
           const k = keyFor(e.work_email, e.personal_email, e.name);
           if (!k) continue;
           merged.set(k, e);
         }
 
-        // 2) Fallback: employee_hourly_rates
         for (const r of ratesJson.rows ?? []) {
           const k = keyFor(r.work_email, r.personal_email, r.name);
           if (!k || merged.has(k)) continue;
@@ -92,7 +163,6 @@ export default function AdminRoles() {
           } as EmployeeRow);
         }
 
-        // 3) Last-resort fallback: hubstaff_hours (uses raw rows, so sniff common email keys)
         for (const row of hubJson.rows ?? []) {
           const pickStr = (...keys: string[]): string | null => {
             for (const k of keys) {
@@ -126,21 +196,35 @@ export default function AdminRoles() {
     })();
   }, []);
 
+  const identity = employeeIdentityEmail(selected);
+  const selWork = selected?.work_email ?? null;
+  const selPersonal = selected?.personal_email ?? null;
+
   useEffect(() => {
-    if (!selected?.work_email) {
+    const email = (selWork?.trim() || selPersonal?.trim() || '').trim();
+    if (!email) {
       setRoles([]);
+      setRolesLoading(false);
       return;
     }
+    let cancelled = false;
     setRolesLoading(true);
-    fetch(`/api/employee-roles?email=${encodeURIComponent(selected.work_email)}`, { cache: 'no-store' })
+    fetch(`/api/employee-roles?email=${encodeURIComponent(email)}`, { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { rows?: RoleRow[] }) => setRoles(j.rows ?? []))
-      .catch((e: unknown) => toast.error(e instanceof Error ? e.message : 'Failed to load roles'))
-      .finally(() => setRolesLoading(false));
-  }, [selected]);
+      .then((j: { rows?: RoleRow[] }) => {
+        if (!cancelled) setRoles(j.rows ?? []);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load roles');
+      })
+      .finally(() => {
+        if (!cancelled) setRolesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selWork, selPersonal]);
 
-  // Dedupe on work_email (lowercase); fall back to personal_email then name.
-  // Rows with no identity at all still get a synthetic key so they aren't dropped.
   const uniqueEmployees = useMemo(() => {
     const seen = new Set<string>();
     const out: EmployeeRow[] = [];
@@ -157,14 +241,7 @@ export default function AdminRoles() {
     const q = search.trim().toLowerCase();
     const base = q
       ? uniqueEmployees.filter((e) => {
-          const hay = [
-            e.name,
-            e.work_email,
-            e.personal_email,
-            e.department,
-            e.employee_id,
-            e.start_date,
-          ]
+          const hay = [e.name, e.work_email, e.personal_email, e.department, e.employee_id, e.start_date]
             .filter(Boolean)
             .join(' ')
             .toLowerCase();
@@ -183,6 +260,14 @@ export default function AdminRoles() {
   const pageStart = (currentPage - 1) * PAGE_SIZE;
   const pageSlice = filtered.slice(pageStart, pageStart + PAGE_SIZE);
 
+  const stats = useMemo(() => {
+    const people = uniqueEmployees.length;
+    const emailsWithRoles = new Set(allAssignments.map((a) => a.work_email.toLowerCase()));
+    const withRoles = emailsWithRoles.size;
+    const grants = allAssignments.length;
+    return { people, withRoles, grants };
+  }, [uniqueEmployees.length, allAssignments]);
+
   const hasRole = (role: RoleKey) => roles.some((r) => r.role === role);
 
   async function refreshAll() {
@@ -192,18 +277,22 @@ export default function AdminRoles() {
   }
 
   async function toggleRole(role: RoleKey) {
-    if (!selected?.work_email) return;
+    const email = employeeIdentityEmail(selected);
+    if (!email) {
+      toast.error('This person has no email on file — add a work or personal email first.');
+      return;
+    }
     const currentlyHas = hasRole(role);
     setMutating(role);
     try {
       const res = await fetch(
         currentlyHas
-          ? `/api/employee-roles?email=${encodeURIComponent(selected.work_email)}&role=${role}`
+          ? `/api/employee-roles?email=${encodeURIComponent(email)}&role=${role}`
           : '/api/employee-roles',
         {
           method: currentlyHas ? 'DELETE' : 'POST',
           headers: currentlyHas ? undefined : { 'content-type': 'application/json' },
-          body: currentlyHas ? undefined : JSON.stringify({ work_email: selected.work_email, role }),
+          body: currentlyHas ? undefined : JSON.stringify({ work_email: email, role }),
         },
       );
       const json = (await res.json()) as { success?: boolean; error?: string };
@@ -211,9 +300,8 @@ export default function AdminRoles() {
         toast.error(json.error || 'Failed to update role');
         return;
       }
-      toast.success(currentlyHas ? `Revoked ${role}` : `Granted ${role}`);
-      // Refetch for selected + all
-      const r = await fetch(`/api/employee-roles?email=${encodeURIComponent(selected.work_email)}`, {
+      toast.success(currentlyHas ? `Revoked ${ROLE_BY_KEY[role].label}` : `Granted ${ROLE_BY_KEY[role].label}`);
+      const r = await fetch(`/api/employee-roles?email=${encodeURIComponent(email)}`, {
         cache: 'no-store',
       });
       setRoles(((await r.json()) as { rows?: RoleRow[] }).rows ?? []);
@@ -227,58 +315,99 @@ export default function AdminRoles() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
+      <div className="flex h-full flex-col items-center justify-center gap-3 bg-zinc-50/50 dark:bg-zinc-950/30">
+        <Loader2 className="h-8 w-8 animate-spin text-orange-500" aria-hidden />
+        <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Loading people and assignments…</p>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden p-4 sm:p-5">
-      <div className="flex shrink-0 flex-col gap-0.5">
-        <h1 className="flex items-center gap-2 text-xl font-bold text-zinc-900 dark:text-white">
-          <UserCog className="h-5 w-5 text-orange-500" />
-          Role & Permissions
-        </h1>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          Assign accounting, payroll, HR, and admin capabilities to employees. Changes are logged.
-        </p>
-      </div>
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 dark:from-zinc-950/50">
+      <header className="shrink-0 space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-1">
+            <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/15 ring-1 ring-orange-500/25">
+                <UserCog className="h-5 w-5 text-orange-600 dark:text-orange-400" aria-hidden />
+              </span>
+              Roles & permissions
+            </h1>
+            <p className="max-w-xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              Grant access by role. Updates apply immediately and are written to the audit log.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <div className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white/90 px-3 py-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
+              <Users className="h-4 w-4 text-zinc-400" aria-hidden />
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Directory</p>
+                <p className="font-mono text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {stats.people}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white/90 px-3 py-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
+              <Eye className="h-4 w-4 text-zinc-400" aria-hidden />
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">With roles</p>
+                <p className="font-mono text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {stats.withRoles}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white/90 px-3 py-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
+              <Briefcase className="h-4 w-4 text-zinc-400" aria-hidden />
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Active grants</p>
+                <p className="font-mono text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {stats.grants}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[1fr_1.2fr]">
-        <Card className="flex h-full min-h-0 flex-col overflow-hidden">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold">Employees</CardTitle>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <div className="relative min-w-[12rem] flex-1">
-                <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        <Card className="flex h-full min-h-0 flex-col overflow-hidden border-zinc-200/90 shadow-sm dark:border-zinc-800/80">
+          <CardHeader className="shrink-0 space-y-3 border-b border-zinc-100 pb-4 dark:border-zinc-800/80">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">People</CardTitle>
+              <Badge variant="outline" className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
+                {filtered.length} shown
+              </Badge>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by name or email…"
-                  className="pl-7"
+                  placeholder="Search name, email, department…"
+                  className="h-10 rounded-lg border-zinc-200 bg-white pl-9 dark:border-zinc-800 dark:bg-zinc-950/50"
                 />
               </div>
-              <div className="flex shrink-0 items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+              <div className="flex shrink-0 items-center justify-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50/80 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/40">
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  className="h-8 border-zinc-200 text-zinc-800 dark:border-zinc-800 dark:text-zinc-300"
+                  className="h-8 px-2 text-zinc-700 dark:text-zinc-300"
                   disabled={currentPage <= 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   aria-label="Previous page"
                 >
                   <ChevronLeft className="size-4" />
                 </Button>
-                <span className="px-2 font-mono text-zinc-600 dark:text-zinc-400">
+                <span className="min-w-[4.5rem] text-center font-mono text-xs text-zinc-600 dark:text-zinc-400">
                   {currentPage} / {totalPages}
                 </span>
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  className="h-8 border-zinc-200 text-zinc-800 dark:border-zinc-800 dark:text-zinc-300"
+                  className="h-8 px-2 text-zinc-700 dark:text-zinc-300"
                   disabled={currentPage >= totalPages}
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   aria-label="Next page"
@@ -287,78 +416,77 @@ export default function AdminRoles() {
                 </Button>
               </div>
             </div>
-            <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
               Showing{' '}
-              <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                {filtered.length === 0 ? 0 : pageStart + 1}–
-                {Math.min(pageStart + PAGE_SIZE, filtered.length)}
+              <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">
+                {filtered.length === 0 ? 0 : pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filtered.length)}
               </span>{' '}
-              of <span className="font-mono text-zinc-700 dark:text-zinc-300">{filtered.length}</span>
+              of <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">{filtered.length}</span>
               {search.trim() && uniqueEmployees.length !== filtered.length && (
-                <>
-                  {' '}
-                  <span className="text-zinc-400">
-                    (filtered from {uniqueEmployees.length} total)
-                  </span>
-                </>
+                <span className="text-zinc-400"> · filtered from {uniqueEmployees.length}</span>
               )}
             </p>
           </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-y-auto pr-2">
-            <ul className="space-y-1">
+          <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-2 sm:px-4">
+            <ul className="space-y-1.5" role="list">
               {pageSlice.map((e, i) => {
-                const emailKey = (e.work_email ?? e.personal_email ?? '').toLowerCase();
-                const assignedRoles = allAssignments.filter(
-                  (a) => a.work_email.toLowerCase() === (e.work_email ?? '').toLowerCase(),
-                );
-                const isSel =
-                  !!selected &&
-                  (selected.work_email ?? '').toLowerCase() === (e.work_email ?? '').toLowerCase();
+                const assignedRoles = assignmentsForEmployee(e, allAssignments);
+                const isSel = selected === e;
                 return (
-                  <li key={`${emailKey}-${pageStart + i}`}>
+                  <li key={`${employeeIdentityEmail(e) || e.name}-${pageStart + i}`}>
                     <button
                       type="button"
                       onClick={() => setSelected(e)}
-                      className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
+                      className={cn(
+                        'flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all',
                         isSel
-                          ? 'border-orange-500/50 bg-orange-50 shadow-sm dark:border-orange-500/40 dark:bg-orange-950/30'
-                          : 'border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/60'
-                      }`}
+                          ? 'border-orange-500/55 bg-orange-50/90 shadow-md shadow-orange-500/10 ring-1 ring-orange-500/20 dark:border-orange-500/45 dark:bg-orange-950/35 dark:shadow-none'
+                          : 'border-zinc-200/90 bg-white/60 hover:border-zinc-300 hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/70',
+                      )}
                     >
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-500/20 to-blue-500/20 text-xs font-semibold uppercase text-orange-700 dark:text-orange-300">
-                          {(e.name?.trim() || e.work_email || '?').slice(0, 1)}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-zinc-900 dark:text-white">
-                            {e.name || e.work_email || '—'}
-                          </p>
-                          <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-                            {e.work_email || e.personal_email || '—'}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-                        {assignedRoles.length === 0 ? (
-                          <span className="text-[10px] italic text-zinc-400">no roles</span>
-                        ) : (
-                          assignedRoles.slice(0, 3).map((r) => (
-                            <Badge
-                              key={r.id}
-                              variant="outline"
-                              className="border-indigo-500/30 bg-indigo-500/10 px-1.5 py-0 text-[10px] text-indigo-700 dark:text-indigo-300"
-                            >
-                              {r.role}
-                            </Badge>
-                          ))
+                      <div
+                        className={cn(
+                          'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold',
+                          isSel
+                            ? 'bg-orange-500 text-white shadow-sm'
+                            : 'bg-gradient-to-br from-zinc-100 to-zinc-200/80 text-zinc-700 dark:from-zinc-800 dark:to-zinc-900 dark:text-zinc-200',
                         )}
-                        {assignedRoles.length > 3 && (
-                          <Badge
-                            variant="outline"
-                            className="border-zinc-300 px-1.5 py-0 text-[10px] text-zinc-500 dark:border-zinc-700"
-                          >
-                            +{assignedRoles.length - 3}
-                          </Badge>
+                      >
+                        {initialsFromEmployee(e)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
+                          {e.name || employeeIdentityEmail(e) || '—'}
+                        </p>
+                        <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                          {e.work_email || e.personal_email || 'No email'}
+                        </p>
+                        {e.department && (
+                          <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">{e.department}</p>
+                        )}
+                      </div>
+                      <div className="flex max-w-[40%] shrink-0 flex-wrap justify-end gap-1">
+                        {assignedRoles.length === 0 ? (
+                          <span className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500">No roles</span>
+                        ) : (
+                          <>
+                            {assignedRoles.slice(0, 3).map((r) => (
+                              <span
+                                key={r.id}
+                                className={cn(
+                                  'rounded-md border px-1.5 py-0.5 text-[10px] font-semibold',
+                                  rolePillClasses(r.role),
+                                )}
+                              >
+                                {ROLE_BY_KEY[r.role].label}
+                              </span>
+                            ))}
+                            {assignedRoles.length > 3 && (
+                              <span className="rounded-md border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
+                                +{assignedRoles.length - 3}
+                              </span>
+                            )}
+                          </>
                         )}
                       </div>
                     </button>
@@ -366,103 +494,155 @@ export default function AdminRoles() {
                 );
               })}
               {filtered.length === 0 && (
-                <li className="px-3 py-6 text-center text-xs text-zinc-500">No employees match.</li>
+                <li className="rounded-xl border border-dashed border-zinc-200 py-10 text-center dark:border-zinc-800">
+                  <p className="text-sm text-zinc-500">No people match this search.</p>
+                </li>
               )}
             </ul>
           </CardContent>
         </Card>
 
-        <Card className="flex h-full min-h-0 flex-col overflow-hidden">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-              <ShieldCheck className="h-4 w-4 text-orange-500" />
-              {selected
-                ? `Roles for ${selected.name || selected.work_email}`
-                : 'Select an employee'}
+        <Card className="flex h-full min-h-0 flex-col overflow-hidden border-zinc-200/90 shadow-sm dark:border-zinc-800/80">
+          <CardHeader className="shrink-0 space-y-1 border-b border-zinc-100 pb-4 dark:border-zinc-800/80">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
+                <ShieldCheck className="h-4 w-4 text-orange-600 dark:text-orange-400" aria-hidden />
+              </span>
+              {selected ? 'Role assignments' : 'Choose someone'}
             </CardTitle>
-            {selected?.work_email && (
-              <p className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{selected.work_email}</p>
+            {selected && (
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-zinc-200/90 bg-zinc-50/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white font-semibold shadow-sm dark:bg-zinc-800">
+                    {initialsFromEmployee(selected)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
+                      {selected.name || identity || '—'}
+                    </p>
+                    <p className="truncate font-mono text-[11px] text-zinc-500">{identity || 'No email on file'}</p>
+                  </div>
+                </div>
+                {roles.filter((r) => r.role === 'admin').length > 0 && (
+                  <Badge className="shrink-0 gap-1 border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-200">
+                    <Crown className="h-3 w-3" aria-hidden />
+                    Admin
+                  </Badge>
+                )}
+              </div>
             )}
           </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-y-auto">
+          <CardContent className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-1 sm:px-4">
             {!selected ? (
-              <p className="py-8 text-center text-sm text-zinc-500">
-                Pick an employee from the list to manage their roles.
-              </p>
+              <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 px-6 py-10 text-center dark:border-zinc-800 dark:bg-zinc-900/30">
+                <UserCog className="h-10 w-10 text-zinc-300 dark:text-zinc-600" aria-hidden />
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Select a person</p>
+                  <p className="max-w-xs text-xs text-zinc-500 dark:text-zinc-500">
+                    Pick someone from the list to grant or revoke roles. Use search to narrow the directory.
+                  </p>
+                </div>
+              </div>
             ) : rolesLoading ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+              <div className="flex flex-col items-center justify-center gap-2 py-16">
+                <Loader2 className="h-6 w-6 animate-spin text-orange-500" aria-hidden />
+                <p className="text-xs text-zinc-500">Loading current roles…</p>
+              </div>
+            ) : !identity ? (
+              <div className="rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100/90">
+                This record has no work or personal email, so roles cannot be assigned. Update the directory first.
               </div>
             ) : (
-              <div className="space-y-2">
-                {ROLES.map((r) => {
-                  const active = hasRole(r.key);
-                  const busy = mutating === r.key;
-                  return (
-                    <div
-                      key={r.key}
-                      className={`group flex items-center justify-between gap-3 rounded-lg border p-3 transition-all ${
-                        active
-                          ? 'border-emerald-500/40 bg-gradient-to-r from-emerald-50/60 to-white shadow-sm dark:border-emerald-500/30 dark:from-emerald-950/30 dark:to-transparent'
-                          : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-sm dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-zinc-700'
-                      }`}
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div
-                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition ${
-                            active
-                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                              : 'bg-zinc-100 text-zinc-400 group-hover:bg-orange-500/10 group-hover:text-orange-500 dark:bg-zinc-800 dark:text-zinc-500'
-                          }`}
-                        >
-                          {active ? <Check className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium text-zinc-900 dark:text-white">{r.label}</p>
-                            {active && (
-                              <Badge
-                                variant="outline"
-                                className="border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300"
-                              >
-                                ACTIVE
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">{r.blurb}</p>
-                          <p className="mt-0.5 font-mono text-[10px] text-zinc-400">{r.key}</p>
-                        </div>
+              <div className="space-y-6">
+                {ROLE_GROUPS.map((group) => (
+                  <section key={group.title} className="space-y-2">
+                    <div className="flex items-baseline justify-between gap-2 border-b border-zinc-100 pb-1 dark:border-zinc-800/80">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-800 dark:text-zinc-200">
+                          {group.title}
+                        </h3>
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-500">{group.caption}</p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => toggleRole(r.key)}
-                        disabled={busy}
-                        className={`group/btn relative flex shrink-0 items-center gap-1.5 overflow-hidden rounded-full px-4 py-2 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
-                          active
-                            ? 'border border-red-200 bg-white text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700 hover:shadow-md hover:shadow-red-500/10 dark:border-red-500/30 dark:bg-transparent dark:text-red-400 dark:hover:bg-red-950/30'
-                            : 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-sm shadow-orange-500/30 hover:shadow-lg hover:shadow-orange-500/40 hover:brightness-110'
-                        }`}
-                      >
-                        {busy ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            <span>{active ? 'Revoking…' : 'Assigning…'}</span>
-                          </>
-                        ) : active ? (
-                          <>
-                            <X className="h-3.5 w-3.5 transition-transform group-hover/btn:rotate-90" />
-                            <span>Revoke</span>
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="h-3.5 w-3.5 transition-transform group-hover/btn:rotate-90" />
-                            <span>Assign</span>
-                          </>
-                        )}
-                      </button>
                     </div>
-                  );
-                })}
+                    <ul className="space-y-2" role="list">
+                      {group.keys.map((key) => {
+                        const r = ROLE_BY_KEY[key];
+                        const active = hasRole(key);
+                        const busy = mutating === key;
+                        return (
+                          <li
+                            key={key}
+                            className={cn(
+                              'flex flex-col gap-3 rounded-xl border border-l-4 bg-white/80 p-3 shadow-sm transition-all sm:flex-row sm:items-center sm:justify-between dark:bg-zinc-900/35',
+                              active
+                                ? 'border-zinc-200/90 dark:border-zinc-700/90'
+                                : 'border-zinc-200/90 dark:border-zinc-800/90',
+                              roleRowAccent(key),
+                            )}
+                          >
+                            <div className="flex min-w-0 flex-1 items-start gap-3">
+                              <div
+                                className={cn(
+                                  'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
+                                  active
+                                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                                    : 'bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500',
+                                )}
+                              >
+                                {active ? <Check className="h-5 w-5" aria-hidden /> : <ShieldCheck className="h-5 w-5" aria-hidden />}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-sm font-semibold text-zinc-900 dark:text-white">{r.label}</p>
+                                  {active && (
+                                    <span
+                                      className={cn(
+                                        'rounded-md border px-1.5 py-px text-[10px] font-bold uppercase tracking-wide',
+                                        rolePillClasses(key),
+                                      )}
+                                    >
+                                      Active
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="mt-0.5 text-[12px] leading-snug text-zinc-600 dark:text-zinc-400">{r.blurb}</p>
+                                <p className="mt-1 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{key}</p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleRole(key)}
+                              disabled={busy}
+                              className={cn(
+                                'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg px-4 py-2.5 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60',
+                                active
+                                  ? 'border border-red-200/90 bg-white text-red-600 hover:bg-red-50 dark:border-red-500/35 dark:bg-transparent dark:text-red-400 dark:hover:bg-red-950/40'
+                                  : 'bg-orange-600 text-white shadow-sm hover:bg-orange-500 dark:bg-orange-600 dark:hover:bg-orange-500',
+                              )}
+                            >
+                              {busy ? (
+                                <>
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                                  {active ? 'Revoking…' : 'Assigning…'}
+                                </>
+                              ) : active ? (
+                                <>
+                                  <X className="h-3.5 w-3.5" aria-hidden />
+                                  Revoke
+                                </>
+                              ) : (
+                                <>
+                                  <Plus className="h-3.5 w-3.5" aria-hidden />
+                                  Assign
+                                </>
+                              )}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                ))}
               </div>
             )}
           </CardContent>

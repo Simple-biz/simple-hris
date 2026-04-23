@@ -185,6 +185,10 @@ export default function PabDisputeQueue() {
       const safeHrs = Number.isFinite(hrs) && hrs >= 0 ? hrs : 0;
       const safeMins = Number.isFinite(mins) && mins >= 0 ? mins : 0;
       const totalHours = safeHrs + safeMins / 60;
+      // Empty inputs → no override (fall back to Hubstaff). Explicit 0 → zero-out the day.
+      const hasInput = editHrs.trim() !== '' || editMins.trim() !== '';
+      const overrideToSend =
+        editStatus === 'approved' && hasInput ? totalHours : null;
       const res = await fetch(`/api/pab-disputes/${editDialog.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -193,7 +197,7 @@ export default function PabDisputeQueue() {
           status: editStatus,
           decided_by: currentUser ?? '',
           decision_note: editNote.trim() || null,
-          override_hours: editStatus === 'approved' && totalHours > 0 ? totalHours : null,
+          override_hours: overrideToSend,
         }),
       });
       const json = await res.json();
@@ -217,6 +221,10 @@ export default function PabDisputeQueue() {
       const safeHrs = Number.isFinite(hrs) && hrs >= 0 ? hrs : 0;
       const safeMins = Number.isFinite(mins) && mins >= 0 ? mins : 0;
       const totalHours = safeHrs + safeMins / 60;
+      // Empty inputs → no override (fall back to Hubstaff). Explicit 0 → zero-out the day.
+      const hasInput = overrideHrs.trim() !== '' || overrideMins.trim() !== '';
+      const overrideToSend =
+        decideDialog.action === 'approve' && hasInput ? totalHours : null;
       const res = await fetch(`/api/pab-disputes/${decideDialog.dispute.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -224,7 +232,7 @@ export default function PabDisputeQueue() {
           action: decideDialog.action,
           decided_by: currentUser ?? '',
           decision_note: decisionNote.trim() || null,
-          override_hours: decideDialog.action === 'approve' && totalHours > 0 ? totalHours : null,
+          override_hours: overrideToSend,
         }),
       });
       const json = await res.json();

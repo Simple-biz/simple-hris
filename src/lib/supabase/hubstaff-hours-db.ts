@@ -23,7 +23,8 @@ function requireServiceRole(): SupabaseClient {
  * `.not('id','is',null)` can fail to remove all rows in some setups. Batching by `id`
  * matches how a full replace is expected to behave (no leftover rows from prior uploads).
  */
-async function deleteAllRowsInTable(supabase: SupabaseClient, table: string): Promise<void> {
+/** Clears a table by paging deletes on `id` — used by hubstaff replace and legacy master-list import. */
+export async function deleteAllRowsInTable(supabase: SupabaseClient, table: string): Promise<void> {
   const PAGE = 1000;
   let safety = 0;
   const maxIterations = 100_000;
@@ -255,7 +256,11 @@ export function sortHubstaffColumnsForDisplay(columns: string[]): string[] {
   });
 }
 
-/** Fetches ALL rows from hubstaff_hours (paginated, no hard cap), drops rows that are empty in every preview column. */
+/**
+ * Fetches rows from hubstaff_hours for the **current upload only** (the latest CSV
+ * the operator pushed). Older uploads remain in the table but are hidden from
+ * the Payroll Wizard's default view — use `fetchHubstaffRowsBySourceFile` to inspect them.
+ */
 export async function fetchHubstaffRowsOrdered(): Promise<{
   columns: string[];
   rows: Record<string, unknown>[];
@@ -263,23 +268,23 @@ export async function fetchHubstaffRowsOrdered(): Promise<{
   const supabase = requireServiceRole();
   const table = getTableName();
 
-  const PAGE = 1000; // PostgREST max per request
+  const currentUploadId = await getCurrentHubstaffUploadId(supabase);
+
+  const PAGE = 1000;
   const allRows: Record<string, unknown>[] = [];
   let from = 0;
 
   while (true) {
-    const { data, error } = await supabase
-      .from(table)
-      .select("*")
-      .range(from, from + PAGE - 1);
+    let q = supabase.from(table).select("*").range(from, from + PAGE - 1);
+    if (currentUploadId) q = q.eq("upload_id", currentUploadId);
+    const { data, error } = await q;
     if (error) throw new Error(error.message);
     const page = (data ?? []) as Record<string, unknown>[];
     allRows.push(...page);
-    if (page.length < PAGE) break; // last page
+    if (page.length < PAGE) break;
     from += PAGE;
   }
 
-  // Drop rows where every preview column is null / empty string
   const rows = allRows.filter((r) => !rowIsEmpty(r));
 
   let columns =
@@ -381,14 +386,14 @@ async function resolveColumnMapping(
 
 /**
  * Batch-inserts parsed CSV rows into the hubstaff_hours table.
- * If sourceFile is provided, it is written to the `source_file` column on every row.
+ * Extra columns like `source_file` and `upload_id` are applied to every row.
  */
 async function batchInsertRows(
   supabase: SupabaseClient,
   table: string,
   dataRows: string[][],
   insertCols: { csvIdx: number; dbCol: string }[],
-  sourceFile?: string,
+  rowExtras?: Record<string, string | null>,
 ): Promise<number> {
   const batchSize = 50;
   let rowCount = 0;
@@ -401,9 +406,7 @@ async function batchInsertRows(
         const val = row[csvIdx] ?? "";
         obj[dbCol] = val === "" ? null : String(val);
       }
-      if (sourceFile) {
-        obj["source_file"] = sourceFile;
-      }
+      if (rowExtras) Object.assign(obj, rowExtras);
       return obj;
     });
 
@@ -415,11 +418,107 @@ async function batchInsertRows(
   return rowCount;
 }
 
+const HUBSTAFF_UPLOADS_TABLE = "hubstaff_uploads";
+
+/** Returns the `id` of the upload currently flagged `is_current`, or null when none is flagged yet. */
+export async function getCurrentHubstaffUploadId(supabase: SupabaseClient): Promise<string | null> {
+  const { data, error } = await supabase
+    .from(HUBSTAFF_UPLOADS_TABLE)
+    .select("id")
+    .eq("is_current", true)
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  const id = (data as { id?: string } | null)?.id;
+  return id ?? null;
+}
+
 /**
- * Replaces all rows in `public.hubstaff_hours` with data from the Hubstaff weekly CSV.
- * Uses SUPABASE_SERVICE_ROLE_KEY (bypasses RLS); works over HTTPS — no direct Postgres needed.
+ * Creates a new `hubstaff_uploads` row (not yet current). Caller must later call
+ * `promoteHubstaffUploadToCurrent` once the data rows are safely inserted.
  */
-export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<{ rowCount: number }> {
+async function createPendingHubstaffUpload(
+  supabase: SupabaseClient,
+  sourceFile: string | undefined,
+  rowCount: number,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from(HUBSTAFF_UPLOADS_TABLE)
+    .insert({
+      source_file: sourceFile ?? null,
+      row_count: rowCount,
+      is_current: false,
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(`Could not create hubstaff_uploads row: ${error.message}`);
+  const id = (data as { id?: string }).id;
+  if (!id) throw new Error("hubstaff_uploads insert returned no id");
+  return id;
+}
+
+/**
+ * Lists Hubstaff upload history from `hubstaff_uploads`, newest first. Each row
+ * has the metadata shown in the Payroll Wizard's "Source Files" panel: filename,
+ * when it was uploaded, how many rows it carried, and whether it's the current
+ * (active) upload.
+ */
+export async function listHubstaffUploads(): Promise<
+  {
+    id: string;
+    source_file: string | null;
+    uploaded_at: string;
+    uploaded_by: string | null;
+    row_count: number | null;
+    is_current: boolean;
+  }[]
+> {
+  const supabase = requireServiceRole();
+  const { data, error } = await supabase
+    .from(HUBSTAFF_UPLOADS_TABLE)
+    .select("id, source_file, uploaded_at, uploaded_by, row_count, is_current")
+    .order("uploaded_at", { ascending: false });
+  if (error) throw new Error(`Could not list hubstaff_uploads: ${error.message}`);
+  return (data ?? []) as {
+    id: string;
+    source_file: string | null;
+    uploaded_at: string;
+    uploaded_by: string | null;
+    row_count: number | null;
+    is_current: boolean;
+  }[];
+}
+
+/** Flips all other uploads to `is_current=false` and sets this one to `true`. */
+async function promoteHubstaffUploadToCurrent(
+  supabase: SupabaseClient,
+  newUploadId: string,
+): Promise<void> {
+  const { error: clearErr } = await supabase
+    .from(HUBSTAFF_UPLOADS_TABLE)
+    .update({ is_current: false })
+    .eq("is_current", true)
+    .neq("id", newUploadId);
+  if (clearErr) throw new Error(`Failed to clear prior current uploads: ${clearErr.message}`);
+
+  const { error: setErr } = await supabase
+    .from(HUBSTAFF_UPLOADS_TABLE)
+    .update({ is_current: true })
+    .eq("id", newUploadId);
+  if (setErr) throw new Error(`Failed to mark upload ${newUploadId} current: ${setErr.message}`);
+}
+
+/**
+ * Archives the Hubstaff weekly CSV as a new `hubstaff_uploads` row and tags the inserted
+ * `hubstaff_hours` rows with that upload's id. The new upload becomes `is_current=true`;
+ * prior uploads remain in the table but stop being visible to the Payroll Wizard.
+ *
+ * No rows are deleted — historical uploads are preserved for audit and rollback.
+ */
+export async function replaceHubstaffHoursFromCsvText(
+  csvText: string,
+  sourceFile?: string,
+): Promise<{ rowCount: number; uploadId: string }> {
   const supabase = requireServiceRole();
   const table = getTableName();
 
@@ -438,16 +537,21 @@ export async function replaceHubstaffHoursFromCsvText(csvText: string): Promise<
     );
   }
 
-  // Remove prior upload completely, then clear saved daily fallback so reloads do not
-  // merge old week columns with the new file.
-  await deleteAllRowsInTable(supabase, table);
+  const uploadId = await createPendingHubstaffUpload(supabase, sourceFile, dataRows.length);
+
+  const extras: Record<string, string | null> = { upload_id: uploadId };
+  if (sourceFile) extras.source_file = sourceFile;
+
+  const rowCount = await batchInsertRows(supabase, table, dataRows, insertCols, extras);
+  await promoteHubstaffUploadToCurrent(supabase, uploadId);
+
+  // Clear any derived daily-breakdown cache so readers recompute from the new upload.
   const { error: settingsErr } = await upsertAppSetting("hubstaff_daily_breakdown", "");
   if (settingsErr) {
     console.warn("[hubstaff_hours] could not clear hubstaff_daily_breakdown:", settingsErr);
   }
 
-  const rowCount = await batchInsertRows(supabase, table, dataRows, insertCols);
-  return { rowCount };
+  return { rowCount, uploadId };
 }
 
 /**
@@ -479,46 +583,21 @@ export async function deleteHubstaffRowsBySourceFile(sourceFile: string): Promis
 }
 
 /**
- * Appends rows from the Hubstaff CSV to `public.hubstaff_hours` WITHOUT deleting existing data.
- * This allows continuously uploading weekly CSV files without overwriting previous uploads.
- * Stores the original filename in the `source_file` column for tracking.
+ * Back-compat shim: append mode no longer exists as distinct behavior — every upload
+ * is archived and becomes the new current (latest always wins in the Payroll Wizard).
+ * The API route still accepts `mode=append`; it routes here.
  */
 export async function appendHubstaffHoursFromCsvText(
   csvText: string,
   sourceFile?: string,
-): Promise<{ rowCount: number }> {
-  const supabase = requireServiceRole();
-  const table = getTableName();
-
-  const grid = parseCsv(csvText);
-  if (grid.length < 2) {
-    throw new Error("CSV must include a header row and at least one data row.");
-  }
-
-  const csvHeaders = grid[0].map((h) => h.trim());
-  const dataRows = grid.slice(1).filter((row) => row.some((cell) => cell.trim() !== ""));
-
-  const insertCols = await resolveColumnMapping(csvHeaders, table);
-  if (insertCols.length === 0) {
-    throw new Error(
-      "No CSV columns match public.hubstaff_hours. Ensure CSV column names match your Supabase table (case-insensitive).",
-    );
-  }
-
-  const specCols = await getTableColumnsFromSpec(table);
-  const canStoreSourceFile = specCols.includes("source_file");
-  const rowCount = await batchInsertRows(
-    supabase,
-    table,
-    dataRows,
-    insertCols,
-    canStoreSourceFile ? sourceFile : undefined,
-  );
-  return { rowCount };
+): Promise<{ rowCount: number; uploadId: string }> {
+  return replaceHubstaffHoursFromCsvText(csvText, sourceFile);
 }
 
 /**
- * Returns distinct source_file values from the hubstaff_hours table, ordered by filename.
+ * Returns distinct source_file values from hubstaff_hours, **newest upload first**
+ * (by max row `id` per `source_file`). Older files are kept for reference; the Payroll
+ * Wizard uses `files[0]` as the active timesheet batch.
  */
 export async function getUploadedSourceFiles(): Promise<string[]> {
   const supabase = requireServiceRole();
@@ -529,32 +608,35 @@ export async function getUploadedSourceFiles(): Promise<string[]> {
     return [];
   }
 
-  // Paginate through all rows to collect every distinct source_file value.
-  // PostgREST defaults to 1000 rows per request, which can miss files when
-  // the table has more rows than that limit.
   const PAGE = 1000;
-  const allSourceFiles = new Set<string>();
+  /** source_file → max(id) for that upload batch */
+  const maxIdByFile = new Map<string, number>();
   let from = 0;
 
   while (true) {
     const { data, error } = await supabase
       .from(table)
-      .select("source_file")
+      .select("id,source_file")
       .not("source_file", "is", null)
-      .order("source_file")
+      .order("id", { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
-    const page = (data ?? []) as { source_file: string }[];
+    const page = (data ?? []) as { id: unknown; source_file: string }[];
     for (const r of page) {
-      if (r.source_file && r.source_file.trim() !== "") {
-        allSourceFiles.add(r.source_file);
-      }
+      const fn = (r.source_file ?? "").trim();
+      if (!fn) continue;
+      const idNum = Number(r.id);
+      if (!Number.isFinite(idNum)) continue;
+      const prev = maxIdByFile.get(fn) ?? 0;
+      if (idNum > prev) maxIdByFile.set(fn, idNum);
     }
     if (page.length < PAGE) break;
     from += PAGE;
   }
 
-  return [...allSourceFiles].sort();
+  return [...maxIdByFile.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([file]) => file);
 }
 
 /**

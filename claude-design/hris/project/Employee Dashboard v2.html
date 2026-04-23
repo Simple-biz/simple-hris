@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>My Dashboard · Simple HRIS</title>
+<meta name="viewport" content="width=1440" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/lucide@0.462.0/dist/umd/lucide.min.js"></script>
+<style>
+  :root {
+    --ink: #18181b;
+    --ink-2: #3f3f46;
+    --ink-3: #71717a;
+    --ink-4: #a1a1aa;
+    --line: #ececec;
+    --line-2: #f3f3f3;
+    --bg: #fafaf8;
+    --card: #ffffff;
+    --orange: #ea580c;
+    --orange-soft: #fff1e6;
+    --green: #047857;
+    --green-soft: #e8f5ee;
+    --red: #b91c1c;
+    --red-soft: #fbeaea;
+    --amber: #b45309;
+    --amber-soft: #fbf3e1;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    font-size: 14px;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+  /* ---------- Shell ---------- */
+  .app {
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    padding: 28px 20px;
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column;
+    background: var(--card);
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 40px;
+    padding: 0 4px;
+  }
+  .brand-mark {
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    background: var(--orange);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+    letter-spacing: -0.02em;
+  }
+  .brand-name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+
+  .nav-label {
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--ink-4);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0 10px;
+    margin: 0 0 6px;
+  }
+  .nav { display: flex; flex-direction: column; gap: 1px; }
+  .nav a {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+    text-decoration: none;
+    cursor: pointer;
+    font-weight: 450;
+  }
+  .nav a svg { width: 15px; height: 15px; color: var(--ink-4); }
+  .nav a:hover { background: var(--line-2); color: var(--ink); }
+  .nav a.active {
+    background: var(--ink);
+    color: white;
+  }
+  .nav a.active svg { color: rgba(255,255,255,0.75); }
+
+  .nav-divider { height: 1px; background: var(--line); margin: 20px 10px; }
+
+  .sidebar-foot {
+    margin-top: auto;
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--bg);
+  }
+  .avatar {
+    width: 28px; height: 28px;
+    border-radius: 9999px;
+    background: var(--ink);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 11px;
+  }
+  .sidebar-foot .nm { font-size: 13px; font-weight: 500; line-height: 1.2; }
+  .sidebar-foot .rl { font-size: 11px; color: var(--ink-3); line-height: 1.2; margin-top: 1px; }
+  .sidebar-foot .menu {
+    margin-left: auto;
+    color: var(--ink-4);
+    display: flex; align-items: center;
+    cursor: pointer;
+  }
+
+  /* ---------- Main ---------- */
+  main {
+    flex: 1;
+    padding: 56px 72px 80px;
+    max-width: 1180px;
+  }
+
+  /* Top meta */
+  .top-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 28px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+  }
+  .top-meta .crumb { display: flex; align-items: center; gap: 8px; }
+  .top-meta .crumb .sep { color: var(--ink-4); }
+  .period-picker {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px 5px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    cursor: pointer;
+    color: var(--ink-2);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .period-picker svg { width: 13px; height: 13px; color: var(--ink-4); }
+
+  /* ---------- Hero: the one number ---------- */
+  .hero {
+    padding: 12px 0 40px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 40px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 48px;
+    align-items: end;
+  }
+  .hero-greeting {
+    font-size: 13px;
+    color: var(--ink-3);
+    margin-bottom: 20px;
+    font-weight: 450;
+  }
+  .hero-greeting strong { color: var(--ink); font-weight: 600; }
+
+  .hero-label {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    margin-bottom: 14px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+  .hero-amount {
+    font-size: 76px;
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    font-feature-settings: 'ss01', 'cv11', 'tnum';
+  }
+  .hero-amount .cur { color: var(--ink-4); font-weight: 500; margin-right: 6px; }
+  .hero-sub {
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--ink-3);
+    display: flex; align-items: baseline; gap: 14px;
+  }
+  .hero-sub .usd { color: var(--ink-2); font-weight: 500; }
+  .hero-sub .note { color: var(--ink-4); font-size: 12.5px; }
+
+  .hero-right {
+    display: flex; flex-direction: column; align-items: flex-end;
+    gap: 10px;
+  }
+  .period-range {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    font-weight: 500;
+  }
+  .period-range strong { color: var(--ink); font-weight: 600; }
+
+  .pay-compose {
+    display: grid;
+    grid-template-columns: auto auto;
+    gap: 6px 22px;
+    font-size: 13px;
+    color: var(--ink-3);
+    margin-top: 6px;
+  }
+  .pay-compose .v { color: var(--ink); font-weight: 500; text-align: right; }
+  .pay-compose .v.mute { color: var(--ink-4); font-weight: 450; }
+  .pay-compose .l { display: flex; align-items: center; gap: 8px; }
+  .pay-compose .l .tick {
+    width: 6px; height: 6px; border-radius: 9999px; background: var(--ink-4); display: inline-block;
+  }
+  .pay-compose .l .tick.orange { background: var(--orange); }
+  .pay-compose .l .tick.muted { background: var(--line); border: 1px solid var(--ink-4); box-sizing: border-box; }
+
+  /* ---------- Section framing ---------- */
+  .section + .section { margin-top: 56px; }
+  .section-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: -0.005em;
+    margin: 0;
+  }
+  .section-sub {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    font-weight: 450;
+  }
+
+  /* ---------- PAB status strip ---------- */
+  .pab {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 48px;
+    align-items: start;
+  }
+  .pab-status {
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .pab-status .tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11.5px; font-weight: 500;
+    background: var(--red-soft);
+    color: var(--red);
+    align-self: flex-start;
+  }
+  .pab-status .tag .dot { width: 6px; height: 6px; border-radius: 9999px; background: var(--red); }
+  .pab-status .tag.ok { background: var(--green-soft); color: var(--green); }
+  .pab-status .tag.ok .dot { background: var(--green); }
+  .pab-status .big {
+    font-size: 15px; font-weight: 600; line-height: 1.4;
+    color: var(--ink);
+  }
+  .pab-status .big .amount { white-space: nowrap; }
+  .pab-status .why {
+    font-size: 12.5px;
+    color: var(--ink-3);
+    line-height: 1.5;
+    font-weight: 450;
+  }
+  .pab-status .why strong { color: var(--ink-2); font-weight: 600; }
+  .pab-status .disclosure {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--ink-3);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--card);
+    overflow: hidden;
+  }
+  .pab-status .disclosure summary {
+    padding: 8px 12px;
+    cursor: pointer;
+    list-style: none;
+    display: flex; align-items: center; gap: 8px;
+    font-weight: 500; color: var(--ink-2);
+  }
+  .pab-status .disclosure summary::-webkit-details-marker { display: none; }
+  .pab-status .disclosure summary svg { width: 13px; height: 13px; transition: transform 150ms; }
+  .pab-status .disclosure[open] summary svg { transform: rotate(90deg); }
+  .pab-status .disclosure .body {
+    padding: 0 12px 10px;
+    line-height: 1.55;
+  }
+
+  /* ---------- PAB calendar grid ---------- */
+  .pab-cal {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .pab-cal-head {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    font-size: 11px;
+    color: var(--ink-4);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    padding: 0 2px 4px;
+  }
+  .pab-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+  }
+  .cal-cell {
+    aspect-ratio: 1.6;
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex; flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+  }
+  .cal-cell .cal-d {
+    font-size: 11px;
+    color: var(--ink-4);
+    font-weight: 500;
+  }
+  .cal-cell .cal-h {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  .cal-cell.pass {
+    background: var(--green-soft);
+  }
+  .cal-cell.pass .cal-h { color: var(--green); }
+  .cal-cell.fail {
+    background: var(--red-soft);
+  }
+  .cal-cell.fail .cal-h { color: var(--red); }
+  .cal-cell.pending {
+    background: var(--amber-soft);
+  }
+  .cal-cell.pending .cal-h { color: var(--amber); }
+  .cal-cell.future {
+    background: var(--card);
+    border: 1px dashed var(--line);
+  }
+  .cal-cell.future .cal-h { color: var(--ink-4); font-weight: 500; }
+  .cal-cell .cal-mark {
+    position: absolute;
+    top: 8px; right: 10px;
+    width: 5px; height: 5px; border-radius: 9999px;
+  }
+  .cal-cell.pass .cal-mark { background: var(--green); }
+  .cal-cell.fail .cal-mark { background: var(--red); }
+
+  /* ---------- Hours section ---------- */
+  .hours {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .hours-week {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-bottom: 4px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line-2);
+  }
+  .hours-day {
+    display: flex; flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .hours-day .d-label {
+    font-size: 11px;
+    color: var(--ink-4);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .hours-day .d-date {
+    font-size: 11px;
+    color: var(--ink-4);
+  }
+  .hours-bar-wrap {
+    position: relative;
+    height: 92px;
+    border-radius: 6px;
+    background: var(--line-2);
+    display: flex; align-items: flex-end;
+    overflow: hidden;
+  }
+  .hours-bar {
+    width: 100%;
+    border-radius: 6px 6px 0 0;
+    background: var(--ink);
+  }
+  .hours-bar.under { background: var(--ink-4); }
+  .hours-bar.fail { background: var(--red); opacity: 0.85; }
+  .hours-bar.weekend { background: transparent; }
+  .hours-threshold {
+    position: absolute;
+    left: 0; right: 0;
+    height: 1px;
+    background: var(--ink-4);
+    opacity: 0.35;
+  }
+  .hours-day .d-hours {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  .hours-day.weekend .d-hours { color: var(--ink-4); font-weight: 450; }
+  .hours-day.fail .d-hours { color: var(--red); }
+
+  .hours-meta {
+    display: flex; gap: 40px;
+    font-size: 12.5px;
+    color: var(--ink-3);
+  }
+  .hours-meta .pair { display: flex; align-items: baseline; gap: 8px; }
+  .hours-meta .pair .v { color: var(--ink); font-weight: 600; font-size: 13px; }
+
+  /* ---------- Footnote ---------- */
+  .footnote {
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-4);
+    line-height: 1.6;
+    display: flex;
+    justify-content: space-between;
+    gap: 32px;
+  }
+  .footnote .mono-inline { font-family: 'JetBrains Mono', monospace; color: var(--ink-3); }
+
+  /* ---------- Tweaks panel ---------- */
+  #tweaks-panel {
+    position: fixed;
+    right: 20px; bottom: 20px;
+    width: 260px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 20px 40px -15px rgba(0,0,0,0.15);
+    padding: 14px 16px 16px;
+    font-size: 12px;
+    display: none;
+    z-index: 50;
+  }
+  #tweaks-panel.on { display: block; }
+  #tweaks-panel h4 {
+    margin: 0 0 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  #tweaks-panel label {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 6px 0;
+    color: var(--ink-2);
+    font-weight: 500;
+  }
+  #tweaks-panel .options {
+    display: flex; gap: 4px;
+  }
+  #tweaks-panel .options button {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    border-radius: 5px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    color: var(--ink-3);
+  }
+  #tweaks-panel .options button.sel {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: white;
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- =============== Sidebar =============== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">s</div>
+      <div class="brand-name">simple·hris</div>
+    </div>
+
+    <p class="nav-label">For you</p>
+    <nav class="nav">
+      <a class="active"><i data-lucide="home"></i>Dashboard</a>
+      <a><i data-lucide="user"></i>Profile</a>
+      <a><i data-lucide="clock"></i>Hours</a>
+      <a><i data-lucide="calendar"></i>Leave</a>
+    </nav>
+
+    <div class="nav-divider"></div>
+
+    <p class="nav-label">Other</p>
+    <nav class="nav">
+      <a><i data-lucide="file-text"></i>Disputes</a>
+      <a><i data-lucide="heart"></i>Orphanage visits</a>
+      <a><i data-lucide="settings"></i>Settings</a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="avatar">MR</div>
+      <div>
+        <div class="nm">Maria Reyes</div>
+        <div class="rl">Support · EMP‑0427</div>
+      </div>
+      <span class="menu"><i data-lucide="more-horizontal" style="width:16px;height:16px;"></i></span>
+    </div>
+  </aside>
+
+  <!-- =============== Main =============== -->
+  <main>
+
+    <!-- Top meta -->
+    <div class="top-meta">
+      <div class="crumb">
+        <span>Dashboard</span>
+        <span class="sep">/</span>
+        <span style="color:var(--ink);font-weight:500;">March 2026</span>
+      </div>
+      <button class="period-picker">
+        <i data-lucide="calendar"></i>
+        <span>Mar 24 – 30, 2026</span>
+        <i data-lucide="chevron-down" style="width:13px;height:13px;color:var(--ink-4);"></i>
+      </button>
+    </div>
+
+    <!-- Hero -->
+    <section class="hero">
+      <div>
+        <p class="hero-greeting">Good morning, <strong>Maria</strong>.</p>
+        <p class="hero-label">Estimated pay, this period</p>
+        <div class="hero-amount"><span class="cur">₱</span><span class="mono">11,909.02</span></div>
+        <p class="hero-sub">
+          <span class="usd">≈ $204.98 USD</span>
+          <span class="note">Final amount confirmed at payroll · fx ₱58.10/USD</span>
+        </p>
+      </div>
+      <div class="hero-right">
+        <div class="period-range"><strong>Week of Mar 24</strong> · pay period</div>
+        <div class="pay-compose">
+          <div class="l"><span class="tick orange"></span>Regular</div>
+          <div class="v mono">₱11,909.02</div>
+          <div class="l"><span class="tick muted"></span>Overtime</div>
+          <div class="v mono mute">—</div>
+          <div class="l"><span class="tick muted"></span>PAB</div>
+          <div class="v mono mute">₱0</div>
+          <div class="l"><span class="tick muted"></span>Tech bonus</div>
+          <div class="v mono mute">₱0</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAB section -->
+    <section class="section">
+      <div class="section-head">
+        <h2 class="section-title">Perfect Attendance Bonus · March</h2>
+        <span class="section-sub">Mar 9 – Apr 3 · 20 working days</span>
+      </div>
+
+      <div class="pab">
+        <div class="pab-status">
+          <span class="tag">
+            <span class="dot"></span>Not eligible this month
+          </span>
+          <p class="big">Try again in April — the <span class="amount">₱5,000</span> bonus unlocks with a full month of 7h+ weekdays.</p>
+          <p class="why">Missed <strong>Wed, Mar 18</strong> — logged 5.2h (7h required). The rest of the month has been strong; this doesn't affect your regular pay.</p>
+
+          <details class="disclosure">
+            <summary><i data-lucide="chevron-right"></i>How PAB works</summary>
+            <div class="body">
+              Every Mon–Fri in the PAB period must hit 7h+. If the month doesn't start on a Monday, the first week is skipped. One miss voids the bonus for the month.
+            </div>
+          </details>
+        </div>
+
+        <div>
+          <div class="pab-cal">
+            <div class="pab-cal-head">
+              <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span>
+            </div>
+            <div id="pab-rows"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Hours section -->
+    <section class="section">
+      <div class="section-head">
+        <h2 class="section-title">This week's hours</h2>
+        <span class="section-sub">From Hubstaff · week of Mar 24</span>
+      </div>
+
+      <div class="hours">
+        <div class="hours-week" id="hours-week"></div>
+        <div class="hours-meta">
+          <div class="pair"><span>Total</span><span class="v mono">38h 25m</span></div>
+          <div class="pair"><span>Regular</span><span class="v mono">38h 25m</span></div>
+          <div class="pair"><span>Overtime</span><span class="v mono">0h</span></div>
+          <div class="pair"><span>Rate</span><span class="v mono">₱310/hr</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footnote -->
+    <div class="footnote">
+      <div>
+        Source: <span class="mono-inline">hubstaff_hours_2026-03-24_to_2026-03-30.csv</span> · synced 2h ago
+      </div>
+      <div>
+        Questions? Contact your manager or <span style="color:var(--ink-2);text-decoration:underline;cursor:pointer;">file a dispute</span>.
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Tweaks panel (hidden until host activates) -->
+<div id="tweaks-panel">
+  <h4>Tweaks</h4>
+  <label>Accent
+    <div class="options" data-key="accent">
+      <button data-v="orange" class="sel">Orange</button>
+      <button data-v="indigo">Indigo</button>
+      <button data-v="mono">None</button>
+    </div>
+  </label>
+  <label>Density
+    <div class="options" data-key="density">
+      <button data-v="airy" class="sel">Airy</button>
+      <button data-v="tight">Tight</button>
+    </div>
+  </label>
+  <label>Show hero
+    <div class="options" data-key="hero">
+      <button data-v="on" class="sel">On</button>
+      <button data-v="off">Off</button>
+    </div>
+  </label>
+</div>
+
+<script>
+// =============== PAB calendar ===============
+const weeks = [
+  // Week 1: Mar 9–13
+  [{d:9,h:7.8,s:'pass'},{d:10,h:8.1,s:'pass'},{d:11,h:7.5,s:'pass'},{d:12,h:8.0,s:'pass'},{d:13,h:7.6,s:'pass'}],
+  // Week 2: Mar 16–20 (Wed fail)
+  [{d:16,h:7.4,s:'pass'},{d:17,h:7.9,s:'pass'},{d:18,h:5.2,s:'fail'},{d:19,h:7.7,s:'pass'},{d:20,h:7.3,s:'pass'}],
+  // Week 3: Mar 23–27
+  [{d:23,h:8.1,s:'pass'},{d:24,h:7.8,s:'pass'},{d:25,h:7.4,s:'pass'},{d:26,h:8.0,s:'pass'},{d:27,h:7.2,s:'pass'}],
+  // Week 4: Mar 30 – Apr 3 (future)
+  [{d:30,h:0,s:'future',m:3},{d:31,h:0,s:'future',m:3},{d:1,h:0,s:'future',m:4},{d:2,h:0,s:'future',m:4},{d:3,h:0,s:'future',m:4}],
+];
+const rowsEl = document.getElementById('pab-rows');
+weeks.forEach(w => {
+  const row = document.createElement('div');
+  row.className = 'pab-row';
+  row.style.marginBottom = '6px';
+  w.forEach(day => {
+    const m = day.m || 3;
+    const label = `${m}/${day.d}`;
+    const hStr = day.s === 'future' ? '—' : day.h.toFixed(1) + 'h';
+    row.insertAdjacentHTML('beforeend', `
+      <div class="cal-cell ${day.s}">
+        <span class="cal-mark"></span>
+        <span class="cal-d">${label}</span>
+        <span class="cal-h">${hStr}</span>
+      </div>
+    `);
+  });
+  rowsEl.appendChild(row);
+});
+
+// =============== Weekly hours bars ===============
+const week = [
+  { day: 'Mon', date: 'Mar 24', h: 7.85, weekend: false },
+  { day: 'Tue', date: 'Mar 25', h: 7.42, weekend: false },
+  { day: 'Wed', date: 'Mar 26', h: 8.05, weekend: false },
+  { day: 'Thu', date: 'Mar 27', h: 7.20, weekend: false },
+  { day: 'Fri', date: 'Mar 28', h: 7.90, weekend: false },
+  { day: 'Sat', date: 'Mar 29', h: 0,    weekend: true  },
+  { day: 'Sun', date: 'Mar 30', h: 0,    weekend: true  },
+];
+const max = 9; // scale ceiling
+const threshPct = (7 / max) * 100;
+const weekEl = document.getElementById('hours-week');
+week.forEach(d => {
+  const hPct = (d.h / max) * 100;
+  let cls = '';
+  if (d.weekend) cls = 'weekend';
+  else if (d.h < 7) cls = 'fail';
+  else cls = '';
+  const barCls = d.weekend ? 'weekend' : (d.h < 7 ? 'fail' : '');
+  const hoursLabel = d.weekend ? '—' : `${Math.floor(d.h)}h ${Math.round((d.h%1)*60).toString().padStart(2,'0')}m`;
+  weekEl.insertAdjacentHTML('beforeend', `
+    <div class="hours-day ${cls}">
+      <div>
+        <div class="d-label">${d.day}</div>
+        <div class="d-date">${d.date}</div>
+      </div>
+      <div class="hours-bar-wrap">
+        ${d.weekend ? '' : `<div class="hours-threshold" style="bottom:${threshPct}%"></div>`}
+        <div class="hours-bar ${barCls}" style="height:${d.weekend ? 0 : hPct}%"></div>
+      </div>
+      <div class="d-hours">${hoursLabel}</div>
+    </div>
+  `);
+});
+
+lucide.createIcons();
+
+// =============== Tweaks ===============
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "orange",
+  "density": "tight",
+  "hero": "on"
+}/*EDITMODE-END*/;
+
+const state = { ...TWEAK_DEFAULTS };
+
+function applyTweaks() {
+  const accents = {
+    orange: { main: '#ea580c', soft: '#fff1e6' },
+    indigo: { main: '#4f46e5', soft: '#eef1fe' },
+    mono:   { main: '#18181b', soft: '#f3f3f3' }
+  };
+  const a = accents[state.accent] || accents.orange;
+  document.documentElement.style.setProperty('--orange', a.main);
+  document.documentElement.style.setProperty('--orange-soft', a.soft);
+  // brand mark
+  document.querySelector('.brand-mark').style.background = a.main;
+
+  // density
+  const main = document.querySelector('main');
+  if (state.density === 'tight') {
+    main.style.padding = '36px 48px 56px';
+    document.querySelectorAll('.section').forEach(s => s.style.marginTop = '36px');
+  } else {
+    main.style.padding = '56px 72px 80px';
+    document.querySelectorAll('.section').forEach(s => s.style.marginTop = '');
+  }
+
+  // hero
+  document.querySelector('.hero').style.display = state.hero === 'off' ? 'none' : '';
+}
+applyTweaks();
+
+// Tweak panel buttons
+document.querySelectorAll('#tweaks-panel .options').forEach(group => {
+  const key = group.dataset.key;
+  group.addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    state[key] = btn.dataset.v;
+    group.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b === btn));
+    applyTweaks();
+    try {
+      window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [key]: state[key] } }, '*');
+    } catch {}
+  });
+});
+
+// Edit-mode protocol
+window.addEventListener('message', e => {
+  if (e.data?.type === '__activate_edit_mode') document.getElementById('tweaks-panel').classList.add('on');
+  else if (e.data?.type === '__deactivate_edit_mode') document.getElementById('tweaks-panel').classList.remove('on');
+});
+try { window.parent.postMessage({ type: '__edit_mode_available' }, '*'); } catch {}
+</script>
+</body>
+</html>

@@ -40,9 +40,13 @@ export async function DELETE(req: Request) {
       if (error) errors.push(`${ratesTable} (personal email): ${error.message}`);
     }
 
-    // Delete from global_master_list by personal email first, then name fallback
+    // Delete from global_master_list by personal email first, then name fallback.
+    // With one-row-per-work_email invariant the batch filter is no longer needed.
     if (personalEmail) {
-      const { error } = await supabase.from(masterTable).delete().eq("Personal Email", personalEmail);
+      const { error } = await supabase
+        .from(masterTable)
+        .delete()
+        .eq("Personal Email", personalEmail);
       if (error) errors.push(`${masterTable} (personal email): ${error.message}`);
     } else if (name) {
       const { error } = await supabase.from(masterTable).delete().eq("Name", name);

@@ -21,6 +21,9 @@ The canonical employee directory. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEES
 | `Personal Email` | text | Primary identity key for payroll matching |
 | `Work Email` | text | Secondary identity key |
 | `Start Date` | text/date | Used to derive `YYMM` group for employee ID generation |
+| `Profile Photo URL` | text | Optional; public avatar URL |
+
+**Primary key:** A surrogate `id` (`bigint`, identity) is recommended so bulk CSV replace can delete all existing rows in batches (see `references/supabase_global_master_list.sql`).
 
 **Who reads it:**
 - `GET /api/employees` → `src/lib/supabase/employees.ts: getEmployees()`
@@ -29,9 +32,10 @@ The canonical employee directory. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEES
 **Who writes it:**
 - `POST /api/add-employee` — inserts a new row
 - `DELETE /api/delete-employee` — deletes by email or name match
+- `POST /api/global-master-list` — CSV import (`replaceGlobalMasterListFromCsvText()` in `src/lib/supabase/global-master-list-db.ts`). Service role only. **Layout:** rows 1–2 must contain the text `MASTERLIST`; row 3 is the fixed header row (Department + Name or Personal Email); row 4+ are data. Hubstaff-style headers on row 3 are rejected. Each upload **clears the table then inserts** the CSV (full replace; `import_batch_id` is still set for reads). **Does not** write to `employee_hourly_rates`.
 
 **Key logic in `src/lib/supabase/employees.ts`:**
-- `getEmployees()` selects the 5 columns above, maps with flexible key aliases (handles both snake_case and space variants), filters blank rows, sorts by name.
+- `getEmployees()` selects the core directory columns (including optional profile photo), maps with flexible key aliases (handles both snake_case and space variants), filters blank rows, sorts by name.
 - `generateEmployeeIds()` groups the result by `YYMM` (derived from `Start Date`), sorts each group alphabetically by first name, then assigns a 4-digit serial: `YYMM-0001`, `YYMM-0002`, etc. These IDs are **display-only and never persisted**.
 
 ---
@@ -161,6 +165,8 @@ All routes are `export const dynamic = "force-dynamic"` (no caching).
 | Route | Method | Auth Level | Handler Location |
 |---|---|---|---|
 | `/api/employees` | GET | Anon | `src/lib/supabase/employees.ts` |
+| `/api/global-master-list` | GET | Service role required | `src/lib/supabase/global-master-list-db.ts` |
+| `/api/global-master-list` | POST | Service role required | `src/lib/supabase/global-master-list-db.ts` |
 | `/api/employee-hourly-rates` | GET | Anon | `src/lib/supabase/employee-hourly-rates.ts` |
 | `/api/employee-rate-profiles` | GET | Service role preferred | `src/lib/supabase/employee-rate-profiles.ts` |
 | `/api/employee-ids` | GET | Anon | `src/lib/supabase/employee-ids.ts` |

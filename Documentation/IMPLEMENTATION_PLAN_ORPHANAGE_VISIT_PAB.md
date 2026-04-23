@@ -310,3 +310,35 @@ Admin can edit this JSON in System Settings to add/remove reasons or change per-
 - [ ] Manual test matrix executed
 - [x] `BUSINESS_LOGIC.md` updated with dispute rules
 - [x] `memory/pending_sql.md` updated
+
+---
+
+## 11. Changelog (post-v1 amendments)
+
+### 2026-04-18 — Two-tier approval collapsed to single-step
+The post-v1 two-tier approval flow (first-approver + second-finalizer, gated to `carla@simple.biz` / `franm@simple.biz`) was reverted. Any Accounting role can now approve or deny a pending dispute alone. The `first_approved_*` write paths in `decideDispute` were removed; `revokeFirstApproval` remained in the codebase as dead code.
+
+### 2026-04-21 — RBAC-only authorisation, tri-state override, day-after mechanic, cleanup
+Follow-up audit addressed the loose ends and logic holes. Full write-up in `Documentation/AUDIT_2026-04-21.md`. Highlights:
+
+- **Authorisation is now purely role-based.** The hardcoded `DISPUTE_APPROVERS` list (Carla / Fran) and the `isDisputeApprover` helper were deleted. `canActOnDisputes(email)` in `src/lib/supabase/pab-day-disputes.ts` resolves to a `SELECT role FROM employee_roles WHERE work_email = ? AND revoked_at IS NULL` and returns true iff the role is in `DISPUTE_ACTOR_ROLES` (`payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `admin`). Carla and Fran must have matching `employee_roles` rows or they lose access.
+
+- **`override_hours` is tri-state.** Stored values: `NULL` = no override (floor-drop only), `0` = intentional zero-out, `> 0` = SET total hours. Clients that previously collapsed `0` to `null` in `PabDisputeQueue.tsx` now send `null` only when both hour+minute inputs are empty strings.
+
+- **Orphanage day-after forgiveness** is now implemented. A single DB row is still inserted per visit; `PayrollWizard.tsx` (forgiveness map builder) and `EmployeeDashboard.tsx` (`disputesByDate` useMemo) synthesise a second map entry at `visit_date + 1` with `override_hours = null` so the 4h floor applies without inventing hours. A real dispute already on `visit_date + 1` wins (synthetic entry is skipped).
+
+- **Atomic orphanage upsert.** `adminCreateOrphanageVisit` switched from SELECT-then-INSERT/UPDATE to `.upsert(payload, { onConflict: 'work_email,dispute_date' })` — two admins recording the same visit concurrently no longer race.
+
+- **Audit log role resolution.** `user_role` on every audit row is now resolved via `resolveUserRole(email)` — a query against `employee_roles` with role-priority ordering. Previously hardcoded literals (`'Admin'`, `'Employee'`).
+
+- **Dead code removed.** `revokeFirstApproval`, the `first_approved_*` fields on `PabDayDisputeRow`, and the `revoke_first` API action (`PATCH /api/pab-disputes/[id]`) were deleted. The four `first_approved_*` DB columns were dropped via SQL migration (confirmed run 2026-04-21).
+
+- **Timezone safety in CSV column parsing.** `PayrollWizard.tsx` gained `parseColDateParts()` and `addOneIsoDay()` helpers that bypass `Date` entirely for ISO-string arithmetic. `isoDateFromColumnGroup` now uses the parts helper; the existing `parseColDate` returning a `Date` remains for display / weekday code paths that want a Date object.
+
+- **Email normalization.** `OrphanageVisits.tsx` swapped ad-hoc `.toLowerCase()` calls for the shared `normEmail()` helper, matching the convention used elsewhere in the codebase.
+
+### Known open items (not addressed in 2026-04-21 amendment)
+
+- `POST /api/pab-disputes/orphanage-visits` and `DELETE /api/pab-disputes/orphanage-visits/[id]` still accept `admin_name` as a client-supplied string with no server-side authorisation check. Deferred pending SSO.
+- `POST /api/dispatch-paystubs` still accepts any caller and forwards to n8n. Deferred pending SSO.
+- `override_hours` has no min/max validation on the approval form — an approver could enter 999h. Low impact today.

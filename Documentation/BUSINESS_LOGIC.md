@@ -460,54 +460,68 @@ Employees can dispute individual failing PAB days (days where they logged < 7 ho
 
 Per Payroll directive (2026-04-17), **Orphanage visit** is the only valid dispute reason. The list is stored in the `app_settings` key `pab_dispute_reason_codes` and is admin-configurable.
 
-### Two-tier approval flow
+### Approval flow (single-step, RBAC-gated)
+
+As of 2026-04-21, dispute decisions are **single-step** and authorised purely by role membership in `employee_roles`:
 
 1. Employee submits a dispute from the PAB calendar for a specific date → `status = pending`.
-2. **First approver** (must be `carla@simple.biz` or `franm@simple.biz`) casts an approval vote in the **Disputes tab**. The dispute stays `pending` but the `first_approved_by`, `first_approved_at`, `first_approved_note`, and `first_approved_override_hours` columns are populated.
-3. **Second approver** (must be the *other* authorized approver — self-finalization is blocked) reviews and finalizes. Status moves to `approved`, and the final `override_hours` and `decision_note` are written. The second approver can adjust the proposed override hours before finalizing.
-4. Denial is single-step — either authorized approver can deny immediately. Status moves to `denied`.
-5. The first approver can revoke their own pending first-vote before a second approver finalizes.
+2. Any user whose active `employee_roles.role` is in `DISPUTE_ACTOR_ROLES` (`payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, or `admin`) can approve or deny the dispute from the **Disputes tab**. The decision is final in one step.
+3. Status moves to `approved` or `denied`. On approve, the approver can set `override_hours` (hours + minutes); on deny, no hours are written.
 
-Only `carla@simple.biz` and `franm@simple.biz` are authorized to approve, deny, edit, or revoke. Any other admin can view the queue but sees disabled action buttons.
+**Authorisation:** enforced server-side by `canActOnDisputes(email)` in `src/lib/supabase/pab-day-disputes.ts`, which queries `employee_roles` for active (non-revoked) entries. Client UI in `PabDisputeQueue.tsx` disables the action buttons for non-qualified users as a hint, but the server check is authoritative.
+
+The previous two-tier flow (Carla + Fran hardcoded as approvers, first-approve → second-finalise) was replaced on 2026-04-18 (single-step) and the hardcoded allow-list was removed on 2026-04-21. Any Accounting role can now act alone.
 
 ### PAB eligibility impact
 
-Only disputes with `approved` status affect PAB eligibility. `pending` (including "1/2 approved") and `denied` disputes have no effect on the calculation.
+Only disputes with `approved` status affect PAB eligibility. `pending` and `denied` disputes have no effect.
 
-When a dispute is approved:
+**`override_hours` contract — tri-state SET semantics** (finalised 2026-04-21):
 
-- The passing threshold for that day drops from **7 hours to 4 hours** (14,400 seconds), applied to both `dispute_date` and `dispute_date + 1` calendar day.
-- If the approver sets `override_hours` (entered as hours + minutes), those hours are added on top of the Hubstaff-logged seconds for both covered days. Example: 6h 30m Hubstaff + 0h 30m override = 7h total → day passes.
+| Stored value | Meaning on `dispute_date` |
+|---|---|
+| `NULL` | Floor-drop only — Hubstaff hours are used as-is; the 7h threshold is replaced by a 4h floor for that day. |
+| `0` | Intentional zero-out — the day counts as 0h total (fails PAB; used for e.g. unpaid leave). |
+| `> 0` | SET — replaces Hubstaff hours for that day. Example: Hubstaff logged 3h, approver sets 7h → day reads 7h, passes PAB. |
 
-The employee's PAB calendar reflects the added time automatically (`EmployeeDashboard.tsx` applies `override_hours` to the matching days in the `pabCalendar` memo).
+The override applies to the **exact** `dispute_date` only. The floor-drop threshold extends to `dispute_date + 1` **only for `reason = 'orphanage_visit'`** disputes (see Orphanage Visits below). For all other reasons, forgiveness is single-date.
+
+Client input (`PabDisputeQueue.tsx`): if the hours+minutes inputs are both empty strings, the UI sends `null`; otherwise it sends the computed total (including `0`). This preserves the author's intent end-to-end.
 
 ### Editing decided disputes
 
-Authorized approvers can **edit** an already-decided dispute (approved → denied, change override hours, update note, or clear the override entirely) from the Disputes tab's Edit button. Edits are single-step and fully audit-logged. Pending disputes are not edited — they progress via the approval vote or are withdrawn by the employee.
+Any Accounting-role user can **edit** an already-decided dispute (approved ↔ denied, change override hours, update note, or clear the override entirely) from the Disputes tab's Edit button. Edits are fully audit-logged. Pending disputes are not edited — they progress via the approve/deny decision or are withdrawn by the employee.
 
 ### Withdraw
 
-Employees can **withdraw** a dispute while it is still in `pending` status (no approvals or first-approved only).
+Employees can **withdraw** their own dispute while it is still in `pending` status.
 
 ### Audit log
 
 | Action | Trigger |
 |---|---|
 | `pab_dispute.submitted` | Employee submits a new dispute |
-| `pab_dispute.first_approved` | First approver casts their vote |
-| `pab_dispute.approval_revoked` | First approver revokes their own vote |
-| `pab_dispute.approved` | Second approver finalizes approval |
-| `pab_dispute.denied` | Approver denies the dispute |
-| `pab_dispute.edited` | Approver edits a decided dispute |
-| `pab_dispute.withdrawn` | Employee withdraws a pending dispute |
+| `pab_dispute.approved` | Accounting approves a pending dispute |
+| `pab_dispute.denied` | Accounting denies a pending dispute |
+| `pab_dispute.edited` | Accounting edits a decided dispute |
+| `pab_dispute.withdrawn` | Employee withdraws a pending dispute, OR admin removes an orphanage visit |
+
+The `user_role` field on each audit row is resolved dynamically at write time via `resolveUserRole(email)` — it reflects the actor's actual role (e.g. `payroll_coordinator`) instead of a hardcoded literal.
 
 ### Data model
 
-Disputes are stored in the `pab_day_disputes` table with a unique constraint on `(work_email, dispute_date)` — one dispute per employee per calendar day. Two-tier approval columns: `first_approved_by`, `first_approved_at`, `first_approved_note`, `first_approved_override_hours`.
+Disputes are stored in the `pab_day_disputes` table with a unique constraint on `(work_email, dispute_date)` — one dispute per employee per calendar day. The `first_approved_*` columns from the deprecated two-tier design were dropped on 2026-04-21.
 
 ### Orphanage Visits roster (admin-entered alternative)
 
-Separate from the employee dispute flow, admins can proactively record employee orphanage visits via the **Orphanage Visits** sidebar tab. Rows are inserted into `pab_day_disputes` with `status='approved'`, `reason='orphanage_visit'`, bypassing the two-tier vote. These are intended for cases where accounting knows of the visit in advance and wants to pre-approve the forgiveness. The roster records date only — no `override_hours` are added; it only drops the PAB floor to 4h for the visit day and day after. Employees see their own visits in a read-only panel (`My Orphanage Visits` in the employee sidebar).
+Admins can proactively record employee orphanage visits via the **Orphanage Visits** sidebar tab. Rows are inserted into `pab_day_disputes` with `status='approved'`, `reason='orphanage_visit'` via `adminCreateOrphanageVisit`, which performs an atomic `.upsert({ onConflict: 'work_email,dispute_date' })` — two admins recording the same visit concurrently will not race.
+
+The roster records date only — no `override_hours` are written. Forgiveness semantics for `orphanage_visit` reason:
+
+- **Visit date**: PAB floor drops from 7h to 4h. Any Hubstaff-logged hours are kept as-is.
+- **Visit date + 1**: the forgiveness-map builders in `PayrollWizard.tsx` (`approvedDisputeDates`) and `EmployeeDashboard.tsx` (`disputesByDate`) synthesise a second map entry with `override_hours = null` so the 4h floor also applies on the day after. A real dispute already recorded on `visit_date + 1` wins (the synthetic entry is skipped).
+
+Employees see their own visits in a read-only panel (`My Orphanage Visits` in the employee sidebar). Admins can remove a visit via the trash button; removal reverts forgiveness for both the visit day and the day after.
 
 ---
 

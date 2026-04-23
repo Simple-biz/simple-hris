@@ -75,7 +75,7 @@ export default function EmployeeSidebar({
           </div>
           <div className="rounded-md bg-white px-2 py-1">
             <img
-              src="/simple%20logo.png"
+              src="/simple-logo.png"
               alt="Simple HRIS"
               className="h-5 w-auto object-contain"
             />

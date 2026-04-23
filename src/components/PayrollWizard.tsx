@@ -2,12 +2,12 @@
 
 import React, { useState, useRef, useEffect, useMemo, useTransition } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Check, 
-  Upload, 
-  Calculator, 
-  ShieldCheck, 
-  Send, 
+import {
+  Check,
+  Upload,
+  Calculator,
+  ShieldCheck,
+  Send,
   AlertCircle,
   Lock,
   ArrowRight,
@@ -20,6 +20,8 @@ import {
   CalendarDays,
   X,
   Info,
+  Users,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -39,13 +41,12 @@ import {
   groupDateColumnsByCalendarDay,
   pickPreferredHubstaffColumn,
   getPabMonthRange,
-  inferPabMonthFromColumns,
+  getCurrentPabMonth,
   filterColumnGroupsByPabRange,
   countMonFriInclusiveInRange,
   resolveCanonicalColumnsToIso,
   columnsAreAllCanonical,
   parseDateRangeFromFilename,
-  getLatestPabMonthFromColumns,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { parseCsv } from '@/lib/csv/parse-csv';
@@ -69,7 +70,7 @@ import {
 } from '@/lib/fx/usd-php';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import { isDeptInPabScope } from '@/lib/pab-period-settings';
+import { isDeptInPabScope, parseLocalDateFromIso } from '@/lib/pab-period-settings';
 import {
   Dialog,
   DialogContent,
@@ -476,6 +477,28 @@ function parseColDate(col: string): Date | null {
   return null;
 }
 
+/**
+ * Extracts {year, month, day} from a Hubstaff or ISO column header without
+ * going through a Date object. Prefer this over `parseColDate` when deriving
+ * an ISO date string — Date round-trips can drift across timezones/DST.
+ */
+function parseColDateParts(col: string): { year: number; month: number; day: number } | null {
+  const s = col.trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (iso) {
+    return { year: parseInt(iso[1], 10), month: parseInt(iso[2], 10), day: parseInt(iso[3], 10) };
+  }
+  const hub = /^(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/i.exec(s);
+  if (hub) {
+    const month = parseInt(hub[1], 10);
+    const day = parseInt(hub[2], 10);
+    let year = hub[3] ? parseInt(hub[3], 10) : new Date().getFullYear();
+    if (year < 100) year += 2000;
+    return { year, month, day };
+  }
+  return null;
+}
+
 /** Map short day-name prefixes to a canonical 3-letter label + sort order. */
 const DAY_PREFIX_MAP: Record<string, { label: string; order: number; weekday: boolean }> = {
   mon: { label: 'Mon', order: 1, weekday: true },
@@ -573,12 +596,27 @@ function maxSecondsAcrossWeekdayGroup(row: Record<string, unknown>, group: strin
 
 function isoDateFromColumnGroup(group: string[]): string | null {
   for (const col of group) {
-    const d = parseColDate(col);
-    if (d) {
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const parts = parseColDateParts(col);
+    if (parts) {
+      return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
     }
   }
   return null;
+}
+
+/**
+ * Advances an ISO date string ("YYYY-MM-DD") by exactly one calendar day.
+ * Uses string-based parse + `Date.UTC` to avoid TZ drift: the same input always
+ * returns the same output regardless of where the code runs.
+ */
+function addOneIsoDay(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
+  if (!m) return null;
+  const d = new Date(Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10)));
+  if (isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() + 1);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
 /**
@@ -793,7 +831,12 @@ function calculateDepartmentBonus(
 }
 
 const steps = [
-  { id: 1, label: 'Upload CSV', icon: Upload, description: 'Hubstaff weekly report → public.hubstaff_hours' },
+  {
+    id: 1,
+    label: 'Upload CSV',
+    icon: Upload,
+    description: 'Global master list + Hubstaff weekly → Supabase',
+  },
   { id: 2, label: 'Initial Calculation', icon: DollarSign, description: 'Hubstaff hours × employee_hourly_rates → Initial Pay' },
   { id: 3, label: 'Additions', icon: Calculator, description: 'Apply bonuses and adjustments' },
   { id: 4, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
@@ -819,6 +862,8 @@ export default function PayrollWizard() {
   const [hubstaffPreviewLoading, setHubstaffPreviewLoading] = useState(false);
   const [hubstaffPreviewError, setHubstaffPreviewError] = useState<string | null>(null);
   const [weeklyUploadLoading, setWeeklyUploadLoading] = useState(false);
+  const [masterListUploadLoading, setMasterListUploadLoading] = useState(false);
+  const [ratesUploadLoading, setRatesUploadLoading] = useState(false);
   const [hubstaffPage, setHubstaffPage] = useState(1);
   const HUBSTAFF_PAGE_SIZE = 15;
   const SOURCE_FILE_PAGE_SIZE = 25;
@@ -837,7 +882,47 @@ export default function PayrollWizard() {
   // ── Uploaded-files browser tab state ──
   const [hubstaffActiveTab, setHubstaffActiveTab] = useState<'files' | 'upload'>('upload');
   const [uploadedSourceFiles, setUploadedSourceFiles] = useState<string[]>([]);
-  const [sourceFilesLoading, setSourceFilesLoading] = useState(false);
+  const [hubstaffUploads, setHubstaffUploads] = useState<
+    {
+      id: string;
+      source_file: string | null;
+      uploaded_at: string;
+      row_count: number | null;
+      is_current: boolean;
+    }[]
+  >([]);
+
+  // Look up upload metadata (timestamp, row count, is_current) by filename. If
+  // multiple uploads share the same source_file, the newest wins (backend orders
+  // uploaded_at DESC).
+  const uploadMetaByFile = React.useMemo(() => {
+    const map = new Map<string, { uploaded_at: string; row_count: number | null; is_current: boolean }>();
+    for (const u of hubstaffUploads) {
+      const f = (u.source_file ?? '').trim();
+      if (!f || map.has(f)) continue;
+      map.set(f, {
+        uploaded_at: u.uploaded_at,
+        row_count: u.row_count,
+        is_current: u.is_current,
+      });
+    }
+    return map;
+  }, [hubstaffUploads]);
+
+  /** Short human-readable timestamp. Returns null on invalid input. */
+  const formatUploadStamp = React.useCallback((iso: string | null | undefined): string | null => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }, []);
+  const [sourceFilesLoading, setSourceFilesLoading] = useState(true);
   const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(null);
   const [sourceFileRows, setSourceFileRows] = useState<Record<string, unknown>[] | null>(null);
   const [sourceFileCols, setSourceFileCols] = useState<string[] | null>(null);
@@ -871,6 +956,16 @@ export default function PayrollWizard() {
   const [callbackModalEmail, setCallbackModalEmail] = useState<string | null>(null);
   const [qcModalEmail, setQcModalEmail] = useState<string | null>(null);
   const [hrModalEmail, setHrModalEmail] = useState<string | null>(null);
+  const [pabCalendarModalEmail, setPabCalendarModalEmail] = useState<string | null>(null);
+  // ── Inline PAB period setter: per-month memory + active-month selector ──────
+  /** Local YYYY-MM-DD for the active month's start/end date inputs (mirrors the hook after each refresh). */
+  const [pabStartLocal, setPabStartLocal] = useState('');
+  const [pabEndLocal, setPabEndLocal] = useState('');
+  /** Year shown in the 12-month strip (defaults to today's year; arrows shift ±1 year). */
+  const [pabPickerYear, setPabPickerYear] = useState<number>(() => new Date().getFullYear());
+  const [pabSaveState, setPabSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [pabRefreshing, setPabRefreshing] = useState(false);
+  const [pabSettingsOpen, setPabSettingsOpen] = useState(false);
   const [simpleMetricModal, setSimpleMetricModal] = useState<
     | null
     | {
@@ -900,24 +995,159 @@ export default function PayrollWizard() {
 
   const pabPeriodSettings = usePabPeriodSettings();
 
+  /**
+   * Sync hook → local form state whenever the hook refreshes (initial load, save, refresh button).
+   * Local inputs always reflect the active month's resolved range (override or default).
+   */
+  useEffect(() => {
+    if (pabPeriodSettings.loading) return;
+    const toIso = (d: Date): string =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    setPabStartLocal(toIso(pabPeriodSettings.activeRange.start));
+    setPabEndLocal(toIso(pabPeriodSettings.activeRange.end));
+    setPabPickerYear(pabPeriodSettings.activeMonthResolved.year);
+  }, [
+    pabPeriodSettings.loading,
+    pabPeriodSettings.activeRange.start,
+    pabPeriodSettings.activeRange.end,
+    pabPeriodSettings.activeMonthResolved.year,
+  ]);
+
+  const savePabSetting = React.useCallback(async (key: string, value: string) => {
+    const res = await fetch('/api/app-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    });
+    const json = (await res.json()) as { error: string | null };
+    if (json.error) throw new Error(json.error);
+  }, []);
+
+  /**
+   * Serialize the overrides map (Date-based) back to the JSON shape stored in app_settings.
+   * Optionally patches a single month's entry (pass `null` to remove that month's override).
+   */
+  const writeOverridesBlob = React.useCallback(
+    async (patchKey: string, patch: { start: string; end: string } | null) => {
+      const next: Record<string, { start: string; end: string }> = {};
+      for (const [k, v] of pabPeriodSettings.overrides.entries()) {
+        if (k === patchKey) continue;
+        next[k] = {
+          start: `${v.start.getFullYear()}-${String(v.start.getMonth() + 1).padStart(2, '0')}-${String(v.start.getDate()).padStart(2, '0')}`,
+          end: `${v.end.getFullYear()}-${String(v.end.getMonth() + 1).padStart(2, '0')}-${String(v.end.getDate()).padStart(2, '0')}`,
+        };
+      }
+      if (patch) next[patchKey] = patch;
+      await savePabSetting('pab_period_overrides', JSON.stringify(next));
+    },
+    [pabPeriodSettings.overrides, savePabSetting],
+  );
+
+  /** Save a start/end override for the *active* month only. */
+  const saveActiveMonthOverride = React.useCallback(
+    async (start: string, end: string) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return;
+      const sd = parseLocalDateFromIso(start);
+      const ed = parseLocalDateFromIso(end);
+      if (!sd || !ed || sd.getTime() > ed.getTime()) {
+        toast.error('Invalid PAB period', { description: 'End date must be on or after start date.' });
+        return;
+      }
+      setPabSaveState('saving');
+      try {
+        await writeOverridesBlob(pabPeriodSettings.activeMonthResolved.key, { start, end });
+        await pabPeriodSettings.refresh();
+        setPabSaveState('saved');
+        toast.success('PAB override saved', { description: `${start} → ${end}` });
+        setTimeout(() => setPabSaveState('idle'), 2000);
+      } catch (e) {
+        setPabSaveState('error');
+        toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+        setTimeout(() => setPabSaveState('idle'), 3000);
+      }
+    },
+    [writeOverridesBlob, pabPeriodSettings],
+  );
+
+  /**
+   * Auto-calculate the active month's PAB window from the canonical rule
+   * (first Mon on/after the 1st → Friday of the last week whose Monday falls in the month)
+   * and save it as that month's override. Useful to explicitly re-anchor a drifted custom range.
+   */
+  const autoCalcActiveMonth = React.useCallback(async () => {
+    const { year, month } = pabPeriodSettings.activeMonthResolved;
+    const r = getPabMonthRange(year, month);
+    const startIso = `${r.start.getFullYear()}-${String(r.start.getMonth() + 1).padStart(2, '0')}-${String(r.start.getDate()).padStart(2, '0')}`;
+    const endIso = `${r.end.getFullYear()}-${String(r.end.getMonth() + 1).padStart(2, '0')}-${String(r.end.getDate()).padStart(2, '0')}`;
+    setPabSaveState('saving');
+    try {
+      await writeOverridesBlob(pabPeriodSettings.activeMonthResolved.key, { start: startIso, end: endIso });
+      await pabPeriodSettings.refresh();
+      setPabSaveState('saved');
+      toast.success('PAB dates auto-calculated', { description: `${startIso} → ${endIso}` });
+      setTimeout(() => setPabSaveState('idle'), 2000);
+    } catch (e) {
+      setPabSaveState('error');
+      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      setTimeout(() => setPabSaveState('idle'), 3000);
+    }
+  }, [pabPeriodSettings, writeOverridesBlob]);
+
+  /** Remove the override for the active month; the default `getPabMonthRange` takes over. */
+  const resetActiveMonthOverride = React.useCallback(async () => {
+    setPabSaveState('saving');
+    try {
+      await writeOverridesBlob(pabPeriodSettings.activeMonthResolved.key, null);
+      await pabPeriodSettings.refresh();
+      setPabSaveState('saved');
+      toast.success('Override removed', { description: 'Reverted to the default Mon–Fri window for this month.' });
+      setTimeout(() => setPabSaveState('idle'), 2000);
+    } catch (e) {
+      setPabSaveState('error');
+      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      setTimeout(() => setPabSaveState('idle'), 3000);
+    }
+  }, [writeOverridesBlob, pabPeriodSettings]);
+
+  /** Switch which month the Additions tab evaluates. */
+  const selectPabMonth = React.useCallback(
+    async (year: number, month: number) => {
+      const key = `${year}-${String(month + 1).padStart(2, '0')}`;
+      setPabSaveState('saving');
+      try {
+        await savePabSetting('pab_period_active_month', key);
+        await pabPeriodSettings.refresh();
+        setPabSaveState('saved');
+        setTimeout(() => setPabSaveState('idle'), 1500);
+      } catch (e) {
+        setPabSaveState('error');
+        toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+        setTimeout(() => setPabSaveState('idle'), 3000);
+      }
+    },
+    [savePabSetting, pabPeriodSettings],
+  );
+
   const [approvedDisputeDates, setApprovedDisputeDates] = useState<Map<string, Map<string, number | null>>>(new Map());
 
   const fileInputWeeklyRef = useRef<HTMLInputElement>(null);
+  const masterListFileInputRef = useRef<HTMLInputElement>(null);
+  const ratesFileInputRef = useRef<HTMLInputElement>(null);
+
+  const reloadMasterEmployees = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/employees', { cache: 'no-store' });
+      if (!res.ok) return;
+      const json = (await res.json()) as { employees: EmployeeRow[]; error: string | null };
+      setMasterEmployees(json.employees ?? []);
+    } catch {
+      // payrollComparison degrades gracefully with an empty list
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/employees', { cache: 'no-store' });
-        if (!res.ok) return;
-        const json = (await res.json()) as { employees: EmployeeRow[]; error: string | null };
-        if (!cancelled) setMasterEmployees(json.employees ?? []);
-      } catch {
-        // payrollComparison degrades gracefully with an empty list
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    void reloadMasterEmployees();
+  }, [reloadMasterEmployees]);
 
   useEffect(() => {
     let cancelled = false;
@@ -986,12 +1216,14 @@ export default function PayrollWizard() {
 
   // Auto-select latest uploaded source file as soon as the list is available.
   // If no source files exist, fall back to loading all rows.
+  // Hubstaff: newest upload is always the payroll source of truth (files[0] from API).
   useEffect(() => {
-    if (uploadedSourceFiles.length > 0 && !calcSourceFile) {
-      const latest = uploadedSourceFiles[uploadedSourceFiles.length - 1];
-      setCalcSourceFile(latest);
+    if (uploadedSourceFiles.length === 0) {
+      setCalcSourceFile(null);
+      return;
     }
-  }, [uploadedSourceFiles, calcSourceFile]);
+    setCalcSourceFile(uploadedSourceFiles[0]);
+  }, [uploadedSourceFiles]);
 
   // Fallback: if source files loaded but none exist, load all data unfiltered
   useEffect(() => {
@@ -1084,10 +1316,8 @@ export default function PayrollWizard() {
     }
   }, [calcSourceFile, loadCalcSourceFileData]);
 
-  // Fetch ALL rows for full-month PAB eligibility (Additions / Step 3).
-  // - When `source_file` is tracked: merge every uploaded file (each has different date columns).
-  // - When there is no file list (legacy / replace-only): merge ALL hubstaff_hours rows by email
-  //   so PAB still uses the whole month, not only the selected calc file.
+  // PAB eligibility (Additions / Step 3) merges **every** archived Hubstaff upload so the
+  // full PAB month has data, not just the latest weekly CSV. Matches the Employee Dashboard.
   useEffect(() => {
     if (sourceFilesLoading) return;
     setPabMergeLoaded(false);
@@ -1118,18 +1348,28 @@ export default function PayrollWizard() {
         const rowsByEmail = new Map<string, Record<string, unknown>>();
 
         if (uploadedSourceFiles.length > 0) {
-          for (const file of uploadedSourceFiles) {
-            const res = await fetch(
-              `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
-              { cache: 'no-store' },
-            );
-            const json = (await res.json()) as {
-              columns?: string[] | null;
-              rows?: Record<string, unknown>[] | null;
-            };
-            if (cancelled) return;
-            if (!json.columns || !json.rows) continue;
-            for (const col of json.columns) allCols.add(col);
+          // Fetch every archived upload in parallel and merge by email so canonical
+          // weekday columns from different weeks don't overwrite each other (each week
+          // resolves `monday`..`sunday` to distinct ISO dates via the source filename).
+          const responses = await Promise.all(
+            uploadedSourceFiles.map((file) =>
+              fetch(
+                `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
+                { cache: 'no-store' },
+              )
+                .then(async (res) => {
+                  const json = (await res.json()) as {
+                    columns?: string[] | null;
+                    rows?: Record<string, unknown>[] | null;
+                  };
+                  return { file, json };
+                })
+                .catch(() => ({ file, json: { columns: null, rows: null } as { columns: null; rows: null } })),
+            ),
+          );
+          if (cancelled) return;
+          for (const { file, json } of responses) {
+            if (!json.columns?.length || !json.rows?.length) continue;
             mergeRowsInto(json.rows, rowsByEmail, allCols, file);
           }
         } else {
@@ -1184,31 +1424,46 @@ export default function PayrollWizard() {
     [hourlyRateRows],
   );
 
-  /** Inferred PAB month + computed date range for display (overridden by System Settings when custom PAB period is on). */
+  /**
+   * PAB month + computed date range for the Additions tab.
+   *
+   * Sourced from `usePabPeriodSettings` — the hook resolves the active month (defaulting
+   * to today's PAB month) and picks a saved override when present, otherwise the default
+   * `getPabMonthRange(year, month)` window per docs §"PAB month period".
+   */
   const pabMonthRange = useMemo(() => {
-    const manual = pabPeriodSettings.validManualRange;
-    if (manual) {
-      const { start, end } = manual;
-      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-      return {
-        year: start.getFullYear(),
-        month: start.getMonth(),
-        start,
-        end,
-        monthName: monthNames[start.getMonth()] ?? '',
-      };
-    }
-    const cols = hubstaffColsForPab;
-    if (!cols?.length) return null;
-    // Prefer the LATEST month present so an in-progress current month isn't masked
-    // by a more column-dense prior month (fixes "Additions tab shows PAB eligible
-    // from a concluded past month when only a partial current month is uploaded").
-    const pabMonth = getLatestPabMonthFromColumns(cols) ?? inferPabMonthFromColumns(cols);
-    if (!pabMonth) return null;
-    const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
-  }, [hubstaffColsForPab, pabPeriodSettings.validManualRange]);
+    const { year, month } = pabPeriodSettings.activeMonthResolved;
+    const { start, end } = pabPeriodSettings.activeRange;
+    return { year, month, start, end, monthName: monthNames[month] ?? '' };
+  }, [
+    pabPeriodSettings.activeMonthResolved,
+    pabPeriodSettings.activeRange,
+  ]);
+
+  /**
+   * Per-month Hubstaff data availability for the month picker. For each YYYY-MM key,
+   * counts how many parseable date columns in merged uploads fall inside that month's
+   * default PAB range (`getPabMonthRange`). Months with `count === 0` are disabled in
+   * the picker — the user can't select a PAB period for a month that has no data.
+   */
+  const pabMonthDataCoverage = useMemo<Map<string, number>>(() => {
+    const map = new Map<string, number>();
+    const cols = hubstaffColsForPab;
+    if (!cols?.length) return map;
+    for (const col of cols) {
+      const d = parseColDate(col);
+      if (!d) continue;
+      const y = d.getFullYear();
+      // Figure out which PAB month this date belongs to: use the Monday of that week.
+      const dow = d.getDay();
+      const daysBackToMon = dow === 0 ? 6 : dow - 1;
+      const mon = new Date(y, d.getMonth(), d.getDate() - daysBackToMon);
+      const key = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, '0')}`;
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return map;
+  }, [hubstaffColsForPab]);
 
   /** One group per calendar weekday — dedupes ISO + Hubstaff labels for the same day across ALL CSVs, filtered to PAB month boundaries. */
   const weekdayColumnGroups = useMemo(() => {
@@ -1260,13 +1515,26 @@ export default function PayrollWizard() {
     const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
     fetch(`/api/pab-disputes?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
       .then(r => r.json())
-      .then((json: { rows: { work_email: string; dispute_date: string; override_hours: number | null }[] }) => {
+      .then((json: { rows: { work_email: string; dispute_date: string; reason: string; override_hours: number | null }[] }) => {
         const map = new Map<string, Map<string, number | null>>();
         for (const row of json.rows ?? []) {
           const em = (row.work_email ?? '').trim().toLowerCase();
           if (!em) continue;
           if (!map.has(em)) map.set(em, new Map());
           map.get(em)!.set(row.dispute_date, row.override_hours);
+        }
+        // Orphanage visits extend the 4h floor-drop to the following day as well.
+        // Only the primary date carries override_hours; the +1 entry is a floor-drop marker
+        // (null value) and never clobbers a pre-existing SET override on that date.
+        for (const row of json.rows ?? []) {
+          if (row.reason !== 'orphanage_visit') continue;
+          const em = (row.work_email ?? '').trim().toLowerCase();
+          if (!em) continue;
+          const nextKey = addOneIsoDay(row.dispute_date);
+          if (!nextKey) continue;
+          const byDate = map.get(em);
+          if (!byDate) continue;
+          if (!byDate.has(nextKey)) byDate.set(nextKey, null);
         }
         setApprovedDisputeDates(map);
       })
@@ -1310,9 +1578,11 @@ export default function PayrollWizard() {
         const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
         const groupDate = isoDateFromColumnGroup(group);
         const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
-        // SET semantics: override_hours replaces Hubstaff hours for the day, not add to them.
+        // SET semantics: override_hours replaces Hubstaff hours for the day. `null` means the
+        // dispute floor-drops without changing hours (e.g. orphanage visit); `0` intentionally
+        // zeros out the day. Only `undefined` (no dispute on this date) falls back to Hubstaff.
         const effectiveSeconds =
-          overrideHours != null && overrideHours > 0 ? overrideHours * 3600 : rawSeconds;
+          overrideHours != null ? overrideHours * 3600 : rawSeconds;
         if (effectiveSeconds < 7 * 3600) {
           const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && effectiveSeconds >= 4 * 3600);
           if (!forgiven) {
@@ -1359,9 +1629,10 @@ export default function PayrollWizard() {
           const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
           const groupDate = isoDateFromColumnGroup(group);
           const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
-          // SET semantics: override_hours replaces Hubstaff hours for the day.
+          // SET semantics: override_hours replaces Hubstaff hours for the day. `null` dispute
+          // falls through to Hubstaff hours (floor-drop marker); `0` zeros the day out.
           const seconds =
-            overrideHours != null && overrideHours > 0 ? overrideHours * 3600 : rawSeconds;
+            overrideHours != null ? overrideHours * 3600 : rawSeconds;
           const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600 && seconds < 7 * 3600);
           return { col, seconds, passes: seconds >= 7 * 3600 || forgiven, forgivenByDispute: forgiven };
         }),
@@ -1369,6 +1640,49 @@ export default function PayrollWizard() {
     }
     return map;
   }, [hubstaffRowsForPab, weekdayColumnGroups, approvedDisputeDates]);
+
+  /**
+   * Tri-state PAB display status per employee:
+   *  - `ineligible`: at least one past weekday in the PAB range failed the 7h threshold (not forgiven).
+   *    Verdict is locked — future days can no longer salvage the month.
+   *  - `in_progress`: today is on/before the PAB period end AND no past failures recorded yet.
+   *    The month is still winnable.
+   *  - `eligible`: the PAB period has ended AND every weekday passed.
+   *
+   * Used by the PAB cell in the Additions table so in-progress months don't render as "Ineligible"
+   * just because future weekdays haven't happened yet.
+   */
+  const pabStatusByEmail = useMemo<Map<string, 'eligible' | 'ineligible' | 'in_progress'>>(() => {
+    const map = new Map<string, 'eligible' | 'ineligible' | 'in_progress'>();
+    if (!pabMonthRange) return map;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const endDay = new Date(pabMonthRange.end);
+    endDay.setHours(0, 0, 0, 0);
+    const periodEnded = today.getTime() > endDay.getTime();
+
+    for (const [email, breakdown] of employeeWeekdayHours.entries()) {
+      let hasPastFailure = false;
+      for (const entry of breakdown) {
+        if (entry.passes) continue;
+        const d = parseColDate(entry.col);
+        if (!d) continue;
+        const entryDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        if (entryDay.getTime() <= today.getTime()) {
+          hasPastFailure = true;
+          break;
+        }
+      }
+      if (hasPastFailure) {
+        map.set(email, 'ineligible');
+      } else if (!periodEnded) {
+        map.set(email, 'in_progress');
+      } else {
+        map.set(email, 'eligible');
+      }
+    }
+    return map;
+  }, [pabMonthRange, employeeWeekdayHours]);
 
   /**
    * Auto-apply / remove perfect_attendance toggle whenever eligibility is
@@ -1841,10 +2155,17 @@ export default function PayrollWizard() {
   }, [effectiveCalcResults, initialCalcSearch]);
 
   const loadHubstaffPreview = React.useCallback(async () => {
+    if (sourceFilesLoading) return;
     setHubstaffPreviewLoading(true);
     setHubstaffPreviewError(null);
     try {
-      const res = await fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' });
+      const latest = uploadedSourceFiles[0];
+      const res = await fetch(
+        uploadedSourceFiles.length > 0
+          ? `/api/hubstaff-hours?source_file=${encodeURIComponent(latest)}&_=${Date.now()}`
+          : `/api/hubstaff-hours?_=${Date.now()}`,
+        { cache: 'no-store' },
+      );
       const json = (await res.json()) as {
         columns?: string[] | null;
         rows?: Record<string, unknown>[] | null;
@@ -1922,7 +2243,7 @@ export default function PayrollWizard() {
     } finally {
       setHubstaffPreviewLoading(false);
     }
-  }, [users]);
+  }, [users, uploadedSourceFiles, sourceFilesLoading]);
 
   useEffect(() => {
     void loadHubstaffPreview();
@@ -1933,12 +2254,25 @@ export default function PayrollWizard() {
     setSourceFilesLoading(true);
     try {
       const res = await fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, { cache: 'no-store' });
-      const json = (await res.json()) as { files?: string[]; error?: string | null };
+      const json = (await res.json()) as {
+        files?: string[];
+        uploads?: {
+          id: string;
+          source_file: string | null;
+          uploaded_at: string;
+          row_count: number | null;
+          is_current: boolean;
+        }[];
+        error?: string | null;
+      };
       const files = json.files ?? [];
+      const uploads = json.uploads ?? [];
       setUploadedSourceFiles(files);
+      setHubstaffUploads(uploads);
       return files;
     } catch {
       setUploadedSourceFiles([]);
+      setHubstaffUploads([]);
       return [];
     } finally {
       setSourceFilesLoading(false);
@@ -1948,6 +2282,22 @@ export default function PayrollWizard() {
   useEffect(() => {
     void loadUploadedSourceFiles();
   }, [loadUploadedSourceFiles]);
+
+  /** Inline refresh for the Additions tab PAB control: re-syncs period settings + re-fetches Hubstaff uploads. */
+  const refreshPabInline = React.useCallback(async () => {
+    setPabRefreshing(true);
+    try {
+      await Promise.all([
+        pabPeriodSettings.refresh(),
+        loadUploadedSourceFiles(),
+      ]);
+      toast.success('PAB data refreshed', { description: 'Period settings and Hubstaff uploads re-fetched.' });
+    } catch (e) {
+      toast.error('Refresh failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+    } finally {
+      setPabRefreshing(false);
+    }
+  }, [pabPeriodSettings, loadUploadedSourceFiles]);
 
   const confirmDeleteSourceFile = React.useCallback(async () => {
     if (!deleteSourceFilePending) return;
@@ -2240,7 +2590,7 @@ export default function PayrollWizard() {
 
       // Update calcSourceFile to the latest uploaded file so steps 2–4 use the new data
       if (files.length > 0) {
-        setCalcSourceFile(files[files.length - 1]);
+        setCalcSourceFile(files[0]);
       }
 
       toast.success('Saved to hubstaff_hours', {
@@ -2251,6 +2601,88 @@ export default function PayrollWizard() {
       toast.error('Upload failed', { description: msg });
     } finally {
       setWeeklyUploadLoading(false);
+    }
+  };
+
+  const handleMasterListFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setMasterListUploadLoading(true);
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      const res = await fetch('/api/global-master-list', { method: 'POST', body: form });
+      const json = (await res.json()) as {
+        success?: boolean;
+        rowCount?: number;
+        error?: string;
+        ratesReconcile?: { hint: string | null; ratesFewerThanMaster?: boolean } | null;
+      };
+      if (!res.ok || !json.success) {
+        toast.error('Master list upload failed', { description: json.error ?? res.statusText });
+        return;
+      }
+      toast.success('Master list replaced in Supabase', {
+        description: `${(json.rowCount ?? 0).toLocaleString()} rows from ${file.name}`,
+      });
+      if (json.ratesReconcile?.hint) {
+        toast.warning('Hourly rates coverage', { description: json.ratesReconcile.hint });
+      }
+      await reloadMasterEmployees();
+    } catch (err) {
+      toast.error('Master list upload failed', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setMasterListUploadLoading(false);
+    }
+  };
+
+  const handleRatesFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setRatesUploadLoading(true);
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      const res = await fetch('/api/employee-hourly-rates-upload', {
+        method: 'POST',
+        body: form,
+      });
+      const json = (await res.json()) as {
+        success?: boolean;
+        rowCount?: number;
+        inserted?: number;
+        updated?: number;
+        uniqueEmployees?: number;
+        skippedNoWorkEmail?: number;
+        skippedNoRate?: number;
+        error?: string;
+      };
+      if (!res.ok || !json.success) {
+        toast.error('Payroll rates upload failed', { description: json.error ?? res.statusText });
+        return;
+      }
+      toast.success('Payroll rates imported', {
+        description: [
+          `${(json.uniqueEmployees ?? 0).toLocaleString()} employees`,
+          `${json.updated ?? 0} updated`,
+          `${json.inserted ?? 0} new`,
+        ].join(' · '),
+      });
+      if ((json.skippedNoWorkEmail ?? 0) > 0 || (json.skippedNoRate ?? 0) > 0) {
+        toast.warning('Some rows skipped', {
+          description: `No work email: ${json.skippedNoWorkEmail ?? 0} · No rate: ${json.skippedNoRate ?? 0}`,
+        });
+      }
+    } catch (err) {
+      toast.error('Payroll rates upload failed', {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setRatesUploadLoading(false);
     }
   };
 
@@ -2274,7 +2706,7 @@ export default function PayrollWizard() {
                   void loadUploadedSourceFiles().then((files) => {
                     // Auto-select the latest uploaded file
                     if (files.length > 0 && !selectedSourceFile) {
-                      void loadSourceFileRows(files[files.length - 1]);
+                      void loadSourceFileRows(files[0]);
                     }
                   });
                 }}
@@ -2337,12 +2769,15 @@ export default function PayrollWizard() {
                         Source Files ({uploadedSourceFiles.length})
                       </p>
                       <div className="max-h-[400px] overflow-y-auto">
-                        {uploadedSourceFiles.map((file) => (
+                        {uploadedSourceFiles.map((file) => {
+                          const meta = uploadMetaByFile.get(file);
+                          const stamp = formatUploadStamp(meta?.uploaded_at);
+                          return (
                           <div key={file} className="flex items-stretch gap-0.5">
                             <button
                               type="button"
                               className={cn(
-                                'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors',
+                                'flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors',
                                 selectedSourceFile === file
                                   ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400'
                                   : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900',
@@ -2351,15 +2786,31 @@ export default function PayrollWizard() {
                             >
                               <FileText
                                 className={cn(
-                                  'h-3.5 w-3.5 shrink-0',
+                                  'h-3.5 w-3.5 mt-0.5 shrink-0',
                                   selectedSourceFile === file
                                     ? 'text-indigo-500 dark:text-indigo-400'
                                     : 'text-zinc-400',
                                 )}
                               />
-                              <span className="truncate font-mono">{file}</span>
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-1.5">
+                                  <span className="truncate font-mono">{file}</span>
+                                  {meta?.is_current && (
+                                    <span className="shrink-0 rounded border border-emerald-300 bg-emerald-50 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                      Current
+                                    </span>
+                                  )}
+                                </span>
+                                {(stamp || meta?.row_count != null) && (
+                                  <span className="mt-0.5 block text-[10px] text-zinc-500 dark:text-zinc-500">
+                                    {stamp ?? ''}
+                                    {stamp && meta?.row_count != null ? ' · ' : ''}
+                                    {meta?.row_count != null ? `${meta.row_count.toLocaleString()} rows` : ''}
+                                  </span>
+                                )}
+                              </span>
                               {selectedSourceFile === file && (
-                                <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-indigo-400" />
+                                <ChevronRight className="ml-auto mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-400" />
                               )}
                             </button>
                             <button
@@ -2374,7 +2825,8 @@ export default function PayrollWizard() {
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -2530,6 +2982,119 @@ export default function PayrollWizard() {
             {/* ── TAB: Upload CSV (original content) ── */}
             {hubstaffActiveTab === 'upload' && (
               <div className="space-y-6">
+                {/* ── Global master list (roster) — separate from Hubstaff timesheets ── */}
+                <section className="space-y-4 rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-emerald-200/90 bg-white dark:border-emerald-800/60 dark:bg-emerald-950/50">
+                        <Users className="h-5 w-5 text-emerald-700 dark:text-emerald-400" aria-hidden />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-800/90 dark:text-emerald-400/90">
+                          Global master list
+                        </p>
+                        <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Employee roster CSV</h3>
+                        <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+                          Only the <span className="font-medium">MASTERLIST</span> sheet: rows <span className="font-medium">1–2</span> must
+                          include <span className="font-mono">MASTERLIST</span> in any cell; row <span className="font-medium">3</span> is the
+                          header row; row <span className="font-medium">4+</span> is data. Hubstaff-style headers on row 3 are rejected. Upload{' '}
+                          <span className="font-medium">replaces every row</span> in{' '}
+                          <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                            {process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE ?? 'global_master_list'}
+                          </span>{' '}
+                          (then inserts this file; <span className="font-mono">import_batch_id</span> is set when the column exists). Does not update{' '}
+                          <span className="font-mono text-zinc-600 dark:text-zinc-400">employee_hourly_rates</span>. Requires{' '}
+                          <span className="font-mono">SUPABASE_SERVICE_ROLE_KEY</span> and <span className="font-mono">id</span>.
+                        </p>
+                        <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
+                          <span className="font-medium text-zinc-700 dark:text-zinc-300">{masterEmployees.length}</span> employees
+                          loaded from Supabase for this payroll run.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={masterListUploadLoading}
+                        onClick={() => masterListFileInputRef.current?.click()}
+                        className="gap-2 border-emerald-300/80 bg-white text-emerald-900 hover:bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-950/70"
+                      >
+                        {masterListUploadLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Upload className="h-4 w-4" />
+                        )}
+                        Import master list CSV
+                      </Button>
+                      <input
+                        type="file"
+                        ref={masterListFileInputRef}
+                        onChange={(ev) => void handleMasterListFileChosen(ev)}
+                        accept=".csv,.CSV,text/csv,application/csv,text/plain"
+                        className="hidden"
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-4 rounded-xl border border-sky-200/80 bg-sky-50/40 p-4 dark:border-sky-900/40 dark:bg-sky-950/20">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-sky-200/90 bg-white dark:border-sky-800/60 dark:bg-sky-950/50">
+                        <DollarSign className="h-5 w-5 text-sky-700 dark:text-sky-400" aria-hidden />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-800/90 dark:text-sky-400/90">
+                          Payroll rates
+                        </p>
+                        <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Import All Dept payroll CSV</h3>
+                        <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+                          Upload the <span className="font-medium">All Dept</span> sheet exported from the new Payroll Dashboard.
+                          The importer reads <span className="font-mono">Work Email</span>, <span className="font-mono">Personal Email</span>,{' '}
+                          <span className="font-mono">Week</span>, <span className="font-mono">Regular Rate</span>, and{' '}
+                          <span className="font-mono">OT Rate</span>, then upserts{' '}
+                          <span className="font-mono text-zinc-700 dark:text-zinc-300">employee_hourly_rates</span> by work email.
+                        </p>
+                        <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
+                          Multiple weekly rows per employee are expected. The latest week wins for each employee.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={ratesUploadLoading}
+                        onClick={() => ratesFileInputRef.current?.click()}
+                        className="gap-2 border-sky-300/80 bg-white text-sky-900 hover:bg-sky-50 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100 dark:hover:bg-sky-950/70"
+                      >
+                        {ratesUploadLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Upload className="h-4 w-4" />
+                        )}
+                        Import payroll rates CSV
+                      </Button>
+                      <input
+                        type="file"
+                        ref={ratesFileInputRef}
+                        onChange={(ev) => void handleRatesFileChosen(ev)}
+                        accept=".csv,.CSV,text/csv,application/csv,text/plain"
+                        className="hidden"
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <div className="flex items-center gap-3 py-1">
+                  <Separator className="flex-1 bg-zinc-200 dark:bg-zinc-800" />
+                  <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                    Hubstaff timesheets
+                  </span>
+                  <Separator className="flex-1 bg-zinc-200 dark:bg-zinc-800" />
+                </div>
+
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Upload Hubstaff weekly report</h3>
@@ -2588,25 +3153,45 @@ export default function PayrollWizard() {
                       Uploaded batches (delete removes rows in Supabase)
                     </p>
                     <ul className="max-h-[200px] space-y-1 overflow-y-auto">
-                      {uploadedSourceFiles.map((file) => (
-                        <li
-                          key={file}
-                          className="flex items-center gap-2 rounded-md border border-zinc-100 bg-zinc-50/80 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/50"
-                        >
-                          <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-                          <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                            {file}
-                          </span>
-                          <button
-                            type="button"
-                            className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
-                            title="Delete this batch from Supabase"
-                            onClick={() => setDeleteSourceFilePending(file)}
+                      {uploadedSourceFiles.map((file) => {
+                        const meta = uploadMetaByFile.get(file);
+                        const stamp = formatUploadStamp(meta?.uploaded_at);
+                        return (
+                          <li
+                            key={file}
+                            className="flex items-start gap-2 rounded-md border border-zinc-100 bg-zinc-50/80 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/50"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </li>
-                      ))}
+                            <FileText className="h-3.5 w-3.5 mt-0.5 shrink-0 text-zinc-400" />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                                  {file}
+                                </span>
+                                {meta?.is_current && (
+                                  <span className="shrink-0 rounded border border-emerald-300 bg-emerald-50 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                    Current
+                                  </span>
+                                )}
+                              </span>
+                              {(stamp || meta?.row_count != null) && (
+                                <span className="mt-0.5 block text-[10px] text-zinc-500 dark:text-zinc-500">
+                                  {stamp ?? ''}
+                                  {stamp && meta?.row_count != null ? ' · ' : ''}
+                                  {meta?.row_count != null ? `${meta.row_count.toLocaleString()} rows` : ''}
+                                </span>
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                              title="Delete this batch from Supabase"
+                              onClick={() => setDeleteSourceFilePending(file)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                 )}
@@ -2880,22 +3465,14 @@ export default function PayrollWizard() {
             {uploadedSourceFiles.length > 0 && (
               <div className="flex flex-wrap items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 dark:border-indigo-800/50 dark:bg-indigo-950/30">
                 <FileText className="h-4 w-4 shrink-0 text-indigo-500" />
-                <div className="flex flex-1 flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-indigo-900 dark:text-indigo-200">Source CSV</span>
-                  <span className="text-xs text-indigo-700/70 dark:text-indigo-400/70">(latest uploaded file selected by default)</span>
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
+                  <span className="text-sm font-medium text-indigo-900 dark:text-indigo-200">Active Hubstaff upload</span>
+                  <span className="font-mono text-xs text-indigo-800 dark:text-indigo-300">{uploadedSourceFiles[0]}</span>
+                  <span className="text-xs text-indigo-700/80 dark:text-indigo-400/80">
+                    Newest file in Supabase is the source of truth; older uploads are kept for reference in Step 1.
+                  </span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <select
-                    value={calcSourceFile ?? ''}
-                    onChange={(e) => setCalcSourceFile(e.target.value || null)}
-                    className="h-8 rounded-md border border-indigo-300 bg-white px-2 pr-7 font-mono text-xs dark:border-indigo-700 dark:bg-zinc-950 dark:text-zinc-200"
-                  >
-                    {uploadedSourceFiles.map((file) => (
-                      <option key={file} value={file}>{file}</option>
-                    ))}
-                  </select>
-                  {calcSourceFileLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />}
-                </div>
+                {calcSourceFileLoading && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-indigo-500" />}
               </div>
             )}
 
@@ -3410,26 +3987,8 @@ export default function PayrollWizard() {
                     </span>
                   </div>
                 )}
-                {pabMonthRange && hubstaffColsForPab && !pabMonthColumnCoverageComplete && (
-                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-400">
-                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>
-                      <strong>Monthly PAB needs all workdays in range.</strong> Hubstaff has{' '}
-                      {weekdayColumnGroups.length} of {pabExpectedMonFriCount} Mon–Fri columns merged. Append or re-upload
-                      weekly exports in <strong>Step 1</strong> until every weekday in the PAB period is present—PAB will not
-                      use the single &quot;calc file&quot; week alone.
-                    </span>
-                  </div>
-                )}
-                {dailyDataMissing && (
-                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>
-                      <strong>Perfect Attendance cannot be detected.</strong> The daily hours breakdown (Mon–Fri columns) is empty in Supabase.
-                      PAB is evaluated monthly (all uploaded CSVs). Go back to <strong>Step 1</strong> and <strong>re-upload the Hubstaff CSVs</strong> — daily data will be stored correctly.
-                    </span>
-                  </div>
-                )}
+
+                {/* PAB period picker + availability warnings render full-width below the flex-row. */}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 {unassignedEmployees.length > 0 && (
@@ -3454,6 +4013,300 @@ export default function PayrollWizard() {
                 )}
               </div>
               </div>
+
+              {/* ── PAB settings trigger — opens the full picker in a modal so the Additions table has more room ── */}
+              {(() => {
+                const activeHasOverride = pabPeriodSettings.activeRange.isOverride;
+                return (
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-white/60 px-3 py-2 dark:border-indigo-900/50 dark:bg-zinc-900/40">
+                    <button
+                      type="button"
+                      onClick={() => setPabSettingsOpen(true)}
+                      className="inline-flex items-center gap-2 rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-50 dark:border-indigo-800/60 dark:bg-zinc-900 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
+                      title="Open PAB period settings"
+                    >
+                      <CalendarDays className="h-3.5 w-3.5" />
+                      <span>PAB settings</span>
+                    </button>
+                    <span className="text-xs text-zinc-600 dark:text-zinc-400">
+                      <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                        {pabMonthRange.monthName} {pabMonthRange.year}
+                      </span>
+                      <span className="mx-1.5 text-zinc-400">·</span>
+                      <span className="font-mono">
+                        {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        {' – '}
+                        {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </span>
+                      {activeHasOverride && (
+                        <span className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                          Custom
+                        </span>
+                      )}
+                    </span>
+                    <div className="ml-auto flex items-center gap-1.5 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => void refreshPabInline()}
+                        disabled={pabRefreshing || pabSaveState === 'saving'}
+                        title="Re-fetch PAB settings and Hubstaff uploads"
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded-md border px-2 py-1 font-medium transition',
+                          'border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60',
+                          'dark:border-indigo-800/60 dark:bg-zinc-900 dark:text-indigo-300 dark:hover:bg-indigo-950/40',
+                        )}
+                      >
+                        <RefreshCw className={cn('h-3 w-3', pabRefreshing && 'animate-spin')} />
+                        <span>{pabRefreshing ? 'Refreshing…' : 'Refresh'}</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Hidden container preserving the original picker content — rendered in a modal below */}
+              {pabSettingsOpen && (() => {
+                const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                const today = new Date();
+                const todayPm = getCurrentPabMonth(today);
+                const activeKey = pabPeriodSettings.activeMonthResolved.key;
+                const activeHasOverride = pabPeriodSettings.activeRange.isOverride;
+                return (
+                  <Dialog open={pabSettingsOpen} onOpenChange={setPabSettingsOpen}>
+                    <DialogContent className="flex max-h-[92vh] w-[95vw] max-w-[1200px] flex-col gap-0 overflow-hidden border-zinc-200 bg-white p-0 dark:border-zinc-800 dark:bg-zinc-950 sm:!max-w-[1200px]">
+                      <DialogHeader className="shrink-0 border-b border-zinc-200 bg-gradient-to-br from-white via-zinc-50/70 to-indigo-50/40 px-6 py-4 dark:border-zinc-800 dark:from-zinc-950 dark:via-zinc-900/40 dark:to-indigo-950/30">
+                        <DialogTitle className="flex items-center gap-2 text-base text-zinc-900 dark:text-white">
+                          <CalendarDays className="h-5 w-5 text-indigo-500" />
+                          PAB period settings
+                        </DialogTitle>
+                        <DialogDescription className="text-xs text-zinc-500 dark:text-zinc-400">
+                          Pick which month Additions evaluates, edit its start/end, or auto-calculate the canonical Mon–Fri window.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                    {/* Header row */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <CalendarDays className="h-4 w-4 shrink-0 text-indigo-500 dark:text-indigo-400" />
+                        <span className="truncate text-sm font-semibold text-zinc-800 dark:text-zinc-100">PAB month</span>
+                      </div>
+                      <div className="inline-flex items-center rounded-md border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+                        <button
+                          type="button"
+                          onClick={() => setPabPickerYear((y) => y - 1)}
+                          className="rounded-l p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                          aria-label="Previous year"
+                        >
+                          <ArrowLeft className="h-3.5 w-3.5" />
+                        </button>
+                        <span className="min-w-[4ch] border-x border-zinc-200 px-2 text-center font-mono text-xs font-semibold text-zinc-700 dark:border-zinc-700 dark:text-zinc-200">
+                          {pabPickerYear}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPabPickerYear((y) => y + 1)}
+                          className="rounded-r p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                          aria-label="Next year"
+                        >
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <div className="ml-auto flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {pabSaveState === 'saving' && (
+                          <span className="flex items-center gap-1">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span>Saving…</span>
+                          </span>
+                        )}
+                        {pabSaveState === 'saved' && (
+                          <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                            <Check className="h-3.5 w-3.5" />
+                            <span>Saved</span>
+                          </span>
+                        )}
+                        {pabSaveState === 'error' && (
+                          <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                            <AlertCircle className="h-3.5 w-3.5" />
+                            <span>Save failed</span>
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void refreshPabInline()}
+                          disabled={pabRefreshing || pabSaveState === 'saving'}
+                          title="Re-fetch PAB settings and Hubstaff uploads"
+                          className={cn(
+                            'inline-flex shrink-0 items-center gap-1 rounded-md border px-2.5 py-1 text-[11px] font-medium transition',
+                            'border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60',
+                            'dark:border-indigo-800/60 dark:bg-zinc-900 dark:text-indigo-300 dark:hover:bg-indigo-950/40',
+                          )}
+                        >
+                          <RefreshCw className={cn('h-3.5 w-3.5', pabRefreshing && 'animate-spin')} />
+                          <span>{pabRefreshing ? 'Refreshing…' : 'Refresh'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 12-month grid — full names, breathable pills */}
+                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+                      {MONTH_NAMES.map((lbl, m) => {
+                        const key = `${pabPickerYear}-${String(m + 1).padStart(2, '0')}`;
+                        const dataCount = pabMonthDataCoverage.get(key) ?? 0;
+                        const hasData = dataCount > 0;
+                        const hasOverride = pabPeriodSettings.overrides.has(key);
+                        const isActive = key === activeKey;
+                        const isToday = pabPickerYear === todayPm.year && m === todayPm.month;
+                        const selectable = hasData || isToday;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            disabled={!selectable || pabSaveState === 'saving'}
+                            onClick={() => { if (selectable) void selectPabMonth(pabPickerYear, m); }}
+                            title={
+                              !selectable
+                                ? `${lbl} ${pabPickerYear} — no Hubstaff data uploaded yet`
+                                : `${lbl} ${pabPickerYear}${hasOverride ? ' · custom range saved' : ''}${isToday ? ' · current PAB month' : ''}`
+                            }
+                            className={cn(
+                              'group flex min-w-0 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition',
+                              isActive
+                                ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-500/25 dark:border-indigo-400 dark:bg-indigo-950/60 dark:text-indigo-200'
+                                : selectable
+                                  ? 'border-zinc-200 bg-white text-zinc-700 hover:border-indigo-300 hover:bg-indigo-50/60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/20'
+                                  : 'cursor-not-allowed border-dashed border-zinc-200 bg-zinc-50/60 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-600',
+                              'disabled:cursor-not-allowed',
+                            )}
+                          >
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="truncate">{lbl}</span>
+                              {isToday && (
+                                <span className="shrink-0 rounded bg-indigo-600 px-1 py-[1px] text-[9px] font-bold uppercase leading-none text-white dark:bg-indigo-500">
+                                  Now
+                                </span>
+                              )}
+                            </span>
+                            <span className="flex shrink-0 items-center gap-1">
+                              <span
+                                className={cn(
+                                  'h-2 w-2 rounded-full',
+                                  hasData
+                                    ? 'bg-emerald-500 dark:bg-emerald-400'
+                                    : 'bg-zinc-300 dark:bg-zinc-700',
+                                )}
+                              />
+                              {hasOverride && (
+                                <span
+                                  className="h-2 w-2 rounded-full bg-amber-500 dark:bg-amber-400"
+                                  title="Custom override saved"
+                                />
+                              )}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Active-month editor */}
+                    <div className="mt-3 border-t border-indigo-200/60 pt-3 dark:border-indigo-900/40">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <span className="rounded-md bg-indigo-600/10 px-2 py-1 text-xs font-bold uppercase tracking-wide text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
+                          Active: {pabMonthRange.monthName} {pabMonthRange.year}
+                        </span>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Input
+                            type="date"
+                            value={pabStartLocal}
+                            onChange={(ev) => {
+                              const v = ev.target.value;
+                              setPabStartLocal(v);
+                              if (v && pabEndLocal) void saveActiveMonthOverride(v, pabEndLocal);
+                            }}
+                            disabled={pabSaveState === 'saving'}
+                            className="h-8 w-[150px] shrink-0 text-xs"
+                          />
+                          <span className="text-zinc-400">→</span>
+                          <Input
+                            type="date"
+                            value={pabEndLocal}
+                            onChange={(ev) => {
+                              const v = ev.target.value;
+                              setPabEndLocal(v);
+                              if (pabStartLocal && v) void saveActiveMonthOverride(pabStartLocal, v);
+                            }}
+                            disabled={pabSaveState === 'saving'}
+                            className="h-8 w-[150px] shrink-0 text-xs"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void autoCalcActiveMonth()}
+                          disabled={pabSaveState === 'saving'}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-800/60 dark:bg-zinc-900 dark:text-indigo-300 dark:hover:bg-indigo-950/30"
+                          title="Auto-calculate this month's PAB window: first Monday on/after the 1st → Friday of the last week whose Monday falls in the month"
+                        >
+                          <Calculator className="h-3.5 w-3.5" />
+                          <span>Auto-calc</span>
+                        </button>
+                        {activeHasOverride ? (
+                          <button
+                            type="button"
+                            onClick={() => void resetActiveMonthOverride()}
+                            disabled={pabSaveState === 'saving'}
+                            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-800/60 dark:bg-zinc-900 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                            title="Delete this month's custom range"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                            <span>Reset override</span>
+                          </button>
+                        ) : (
+                          <span className="text-xs italic text-zinc-500 dark:text-zinc-400">
+                            Using default (first Mon → last Fri)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Legend */}
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500 dark:text-zinc-500">
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500" /> Has Hubstaff data
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-amber-500" /> Custom override saved
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-700" /> No data — not selectable
+                      </span>
+                    </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                );
+              })()}
+
+              {/* PAB coverage / data warnings — full width */}
+              {pabMonthRange && hubstaffColsForPab && !pabMonthColumnCoverageComplete && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-400">
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    <strong>Monthly PAB needs all workdays in range.</strong> Hubstaff has{' '}
+                    {weekdayColumnGroups.length} of {pabExpectedMonFriCount} Mon–Fri columns merged. Append or re-upload
+                    weekly exports in <strong>Step 1</strong> until every weekday in the PAB period is present—PAB will not
+                    use the single &quot;calc file&quot; week alone.
+                  </span>
+                </div>
+              )}
+              {dailyDataMissing && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    <strong>Perfect Attendance cannot be detected.</strong> The daily hours breakdown (Mon–Fri columns) is empty in Supabase.
+                    PAB is evaluated monthly (all uploaded CSVs). Go back to <strong>Step 1</strong> and <strong>re-upload the Hubstaff CSVs</strong> — daily data will be stored correctly.
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Department Tabs */}
@@ -3879,10 +4732,10 @@ export default function PayrollWizard() {
                       <Table className="w-full min-w-[720px] text-xs">
                         <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
                           <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
-                            <TableHead className="min-w-[96px] max-w-[140px] px-1.5 py-2 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+                            <TableHead className="min-w-[200px] px-2 py-2 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
                               Employee
                             </TableHead>
-                            <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+                            <TableHead className="min-w-[64px] px-1 py-2 text-right text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
                               Init
                             </TableHead>
                             <TableHead className="min-w-[96px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-indigo-600 dark:text-indigo-400">
@@ -3988,8 +4841,8 @@ export default function PayrollWizard() {
                                 key={emp.email}
                                 className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
                               >
-                                <TableCell className="max-w-[140px] px-1.5 py-1.5">
-                                  <div className="truncate text-[11px] font-medium leading-tight text-zinc-800 dark:text-zinc-200">
+                                <TableCell className="px-2 py-1.5">
+                                  <div className="whitespace-normal break-words text-[12px] font-semibold leading-tight text-zinc-800 dark:text-zinc-200">
                                     {emp.name || '—'}
                                   </div>
                                   <div className="truncate font-mono text-[9px] leading-tight text-zinc-400">
@@ -3999,49 +4852,36 @@ export default function PayrollWizard() {
                                 <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
                                   {emp.initialPay != null ? formatPHP(emp.initialPay) : '—'}
                                 </TableCell>
-                                {/* PAB date counters per-employee */}
+                                {/* PAB — tri-state pill (Eligible / Ineligible / In Progress); click to open calendar modal */}
                                 {(() => {
                                   const normEmpEmail = normEmail(emp.email) ?? emp.email.toLowerCase();
-                                  const paEligible = perfectAttendanceEligible.has(normEmpEmail);
-                                  const weekdayBreakdown = employeeWeekdayHours.get(normEmpEmail) ?? null;
+                                  const status = pabStatusByEmail.get(normEmpEmail) ?? 'in_progress';
+                                  const label =
+                                    status === 'eligible' ? '✓ Eligible'
+                                    : status === 'ineligible' ? '✗ Ineligible'
+                                    : '⏳ In Progress';
+                                  const titleText =
+                                    status === 'eligible' ? 'Passed every Mon–Fri in the PAB period — click to see the calendar.'
+                                    : status === 'ineligible' ? 'Already failed at least one past weekday — locked for this period. Click to see which day.'
+                                    : 'PAB period is still running and no past failures yet. Click to see the calendar.';
                                   return (
                                     <TableCell className="px-1 py-1.5 text-center">
-                                      <div className="flex flex-col items-center gap-0.5">
-                                        {weekdayBreakdown && weekdayBreakdown.length > 0 ? (
-                                          <div className="flex flex-wrap justify-center gap-px">
-                                            {weekdayBreakdown.map(({ col, seconds, passes, forgivenByDispute }) => {
-                                              const colDate = parseColDate(col);
-                                              const dateStr = colDate
-                                                ? `${colDate.getMonth() + 1}/${colDate.getDate()}`
-                                                : '';
-                                              return (
-                                                <span
-                                                  key={col}
-                                                  title={`${dayLabel(col)}${dateStr ? ` ${dateStr}` : ''}: ${formatSeconds(seconds)} logged${forgivenByDispute ? ' ★ forgiven by dispute' : passes ? ' ✓' : ' — needs 7 h'}`}
-                                                  className={cn(
-                                                    'flex h-3.5 cursor-default items-center justify-center rounded-sm px-0.5 text-[7px] font-bold leading-none select-none',
-                                                    forgivenByDispute
-                                                      ? 'bg-amber-100 text-amber-700 ring-1 ring-amber-400/50 dark:bg-amber-900/40 dark:text-amber-400'
-                                                      : passes
-                                                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
-                                                        : 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
-                                                  )}
-                                                >
-                                                  {forgivenByDispute ? '★' : dayLetter(col)}
-                                                </span>
-                                              );
-                                            })}
-                                          </div>
-                                        ) : (
-                                          <span className="text-[9px] italic text-zinc-400">—</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setPabCalendarModalEmail(emp.email)}
+                                        title={titleText}
+                                        className={cn(
+                                          'group inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none transition-all duration-200',
+                                          'hover:scale-105 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-offset-1 dark:focus:ring-offset-zinc-900',
+                                          status === 'eligible'
+                                            ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-400/40 hover:bg-emerald-200 focus:ring-emerald-400 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-500/30 dark:hover:bg-emerald-900/60'
+                                            : status === 'ineligible'
+                                              ? 'bg-red-100 text-red-600 ring-1 ring-red-400/40 hover:bg-red-200 focus:ring-red-400 dark:bg-red-900/30 dark:text-red-300 dark:ring-red-500/30 dark:hover:bg-red-900/50'
+                                              : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
                                         )}
-                                        <span className={cn(
-                                          'text-[9px] font-semibold leading-none',
-                                          paEligible ? 'text-emerald-500' : 'text-zinc-400',
-                                        )}>
-                                          {paEligible ? '✓ Eligible' : '✗ Ineligible'}
-                                        </span>
-                                      </div>
+                                      >
+                                        <span>{label}</span>
+                                      </button>
                                     </TableCell>
                                   );
                                 })()}
@@ -6425,6 +7265,446 @@ export default function PayrollWizard() {
           </div>
         );
       })()}
+
+      {/* PAB Calendar modal — full-month view for a single employee */}
+      <AnimatePresence>
+        {pabCalendarModalEmail && (() => {
+          const emp = calcResults.find((e) => e.email === pabCalendarModalEmail);
+          const normEmpEmail = normEmail(pabCalendarModalEmail) ?? pabCalendarModalEmail.toLowerCase();
+          const paEligible = perfectAttendanceEligible.has(normEmpEmail);
+          const paStatus = pabStatusByEmail.get(normEmpEmail) ?? (paEligible ? 'eligible' : 'ineligible');
+          const breakdown = employeeWeekdayHours.get(normEmpEmail) ?? [];
+          // Map ISO date → breakdown entry so we can look up per-cell data quickly.
+          const byIso = new Map<string, { seconds: number; passes: boolean; forgivenByDispute: boolean }>();
+          for (const entry of breakdown) {
+            const d = parseColDate(entry.col);
+            if (!d) continue;
+            const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            byIso.set(iso, { seconds: entry.seconds, passes: entry.passes, forgivenByDispute: entry.forgivenByDispute });
+          }
+
+          // Build calendar grid (weeks × 7 days) spanning the PAB period.
+          type Cell = { date: Date; iso: string; inRange: boolean; isWeekday: boolean; data: { seconds: number; passes: boolean; forgivenByDispute: boolean } | null };
+          const cells: Cell[] = [];
+          if (pabMonthRange) {
+            const gridStart = new Date(pabMonthRange.start);
+            gridStart.setDate(gridStart.getDate() - gridStart.getDay());
+            const gridEnd = new Date(pabMonthRange.end);
+            gridEnd.setDate(gridEnd.getDate() + (6 - gridEnd.getDay()));
+            const cursor = new Date(gridStart);
+            while (cursor <= gridEnd) {
+              const iso = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+              const inRange = cursor >= pabMonthRange.start && cursor <= pabMonthRange.end;
+              const dow = cursor.getDay();
+              const isWeekday = dow >= 1 && dow <= 5;
+              cells.push({
+                date: new Date(cursor),
+                iso,
+                inRange,
+                isWeekday,
+                data: byIso.get(iso) ?? null,
+              });
+              cursor.setDate(cursor.getDate() + 1);
+            }
+          }
+
+          const totalDays = breakdown.length;
+          const passedDays = breakdown.filter((b) => b.passes && !b.forgivenByDispute).length;
+          const forgivenDays = breakdown.filter((b) => b.forgivenByDispute).length;
+          const failedDays = breakdown.filter((b) => !b.passes).length;
+          const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+          // Failed date list — for the "Why Ineligible?" panel.
+          const failedDetails = breakdown
+            .filter((b) => !b.passes)
+            .map((b) => {
+              const d = parseColDate(b.col);
+              return {
+                date: d,
+                iso: d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : b.col,
+                seconds: b.seconds,
+                shortfallSec: Math.max(0, 7 * 3600 - b.seconds),
+              };
+            })
+            .sort((a, b) => (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0));
+
+          const formatShortfall = (sec: number) => {
+            if (sec <= 0) return '0m';
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            if (h > 0 && m > 0) return `${h}h ${m}m`;
+            if (h > 0) return `${h}h`;
+            return `${m}m`;
+          };
+
+          return (
+            <motion.div
+              key="pab-cal-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+              onClick={() => setPabCalendarModalEmail(null)}
+            >
+              <motion.div
+                key="pab-cal-panel"
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.97, y: 6 }}
+                transition={{ type: 'spring', stiffness: 340, damping: 28, mass: 0.6 }}
+                className="flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Header — compact, doesn't scroll */}
+                <div className="relative flex items-start justify-between gap-3 border-b border-zinc-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 px-5 py-3.5 dark:border-zinc-800 dark:from-indigo-950/30 dark:via-zinc-950 dark:to-violet-950/30">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <CalendarDays className="h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                        <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">
+                          PAB Calendar
+                        </h2>
+                      </div>
+                      <motion.span
+                        initial={{ scale: 0.7, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ delay: 0.12, type: 'spring', stiffness: 400, damping: 22 }}
+                        className={cn(
+                          'rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
+                          paStatus === 'eligible'
+                            ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-400/40 dark:bg-emerald-900/40 dark:text-emerald-300'
+                            : paStatus === 'ineligible'
+                              ? 'bg-red-100 text-red-700 ring-1 ring-red-400/40 dark:bg-red-900/40 dark:text-red-300'
+                              : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 dark:bg-indigo-900/40 dark:text-indigo-300',
+                        )}
+                      >
+                        {paStatus === 'eligible' ? '✓ Eligible' : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
+                      </motion.span>
+                    </div>
+                    <p className="mt-0.5 truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
+                      {emp?.name || pabCalendarModalEmail}
+                    </p>
+                    {pabMonthRange && (
+                      <p className="truncate text-[10px] text-indigo-700 dark:text-indigo-300">
+                        {pabMonthRange.monthName} {pabMonthRange.year}
+                        {' · '}
+                        {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        {' – '}
+                        {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setPabCalendarModalEmail(null)}
+                    className="shrink-0 rounded-md p-1 text-zinc-400 transition hover:bg-zinc-200/60 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                    aria-label="Close"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* Scrollable body */}
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                  {!pabMonthRange ? (
+                    <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>PAB period is not available — upload Hubstaff CSVs or set a manual PAB period.</span>
+                    </div>
+                  ) : (
+                    <>
+                      {/* No-data diagnostic — shown when the employee is in the roster but Hubstaff has no rows for them */}
+                      {breakdown.length === 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.25 }}
+                          className="mb-3 flex items-start gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200"
+                        >
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="font-semibold">No Hubstaff rows for this employee</div>
+                            <div className="mt-0.5 text-amber-700/90 dark:text-amber-300/90">
+                              {weekdayColumnGroups.length === 0
+                                ? `Hubstaff has 0 Mon–Fri columns for this PAB period — upload the ${pabMonthRange.monthName} CSVs in Step 1.`
+                                : `Hubstaff covers ${weekdayColumnGroups.length} Mon–Fri in ${pabMonthRange.monthName}, but this employee's work email (${pabCalendarModalEmail}) isn't in any uploaded row. Check the Hubstaff email on their master-list record.`}
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                      {/* Partial-coverage diagnostic — breakdown exists but < expected weekdays */}
+                      {breakdown.length > 0 && weekdayColumnGroups.length < pabExpectedMonFriCount && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.25 }}
+                          className="mb-3 flex items-start gap-2 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200"
+                        >
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>
+                            Partial month — Hubstaff has <strong>{weekdayColumnGroups.length}/{pabExpectedMonFriCount}</strong> Mon–Fri columns for {pabMonthRange.monthName} {pabMonthRange.year}. Missing days show as dashed "No data yet" cells.
+                          </span>
+                        </motion.div>
+                      )}
+                      {/* Stats strip */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.08, duration: 0.25 }}
+                        className="mb-3 grid grid-cols-4 gap-1.5"
+                      >
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-2 py-1.5 text-center dark:border-emerald-800/50 dark:bg-emerald-950/30">
+                          <div className="font-mono text-base font-bold leading-none text-emerald-700 dark:text-emerald-300">{passedDays}</div>
+                          <div className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-700/70 dark:text-emerald-400/80">Passed</div>
+                        </div>
+                        <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-center dark:border-amber-800/50 dark:bg-amber-950/30">
+                          <div className="font-mono text-base font-bold leading-none text-amber-700 dark:text-amber-300">{forgivenDays}</div>
+                          <div className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700/70 dark:text-amber-400/80">Forgiven</div>
+                        </div>
+                        <div className="rounded-lg border border-red-200 bg-red-50/70 px-2 py-1.5 text-center dark:border-red-800/50 dark:bg-red-950/30">
+                          <div className="font-mono text-base font-bold leading-none text-red-700 dark:text-red-300">{failedDays}</div>
+                          <div className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-700/70 dark:text-red-400/80">Failed</div>
+                        </div>
+                        <div className="rounded-lg border border-zinc-200 bg-zinc-50/70 px-2 py-1.5 text-center dark:border-zinc-800 dark:bg-zinc-900/40">
+                          <div className="font-mono text-base font-bold leading-none text-zinc-700 dark:text-zinc-200">{totalDays}</div>
+                          <div className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Tracked</div>
+                        </div>
+                      </motion.div>
+
+                      {/* Weekday header */}
+                      <div className="grid grid-cols-7 gap-1 text-center">
+                        {WEEKDAY_LABELS.map((lbl, i) => (
+                          <div
+                            key={lbl}
+                            className={cn(
+                              'pb-1 text-[10px] font-semibold uppercase tracking-wide',
+                              i === 0 || i === 6
+                                ? 'text-zinc-400 dark:text-zinc-600'
+                                : 'text-zinc-500 dark:text-zinc-400',
+                            )}
+                          >
+                            {lbl}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Day cells */}
+                      <div className="grid grid-cols-7 gap-1">
+                        {cells.map((cell, idx) => {
+                          const dim = !cell.inRange;
+                          const weekend = !cell.isWeekday;
+                          const data = cell.data;
+                          const state = !cell.inRange || weekend
+                            ? 'idle'
+                            : data?.forgivenByDispute
+                              ? 'forgiven'
+                              : data?.passes
+                                ? 'passed'
+                                : data
+                                  ? 'failed'
+                                  : 'missing';
+                          const stateClasses: Record<typeof state, string> = {
+                            idle: 'bg-zinc-100/70 text-zinc-400 ring-1 ring-zinc-200/70 dark:bg-zinc-900/50 dark:text-zinc-600 dark:ring-zinc-800/60',
+                            passed: 'bg-emerald-200 text-emerald-900 ring-1 ring-emerald-500/70 shadow-[0_1px_2px_rgba(16,185,129,0.15)] dark:bg-emerald-600/40 dark:text-emerald-50 dark:ring-emerald-400/50',
+                            forgiven: 'bg-amber-200 text-amber-900 ring-1 ring-amber-500/70 shadow-[0_1px_2px_rgba(245,158,11,0.18)] dark:bg-amber-600/40 dark:text-amber-50 dark:ring-amber-400/50',
+                            failed: 'relative bg-red-200 text-red-900 ring-2 ring-red-500/80 shadow-[0_1px_2px_rgba(239,68,68,0.22)] dark:bg-red-600/40 dark:text-red-50 dark:ring-red-400/70',
+                            missing: 'bg-zinc-100 text-zinc-400 border border-dashed border-zinc-300 dark:bg-zinc-900/50 dark:text-zinc-500 dark:border-zinc-700',
+                          };
+                          const shortfall = data && !data.passes ? Math.max(0, 7 * 3600 - data.seconds) : 0;
+                          return (
+                            <motion.div
+                              key={cell.iso}
+                              initial={{ opacity: 0, y: 4, scale: 0.92 }}
+                              animate={{ opacity: dim ? 0.3 : 1, y: 0, scale: 1 }}
+                              transition={{ delay: 0.04 + idx * 0.008, duration: 0.2, ease: 'easeOut' }}
+                              whileHover={dim || weekend ? undefined : { scale: 1.06, y: -1 }}
+                              title={
+                                !cell.inRange
+                                  ? `${cell.date.toDateString()} — outside PAB period`
+                                  : weekend
+                                    ? `${cell.date.toDateString()} — weekend`
+                                    : data
+                                      ? `${cell.date.toDateString()} · ${formatSeconds(data.seconds)} logged${data.forgivenByDispute ? ' · ★ forgiven by dispute' : data.passes ? ' · ✓ passes 7h threshold' : ` · short by ${formatShortfall(shortfall)}`}`
+                                      : `${cell.date.toDateString()} — no Hubstaff data`
+                              }
+                              className={cn(
+                                'flex h-[46px] cursor-default flex-col items-center justify-center overflow-hidden rounded-md px-0.5 text-center transition-shadow',
+                                stateClasses[state],
+                              )}
+                            >
+                              <span className="text-[10px] font-bold leading-none">
+                                {cell.date.getDate()}
+                              </span>
+                              {cell.inRange && !weekend && data && (
+                                <span className="mt-0.5 font-mono text-[9px] leading-none opacity-85">
+                                  {formatSeconds(data.seconds)}
+                                </span>
+                              )}
+                              {state === 'passed' && (
+                                <span className="mt-0.5 text-[8px] leading-none opacity-80">✓</span>
+                              )}
+                              {state === 'forgiven' && (
+                                <span className="mt-0.5 text-[8px] leading-none opacity-80">★</span>
+                              )}
+                              {state === 'failed' && (
+                                <>
+                                  <span className="mt-0.5 font-mono text-[8px] font-bold leading-none text-red-800 dark:text-red-100">
+                                    −{formatShortfall(shortfall)}
+                                  </span>
+                                  <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-red-600 shadow-[0_0_0_2px_rgba(255,255,255,0.95)] dark:bg-red-400 dark:shadow-[0_0_0_2px_rgba(24,24,27,0.85)]" />
+                                </>
+                              )}
+                              {cell.inRange && !weekend && !data && (
+                                <span className="mt-0.5 text-[9px] leading-none opacity-60">—</span>
+                              )}
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Legend */}
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.1 + cells.length * 0.008, duration: 0.25 }}
+                        className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-md border border-zinc-200 bg-zinc-50/60 px-2 py-1.5 text-[10px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400"
+                      >
+                        <span className="flex items-center gap-1">
+                          <span className="h-2.5 w-2.5 rounded-sm bg-emerald-200 ring-1 ring-emerald-500/70 dark:bg-emerald-600/40 dark:ring-emerald-400/50" /> ≥ 7h
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="h-2.5 w-2.5 rounded-sm bg-amber-200 ring-1 ring-amber-500/70 dark:bg-amber-600/40 dark:ring-amber-400/50" /> Forgiven ★
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="h-2.5 w-2.5 rounded-sm bg-red-200 ring-1 ring-red-500/80 dark:bg-red-600/40 dark:ring-red-400/70" /> &lt; 7h
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="h-2.5 w-2.5 rounded-sm border border-dashed border-zinc-300 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900/50" /> No data yet
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="h-2.5 w-2.5 rounded-sm bg-zinc-100/70 ring-1 ring-zinc-200/70 dark:bg-zinc-900/50 dark:ring-zinc-800/60" /> Weekend / out-of-range
+                        </span>
+                      </motion.div>
+
+                      {/* Verdict — clear pass/fail/in-progress explanation */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.14 + cells.length * 0.008, duration: 0.3 }}
+                        className={cn(
+                          'mt-3 rounded-xl border p-3',
+                          paStatus === 'eligible'
+                            ? 'border-emerald-300/60 bg-emerald-50/80 dark:border-emerald-800/50 dark:bg-emerald-950/30'
+                            : paStatus === 'ineligible'
+                              ? 'border-red-300/60 bg-red-50/80 dark:border-red-800/50 dark:bg-red-950/30'
+                              : 'border-indigo-300/60 bg-indigo-50/80 dark:border-indigo-800/50 dark:bg-indigo-950/30',
+                        )}
+                      >
+                        <div className="flex items-start gap-2">
+                          <div
+                            className={cn(
+                              'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-bold',
+                              paStatus === 'eligible'
+                                ? 'bg-emerald-500 text-white shadow-[0_0_0_3px_rgba(16,185,129,0.15)]'
+                                : paStatus === 'ineligible'
+                                  ? 'bg-red-500 text-white shadow-[0_0_0_3px_rgba(239,68,68,0.15)]'
+                                  : 'bg-indigo-500 text-white shadow-[0_0_0_3px_rgba(79,70,229,0.18)]',
+                            )}
+                          >
+                            {paStatus === 'eligible' ? '✓' : paStatus === 'ineligible' ? '✗' : '⏳'}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div
+                              className={cn(
+                                'text-xs font-bold',
+                                paStatus === 'eligible'
+                                  ? 'text-emerald-800 dark:text-emerald-200'
+                                  : paStatus === 'ineligible'
+                                    ? 'text-red-800 dark:text-red-200'
+                                    : 'text-indigo-800 dark:text-indigo-200',
+                              )}
+                            >
+                              {paStatus === 'eligible'
+                                ? 'Eligible for Perfect Attendance Bonus'
+                                : paStatus === 'ineligible'
+                                  ? (failedDetails.length > 0
+                                      ? `Ineligible — ${failedDetails.length} day${failedDetails.length === 1 ? '' : 's'} under the 7-hour threshold`
+                                      : 'Ineligible — insufficient data for this period')
+                                  : 'In Progress — PAB period is still running'}
+                            </div>
+                            <div
+                              className={cn(
+                                'mt-0.5 text-[11px] leading-snug',
+                                paStatus === 'eligible'
+                                  ? 'text-emerald-700/80 dark:text-emerald-300/80'
+                                  : paStatus === 'ineligible'
+                                    ? 'text-red-700/80 dark:text-red-300/80'
+                                    : 'text-indigo-700/80 dark:text-indigo-300/80',
+                              )}
+                            >
+                              {paStatus === 'eligible'
+                                ? `Logged ≥ 7h on every Mon–Fri in the PAB period${forgivenDays > 0 ? ` (${forgivenDays} day${forgivenDays === 1 ? '' : 's'} forgiven by dispute)` : ''}.`
+                                : paStatus === 'ineligible'
+                                  ? 'Every Mon–Fri in the PAB period must reach 7 h of logged time (or be forgiven via an approved dispute).'
+                                  : 'No past weekdays failed yet — verdict locks once the period ends or the first sub-7h weekday is logged.'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {paStatus === 'ineligible' && failedDetails.length > 0 && (
+                          <div className="mt-3 border-t border-red-300/40 pt-2.5 dark:border-red-800/40">
+                            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-red-700 dark:text-red-300">
+                              Failed days ({failedDetails.length})
+                            </div>
+                            <div className="space-y-1">
+                              {failedDetails.map((f, i) => (
+                                <motion.div
+                                  key={f.iso}
+                                  initial={{ opacity: 0, x: -4 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  transition={{ delay: 0.2 + cells.length * 0.008 + i * 0.03, duration: 0.2 }}
+                                  className="flex items-center justify-between gap-2 rounded-md bg-white/60 px-2 py-1 text-[11px] dark:bg-zinc-950/40"
+                                >
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+                                    <span className="font-mono text-red-800 dark:text-red-200">
+                                      {f.date
+                                        ? f.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                                        : f.iso}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className="font-mono text-red-700 dark:text-red-300">
+                                      {formatSeconds(f.seconds)}
+                                    </span>
+                                    <span className="rounded-sm bg-red-200/70 px-1.5 py-0.5 font-mono text-[10px] font-bold text-red-800 dark:bg-red-900/60 dark:text-red-200">
+                                      −{formatShortfall(f.shortfallSec)}
+                                    </span>
+                                  </div>
+                                </motion.div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </motion.div>
+                    </>
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-end gap-2 border-t border-zinc-200 bg-zinc-50/60 px-6 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <Button
+                    onClick={() => setPabCalendarModalEmail(null)}
+                    className="h-8 bg-indigo-600 text-xs text-white hover:bg-indigo-700"
+                  >
+                    Close
+                  </Button>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
     </div>
   );
 }

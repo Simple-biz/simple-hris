@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { normEmail } from '@/lib/email/norm-email';
 import type { PabDayDisputeRow } from '@/lib/supabase/pab-day-disputes';
 
 const PAGE_SIZE = 15;
@@ -102,14 +103,14 @@ export default function OrphanageVisits() {
   const employeeByEmail = useMemo(() => {
     const map = new Map<string, EmployeeOption>();
     for (const e of employees) {
-      const key = (e.work_email ?? e.personal_email ?? '').toLowerCase();
+      const key = normEmail(e.work_email ?? e.personal_email ?? '');
       if (key) map.set(key, e);
     }
     return map;
   }, [employees]);
 
   const displayNameFor = useCallback((email: string) => {
-    const hit = employeeByEmail.get(email.toLowerCase());
+    const hit = employeeByEmail.get(normEmail(email) ?? '');
     return hit?.name ?? email;
   }, [employeeByEmail]);
 
@@ -130,7 +131,7 @@ export default function OrphanageVisits() {
   useEffect(() => { setPage(1); }, [searchQuery]);
 
   const handleSubmit = useCallback(async () => {
-    const email = formEmail.trim().toLowerCase();
+    const email = normEmail(formEmail);
     if (!email) { toast.error('Select an employee'); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(formDate)) { toast.error('Pick a valid visit date'); return; }
     setSubmitting(true);
@@ -276,7 +277,7 @@ export default function OrphanageVisits() {
                     </div>
                   ) : (
                     empResults.map(e => {
-                      const email = (e.work_email ?? e.personal_email ?? '').toLowerCase();
+                      const email = normEmail(e.work_email ?? e.personal_email ?? '') ?? '';
                       return (
                         <button
                           key={email}

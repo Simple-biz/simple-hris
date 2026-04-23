@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Overview · Admin · Simple HRIS</title>
+<meta name="viewport" content="width=1440" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/lucide@0.462.0/dist/umd/lucide.min.js"></script>
+<style>
+  :root {
+    --ink: #18181b;
+    --ink-2: #3f3f46;
+    --ink-3: #71717a;
+    --ink-4: #a1a1aa;
+    --line: #ececec;
+    --line-2: #f3f3f3;
+    --bg: #fafaf8;
+    --card: #ffffff;
+    --orange: #ea580c;
+    --orange-soft: #fff1e6;
+    --green: #047857;
+    --green-soft: #e8f5ee;
+    --red: #b91c1c;
+    --red-soft: #fbeaea;
+    --amber: #b45309;
+    --amber-soft: #fbf3e1;
+    --blue: #1d4ed8;
+    --blue-soft: #eaf0fd;
+    --purple: #6d28d9;
+    --purple-soft: #f1ecfb;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    font-size: 14px;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+  .app { display: flex; min-height: 100vh; }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    padding: 28px 20px;
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column;
+    background: var(--card);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 40px; padding: 0 4px; }
+  .brand-mark {
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    background: var(--ink);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 14px;
+    letter-spacing: -0.02em;
+  }
+  .brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+  .brand-text .t1 { font-weight: 600; font-size: 13.5px; letter-spacing: -0.01em; }
+  .brand-text .t2 { font-size: 10.5px; color: var(--ink-3); margin-top: 2px; letter-spacing: 0.02em; }
+  .nav-label {
+    font-size: 10.5px; font-weight: 500; color: var(--ink-4);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 0 10px; margin: 0 0 6px;
+  }
+  .nav { display: flex; flex-direction: column; gap: 1px; }
+  .nav a {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+    text-decoration: none; cursor: pointer;
+    font-weight: 450;
+  }
+  .nav a svg { width: 15px; height: 15px; color: var(--ink-4); }
+  .nav a:hover { background: var(--line-2); color: var(--ink); }
+  .nav a.active { background: var(--ink); color: white; }
+  .nav a.active svg { color: rgba(255,255,255,0.75); }
+  .nav a .count {
+    margin-left: auto;
+    font-size: 10.5px;
+    background: var(--line-2);
+    color: var(--ink-3);
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .nav a.active .count { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.9); }
+  .nav a .count.alert { background: var(--amber-soft); color: var(--amber); }
+  .nav-divider { height: 1px; background: var(--line); margin: 20px 10px; }
+
+  .sidebar-foot {
+    margin-top: auto;
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--bg);
+  }
+  .avatar {
+    width: 28px; height: 28px;
+    border-radius: 9999px;
+    background: var(--ink);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 11px;
+  }
+  .sidebar-foot .nm { font-size: 13px; font-weight: 500; line-height: 1.2; }
+  .sidebar-foot .rl { font-size: 11px; color: var(--ink-3); line-height: 1.2; margin-top: 1px; }
+  .sidebar-foot .menu { margin-left: auto; color: var(--ink-4); display: flex; align-items: center; cursor: pointer; }
+
+  /* ---------- Main ---------- */
+  main {
+    flex: 1;
+    padding: 48px 56px 72px;
+    max-width: 1360px;
+    min-width: 0;
+  }
+
+  .top-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-bottom: 32px;
+    font-size: 12.5px; color: var(--ink-3);
+  }
+  .crumb { display: flex; align-items: center; gap: 8px; }
+  .crumb .sep { color: var(--ink-4); }
+  .crumb strong { color: var(--ink); font-weight: 500; }
+  .actions { display: flex; align-items: center; gap: 8px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px 5px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--ink-2);
+    font-size: 12px; font-weight: 500; cursor: pointer;
+  }
+  .pill svg { width: 13px; height: 13px; color: var(--ink-4); }
+  .pill.ghost { border: 1px solid transparent; background: transparent; color: var(--ink-3); }
+  .pill.ghost:hover { background: var(--line-2); color: var(--ink); }
+  .pill.primary { background: var(--ink); color: white; border-color: var(--ink); }
+  .pill.primary svg { color: rgba(255,255,255,0.75); }
+  .pill.danger-ghost { color: var(--red); }
+  .pill.danger-ghost svg { color: var(--red); }
+
+  /* Hero */
+  .hero {
+    padding: 4px 0 40px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 40px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 64px;
+    align-items: end;
+  }
+  .hero-greet { font-size: 13px; color: var(--ink-3); font-weight: 450; margin-bottom: 20px; }
+  .hero-greet strong { color: var(--ink); font-weight: 600; }
+  .hero-label {
+    font-size: 12.5px; color: var(--ink-3);
+    margin-bottom: 14px; font-weight: 500;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .hero-label .heartbeat {
+    width: 7px; height: 7px; border-radius: 9999px;
+    background: var(--green);
+    box-shadow: 0 0 0 0 rgba(4,120,87,0.6);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(4,120,87,0.45); }
+    70% { box-shadow: 0 0 0 8px rgba(4,120,87,0); }
+    100% { box-shadow: 0 0 0 0 rgba(4,120,87,0); }
+  }
+  .hero-amount {
+    font-size: 80px; font-weight: 600;
+    letter-spacing: -0.04em; line-height: 1;
+    color: var(--ink);
+    font-feature-settings: 'ss01','cv11','tnum';
+  }
+  .hero-amount .status {
+    color: var(--green);
+  }
+  .hero-sub {
+    margin-top: 16px;
+    font-size: 13px; color: var(--ink-3);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .hero-sub .dot-sep { color: var(--ink-4); }
+  .hero-sub strong { color: var(--ink); font-weight: 600; }
+
+  .hero-right {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 12px;
+    min-width: 300px;
+  }
+  .period { font-size: 12.5px; color: var(--ink-3); font-weight: 500; }
+  .period strong { color: var(--ink); font-weight: 600; }
+
+  .sys-summary {
+    display: grid;
+    grid-template-columns: auto auto;
+    gap: 6px 24px;
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+  .sys-summary .k {
+    display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  }
+  .sys-summary .k svg { width: 12px; height: 12px; color: var(--ink-4); }
+  .sys-summary .v { text-align: right; color: var(--ink); font-weight: 500; }
+  .sys-summary .v.ok { color: var(--green); }
+  .sys-summary .v.warn { color: var(--amber); }
+
+  /* ---------- Attention row ---------- */
+  .attention {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-bottom: 56px;
+  }
+  .att-card {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--card);
+    padding: 20px 22px;
+    cursor: pointer;
+    transition: border-color 150ms;
+  }
+  .att-card:hover { border-color: var(--ink-4); }
+  .att-card .att-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 18px;
+    font-size: 11.5px; color: var(--ink-3);
+    font-weight: 500; letter-spacing: 0.02em; text-transform: uppercase;
+  }
+  .att-card .att-head svg { width: 14px; height: 14px; }
+  .att-card .att-head .tag {
+    text-transform: none; letter-spacing: 0;
+    padding: 2px 8px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 500;
+  }
+  .att-card .att-value {
+    font-size: 30px; font-weight: 600;
+    letter-spacing: -0.025em; line-height: 1;
+    font-feature-settings: 'ss01','cv11','tnum';
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .att-card .att-value .unit { font-size: 14px; font-weight: 500; color: var(--ink-3); }
+  .att-card .att-sub {
+    margin-top: 10px; font-size: 12.5px; color: var(--ink-3);
+  }
+  .att-card .att-sub strong { color: var(--ink-2); font-weight: 600; }
+  .att-card.warn { background: var(--amber-soft); border-color: transparent; }
+  .att-card.warn .att-head, .att-card.warn .att-value { color: var(--amber); }
+  .att-card.danger { background: var(--red-soft); border-color: transparent; }
+  .att-card.danger .att-head, .att-card.danger .att-value { color: var(--red); }
+  .att-card .att-cta {
+    margin-top: 14px; font-size: 12px; color: var(--ink);
+    font-weight: 500; display: flex; align-items: center; gap: 4px;
+  }
+  .att-card .att-cta svg { width: 13px; height: 13px; }
+  .att-card.warn .att-cta { color: var(--amber); }
+  .att-card.danger .att-cta { color: var(--red); }
+
+  /* ---------- Sections ---------- */
+  .section + .section { margin-top: 56px; }
+  .section-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .section-title {
+    font-size: 14px; font-weight: 600; color: var(--ink);
+    letter-spacing: -0.005em; margin: 0;
+  }
+  .section-sub { font-size: 12.5px; color: var(--ink-3); font-weight: 450; }
+  .section-sub a { color: var(--ink-2); text-decoration: underline; cursor: pointer; }
+
+  /* ---------- Two-col layout: roles + webhooks ---------- */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    align-items: start;
+  }
+
+  /* Roles donut */
+  .roles-block {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 28px;
+    align-items: center;
+  }
+  .donut { width: 130px; height: 130px; position: relative; flex-shrink: 0; }
+  .donut svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); }
+  .donut-center {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+  }
+  .donut-center .num {
+    font-size: 26px; font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    font-feature-settings: 'ss01','cv11','tnum';
+    line-height: 1;
+  }
+  .donut-center .lab {
+    font-size: 10.5px; color: var(--ink-3);
+    font-weight: 500; margin-top: 4px;
+  }
+
+  .role-legend {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .role-legend .row {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+  }
+  .role-legend .sw {
+    width: 8px; height: 8px; border-radius: 9999px;
+    display: inline-block;
+    justify-self: center;
+  }
+  .role-legend .nm { font-weight: 500; }
+  .role-legend .ct {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-3);
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .role-legend .sub {
+    grid-column: 2 / -1;
+    font-size: 11.5px;
+    color: var(--ink-4);
+    margin-top: -4px;
+    margin-bottom: 2px;
+  }
+
+  /* Webhooks list */
+  .hooks { display: flex; flex-direction: column; gap: 10px; }
+  .hook {
+    display: grid;
+    grid-template-columns: 16px 1fr auto;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--card);
+  }
+  .hook .status-dot { width: 8px; height: 8px; border-radius: 9999px; background: var(--green); justify-self: center; }
+  .hook .status-dot.off { background: var(--ink-4); }
+  .hook .status-dot.fail { background: var(--red); }
+  .hook .ttl { font-size: 13px; font-weight: 500; color: var(--ink); }
+  .hook .sub { font-size: 11.5px; color: var(--ink-3); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+  .hook .sub .mut { color: var(--ink-4); }
+  .hook .meta {
+    text-align: right;
+    font-size: 11.5px;
+    color: var(--ink-3);
+  }
+  .hook .meta .big {
+    font-size: 13px; color: var(--ink); font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .hook .meta.fail .big { color: var(--red); }
+
+  /* ---------- Audit log ---------- */
+  .audit-wrap {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--card);
+    overflow: hidden;
+  }
+  .toolbar {
+    padding: 14px 18px;
+    display: flex; align-items: center; gap: 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .search {
+    flex: 1;
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: var(--bg);
+    border: 1px solid transparent;
+    max-width: 360px;
+  }
+  .search svg { width: 14px; height: 14px; color: var(--ink-4); flex-shrink: 0; }
+  .search input {
+    flex: 1;
+    border: 0; background: transparent; outline: 0;
+    font-family: inherit; font-size: 13px;
+    color: var(--ink);
+  }
+  .search input::placeholder { color: var(--ink-4); }
+  .filter-select {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    font-size: 12.5px;
+    color: var(--ink-2);
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .filter-select svg { width: 13px; height: 13px; color: var(--ink-4); }
+  .toolbar .meta {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+  .toolbar .meta strong { color: var(--ink); font-weight: 600; }
+
+  .audit-stream {
+    max-height: 520px;
+    overflow-y: auto;
+  }
+  .audit-row {
+    display: grid;
+    grid-template-columns: 20px 120px 1fr 180px;
+    align-items: start;
+    gap: 16px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--line-2);
+    font-size: 13px;
+  }
+  .audit-row:last-child { border-bottom: 0; }
+  .audit-row:hover { background: var(--bg); }
+  .audit-row .icon {
+    width: 20px; height: 20px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink-3);
+    background: var(--line-2);
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .audit-row .icon svg { width: 12px; height: 12px; }
+  .audit-row.danger .icon { background: var(--red-soft); color: var(--red); }
+  .audit-row.warn .icon   { background: var(--amber-soft); color: var(--amber); }
+  .audit-row.ok .icon     { background: var(--green-soft); color: var(--green); }
+  .audit-row.info .icon   { background: var(--blue-soft); color: var(--blue); }
+  .audit-row .when {
+    font-size: 12px;
+    color: var(--ink-3);
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+  }
+  .audit-row .when .abs { color: var(--ink-4); display: block; font-size: 10.5px; margin-top: 2px; }
+  .audit-row .action {
+    color: var(--ink);
+    font-weight: 450;
+    line-height: 1.5;
+  }
+  .audit-row .action strong { font-weight: 600; }
+  .audit-row .action .obj {
+    color: var(--ink-2);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: var(--line-2);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .audit-row .who {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12.5px; color: var(--ink-2);
+    text-align: left;
+  }
+  .avatar-sm {
+    width: 22px; height: 22px;
+    border-radius: 9999px;
+    background: var(--line-2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9.5px; font-weight: 600;
+    color: var(--ink-2);
+    flex-shrink: 0;
+  }
+  .audit-row .who .em {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    color: var(--ink-4);
+    margin-top: 2px;
+  }
+
+  .pager {
+    padding: 12px 18px;
+    border-top: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12.5px; color: var(--ink-3);
+    background: var(--bg);
+  }
+  .pager .nums { display: flex; gap: 2px; }
+  .pager button {
+    font-family: inherit;
+    height: 28px; min-width: 28px; padding: 0 8px;
+    border-radius: 6px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--ink-3);
+    font-size: 12.5px; font-weight: 500;
+    cursor: pointer;
+  }
+  .pager button:hover:not(:disabled) { background: var(--card); border-color: var(--line); color: var(--ink); }
+  .pager button.sel { background: var(--ink); color: white; border-color: var(--ink); }
+  .pager button:disabled { opacity: 0.35; cursor: default; }
+  .pager .edge { display: inline-flex; align-items: center; justify-content: center; }
+  .pager .edge svg { width: 14px; height: 14px; }
+
+  /* footnote */
+  .footnote {
+    margin-top: 56px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-4);
+    display: flex; justify-content: space-between; gap: 24px;
+    line-height: 1.5;
+  }
+  .footnote .mono-inline { font-family: 'JetBrains Mono', monospace; color: var(--ink-3); }
+
+  /* tweaks panel */
+  #tweaks-panel {
+    position: fixed;
+    right: 20px; bottom: 20px;
+    width: 260px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 20px 40px -15px rgba(0,0,0,0.15);
+    padding: 14px 16px 16px;
+    font-size: 12px;
+    display: none; z-index: 50;
+  }
+  #tweaks-panel.on { display: block; }
+  #tweaks-panel h4 {
+    margin: 0 0 12px; font-size: 11px; font-weight: 600;
+    color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  #tweaks-panel label {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 6px 0; color: var(--ink-2); font-weight: 500;
+  }
+  #tweaks-panel .options { display: flex; gap: 4px; }
+  #tweaks-panel .options button {
+    flex: 1; padding: 4px 8px;
+    border: 1px solid var(--line); background: var(--card);
+    border-radius: 5px; font-size: 11px; font-family: inherit;
+    cursor: pointer; color: var(--ink-3);
+  }
+  #tweaks-panel .options button.sel { background: var(--ink); border-color: var(--ink); color: white; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ============ Sidebar ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">s</div>
+      <div class="brand-text">
+        <span class="t1">simple·hris</span>
+        <span class="t2">Admin</span>
+      </div>
+    </div>
+
+    <p class="nav-label">System</p>
+    <nav class="nav">
+      <a class="active"><i data-lucide="layout-dashboard"></i>Overview</a>
+      <a><i data-lucide="user-cog"></i>Roles &amp; permissions<span class="count">14</span></a>
+      <a><i data-lucide="users"></i>Employees<span class="count">156</span></a>
+      <a><i data-lucide="webhook"></i>Webhooks<span class="count alert">1</span></a>
+    </nav>
+
+    <div class="nav-divider"></div>
+
+    <p class="nav-label">Security</p>
+    <nav class="nav">
+      <a><i data-lucide="shield-check"></i>Audit log</a>
+      <a><i data-lucide="key-round"></i>API tokens</a>
+      <a><i data-lucide="database"></i>Backups</a>
+    </nav>
+
+    <div class="nav-divider"></div>
+
+    <nav class="nav">
+      <a><i data-lucide="settings"></i>System settings</a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="avatar">IC</div>
+      <div>
+        <div class="nm">Isabel Cruz</div>
+        <div class="rl">Admin · root</div>
+      </div>
+      <span class="menu"><i data-lucide="more-horizontal" style="width:16px;height:16px;"></i></span>
+    </div>
+  </aside>
+
+  <!-- ============ Main ============ -->
+  <main>
+
+    <!-- Top meta -->
+    <div class="top-meta">
+      <div class="crumb">
+        <span>Admin</span>
+        <span class="sep">/</span>
+        <strong>Overview</strong>
+      </div>
+      <div class="actions">
+        <button class="pill ghost"><i data-lucide="activity"></i>All systems operational</button>
+        <button class="pill"><i data-lucide="download"></i>Export audit (30d)</button>
+        <button class="pill primary"><i data-lucide="user-plus"></i>Invite admin</button>
+      </div>
+    </div>
+
+    <!-- Hero -->
+    <section class="hero">
+      <div>
+        <p class="hero-greet">Good morning, <strong>Isabel</strong>.</p>
+        <p class="hero-label"><span class="heartbeat"></span>System health · last 24h</p>
+        <div class="hero-amount"><span class="status">Healthy</span></div>
+        <p class="hero-sub">
+          <span><strong>156</strong> employees on record</span>
+          <span class="dot-sep">·</span>
+          <span><strong>14</strong> admins &amp; staff with elevated roles</span>
+          <span class="dot-sep">·</span>
+          <span>uptime <strong>99.98%</strong></span>
+        </p>
+      </div>
+      <div class="hero-right">
+        <div class="period">Reporting window · <strong>last 24 hours</strong></div>
+        <div class="sys-summary">
+          <div class="k"><i data-lucide="database"></i>Database</div>
+          <div class="v ok">Connected</div>
+          <div class="k"><i data-lucide="webhook"></i>Webhooks (1 of 2)</div>
+          <div class="v warn">1 failing</div>
+          <div class="k"><i data-lucide="cloud-upload"></i>Last backup</div>
+          <div class="v">2h 14m ago</div>
+          <div class="k"><i data-lucide="git-commit"></i>Build</div>
+          <div class="v mono">v2.14.3 · 4d</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Attention row -->
+    <section class="attention">
+
+      <div class="att-card danger">
+        <div class="att-head">
+          <span><i data-lucide="webhook" style="vertical-align:-2px;margin-right:5px;"></i>Webhook failing</span>
+          <span class="tag" style="background:#fff;color:var(--red);">since 1h 42m</span>
+        </div>
+        <div class="att-value">1 <span class="unit">endpoint</span></div>
+        <p class="att-sub"><strong>paystub_dispatch</strong> returned <span class="mono" style="color:var(--red);font-weight:500;">502</span> on last 3 retries</p>
+        <div class="att-cta">Check webhook <i data-lucide="arrow-right"></i></div>
+      </div>
+
+      <div class="att-card warn">
+        <div class="att-head">
+          <span><i data-lucide="shield-alert" style="vertical-align:-2px;margin-right:5px;"></i>Needs review</span>
+          <span class="tag" style="background:#fff;color:var(--amber);">audit flag</span>
+        </div>
+        <div class="att-value">3 <span class="unit">anomalies</span></div>
+        <p class="att-sub"><strong>2</strong> bulk rate edits · <strong>1</strong> sign-in from new IP</p>
+        <div class="att-cta">Review flags <i data-lucide="arrow-right"></i></div>
+      </div>
+
+      <div class="att-card">
+        <div class="att-head">
+          <span><i data-lucide="user-cog" style="vertical-align:-2px;margin-right:5px;"></i>Access requests</span>
+          <span class="tag" style="background:var(--line-2);color:var(--ink-3);">this week</span>
+        </div>
+        <div class="att-value">2 <span class="unit">pending</span></div>
+        <p class="att-sub"><strong>2</strong> role upgrades awaiting your approval</p>
+        <div class="att-cta">Open requests <i data-lucide="arrow-right"></i></div>
+      </div>
+
+    </section>
+
+    <!-- Roles + Webhooks two-up -->
+    <section class="section">
+      <div class="two-col">
+
+        <!-- Roles -->
+        <div>
+          <div class="section-head">
+            <h2 class="section-title">Who has elevated access</h2>
+            <span class="section-sub"><a>Manage roles →</a></span>
+          </div>
+          <div class="roles-block">
+            <div class="donut">
+              <svg viewBox="0 0 36 36" id="roles-donut"></svg>
+              <div class="donut-center">
+                <span class="num">14</span>
+                <span class="lab">elevated</span>
+              </div>
+            </div>
+            <div class="role-legend" id="role-legend"></div>
+          </div>
+        </div>
+
+        <!-- Webhooks -->
+        <div>
+          <div class="section-head">
+            <h2 class="section-title">Webhooks &amp; integrations</h2>
+            <span class="section-sub"><a>Configure →</a></span>
+          </div>
+          <div class="hooks">
+            <div class="hook">
+              <span class="status-dot fail"></span>
+              <div>
+                <div class="ttl">Paystub dispatch</div>
+                <div class="sub">n8n · <span class="mut">https://n8n.internal/hooks/paystub</span></div>
+              </div>
+              <div class="meta fail">
+                <div class="big">502</div>
+                <div>3 fails · 1h ago</div>
+              </div>
+            </div>
+            <div class="hook">
+              <span class="status-dot"></span>
+              <div>
+                <div class="ttl">Hubstaff sync</div>
+                <div class="sub">webhook · <span class="mut">https://simplehris.ph/api/hubstaff</span></div>
+              </div>
+              <div class="meta">
+                <div class="big">200</div>
+                <div>42 calls · 4m ago</div>
+              </div>
+            </div>
+            <div class="hook">
+              <span class="status-dot off"></span>
+              <div>
+                <div class="ttl">Slack notifications</div>
+                <div class="sub">webhook · <span class="mut">not configured</span></div>
+              </div>
+              <div class="meta">
+                <div class="big" style="color:var(--ink-4);">—</div>
+                <div>disabled</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Audit log -->
+    <section class="section">
+      <div class="section-head">
+        <h2 class="section-title">Recent activity</h2>
+        <span class="section-sub">Audit log · last 24h</span>
+      </div>
+
+      <div class="audit-wrap">
+        <div class="toolbar">
+          <div class="search">
+            <i data-lucide="search"></i>
+            <input type="text" placeholder="Search actor, action, or resource…" />
+          </div>
+          <button class="filter-select">All actions <i data-lucide="chevron-down"></i></button>
+          <button class="filter-select">Any actor <i data-lucide="chevron-down"></i></button>
+          <button class="filter-select">Last 24h <i data-lucide="chevron-down"></i></button>
+          <div class="meta"><strong>248</strong> events today</div>
+        </div>
+
+        <div class="audit-stream" id="audit-stream"></div>
+
+        <div class="pager">
+          <div>Showing <strong style="color:var(--ink);font-weight:500;">1–10</strong> of 248</div>
+          <div class="nums">
+            <button class="edge" disabled><i data-lucide="chevrons-left"></i></button>
+            <button class="edge" disabled><i data-lucide="chevron-left"></i></button>
+            <button class="sel">1</button>
+            <button>2</button>
+            <button>3</button>
+            <button>…</button>
+            <button>25</button>
+            <button class="edge"><i data-lucide="chevron-right"></i></button>
+            <button class="edge"><i data-lucide="chevrons-right"></i></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="footnote">
+      <div>Audit log retained <span style="color:var(--ink-3);">180 days</span> · <span class="mono-inline">audit_log</span> · synced 12s ago</div>
+      <div>All times · Asia/Manila · build <span class="mono-inline">v2.14.3</span></div>
+    </div>
+
+  </main>
+</div>
+
+<div id="tweaks-panel">
+  <h4>Tweaks</h4>
+  <label>Accent
+    <div class="options" data-key="accent">
+      <button data-v="mono" class="sel">Mono</button>
+      <button data-v="orange">Orange</button>
+      <button data-v="indigo">Indigo</button>
+    </div>
+  </label>
+  <label>Density
+    <div class="options" data-key="density">
+      <button data-v="airy" class="sel">Airy</button>
+      <button data-v="tight">Tight</button>
+    </div>
+  </label>
+  <label>Show attention row
+    <div class="options" data-key="attention">
+      <button data-v="on" class="sel">On</button>
+      <button data-v="off">Off</button>
+    </div>
+  </label>
+</div>
+
+<script>
+  // ------- Roles donut -------
+  const roles = [
+    { key: 'admin',                label: 'Admin',               count: 3, blurb: 'Full system access',             color: '#18181b' },
+    { key: 'payroll_manager',      label: 'Payroll Manager',     count: 2, blurb: 'Edit rates · dispatch payroll', color: '#ea580c' },
+    { key: 'finance',              label: 'Finance / Accounting',count: 2, blurb: 'Accounting dashboard',          color: '#1d4ed8' },
+    { key: 'payroll_coordinator',  label: 'Payroll Coordinator', count: 3, blurb: 'CSV upload · pre-flight',       color: '#6d28d9' },
+    { key: 'hr_coordinator',       label: 'HR Coordinator',      count: 2, blurb: 'Edit employee profiles',        color: '#047857' },
+    { key: 'viewer',               label: 'Viewer',              count: 2, blurb: 'Read-only dashboards',          color: '#a1a1aa' },
+  ];
+  const total = roles.reduce((s,r) => s + r.count, 0);
+  const donut = document.getElementById('roles-donut');
+  // background ring
+  donut.innerHTML = `<circle cx="18" cy="18" r="15.915" fill="none" stroke="var(--line)" stroke-width="3"/>`;
+  let offset = 0;
+  roles.forEach(r => {
+    const pct = (r.count / total) * 100;
+    donut.insertAdjacentHTML('beforeend', `
+      <circle cx="18" cy="18" r="15.915" fill="none"
+        stroke="${r.color}" stroke-width="3"
+        stroke-dasharray="${pct} ${100 - pct}"
+        stroke-dashoffset="${-offset}" />
+    `);
+    offset += pct;
+  });
+  // legend
+  const legend = document.getElementById('role-legend');
+  roles.forEach(r => {
+    legend.insertAdjacentHTML('beforeend', `
+      <div class="row">
+        <span class="sw" style="background:${r.color}"></span>
+        <span class="nm">${r.label}</span>
+        <span class="ct">${r.count}</span>
+        <span class="sub">${r.blurb}</span>
+      </div>
+    `);
+  });
+
+  // ------- Audit stream -------
+  const events = [
+    { kind: 'danger', icon: 'x-octagon',       when: '2m ago',  abs: '09:41',        msg: 'Webhook <strong>paystub_dispatch</strong> returned <span class="obj">502</span> on retry',                                   who: 'System',         em: 'system@simple-hris',          initials: 'SY' },
+    { kind: 'warn',   icon: 'user-check',      when: '14m ago', abs: '09:29',        msg: 'Role upgraded · <strong>Paolo Villanueva</strong> <span class="obj">hr_coordinator → payroll_coordinator</span>',           who: 'Isabel Cruz',    em: 'isabel.cruz@simplehris.ph',   initials: 'IC' },
+    { kind: 'info',   icon: 'upload',          when: '27m ago', abs: '09:16',        msg: 'CSV <strong>replaced</strong> <span class="obj">hubstaff_2026-03-24_to_03-30.csv</span> · 142 rows',                         who: 'Angela Kwan',    em: 'angela.kwan@simplehris.ph',   initials: 'AK' },
+    { kind: 'warn',   icon: 'log-in',          when: '48m ago', abs: '08:55',        msg: 'Sign-in from new IP · <span class="obj">103.215.44.18</span> · Manila, PH',                                                  who: 'Angela Kwan',    em: 'angela.kwan@simplehris.ph',   initials: 'AK' },
+    { kind: 'ok',     icon: 'shield-check',    when: '1h ago',  abs: '08:41',        msg: 'Backup completed · <span class="obj">pg_dump_2026-03-30_08.sql.gz</span> · 284 MB',                                         who: 'System',         em: 'cron@simple-hris',            initials: 'SY' },
+    { kind: 'info',   icon: 'pencil',          when: '1h ago',  abs: '08:30',        msg: 'Rates updated · <strong>Maria Reyes</strong> → <span class="obj">₱310 reg / ₱465 OT</span>',                                who: 'Angela Kwan',    em: 'angela.kwan@simplehris.ph',   initials: 'AK' },
+    { kind: 'info',   icon: 'toggle-right',    when: '2h ago',  abs: '07:40',        msg: 'Rule toggled · <span class="obj">ot.global.suspended → off</span>',                                                          who: 'Isabel Cruz',    em: 'isabel.cruz@simplehris.ph',   initials: 'IC' },
+    { kind: 'warn',   icon: 'users',           when: '3h ago',  abs: '06:50',        msg: 'Bulk rate edit · <strong>12 employees</strong> in <span class="obj">Accounting</span>',                                      who: 'Isabel Cruz',    em: 'isabel.cruz@simplehris.ph',   initials: 'IC' },
+    { kind: 'info',   icon: 'webhook',         when: '5h ago',  abs: '04:12',        msg: 'Webhook enabled · <span class="obj">hubstaff_sync</span>',                                                                   who: 'Isabel Cruz',    em: 'isabel.cruz@simplehris.ph',   initials: 'IC' },
+    { kind: 'ok',     icon: 'user-plus',       when: '8h ago',  abs: 'Yesterday',    msg: 'Employee added · <strong>Bea Dimaculangan</strong> <span class="obj">EMP-0571</span>',                                      who: 'Juan Dela Cruz', em: 'juan.delacruz@simplehris.ph', initials: 'JD' },
+  ];
+  const stream = document.getElementById('audit-stream');
+  events.forEach(e => {
+    stream.insertAdjacentHTML('beforeend', `
+      <div class="audit-row ${e.kind}">
+        <span class="icon"><i data-lucide="${e.icon}"></i></span>
+        <div class="when">${e.when}<span class="abs">${e.abs}</span></div>
+        <div class="action">${e.msg}</div>
+        <div class="who">
+          <span class="avatar-sm">${e.initials}</span>
+          <div>
+            <span>${e.who}</span>
+            <span class="em">${e.em}</span>
+          </div>
+        </div>
+      </div>
+    `);
+  });
+
+  lucide.createIcons();
+
+  // ------- Tweaks -------
+  const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "accent": "mono",
+    "density": "airy",
+    "attention": "on"
+  }/*EDITMODE-END*/;
+  const state = { ...TWEAK_DEFAULTS };
+
+  function applyTweaks() {
+    const accents = { orange: '#ea580c', indigo: '#4f46e5', mono: '#18181b' };
+    const a = accents[state.accent] || accents.mono;
+    document.documentElement.style.setProperty('--orange', a);
+    document.querySelector('.brand-mark').style.background = a;
+
+    const main = document.querySelector('main');
+    if (state.density === 'tight') {
+      main.style.padding = '32px 40px 56px';
+      document.querySelectorAll('.section').forEach(s => s.style.marginTop = '36px');
+      document.querySelector('.attention').style.marginBottom = '36px';
+    } else {
+      main.style.padding = '48px 56px 72px';
+      document.querySelectorAll('.section').forEach(s => s.style.marginTop = '');
+      document.querySelector('.attention').style.marginBottom = '';
+    }
+    document.querySelector('.attention').style.display = state.attention === 'off' ? 'none' : '';
+  }
+  applyTweaks();
+
+  document.querySelectorAll('#tweaks-panel .options').forEach(group => {
+    const key = group.dataset.key;
+    group.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      state[key] = btn.dataset.v;
+      group.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b === btn));
+      applyTweaks();
+      try { window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { [key]: state[key] } }, '*'); } catch {}
+    });
+  });
+
+  window.addEventListener('message', e => {
+    if (e.data?.type === '__activate_edit_mode') document.getElementById('tweaks-panel').classList.add('on');
+    else if (e.data?.type === '__deactivate_edit_mode') document.getElementById('tweaks-panel').classList.remove('on');
+  });
+  try { window.parent.postMessage({ type: '__edit_mode_available' }, '*'); } catch {}
+</script>
+</body>
+</html>

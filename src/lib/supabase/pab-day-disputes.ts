@@ -16,25 +16,10 @@ export type PabDayDisputeRow = {
   decided_at: string | null;
   decision_note: string | null;
   override_hours: number | null;
-  first_approved_by: string | null;
-  first_approved_at: string | null;
-  first_approved_note: string | null;
-  first_approved_override_hours: number | null;
   created_at: string;
   created_by: string | null;
   updated_at: string;
 };
-
-export const DISPUTE_APPROVERS: readonly string[] = [
-  'carla@simple.biz',
-  'franm@simple.biz',
-];
-
-export function isDisputeApprover(email: string | null | undefined): boolean {
-  if (!email) return false;
-  const e = email.trim().toLowerCase();
-  return DISPUTE_APPROVERS.includes(e);
-}
 
 export const DISPUTE_ACTOR_ROLES: readonly string[] = [
   'payroll_coordinator',
@@ -44,20 +29,45 @@ export const DISPUTE_ACTOR_ROLES: readonly string[] = [
   'admin',
 ];
 
+async function fetchActiveRoles(email: string): Promise<string[]> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('employee_roles')
+    .select('role')
+    .ilike('work_email', email)
+    .is('revoked_at', null);
+  if (error || !data) return [];
+  return (data as { role: string }[]).map((r) => r.role);
+}
+
 export async function canActOnDisputes(email: string | null | undefined): Promise<boolean> {
   if (!email) return false;
   const e = email.trim().toLowerCase();
   if (!e) return false;
-  if (DISPUTE_APPROVERS.includes(e)) return true;
-  const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return false;
-  const { data, error } = await supabase
-    .from('employee_roles')
-    .select('role')
-    .ilike('work_email', e)
-    .is('revoked_at', null);
-  if (error || !data) return false;
-  return data.some((r) => DISPUTE_ACTOR_ROLES.includes((r as { role: string }).role));
+  const roles = await fetchActiveRoles(e);
+  return roles.some((r) => DISPUTE_ACTOR_ROLES.includes(r));
+}
+
+/**
+ * Returns the primary active role for the given email, or a sensible default.
+ * Priority order favours higher-privilege roles first so the audit log tag
+ * reflects the decision-making authority the user acted under.
+ */
+export async function resolveUserRole(
+  email: string | null | undefined,
+  fallback: string = 'Employee',
+): Promise<string> {
+  if (!email) return fallback;
+  const e = email.trim().toLowerCase();
+  if (!e) return fallback;
+  const roles = await fetchActiveRoles(e);
+  if (roles.length === 0) return fallback;
+  const priority = ['admin', 'finance', 'payroll_manager', 'payroll_coordinator', 'hr_coordinator'];
+  for (const p of priority) {
+    if (roles.includes(p)) return p;
+  }
+  return roles[0];
 }
 
 export type PabDisputeReasonCode = {
@@ -158,18 +168,22 @@ export async function createDispute(params: {
 
   const id = (data as { id: string } | null)?.id ?? null;
 
-  void insertAuditLog({
-    user_name: params.created_by ?? email,
-    user_role: 'Employee',
-    action: 'pab_dispute.submitted',
-    resource: TABLE,
-    resource_id: id ?? undefined,
-    details: {
-      employee: email,
-      dispute_date: params.dispute_date,
-      reason: params.reason,
-    },
-  });
+  const submitter = params.created_by?.trim() || email;
+  void (async () => {
+    const role = await resolveUserRole(submitter, 'Employee');
+    await insertAuditLog({
+      user_name: submitter,
+      user_role: role,
+      action: 'pab_dispute.submitted',
+      resource: TABLE,
+      resource_id: id ?? undefined,
+      details: {
+        employee: email,
+        dispute_date: params.dispute_date,
+        reason: params.reason,
+      },
+    });
+  })();
 
   return { id, error: null };
 }
@@ -198,8 +212,9 @@ export async function decideDispute(
   if (row.status !== 'pending') return { error: 'Dispute is no longer pending' };
 
   const nowIso = new Date().toISOString();
+  // 0 is a valid SET override (zero-out the day). Only null/negative/undefined means "no override".
   const proposedOverride =
-    params.override_hours != null && params.override_hours > 0 ? params.override_hours : null;
+    params.override_hours != null && params.override_hours >= 0 ? params.override_hours : null;
 
   const { error } = await supabase.from(TABLE).update({
     status: params.status,
@@ -211,61 +226,25 @@ export async function decideDispute(
   }).eq('id', id);
   if (error) return { error: error.message };
 
-  void insertAuditLog({
-    user_name: approver,
-    user_role: 'Admin',
-    action: params.status === 'approved' ? 'pab_dispute.approved' : 'pab_dispute.denied',
-    resource: TABLE,
-    resource_id: id,
-    details: {
-      employee: row.work_email,
-      dispute_date: row.dispute_date,
-      reason: row.reason,
-      decided_by: approver,
-      decision_note: params.decision_note ?? null,
-      override_hours: params.status === 'approved' ? proposedOverride : null,
-    },
-  });
+  void (async () => {
+    const role = await resolveUserRole(approverLower, 'Admin');
+    await insertAuditLog({
+      user_name: approver,
+      user_role: role,
+      action: params.status === 'approved' ? 'pab_dispute.approved' : 'pab_dispute.denied',
+      resource: TABLE,
+      resource_id: id,
+      details: {
+        employee: row.work_email,
+        dispute_date: row.dispute_date,
+        reason: row.reason,
+        decided_by: approver,
+        decision_note: params.decision_note ?? null,
+        override_hours: params.status === 'approved' ? proposedOverride : null,
+      },
+    });
+  })();
   return { error: null, stage: 'final' };
-}
-
-export async function revokeFirstApproval(
-  id: string,
-  params: { revoked_by: string },
-): Promise<{ error: string | null }> {
-  const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { error: 'Supabase not configured' };
-
-  const actor = params.revoked_by.trim();
-  if (!(await canActOnDisputes(actor.toLowerCase()))) {
-    return { error: 'Not authorized' };
-  }
-
-  const { row, error: fetchErr } = await getDisputeById(id);
-  if (fetchErr) return { error: fetchErr };
-  if (!row) return { error: 'Dispute not found' };
-  if (row.status !== 'pending' || !row.first_approved_by) {
-    return { error: 'No first approval to revoke' };
-  }
-  if (row.first_approved_by.trim().toLowerCase() !== actor.toLowerCase()) {
-    return { error: 'Only the first approver can revoke their own vote' };
-  }
-
-  const { error } = await supabase.from(TABLE).update({
-    first_approved_by: null,
-    first_approved_at: null,
-    first_approved_note: null,
-    first_approved_override_hours: null,
-    updated_at: new Date().toISOString(),
-  }).eq('id', id);
-  if (error) return { error: error.message };
-
-  void insertAuditLog({
-    user_name: actor, user_role: 'Admin', action: 'pab_dispute.approval_revoked',
-    resource: TABLE, resource_id: id,
-    details: { employee: row.work_email, dispute_date: row.dispute_date, revoked_by: actor },
-  });
-  return { error: null };
 }
 
 export async function editDisputeDecision(
@@ -280,7 +259,8 @@ export async function editDisputeDecision(
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { error: 'Supabase not configured' };
 
-  if (!(await canActOnDisputes(params.decided_by.trim().toLowerCase()))) {
+  const editorLower = params.decided_by.trim().toLowerCase();
+  if (!(await canActOnDisputes(editorLower))) {
     return { error: 'Not authorized — only Accounting roles can edit dispute decisions' };
   }
 
@@ -291,8 +271,9 @@ export async function editDisputeDecision(
 
   const nowIso = new Date().toISOString();
   const editor = params.decided_by.trim();
+  // 0 is a valid SET override (zero-out the day). Only null/negative/undefined means "no override".
   const newOverride =
-    params.status === 'approved' && params.override_hours != null && params.override_hours > 0
+    params.status === 'approved' && params.override_hours != null && params.override_hours >= 0
       ? params.override_hours
       : null;
 
@@ -310,30 +291,33 @@ export async function editDisputeDecision(
 
   if (error) return { error: error.message };
 
-  void insertAuditLog({
-    user_name: editor,
-    user_role: 'Admin',
-    action: 'pab_dispute.edited',
-    resource: TABLE,
-    resource_id: id,
-    details: {
-      employee: row.work_email,
-      dispute_date: row.dispute_date,
-      reason: row.reason,
-      previous: {
-        status: row.status,
-        override_hours: row.override_hours,
-        decision_note: row.decision_note,
-        decided_by: row.decided_by,
+  void (async () => {
+    const role = await resolveUserRole(editorLower, 'Admin');
+    await insertAuditLog({
+      user_name: editor,
+      user_role: role,
+      action: 'pab_dispute.edited',
+      resource: TABLE,
+      resource_id: id,
+      details: {
+        employee: row.work_email,
+        dispute_date: row.dispute_date,
+        reason: row.reason,
+        previous: {
+          status: row.status,
+          override_hours: row.override_hours,
+          decision_note: row.decision_note,
+          decided_by: row.decided_by,
+        },
+        next: {
+          status: params.status,
+          override_hours: newOverride,
+          decision_note: params.decision_note ?? null,
+          decided_by: editor,
+        },
       },
-      next: {
-        status: params.status,
-        override_hours: newOverride,
-        decision_note: params.decision_note ?? null,
-        decided_by: editor,
-      },
-    },
-  });
+    });
+  })();
 
   return { error: null };
 }
@@ -366,47 +350,36 @@ export async function adminCreateOrphanageVisit(params: {
     updated_at: nowIso,
   };
 
-  const { data: existing } = await supabase
+  // Atomic upsert on the unique (work_email, dispute_date) index — avoids the
+  // TOCTOU race two concurrent admins could previously trigger with check-then-insert.
+  const { data, error } = await supabase
     .from(TABLE)
-    .select('id, status')
-    .eq('work_email', email)
-    .eq('dispute_date', params.visit_date)
-    .maybeSingle();
+    .upsert(payload, { onConflict: 'work_email,dispute_date' })
+    .select('id')
+    .single();
 
-  let id: string | null = null;
-  if (existing) {
-    const { error } = await supabase
-      .from(TABLE)
-      .update(payload)
-      .eq('id', (existing as { id: string }).id);
-    if (error) return { id: null, error: error.message };
-    id = (existing as { id: string }).id;
-  } else {
-    const { data, error } = await supabase
-      .from(TABLE)
-      .insert(payload)
-      .select('id')
-      .single();
-    if (error) return { id: null, error: error.message };
-    id = (data as { id: string } | null)?.id ?? null;
-  }
+  if (error) return { id: null, error: error.message };
+  const id = (data as { id: string } | null)?.id ?? null;
 
-  void insertAuditLog({
-    user_name: admin,
-    user_role: 'Admin',
-    action: 'pab_dispute.approved',
-    resource: TABLE,
-    resource_id: id ?? undefined,
-    details: {
-      employee: email,
-      dispute_date: params.visit_date,
-      reason: 'orphanage_visit',
-      status: 'approved',
-      decided_by: admin,
-      decision_note: note,
-      source: 'admin_orphanage_roster',
-    },
-  });
+  void (async () => {
+    const role = await resolveUserRole(admin, 'Admin');
+    await insertAuditLog({
+      user_name: admin,
+      user_role: role,
+      action: 'pab_dispute.approved',
+      resource: TABLE,
+      resource_id: id ?? undefined,
+      details: {
+        employee: email,
+        dispute_date: params.visit_date,
+        reason: 'orphanage_visit',
+        status: 'approved',
+        decided_by: admin,
+        decision_note: note,
+        source: 'admin_orphanage_roster',
+      },
+    });
+  })();
 
   return { id, error: null };
 }
@@ -426,19 +399,22 @@ export async function adminDeleteOrphanageVisit(
   const { error } = await supabase.from(TABLE).delete().eq('id', id);
   if (error) return { error: error.message };
 
-  void insertAuditLog({
-    user_name: params.admin_name,
-    user_role: 'Admin',
-    action: 'pab_dispute.withdrawn',
-    resource: TABLE,
-    resource_id: id,
-    details: {
-      employee: row.work_email,
-      dispute_date: row.dispute_date,
-      reason: 'orphanage_visit',
-      source: 'admin_orphanage_roster',
-    },
-  });
+  void (async () => {
+    const role = await resolveUserRole(params.admin_name, 'Admin');
+    await insertAuditLog({
+      user_name: params.admin_name,
+      user_role: role,
+      action: 'pab_dispute.withdrawn',
+      resource: TABLE,
+      resource_id: id,
+      details: {
+        employee: row.work_email,
+        dispute_date: row.dispute_date,
+        reason: 'orphanage_visit',
+        source: 'admin_orphanage_roster',
+      },
+    });
+  })();
 
   return { error: null };
 }
@@ -461,18 +437,21 @@ export async function withdrawDispute(
   const { error } = await supabase.from(TABLE).delete().eq('id', id);
   if (error) return { error: error.message };
 
-  void insertAuditLog({
-    user_name: em,
-    user_role: 'Employee',
-    action: 'pab_dispute.withdrawn',
-    resource: TABLE,
-    resource_id: id,
-    details: {
-      employee: row.work_email,
-      dispute_date: row.dispute_date,
-      reason: row.reason,
-    },
-  });
+  void (async () => {
+    const role = await resolveUserRole(em, 'Employee');
+    await insertAuditLog({
+      user_name: em,
+      user_role: role,
+      action: 'pab_dispute.withdrawn',
+      resource: TABLE,
+      resource_id: id,
+      details: {
+        employee: row.work_email,
+        dispute_date: row.dispute_date,
+        reason: row.reason,
+      },
+    });
+  })();
 
   return { error: null };
 }

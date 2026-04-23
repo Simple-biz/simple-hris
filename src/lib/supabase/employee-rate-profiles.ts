@@ -262,50 +262,133 @@ function finalizeProfileFields(rawFields: { key: string; value: unknown }[]): {
   return { fields, department, organization, primaryEmail, workEmail, personalEmail };
 }
 
-function rateGroupKey(row: RawRow, rowIndex: number): string {
-  const w = normEmail(toStr(getField(row, ["Work Email", "work_email", "Work_Email"])));
+function masterIdentityKey(master: RawRow): string | null {
+  const w = normEmail(toStr(getField(master, ["Work Email", "work_email", "Work_Email"])));
+  const p = normEmail(toStr(getField(master, ["Personal Email", "personal_email", "Personal_Email"])));
+  const n = normalizeName(toStr(getField(master, ["Name", "name"])));
+  if (w) return `master:${w}`;
+  if (p) return `master:${p}`;
+  if (n) return `master:${n}`;
+  return null;
+}
+
+function rateGroupKey(row: RawRow, rowIndex: number, master: RawRow | null = null): string {
+  const masterKey = master ? masterIdentityKey(master) : null;
+  if (masterKey) return masterKey;
   const p = normEmail(toStr(getField(row, ["Personal Email", "personal_email", "Personal_Email"])));
-  if (w) return `e:${w}`;
+  const w = normEmail(toStr(getField(row, ["Work Email", "work_email", "Work_Email"])));
   if (p) return `e:${p}`;
+  if (w) return `e:${w}`;
   return `row:${rowIndex}`;
 }
 
+function rowHasUsableRate(row: RawRow, keys: string[]): boolean {
+  return keys.some((key) => {
+    const v = getField(row, [key]);
+    return v !== undefined && v !== null && String(v).trim() !== "";
+  });
+}
+
+function rateRowPriority(row: RawRow, currentUploadId: string | null): number {
+  let score = 0;
+  const uploadId = toStr(getField(row, ["upload_id"]));
+  if (currentUploadId && uploadId === currentUploadId) score += 1000;
+  if (rowHasUsableRate(row, ["Regular Rate", "regular_rate", "Regular_Rate"])) score += 100;
+  if (rowHasUsableRate(row, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])) score += 50;
+  if (normEmail(toStr(getField(row, ["Personal Email", "personal_email", "Personal_Email"])))) {
+    score += 10;
+  }
+  if (normEmail(toStr(getField(row, ["Work Email", "work_email", "Work_Email"])))) {
+    score += 5;
+  }
+  return score;
+}
+
+/**
+ * Multi-value indexes: two master rows can legitimately share a work_email (dual-role
+ * employee listed in two departments). They are only the "same person" when their
+ * personal_email also matches. When two masters share work_email but have different
+ * personal_email, they are different humans (work_email was recycled after offboarding).
+ * The single-value map we used before silently collapsed these cases.
+ */
 function buildMasterIndexes(rows: RawRow[]): {
-  byEmail: Map<string, RawRow>;
-  byName: Map<string, RawRow>;
+  byEmail: Map<string, RawRow[]>;
+  byName: Map<string, RawRow[]>;
 } {
-  const byEmail = new Map<string, RawRow>();
-  const byName = new Map<string, RawRow>();
+  const byEmail = new Map<string, RawRow[]>();
+  const byName = new Map<string, RawRow[]>();
+  const push = <T>(map: Map<string, T[]>, key: string, val: T) => {
+    const list = map.get(key);
+    if (list) list.push(val);
+    else map.set(key, [val]);
+  };
   for (const row of rows) {
     const pe = normEmail(toStr(getField(row, ["Personal Email", "personal_email", "Personal_Email"])));
     const we = normEmail(toStr(getField(row, ["Work Email", "work_email", "Work_Email"])));
-    if (pe) byEmail.set(pe, row);
-    if (we) byEmail.set(we, row);
+    if (pe) push(byEmail, pe, row);
+    if (we) push(byEmail, we, row);
     const nn = normalizeName(toStr(getField(row, ["Name", "name"])));
-    if (nn) byName.set(nn, row);
+    if (nn) push(byName, nn, row);
   }
   return { byEmail, byName };
 }
 
+/**
+ * Picks the master row that a rate row belongs to.
+ *
+ *   1. Strong match: a candidate whose personal_email equals the rate's personal_email.
+ *   2. Otherwise: the first candidate (work_email match). We do NOT reject a candidate
+ *      just because its personal_email differs from the rate's — the rate CSV can
+ *      legitimately carry a different/updated personal_email for the same human.
+ *      Disambiguation only matters when two masters actually share a work_email,
+ *      and that case is handled by the strong-match pass above picking the right one.
+ *   3. Name fallback.
+ */
 function findMasterForMergedRates(
   mergedRates: RawRow,
-  byEmail: Map<string, RawRow>,
-  byName: Map<string, RawRow>,
+  byEmail: Map<string, RawRow[]>,
+  byName: Map<string, RawRow[]>,
 ): RawRow | null {
-  const emails = [
-    normEmail(toStr(getField(mergedRates, ["Work Email", "work_email", "Work_Email"]))),
-    normEmail(toStr(getField(mergedRates, ["Personal Email", "personal_email", "Personal_Email"]))),
-  ].filter((x): x is string => Boolean(x));
-  for (const e of emails) {
-    const m = byEmail.get(e);
-    if (m) return m;
+  const ratePersonal = normEmail(
+    toStr(getField(mergedRates, ["Personal Email", "personal_email", "Personal_Email"])),
+  );
+  const rateWork = normEmail(
+    toStr(getField(mergedRates, ["Work Email", "work_email", "Work_Email"])),
+  );
+
+  const candidates: RawRow[] = [];
+  const seen = new Set<RawRow>();
+  const pushCandidates = (email: string | null) => {
+    if (!email) return;
+    const list = byEmail.get(email);
+    if (!list) return;
+    for (const m of list) {
+      if (!seen.has(m)) {
+        seen.add(m);
+        candidates.push(m);
+      }
+    }
+  };
+  pushCandidates(rateWork);
+  pushCandidates(ratePersonal);
+
+  if (ratePersonal) {
+    for (const m of candidates) {
+      const mPersonal = normEmail(
+        toStr(getField(m, ["Personal Email", "personal_email", "Personal_Email"])),
+      );
+      if (mPersonal === ratePersonal) return m;
+    }
   }
+
+  if (candidates.length > 0) return candidates[0];
+
   const nn = normalizeName(
     toStr(getField(mergedRates, ["Name", "name", "Full Name", "full_name"])),
   );
   if (nn) {
-    const m = byName.get(nn);
-    if (m) return m;
+    const list = byName.get(nn);
+    if (list && list.length > 0) return list[0];
   }
   return null;
 }
@@ -339,9 +422,114 @@ async function fetchRawFromTable(table: string): Promise<{
   if (!isSafeTableName(table)) {
     return { rows: [], error: "Invalid table name" };
   }
-  const { data, error } = await supabase.from(table).select("*");
-  if (error) return { rows: [], error: error.message };
-  return { rows: (data ?? []) as RawRow[], error: null };
+  // Paginate — hubstaff_hours and similar tables easily exceed the 1000-row
+  // PostgREST default and would otherwise be silently truncated.
+  const PAGE = 1000;
+  const rows: RawRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .range(from, from + PAGE - 1);
+    if (error) return { rows: [], error: error.message };
+    const page = (data ?? []) as RawRow[];
+    rows.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+  return { rows, error: null };
+}
+
+async function getCurrentRatesUploadIdForProfiles(): Promise<string | null> {
+  const supabase =
+    createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("rates_uploads")
+    .select("id")
+    .eq("is_current", true)
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  return ((data as { id?: string } | null)?.id ?? null);
+}
+
+async function fetchRatesRowsForProfiles(
+  ratesTable: string,
+  _currentUploadId: string | null,
+): Promise<{ rows: RawRow[]; error: string | null }> {
+  const supabase =
+    createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return {
+      rows: [],
+      error:
+        "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env file.",
+    };
+  }
+  if (!isSafeTableName(ratesTable)) {
+    return { rows: [], error: "Invalid table name" };
+  }
+
+  // Paginate past PostgREST's 1000-row default so we don't lose rate rows
+  // when the table grows beyond that. Without pagination, profiles for
+  // employees whose rate rows sit past row 1000 silently showed "—".
+  const PAGE = 1000;
+  const rows: RawRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from(ratesTable)
+      .select("*")
+      .range(from, from + PAGE - 1);
+    if (error) return { rows: [], error: error.message };
+    const page = (data ?? []) as RawRow[];
+    rows.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+  return { rows, error: null };
+}
+
+/**
+ * Master list rows for the currently-active roster. Reads from the `active_employees`
+ * view (filters `global_master_list` down to rows whose `last_seen_upload_id` matches
+ * the current `master_list_uploads` entry). `masterTable` arg is retained for symmetry
+ * with callers that pass the configured table name, but we ignore it in favor of the view.
+ */
+async function fetchMasterRowsForProfiles(masterTable: string): Promise<{
+  rows: RawRow[];
+  error: string | null;
+}> {
+  const supabase =
+    createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return {
+      rows: [],
+      error:
+        "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env file.",
+    };
+  }
+  if (!isSafeTableName(masterTable)) {
+    return { rows: [], error: "Invalid table name" };
+  }
+  // Paginate — active_employees can grow past the 1000-row PostgREST default.
+  const PAGE = 1000;
+  const rows: RawRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("active_employees")
+      .select("*")
+      .range(from, from + PAGE - 1);
+    if (error) return { rows: [], error: error.message };
+    const page = (data ?? []) as RawRow[];
+    rows.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+  return { rows, error: null };
 }
 
 function parseExcludeTables(): Set<string> {
@@ -391,10 +579,16 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
 
   const mergeNotes: string[] = [];
   const byTable = new Map<string, RawRow[]>();
+  const currentRatesUploadId = await getCurrentRatesUploadIdForProfiles();
 
   const fetched = await Promise.all(
     tablesToFetch.map(async (t) => {
-      const res = await fetchRawFromTable(t);
+      const res =
+        t === ratesTable
+          ? await fetchRatesRowsForProfiles(t, currentRatesUploadId)
+          : t === masterTable
+            ? await fetchMasterRowsForProfiles(t)
+            : await fetchRawFromTable(t);
       return { t, res };
     }),
   );
@@ -415,6 +609,13 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
       mergeNotes,
     };
   }
+  if (currentRatesUploadId) {
+    mergeNotes.push(
+      `Using current rates upload: ${currentRatesUploadId} (historical rows kept as fallback when current batch is incomplete).`,
+    );
+  } else {
+    mergeNotes.push("No current rates_uploads row found; using all employee_hourly_rates rows.");
+  }
 
   const masterRaw = byTable.get(masterTable) ?? [];
   const { byEmail, byName } = buildMasterIndexes(masterRaw);
@@ -425,7 +626,8 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
 
   const groupMap = new Map<string, RawRow[]>();
   ratesRaw.forEach((row, i) => {
-    const k = rateGroupKey(row, i);
+    const master = findMasterForMergedRates(row, byEmail, byName);
+    const k = rateGroupKey(row, i, master);
     if (!groupMap.has(k)) groupMap.set(k, []);
     groupMap.get(k)!.push(row);
   });
@@ -448,7 +650,10 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
   };
 
   for (const [groupId, groupRows] of groupMap) {
-    const mergedRates = mergeRowsUniqueFieldOrder(groupRows);
+    const orderedGroupRows = [...groupRows].sort(
+      (a, b) => rateRowPriority(b, currentRatesUploadId) - rateRowPriority(a, currentRatesUploadId),
+    );
+    const mergedRates = mergeRowsUniqueFieldOrder(orderedGroupRows);
     const master = findMasterForMergedRates(mergedRates, byEmail, byName);
     if (master) matchedMasters.add(master);
     const identity = buildIdentity(mergedRates, master);
@@ -490,14 +695,100 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
     });
   }
 
-  // Second pass: include master-list employees who have no row in the rates
-  // table. Their rate fields stay null; other columns (department, emails,
-  // start date, etc.) come from master + extra tables.
+  // Build a rate-row lookup keyed by every email on each rate row. Used below to
+  // fill in rates for master rows that didn't "win" the byEmail collision
+  // (dual-role employees who share a work_email across two department rows, or
+  // recycled work_emails where two active humans share a seat email).
+  const rateRowsByEmail = new Map<string, RawRow[]>();
+  const pushRateByEmail = (email: string | null, r: RawRow) => {
+    if (!email) return;
+    const list = rateRowsByEmail.get(email);
+    if (list) list.push(r);
+    else rateRowsByEmail.set(email, [r]);
+  };
+  for (const rateRow of ratesRaw) {
+    const we = normEmail(toStr(getField(rateRow, ["Work Email", "work_email", "Work_Email"])));
+    const pe = normEmail(toStr(getField(rateRow, ["Personal Email", "personal_email", "Personal_Email"])));
+    pushRateByEmail(we, rateRow);
+    pushRateByEmail(pe, rateRow);
+  }
+
+  // Precompute: for each rate row that STRONGLY matches (personal_email match)
+  // any master row, the set of masters it strongly matches. Used in the second
+  // pass so rates with a clear owner don't leak to other masters — but rates
+  // without a clear owner still reach the single master who matches by work_email.
+  const rateToStrongMasters = new Map<RawRow, Set<RawRow>>();
+  for (const rateRow of ratesRaw) {
+    const rPersonal = normEmail(
+      toStr(getField(rateRow, ["Personal Email", "personal_email", "Personal_Email"])),
+    );
+    if (!rPersonal) continue;
+    const mastersWithEmail = byEmail.get(rPersonal);
+    if (!mastersWithEmail) continue;
+    let strongSet: Set<RawRow> | null = null;
+    for (const m of mastersWithEmail) {
+      const mPersonal = normEmail(
+        toStr(getField(m, ["Personal Email", "personal_email", "Personal_Email"])),
+      );
+      if (mPersonal === rPersonal) {
+        if (!strongSet) strongSet = new Set<RawRow>();
+        strongSet.add(m);
+      }
+    }
+    if (strongSet) rateToStrongMasters.set(rateRow, strongSet);
+  }
+
+  // Second pass: include master-list employees whose master row was not the
+  // "winner" in the first pass. Their rate fields now come from a direct
+  // email lookup against rateRowsByEmail, so dual-role + recycled-email
+  // employees still show their rate instead of falling through to "—".
   for (let i = 0; i < masterRaw.length; i++) {
     const masterRow = masterRaw[i];
     if (matchedMasters.has(masterRow)) continue;
 
-    const mergedRates: RawRow = {};
+    const mPersonal = normEmail(
+      toStr(getField(masterRow, ["Personal Email", "personal_email", "Personal_Email"])),
+    );
+    const mWork = normEmail(
+      toStr(getField(masterRow, ["Work Email", "work_email", "Work_Email"])),
+    );
+    const masterEmails = [mWork, mPersonal].filter((x): x is string => Boolean(x));
+
+    const seenRateIds = new Set<unknown>();
+    const matchingRateRows: RawRow[] = [];
+    for (const email of masterEmails) {
+      const rows = rateRowsByEmail.get(email);
+      if (!rows) continue;
+      for (const r of rows) {
+        const rid = (r as { id?: unknown }).id;
+        if (rid !== undefined && seenRateIds.has(rid)) continue;
+
+        // Conflict check: if this rate STRONGLY matches a DIFFERENT master
+        // (same personal_email as another master row), don't steal it. This
+        // handles the Jane/Janine case where both masters share a work_email
+        // but the rate row's personal_email identifies a specific human.
+        // Rates with no strong owner fall through and match by work_email —
+        // important for the common case where master has an outdated
+        // personal_email but the rate still belongs to them.
+        const strongMasters = rateToStrongMasters.get(r);
+        if (strongMasters && !strongMasters.has(masterRow)) continue;
+
+        if (rid !== undefined) seenRateIds.add(rid);
+        matchingRateRows.push(r);
+      }
+    }
+
+    const mergedRates: RawRow =
+      matchingRateRows.length > 0
+        ? mergeRowsUniqueFieldOrder(
+            [...matchingRateRows].sort(
+              (a, b) =>
+                rateRowPriority(b, currentRatesUploadId) -
+                rateRowPriority(a, currentRatesUploadId),
+            ),
+          )
+        : {};
+
     const identity = buildIdentity(mergedRates, masterRow);
     const sources: RawRow[] = [mergedRates, masterRow];
 
@@ -542,4 +833,3 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
 
   return { profiles, error: null, mergeNotes };
 }
-

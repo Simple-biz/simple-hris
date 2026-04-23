@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { decideDispute, editDisputeDecision, revokeFirstApproval, withdrawDispute } from '@/lib/supabase/pab-day-disputes';
+import { decideDispute, editDisputeDecision, withdrawDispute } from '@/lib/supabase/pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
 
 export const dynamic = 'force-dynamic';
@@ -24,24 +24,14 @@ export async function PATCH(
     if (
       body.action !== 'approve' &&
       body.action !== 'deny' &&
-      body.action !== 'edit' &&
-      body.action !== 'revoke_first'
+      body.action !== 'edit'
     ) {
-      return NextResponse.json({ error: 'action must be approve, deny, edit, or revoke_first' }, { status: 400 });
+      return NextResponse.json({ error: 'action must be approve, deny, or edit' }, { status: 400 });
     }
 
     const decided_by = body.decided_by?.trim();
     if (!decided_by) {
       return NextResponse.json({ error: 'decided_by is required' }, { status: 400 });
-    }
-
-    if (body.action === 'revoke_first') {
-      const { error } = await revokeFirstApproval(id, { revoked_by: decided_by });
-      if (error) {
-        const code = error === 'Dispute not found' ? 404 : error.includes('Not authorized') ? 403 : 400;
-        return NextResponse.json({ error }, { status: code });
-      }
-      return NextResponse.json({ success: true, error: null });
     }
 
     if (body.action === 'edit') {

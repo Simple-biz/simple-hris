@@ -850,6 +850,20 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   const disputesByDate = useMemo(() => {
     const map = new Map<string, import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow>();
     for (const d of myDisputes) map.set(d.dispute_date, d);
+    // Orphanage visits extend the 4h floor-drop to the following day. We synthesise
+    // an approved entry for dispute_date+1 so the per-cell forgiveness check picks it up
+    // uniformly. A real dispute already recorded on that date wins.
+    for (const d of myDisputes) {
+      if (d.reason !== 'orphanage_visit' || d.status !== 'approved') continue;
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d.dispute_date);
+      if (!m) continue;
+      const dt = new Date(Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10)));
+      if (isNaN(dt.getTime())) continue;
+      dt.setUTCDate(dt.getUTCDate() + 1);
+      const nextKey = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+      if (map.has(nextKey)) continue;
+      map.set(nextKey, { ...d, dispute_date: nextKey, override_hours: null });
+    }
     return map;
   }, [myDisputes]);
 
@@ -894,14 +908,15 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     }
 
     // Apply approved dispute override_hours as a SET (replaces Hubstaff hours for that day).
-    // Accounting enters the total hours that should count for PAB on dispute_date — this replaces
-    // whatever Hubstaff logged. No "day after" rule: the dispute applies to its exact date.
+    // `null` override = floor-drop only (no hour change). `0` = intentional zero-out. `>0` = replace.
+    // Override writes apply to the exact dispute_date only; day-after forgiveness for orphanage
+    // visits happens via the synthetic disputesByDate entry below (no hours change on day+1).
     // Note: dispute_date is ISO "YYYY-MM-DD" but hoursByDateKey uses pabDateKey ("YYYY-M-D", no
     // zero-padding). Convert before writing or the override silently falls through.
     for (const d of myDisputes) {
       if (d.status !== 'approved') continue;
       const set = d.override_hours;
-      if (set == null || set <= 0) continue;
+      if (set == null || set < 0) continue;
       const [y, m, day] = d.dispute_date.split('-').map(Number);
       if (!y || !m || !day) continue;
       const key = `${y}-${m}-${day}`;

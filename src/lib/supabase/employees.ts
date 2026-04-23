@@ -1,5 +1,13 @@
 import { createSupabaseServerClient } from "./server";
 
+/**
+ * View in Supabase that filters `global_master_list` down to rows whose
+ * `last_seen_upload_id` matches the current `master_list_uploads` entry. Created by
+ * the upload-archive migration (2026-04-22). This is the authoritative "who is active
+ * right now" roster.
+ */
+const ACTIVE_EMPLOYEES_VIEW = "active_employees";
+
 /** Normalized row for the UI (snake_case internally). */
 export type EmployeeRow = {
   employee_id: string | null;
@@ -183,12 +191,8 @@ export async function getEmployees(): Promise<{
     };
   }
 
-  const table =
-    process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE?.trim() ||
-    "global_master_list";
-
   const { data, error } = await supabase
-    .from(table)
+    .from(ACTIVE_EMPLOYEES_VIEW)
     .select(GLOBAL_MASTER_SELECT)
     .range(0, 9999);
 

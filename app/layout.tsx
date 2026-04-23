@@ -5,8 +5,8 @@ import { Toaster } from "sonner";
 import "../src/index.css";
 
 export const metadata: Metadata = {
-  title: "Simple HRIS",
-  description: "Payroll and workforce dashboard",
+  title: "Simple Accounting HRIS",
+  description: "Dedicated accounting HRIS for payroll, reconciliation, and workforce operations",
   icons: {
     icon: "/icon.svg",
     shortcut: "/icon.svg",

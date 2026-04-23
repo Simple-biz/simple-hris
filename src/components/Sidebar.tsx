@@ -89,12 +89,17 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/30">
             <Wand2 className="h-5 w-5 text-white" />
           </div>
-          <div className="rounded-md bg-white px-2 py-1">
-            <img
-              src="/simple%20logo.png"
-              alt="Simple HRIS"
-              className="h-5 w-auto object-contain"
-            />
+          <div>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-orange-600/80 dark:text-orange-400/80">
+              Accounting HRIS
+            </p>
+            <div className="rounded-md bg-white px-2 py-1">
+              <img
+                src="/simple-logo.png"
+                alt="Simple Accounting HRIS"
+                className="h-5 w-auto object-contain"
+              />
+            </div>
           </div>
         </div>
 
@@ -155,7 +160,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
           <div className="flex min-w-0 flex-col overflow-hidden">
             <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200" title={email ?? undefined}>{email || 'Not signed in'}</span>
             <span className="truncate text-xs text-zinc-500 dark:text-zinc-500">
-              Accounting view
+              Accounting operations
               {roles.length > 0 && (
                 <> · <span className="font-mono text-[10px] text-orange-600 dark:text-orange-400" title={roles.join(', ')}>{roles.join(', ')}</span></>
               )}

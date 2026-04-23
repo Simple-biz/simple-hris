@@ -29,6 +29,7 @@ async function fetchMasterEmailsForLookup(
   normalized: string,
 ): Promise<MasterEmails | null> {
   const table = masterTable();
+
   const { data: byWork } = await supabase
     .from(table)
     .select('"Work Email","Personal Email"')
@@ -69,6 +70,7 @@ export async function getProfilePhotoUrlForEmail(
   if (!supabase) return null;
 
   const table = masterTable();
+
   const { data: byWork } = await supabase
     .from(table)
     .select('"Profile Photo URL"')

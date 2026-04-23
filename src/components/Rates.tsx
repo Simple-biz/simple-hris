@@ -569,17 +569,14 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     fetchProfiles();
   }, []);
 
-  const filtered = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return profiles.filter((p) => {
+  // Precompute `tableRowFromProfile` + a lowercased search blob once per profile.
+  // Without this, each keystroke re-computed both for every profile (~900 × ~20
+  // string ops) and made search unusably laggy. This memo re-runs only when the
+  // profile set or the id map changes — typing in the search box is then just a
+  // substring check against pre-built blobs.
+  const searchIndex = useMemo(() => {
+    return profiles.map((p) => {
       const row = tableRowFromProfile(p, employeeIdMap);
-      const missingRegular = row.regularRate === "—";
-      const missingOt = row.otRate === "—";
-      if (rateFilter === "missing_regular" && !missingRegular) return false;
-      if (rateFilter === "missing_ot" && !missingOt) return false;
-      if (rateFilter === "missing_both" && !(missingRegular && missingOt)) return false;
-      if (rateFilter === "missing_any" && !(missingRegular || missingOt)) return false;
-      if (!q) return true;
       const blob = [
         row.employeeId ?? "",
         p.displayName,
@@ -594,9 +591,25 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
       ]
         .join(" ")
         .toLowerCase();
-      return blob.includes(q);
+      return { profile: p, row, blob };
     });
-  }, [profiles, searchQuery, rateFilter, employeeIdMap]);
+  }, [profiles, employeeIdMap]);
+
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const result: EmployeeRateProfile[] = [];
+    for (const { profile, row, blob } of searchIndex) {
+      const missingRegular = row.regularRate === "—";
+      const missingOt = row.otRate === "—";
+      if (rateFilter === "missing_regular" && !missingRegular) continue;
+      if (rateFilter === "missing_ot" && !missingOt) continue;
+      if (rateFilter === "missing_both" && !(missingRegular && missingOt)) continue;
+      if (rateFilter === "missing_any" && !(missingRegular || missingOt)) continue;
+      if (q && !blob.includes(q)) continue;
+      result.push(profile);
+    }
+    return result;
+  }, [searchIndex, searchQuery, rateFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);

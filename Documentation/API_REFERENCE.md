@@ -2,7 +2,7 @@
 
 Complete documentation for all REST API endpoints. Base URL: `http://localhost:3000` (development).
 
-> **Auth status**: All endpoints are currently **unauthenticated**. See [IMPLEMENTATION_PLAN_RBAC.md](./IMPLEMENTATION_PLAN_RBAC.md) for the planned role-based access control.
+> **Auth status** (as of 2026-04-21): most endpoints are still **unauthenticated** pending SSO. The PAB dispute decide/edit endpoints (`PATCH /api/pab-disputes/[id]`) enforce server-side role-based access via `canActOnDisputes(email)` — caller must hold an active role from `DISPUTE_ACTOR_ROLES` in `employee_roles`. Orphanage-visit endpoints still trust a client-supplied `admin_name` (auth gap). See [IMPLEMENTATION_PLAN_RBAC.md](./IMPLEMENTATION_PLAN_RBAC.md) and [AUDIT_2026-04-21.md](./AUDIT_2026-04-21.md) for the full picture.
 
 ---
 
@@ -17,7 +17,8 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 7. [App Settings](#7-app-settings)
 8. [Import Daily Report](#8-import-daily-report)
 9. [Avatar (Gravatar)](#9-avatar-gravatar)
-10. [Planned Endpoints (Payroll Automation)](#10-planned-endpoints-payroll-automation)
+10. [PAB Day Disputes](#10-pab-day-disputes)
+11. [Planned Endpoints (Payroll Automation)](#11-planned-endpoints-payroll-automation)
 
 ---
 
@@ -57,6 +58,50 @@ Fetches all employees from the `global_master_list` table.
 
 **Tables**: Reads `global_master_list`
 **Service Role**: Not required
+
+---
+
+### `POST /api/global-master-list`
+
+Imports the configured employees table (`NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE`, default `global_master_list`) from an uploaded CSV. Same transport as Hubstaff: `multipart/form-data` with field `file` (CSV). Requires **`SUPABASE_SERVICE_ROLE_KEY`**. The table must have a bigint **`id`** primary key. Each upload **deletes all rows in the table, then inserts** the CSV; when **`import_batch_id`** exists, the new rows get the next batch id (after a wipe, typically `1`). Legacy tables without `import_batch_id` use the same clear-then-insert behavior.
+
+**CSV layout (strict):**
+
+1. **Rows 1–2** (first two lines): at least one cell must contain the text **`MASTERLIST`** (case-insensitive) so only the MASTERLIST export is accepted—not Hubstaff or other sheets.
+2. **Row 3** is the **header** row (Department, Name, Personal Email, Work Email, Start Date, …).
+3. **Row 4 onward** are data rows. Row 3 is rejected if it looks like a Hubstaff weekly header (e.g. Member + Email + Total worked without Department).
+
+**Request**: `multipart/form-data` — field `file` = CSV file.
+
+**Response** `200`:
+```json
+{
+  "success": true,
+  "rowCount": 120,
+  "ratesReconcile": {
+    "masterCount": 120,
+    "ratesCount": 115,
+    "ratesFewerThanMaster": true,
+    "hint": "employee_hourly_rates has 5 fewer rows than the master list — add or sync rates for payroll."
+  }
+}
+```
+
+`ratesReconcile` may be `null` if counts could not be read after import.
+
+**Tables**: Writes `global_master_list` only (does not change `employee_hourly_rates`).
+
+**Service Role**: Required
+
+---
+
+### `GET /api/global-master-list`
+
+Lightweight check that the service role can read row counts on the master and rates tables. No file upload.
+
+**Response** `200`: `{ "ok": true, "masterCount": 120, "ratesCount": 115, "masterError": null, "ratesError": null }`
+
+**Service Role**: Required
 
 ---
 
@@ -645,7 +690,239 @@ https://www.gravatar.com/avatar/{md5_hash}?s={size}&d={default}&r=pg
 
 ---
 
-## 10. Planned Endpoints (Payroll Automation)
+## 10. PAB Day Disputes
+
+Endpoints backing the PAB dispute flow (employees challenge failing days; Accounting approves / denies) and the admin Orphanage Visits roster. Behaviour is documented in [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#pab-day-dispute-system).
+
+> **Auth status** (as of 2026-04-21): dispute decide/edit endpoints enforce role-based access on the server via `canActOnDisputes(email)` against `employee_roles`. The orphanage-visits endpoints currently accept `admin_name` as a client-supplied string and do **not** enforce auth — this gap is tracked and will be closed once SSO lands.
+
+### `GET /api/pab-disputes`
+
+List disputes, optionally filtered.
+
+**Query Parameters**:
+- `email` (optional): normalised work email filter
+- `from` (optional): `YYYY-MM-DD` inclusive lower bound on `dispute_date`
+- `to` (optional): `YYYY-MM-DD` inclusive upper bound on `dispute_date`
+- `status` (optional): `pending` | `approved` | `denied`
+- `limit` (optional): integer; default unlimited, typical caller sets `500`
+
+**Response** `200`:
+```json
+{
+  "rows": [
+    {
+      "id": "uuid",
+      "work_email": "jane@simple.biz",
+      "dispute_date": "2026-04-14",
+      "reason": "orphanage_visit",
+      "explanation": "Visit to nearby orphanage, home late",
+      "status": "approved",
+      "decided_by": "carla@simple.biz",
+      "decided_at": "2026-04-15T02:15:00Z",
+      "decision_note": "Confirmed with team lead",
+      "override_hours": null,
+      "created_at": "2026-04-14T12:00:00Z",
+      "created_by": "jane@simple.biz",
+      "updated_at": "2026-04-15T02:15:00Z"
+    }
+  ],
+  "error": null
+}
+```
+
+`override_hours` uses **tri-state SET semantics**:
+- `null` — no override; Hubstaff hours stand; 4h floor-drop applies on `dispute_date`.
+- `0` — intentional zero-out; day counts as 0h (fails PAB).
+- `> 0` — replaces Hubstaff hours for `dispute_date`.
+
+For `reason === 'orphanage_visit'`, the 4h floor also applies on `dispute_date + 1` via a synthesized forgiveness map entry in the PAB calculators (no second DB row is written).
+
+**Error Response** `500`:
+```json
+{ "rows": [], "error": "<message>" }
+```
+
+**Tables**: `pab_day_disputes`
+**Service Role**: Required
+
+---
+
+### `POST /api/pab-disputes`
+
+Employee-facing: submit a new dispute against a failing day.
+
+**Body**:
+```json
+{
+  "work_email": "jane@simple.biz",
+  "dispute_date": "2026-04-14",
+  "reason": "orphanage_visit",
+  "explanation": "Visited the orphanage — home at 3pm",
+  "created_by": "jane@simple.biz"
+}
+```
+
+- `work_email`, `dispute_date` (`YYYY-MM-DD`), `reason` are required.
+- `reason` is validated against the current `pab_dispute_reason_codes` list in `app_settings` when any codes are configured.
+
+**Response** `200`:
+```json
+{ "success": true, "id": "uuid", "error": null }
+```
+
+**Error Response**:
+- `400` — missing / malformed fields
+- `409` — a dispute already exists for that `(work_email, dispute_date)` pair
+- `500` — server error
+
+Audit log: `pab_dispute.submitted` (user_role resolved from `employee_roles`, falling back to `Employee`).
+
+**Tables**: `pab_day_disputes`, `audit_log`, `app_settings` (read `pab_dispute_reason_codes`)
+**Service Role**: Required
+
+---
+
+### `PATCH /api/pab-disputes/[id]`
+
+Decide or edit a dispute. Gated server-side by `canActOnDisputes(decided_by)` — caller must have an active role in `DISPUTE_ACTOR_ROLES` (`payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `admin`).
+
+**Body** (approve / deny a pending dispute):
+```json
+{
+  "action": "approve",          // or "deny"
+  "decided_by": "carla@simple.biz",
+  "decision_note": "Confirmed",
+  "override_hours": 6.5          // null or number >= 0; ignored when action=deny
+}
+```
+
+**Body** (edit an already-decided dispute):
+```json
+{
+  "action": "edit",
+  "status": "approved",          // required; "approved" | "denied"
+  "decided_by": "carla@simple.biz",
+  "decision_note": "Updated note",
+  "override_hours": null         // null (clear), 0 (zero-out), or > 0 (set total)
+}
+```
+
+**Response** `200`:
+```json
+{ "success": true, "stage": "final", "error": null }
+```
+
+**Error Response**:
+- `400` — invalid action, missing `decided_by`, pending dispute edited via `edit` action
+- `403` — caller not in an accounting role (`Not authorized — only Accounting roles can …`)
+- `404` — dispute id not found
+- `500` — server error
+
+Audit log: `pab_dispute.approved`, `pab_dispute.denied`, or `pab_dispute.edited` with the dynamically-resolved user role.
+
+**Tables**: `pab_day_disputes`, `audit_log`, `employee_roles` (read)
+**Service Role**: Required
+
+---
+
+### `DELETE /api/pab-disputes/[id]`
+
+Employee withdraws their own pending dispute.
+
+**Query Parameters**:
+- `employee_email` (required): must match the dispute's `work_email` (normalised); otherwise `403 Forbidden`.
+
+**Response** `200`:
+```json
+{ "success": true, "error": null }
+```
+
+**Error Response**:
+- `400` — only pending disputes can be withdrawn
+- `403` — email does not match the dispute owner
+- `404` — dispute not found
+
+Audit log: `pab_dispute.withdrawn`.
+
+**Tables**: `pab_day_disputes`, `audit_log`
+**Service Role**: Required
+
+---
+
+### `GET /api/pab-disputes/orphanage-visits`
+
+Lists approved orphanage-visit rows from `pab_day_disputes`, filtered to `reason = 'orphanage_visit'` and `status = 'approved'`. Used by the admin roster.
+
+Query params: `from`, `to` (`YYYY-MM-DD`); `limit` (integer, default 500).
+
+**Response** `200`:
+```json
+{ "rows": [ { "id": "…", "work_email": "…", "dispute_date": "2026-04-14", "reason": "orphanage_visit", "status": "approved", … } ], "error": null }
+```
+
+**Tables**: `pab_day_disputes`
+**Service Role**: Required
+
+---
+
+### `POST /api/pab-disputes/orphanage-visits`
+
+Admin inserts (or upserts) an orphanage-visit record. Performs atomic `.upsert({ onConflict: 'work_email,dispute_date' })` — concurrent inserts for the same employee/date do not race.
+
+**Body**:
+```json
+{
+  "work_email": "jane@simple.biz",
+  "visit_date": "2026-04-14",
+  "note": "Visited nearby orphanage",
+  "admin_name": "Fran M"
+}
+```
+
+- No `override_hours` is written; the row is a floor-drop marker only. The PAB calculators extend the 4h floor to `visit_date + 1` as well (synthetic forgiveness map entry).
+- `admin_name` is currently trusted from the client body (auth gap — see note at top of section).
+
+**Response** `200`:
+```json
+{ "success": true, "id": "uuid", "error": null }
+```
+
+**Error Response**:
+- `400` — missing/invalid `work_email`, `visit_date`, or `admin_name`
+- `500` — server error
+
+Audit log: `pab_dispute.approved` with `source: "admin_orphanage_roster"` in details.
+
+**Tables**: `pab_day_disputes`, `audit_log`
+**Service Role**: Required
+
+---
+
+### `DELETE /api/pab-disputes/orphanage-visits/[id]`
+
+Admin removes a recorded orphanage visit. The forgiveness on both visit day and day-after reverts.
+
+**Query Parameters**:
+- `admin_name` (required): trusted from client for now (same caveat as POST).
+
+**Response** `200`:
+```json
+{ "success": true, "error": null }
+```
+
+**Error Response**:
+- `400` — missing `admin_name`, or the targeted row is not an orphanage-visit entry
+- `404` — row not found
+
+Audit log: `pab_dispute.withdrawn` with `source: "admin_orphanage_roster"`.
+
+**Tables**: `pab_day_disputes`, `audit_log`
+**Service Role**: Required
+
+---
+
+## 11. Planned Endpoints (Payroll Automation)
 
 These endpoints do not exist yet. They are required for automating Step 5 (Dispatch) and webhook-based paystub delivery.
 
@@ -760,7 +1037,7 @@ Lists all finalized payroll runs.
 
 | Table | Used By | Operations |
 |---|---|---|
-| `global_master_list` | employees, add-employee, delete-employee, update-employee-profile, employee-profile-photo | R, C, U, D |
+| `global_master_list` | employees, global-master-list, add-employee, delete-employee, update-employee-profile, employee-profile-photo | R, C, U, D |
 | `employee_hourly_rates` | employee-hourly-rates, add-employee, delete-employee, update-employee-profile, update-employee-rates | R, C, U, D |
 | `employee_ids` | employee-ids, update-employee-ids | R, U |
 | `hubstaff_hours` | hubstaff-hours | R, C, D |

@@ -29,7 +29,7 @@ async function loadAuditLog(limit = 500): Promise<AuditLogEntry[]> {
   return json.rows ?? [];
 }
 
-function formatAbsoluteTime(iso: string): string {
+export function formatAbsoluteTime(iso: string): string {
   return new Date(iso).toLocaleString('en-PH', {
     month: 'short',
     day: 'numeric',
@@ -40,7 +40,7 @@ function formatAbsoluteTime(iso: string): string {
   });
 }
 
-function formatRelativeTime(iso: string): string {
+export function formatRelativeTime(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
   const minutes = Math.floor(diffMs / 60_000);
   if (minutes < 1) return 'Just now';
@@ -51,7 +51,7 @@ function formatRelativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-function formatActionLabel(action: string, details: Record<string, unknown> | null): string {
+export function formatActionLabel(action: string, details: Record<string, unknown> | null): string {
   switch (action) {
     case 'settings.rule.toggle':
       return `${details?.setting ?? 'Rule'} → ${details?.value ? 'Enabled' : 'Disabled'}`;
@@ -63,6 +63,8 @@ function formatActionLabel(action: string, details: Record<string, unknown> | nu
       const mode = details?.mode === 'replace' ? 'replaced' : 'appended';
       return `CSV ${mode}: ${details?.file ?? 'file'} (${details?.rows ?? '?'} rows)`;
     }
+    case 'csv.master.upload':
+      return `Master list CSV replaced: ${details?.file ?? 'file'} (${details?.rows ?? '?'} rows)`;
     case 'csv.delete':
       return `CSV deleted: ${details?.file ?? details?.resource_id ?? 'file'}`;
     case 'employee.create':
@@ -121,6 +123,7 @@ function actionDot(action: string): string {
   if (action === 'settings.ot.department') return 'bg-orange-400';
   if (action === 'settings.rule.toggle') return 'bg-violet-500';
   if (action === 'csv.upload') return 'bg-blue-500';
+  if (action === 'csv.master.upload') return 'bg-blue-500';
   if (action === 'csv.delete') return 'bg-rose-500';
   if (action === 'employee.create') return 'bg-emerald-500';
   if (action === 'employee.delete') return 'bg-red-600';

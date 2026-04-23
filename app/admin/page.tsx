@@ -3,13 +3,15 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import AdminSidebar from '@/components/admin/AdminSidebar';
+import AdminOverview from '@/components/admin/AdminOverview';
 import AdminRoles from '@/components/admin/AdminRoles';
+import AdminEmployees from '@/components/admin/AdminEmployees';
 import AdminWebhooks from '@/components/admin/AdminWebhooks';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
-import { Toaster } from '@/components/ui/sonner';
 import { Construction } from 'lucide-react';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { cn } from '@/lib/utils';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -26,8 +28,20 @@ function AdminShellFallback() {
   );
 }
 
+interface WebhookEntry {
+  slug: string;
+  url: string;
+  active: boolean;
+}
+
 function AdminPageInner() {
-  const [activeTab, setActiveTab] = useState('roles');
+  const [activeTab, setActiveTab] = useState('overview');
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  const [navCounts, setNavCounts] = useState({
+    roles: 0,
+    employees: 0,
+    webhookAlert: 0,
+  });
   const searchParams = useSearchParams();
   const emailFromQuery = searchParams.get('email');
 
@@ -37,18 +51,65 @@ function AdminPageInner() {
       if (q && isPlausibleEmail(q)) {
         const normalized = normEmail(q) ?? q.toLowerCase();
         sessionStorage.setItem(SESSION_EMAIL_KEY, normalized);
+        setAdminEmail(normalized);
+        return;
       }
+      setAdminEmail(sessionStorage.getItem(SESSION_EMAIL_KEY));
     } catch {
-      /* ignore */
+      setAdminEmail(null);
     }
   }, [emailFromQuery]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [empRes, rolesRes, hookRes] = await Promise.all([
+          fetch('/api/employees', { cache: 'no-store' }),
+          fetch('/api/employee-roles', { cache: 'no-store' }),
+          fetch('/api/app-settings?key=webhooks.config', { cache: 'no-store' }),
+        ]);
+        const empJson = (await empRes.json()) as { employees?: unknown[] };
+        const rolesJson = (await rolesRes.json()) as { rows?: unknown[] };
+        const hookJson = (await hookRes.json()) as { value: string | null };
+        let hooks: WebhookEntry[] = [];
+        if (hookJson.value) {
+          try {
+            const raw = JSON.parse(hookJson.value) as WebhookEntry[];
+            hooks = Array.isArray(raw) ? raw : [];
+          } catch {
+            hooks = [];
+          }
+        }
+        const webhookAlert = hooks.filter((w) => w.active && !String(w.url ?? '').trim()).length;
+        if (!cancelled) {
+          setNavCounts({
+            employees: (empJson.employees ?? []).length,
+            roles: (rolesJson.rows ?? []).length,
+            webhookAlert,
+          });
+        }
+      } catch {
+        if (!cancelled) setNavCounts({ employees: 0, roles: 0, webhookAlert: 0 });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const renderContent = () => {
     switch (activeTab) {
+      case 'overview':
+        return <AdminOverview userEmail={adminEmail} onNavigate={setActiveTab} />;
       case 'roles':
         return <AdminRoles />;
       case 'employees':
-        return <Placeholder title="Employees" hint="Manage employees from the Rates page for now." />;
+        return (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <AdminEmployees />
+          </div>
+        );
       case 'webhooks':
         return <AdminWebhooks />;
       case 'audit':
@@ -57,18 +118,50 @@ function AdminPageInner() {
             <AuditLogPanel className="min-h-0 flex-1" />
           </div>
         );
+      case 'api-tokens':
+        return (
+          <Placeholder
+            title="API tokens"
+            hint="Token management is not wired yet. Use Supabase and server env for service access."
+          />
+        );
+      case 'backups':
+        return (
+          <Placeholder
+            title="Backups"
+            hint="Database backups are handled by your hosting provider or Supabase scheduled backups."
+          />
+        );
+      case 'settings':
+        return (
+          <Placeholder title="System settings" hint="Global app settings live in the main HRIS Settings tab for now." />
+        );
       default:
-        return <AdminRoles />;
+        return <AdminOverview userEmail={adminEmail} onNavigate={setActiveTab} />;
     }
   };
 
   return (
-    <div className="flex h-screen w-full bg-white text-zinc-900 dark:bg-[#0d1117] dark:text-zinc-100">
-      <AdminSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-      <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+    <div
+      className={cn(
+        'flex h-screen w-full text-zinc-900 dark:text-zinc-100',
+        activeTab === 'overview' ? 'bg-zinc-50 dark:bg-zinc-950' : 'bg-white dark:bg-[#0d1117]',
+      )}
+    >
+      <AdminSidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        viewerEmail={adminEmail}
+        counts={navCounts}
+      />
+      <main
+        className={cn(
+          'relative flex min-h-0 min-w-0 flex-1 flex-col',
+          activeTab === 'overview' ? 'overflow-hidden' : 'overflow-y-auto',
+        )}
+      >
         {renderContent()}
       </main>
-      <Toaster position="top-right" />
     </div>
   );
 }

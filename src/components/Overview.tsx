@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   Users,
   DollarSign,
@@ -18,6 +19,13 @@ import {
   XCircle,
   Clock,
   Eye,
+  AlertCircle,
+  FileWarning,
+  CalendarDays,
+  ArrowRight,
+  LayoutGrid,
+  Rows3,
+  Activity,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -75,6 +83,35 @@ function formatStartDate(value: string | null): string {
   });
 }
 
+/** Extract a "Mar 24 – 30, 2026 · week N" style label from a Hubstaff filename. */
+function parsePeriodFromFilename(file: string | null): { label: string; week: number | null } | null {
+  if (!file) return null;
+  const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(file);
+  if (!m) return null;
+  const start = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  const end = new Date(Date.UTC(+m[4], +m[5] - 1, +m[6]));
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
+  const sameMonth = start.getUTCMonth() === end.getUTCMonth() && start.getUTCFullYear() === end.getUTCFullYear();
+  const monthShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const label = sameMonth
+    ? `${monthShort[start.getUTCMonth()]} ${start.getUTCDate()} – ${end.getUTCDate()}, ${end.getUTCFullYear()}`
+    : `${monthShort[start.getUTCMonth()]} ${start.getUTCDate()} – ${monthShort[end.getUTCMonth()]} ${end.getUTCDate()}, ${end.getUTCFullYear()}`;
+  const firstOfYear = Date.UTC(start.getUTCFullYear(), 0, 1);
+  const week = Math.floor((start.getTime() - firstOfYear) / (7 * 24 * 3600 * 1000)) + 1;
+  return { label, week };
+}
+
+/** Donut-chart SVG with a single arc showing `pct` (0–100) of a 100-unit ring. */
+function Donut({ pct, color, size = 96, stroke = 3.2 }: { pct: number; color: string; size?: number; stroke?: number }) {
+  const safe = Math.max(0, Math.min(100, pct));
+  return (
+    <svg viewBox="0 0 36 36" width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+      <circle cx="18" cy="18" r="15.915" fill="none" stroke="currentColor" strokeWidth={stroke} className="text-zinc-200 dark:text-zinc-800" />
+      <circle cx="18" cy="18" r="15.915" fill="none" stroke={color} strokeWidth={stroke} strokeDasharray={`${safe} 100`} strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** Match payroll emails to master rows (personal or work email). */
 function buildMasterEmailSet(list: EmployeeRow[]): Set<string> {
   const s = new Set<string>();
@@ -105,9 +142,828 @@ type OverviewEmployeeRow = EmployeeRow & { recordSource: 'master' | 'hubstaff' }
 
 interface OverviewProps {
   onViewRates?: (email: string) => void;
+  onNavigate?: (tab: string) => void;
 }
 
-export default function Overview({ onViewRates }: OverviewProps = {}) {
+interface SimpleViewProps {
+  totalPayout: number | null;
+  payoutLoading: boolean;
+  payrollWorkerCount: number | null;
+  masterTotal: number;
+  inPayrollNotMaster: number | null;
+  inMasterNotPayroll: number | null;
+  pendingDisputes: number | null;
+  oldestDisputeDays: number | null;
+  pendingLeaves: number | null;
+  weekOrphanageVisits: number | null;
+  pabMetrics: {
+    loading: boolean;
+    totalEmployees: number;
+    eligible: number;
+    notEligible: number;
+    monthLabel: string | null;
+  };
+  techBonusEligibility: { eligible: number; pending: number; unknown: number; total: number };
+  pageRows: OverviewEmployeeRow[];
+  filteredTotal: number;
+  totalPages: number;
+  safePage: number;
+  setPage: React.Dispatch<React.SetStateAction<number>>;
+  searchQuery: string;
+  setSearchQuery: (v: string) => void;
+  departmentFilter: string;
+  setDepartmentFilter: (v: string) => void;
+  departmentOptions: string[];
+  activeSourceFile: string | null;
+  activePeriod: { label: string; week: number | null } | null;
+  employeePayByEmail: Record<string, { hours: number; pay: number | null }>;
+  onViewRates?: (email: string) => void;
+  onNavigate?: (tab: string) => void;
+  loading: boolean;
+}
+
+/** PHP → USD FX rate used only for the informational subtitle under the total payout. */
+const PHP_USD_FX = 58.1;
+
+function initialsFromName(n: string | null | undefined): string {
+  if (!n) return '—';
+  return n
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? '')
+    .join('');
+}
+
+function pabTotalForExpanded(metrics: {
+  totalEmployees: number;
+  eligible: number;
+  notEligible: number;
+}): number {
+  if (metrics.totalEmployees > 0) return metrics.totalEmployees;
+  return Math.max(0, metrics.eligible) + Math.max(0, metrics.notEligible);
+}
+
+function formatPhp(n: number | null | undefined, min = 0): string {
+  if (n == null) return '—';
+  return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: min, maximumFractionDigits: 2 });
+}
+
+function SimpleView({
+  totalPayout,
+  payoutLoading,
+  payrollWorkerCount,
+  masterTotal,
+  inPayrollNotMaster,
+  inMasterNotPayroll,
+  pendingDisputes,
+  oldestDisputeDays,
+  pendingLeaves,
+  weekOrphanageVisits,
+  pabMetrics,
+  techBonusEligibility,
+  pageRows,
+  filteredTotal,
+  totalPages,
+  safePage,
+  setPage,
+  searchQuery,
+  setSearchQuery,
+  departmentFilter,
+  setDepartmentFilter,
+  departmentOptions,
+  activeSourceFile,
+  activePeriod,
+  employeePayByEmail,
+  onViewRates,
+  onNavigate,
+  loading,
+}: SimpleViewProps) {
+  const reconcileGaps =
+    inPayrollNotMaster != null && inMasterNotPayroll != null
+      ? inPayrollNotMaster + inMasterNotPayroll
+      : null;
+  const pabTotal = pabMetrics.totalEmployees;
+  const pabPct = pabTotal > 0 ? Math.round((pabMetrics.eligible / pabTotal) * 100) : 0;
+  const techTotal = techBonusEligibility.total;
+  const techPct = techTotal > 0 ? Math.round((techBonusEligibility.eligible / techTotal) * 100) : 0;
+  const nowHour = new Date().getHours();
+  const greeting = nowHour < 12 ? 'Good morning' : nowHour < 18 ? 'Good afternoon' : 'Good evening';
+
+  const usdEquivalent = totalPayout != null ? totalPayout / PHP_USD_FX : null;
+
+  // ⌘K / Ctrl+K focuses the search input.
+  const searchInputRef = React.useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const disputeTag =
+    pendingDisputes && pendingDisputes > 0
+      ? oldestDisputeDays != null && oldestDisputeDays >= 2
+        ? `overdue ${oldestDisputeDays}d`
+        : 'review soon'
+      : null;
+  const orphanageCount = weekOrphanageVisits ?? 0;
+  const leaveAndVisitsTotal = (pendingLeaves ?? 0) + orphanageCount;
+
+  return (
+    <div className="min-h-0 flex-1 overflow-auto">
+      <div className="mx-auto max-w-[1360px] px-2 pb-12">
+
+        {/* Hero */}
+        <section className="mb-10 grid grid-cols-1 items-end gap-8 border-b border-zinc-200 pb-8 lg:grid-cols-[1fr_auto] dark:border-zinc-800">
+          <div>
+            <p className="mb-4 text-[13px] text-zinc-500 dark:text-zinc-400">
+              <span>{greeting}. Accounting team dashboard.</span>
+            </p>
+            <p className="mb-3 text-[12.5px] font-medium text-zinc-500 dark:text-zinc-400">
+              Total payout for this accounting pay run
+            </p>
+            <div className="flex items-baseline">
+              <span className="mr-1.5 text-5xl font-medium text-zinc-400 md:text-6xl">₱</span>
+              {payoutLoading ? (
+                <span className="inline-block h-[1em] w-[280px] animate-pulse rounded-md bg-zinc-200/80 align-bottom text-5xl md:h-[1em] md:w-[420px] md:text-7xl dark:bg-zinc-800" />
+              ) : (
+                <span className="font-mono text-5xl font-semibold tracking-tight text-zinc-900 md:text-7xl dark:text-white">
+                  {totalPayout != null
+                    ? totalPayout.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : '—'}
+                </span>
+              )}
+            </div>
+            <p className="mt-4 flex flex-wrap items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
+              <span>
+                <strong className="font-semibold text-zinc-900 dark:text-white">
+                  {payrollWorkerCount ?? '—'}
+                </strong>{' '}
+                active workers
+              </span>
+              {usdEquivalent != null && (
+                <>
+                  <span className="text-zinc-400 dark:text-zinc-600">·</span>
+                  <span>
+                    ≈{' '}
+                    <strong className="font-semibold text-zinc-900 dark:text-white">
+                      ${usdEquivalent.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                    </strong>{' '}
+                    USD
+                  </span>
+                </>
+              )}
+              <span className="text-zinc-400 dark:text-zinc-600">·</span>
+              <span>Initial pay · bonuses applied at payroll</span>
+            </p>
+          </div>
+          <div className="flex min-w-[280px] flex-col items-end gap-3">
+            {activePeriod && (
+              <div className="text-[12.5px] font-medium text-zinc-500 dark:text-zinc-400">
+                <strong className="font-semibold text-zinc-900 dark:text-white">{activePeriod.label}</strong>
+                {activePeriod.week != null && <> · week {activePeriod.week}</>}
+              </div>
+            )}
+            <div className="grid grid-cols-[auto_auto] gap-x-6 gap-y-1.5 text-[13px]">
+              <div className="flex items-center gap-2 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                <Users className="h-3 w-3 text-zinc-400" />
+                Master list
+              </div>
+              <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
+                {masterTotal}
+              </div>
+              <div className="flex items-center gap-2 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                <Activity className="h-3 w-3 text-zinc-400" />
+                In this payroll
+              </div>
+              <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
+                {payrollWorkerCount ?? '—'}
+              </div>
+              <div className="flex items-center gap-2 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                <AlertTriangle className="h-3 w-3 text-zinc-400" />
+                Reconcile gaps
+              </div>
+              <div
+                className={cn(
+                  'text-right font-mono font-medium',
+                  reconcileGaps && reconcileGaps > 0
+                    ? 'text-amber-700 dark:text-amber-400'
+                    : 'text-zinc-900 dark:text-white',
+                )}
+              >
+                {reconcileGaps ?? '—'}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Attention row */}
+        <section className="mb-14 grid grid-cols-1 gap-3.5 md:grid-cols-3">
+          <AttentionCard
+            icon={<AlertCircle className="h-3.5 w-3.5" />}
+            label="Needs your decision"
+            tone={pendingDisputes && pendingDisputes > 0 ? 'warn' : 'normal'}
+            tag={disputeTag}
+            value={pendingDisputes ?? 0}
+            unit={pendingDisputes === 1 ? 'dispute pending' : 'disputes pending'}
+            sub="Approve or deny short-day disputes"
+            cta="Review queue"
+            onClick={onNavigate ? () => onNavigate('disputes') : undefined}
+          />
+          <AttentionCard
+            icon={<FileWarning className="h-3.5 w-3.5" />}
+            label="Reconciliation"
+            tone="normal"
+            tag="2 sources"
+            value={reconcileGaps ?? 0}
+            unit={reconcileGaps === 1 ? 'mismatch' : 'mismatches'}
+            sub={
+              <>
+                <strong className="text-zinc-700 dark:text-zinc-300">
+                  {inPayrollNotMaster ?? 0}
+                </strong>{' '}
+                in payroll not on master ·{' '}
+                <strong className="text-zinc-700 dark:text-zinc-300">
+                  {inMasterNotPayroll ?? 0}
+                </strong>{' '}
+                on master not in payroll
+              </>
+            }
+            cta="Reconcile"
+            onClick={onNavigate ? () => onNavigate('payroll-wizard') : undefined}
+          />
+          <AttentionCard
+            icon={<CalendarDays className="h-3.5 w-3.5" />}
+            label="Leave & visits"
+            tone="normal"
+            tag="this week"
+            value={leaveAndVisitsTotal}
+            unit={leaveAndVisitsTotal === 1 ? 'item' : 'items'}
+            sub={
+              <>
+                <strong className="text-zinc-700 dark:text-zinc-300">{pendingLeaves ?? 0}</strong>{' '}
+                leave requests · <strong className="text-zinc-700 dark:text-zinc-300">{orphanageCount}</strong>{' '}
+                orphanage visits
+              </>
+            }
+            cta="Open requests"
+            onClick={onNavigate ? () => onNavigate('leave-requests') : undefined}
+          />
+        </section>
+
+        {/* Monthly bonuses */}
+        <section className="mb-14">
+          <div className="mb-5 flex items-baseline justify-between">
+            <h3 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-white">
+              Monthly bonuses
+            </h3>
+            <span className="text-[12.5px] text-zinc-500 dark:text-zinc-400">
+              {pabMetrics.monthLabel ?? '—'} · merged from all Hubstaff uploads
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-12 md:grid-cols-2">
+            {/* PAB */}
+            <div className="grid grid-cols-[120px_1fr] items-center gap-7">
+              <div className="flex flex-col items-center gap-2.5">
+                <div className="relative h-24 w-24">
+                  <Donut pct={pabPct} color="#047857" />
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                      {pabTotal > 0 ? `${pabPct}%` : '—'}
+                    </span>
+                    {pabTotal > 0 && (
+                      <span className="mt-0.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                        {pabMetrics.eligible} / {pabTotal}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                  Perfect Attendance
+                </span>
+              </div>
+              <div>
+                <h4 className="mb-1 text-[13px] font-semibold text-zinc-900 dark:text-white">
+                  Perfect Attendance Bonus · ₱5,000
+                </h4>
+                <p className="mb-3.5 text-xs text-zinc-500 dark:text-zinc-400">
+                  {pabMetrics.monthLabel ?? '—'} · merged month
+                </p>
+                <div className="grid grid-cols-[auto_auto] gap-x-5 gap-y-1 text-[13px]">
+                  <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-700 dark:bg-emerald-500" />
+                    Eligible
+                  </div>
+                  <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
+                    {pabMetrics.loading ? '…' : pabMetrics.eligible}
+                  </div>
+                  <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
+                    <span className="inline-block h-2 w-2 rounded-full bg-red-700 dark:bg-red-500" />
+                    Not eligible
+                  </div>
+                  <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
+                    {pabMetrics.loading ? '…' : pabMetrics.notEligible}
+                  </div>
+                </div>
+                <p className="mt-3.5 text-[11.5px] leading-snug text-zinc-400 dark:text-zinc-500">
+                  Accrues ₱{(pabMetrics.eligible * 5000).toLocaleString('en-PH')} if all eligible
+                  hold through month end.
+                </p>
+              </div>
+            </div>
+
+            {/* Tech Bonus */}
+            <div className="grid grid-cols-[120px_1fr] items-center gap-7">
+              <div className="flex flex-col items-center gap-2.5">
+                <div className="relative h-24 w-24">
+                  <Donut pct={techPct} color="#18181b" />
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                      {techTotal > 0 ? `${techPct}%` : '—'}
+                    </span>
+                    {techTotal > 0 && (
+                      <span className="mt-0.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                        {techBonusEligibility.eligible} / {techTotal}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                  Technology
+                </span>
+              </div>
+              <div>
+                <h4 className="mb-1 text-[13px] font-semibold text-zinc-900 dark:text-white">
+                  Technology Bonus · ₱1,850
+                </h4>
+                <p className="mb-3.5 text-xs text-zinc-500 dark:text-zinc-400">
+                  Paid on 3rd paycheck of each month · after 30 days of service
+                </p>
+                <div className="grid grid-cols-[auto_auto] gap-x-5 gap-y-1 text-[13px]">
+                  <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-700 dark:bg-emerald-500" />
+                    Eligible
+                  </div>
+                  <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
+                    {techBonusEligibility.eligible}
+                  </div>
+                  <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
+                    <span className="inline-block h-2 w-2 rounded-full bg-amber-700 dark:bg-amber-500" />
+                    Pending 30d
+                  </div>
+                  <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
+                    {techBonusEligibility.pending}
+                  </div>
+                  {techBonusEligibility.unknown > 0 && (
+                    <>
+                      <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
+                        <span className="inline-block h-2 w-2 rounded-full bg-zinc-400" />
+                        No start date
+                      </div>
+                      <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
+                        {techBonusEligibility.unknown}
+                      </div>
+                    </>
+                  )}
+                </div>
+                <p className="mt-3.5 text-[11.5px] leading-snug text-zinc-400 dark:text-zinc-500">
+                  Accrues ₱{(techBonusEligibility.eligible * 1850).toLocaleString('en-PH')} on the
+                  3rd paycheck of the month.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Workers table */}
+        <section>
+          <div className="mb-5 flex items-baseline justify-between">
+            <h3 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-white">
+              Workers in this payroll run
+            </h3>
+            <span className="text-[12.5px] text-zinc-500 dark:text-zinc-400">
+              Master list + Hubstaff fallback
+            </span>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
+            {/* Toolbar */}
+            <div className="flex flex-wrap items-center gap-2.5 border-b border-zinc-200 px-4 py-3.5 dark:border-zinc-800">
+              <div className="flex max-w-[360px] flex-1 items-center gap-2 rounded-lg bg-[#fafaf8] px-3 py-1.5 dark:bg-zinc-900">
+                <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                <input
+                  ref={searchInputRef}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search name, email, department…"
+                  className="flex-1 border-0 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-200"
+                />
+                <kbd className="hidden rounded border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-zinc-400 sm:inline-block dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-500">
+                  ⌘K
+                </kbd>
+              </div>
+              <select
+                value={departmentFilter}
+                onChange={(e) => setDepartmentFilter(e.target.value)}
+                className="h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-[12.5px] font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+              >
+                <option value="">All departments</option>
+                {departmentOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+              <div className="ml-auto text-xs text-zinc-500 dark:text-zinc-400">
+                <strong className="font-semibold text-zinc-900 dark:text-white">{filteredTotal}</strong>{' '}
+                workers · page {safePage} of {totalPages}
+              </div>
+            </div>
+
+            {/* Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-[13px]">
+                <thead>
+                  <tr>
+                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400" style={{ width: '44%' }}>
+                      Worker
+                    </th>
+                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                      Department
+                    </th>
+                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                      Source
+                    </th>
+                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                      Start date
+                    </th>
+                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                      Hours
+                    </th>
+                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                      Initial pay
+                    </th>
+                    <th className="w-14 border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-12 text-center text-zinc-500 dark:text-zinc-400">
+                        <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+                      </td>
+                    </tr>
+                  ) : pageRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                        No workers match your search.
+                      </td>
+                    </tr>
+                  ) : (
+                    pageRows.map((row) => {
+                      const email = row.work_email ?? row.personal_email ?? '';
+                      const emailKey = normEmail(email) ?? '';
+                      const pay = emailKey ? employeePayByEmail[emailKey] : undefined;
+                      const isHubstaff = row.recordSource === 'hubstaff';
+                      return (
+                        <tr
+                          key={`${row.recordSource}-${email}-${row.name ?? ''}`}
+                          className="border-b border-zinc-100 last:border-b-0 hover:bg-[#fafaf8] dark:border-zinc-800/60 dark:hover:bg-zinc-900/60"
+                        >
+                          <td className="px-4 py-3.5">
+                            <div className="flex items-center gap-3">
+                              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-[11px] font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                                {initialsFromName(row.name)}
+                              </span>
+                              <div>
+                                <div className="font-medium leading-tight text-zinc-900 dark:text-white">
+                                  {row.name ?? '—'}
+                                </div>
+                                <div className="mt-0.5 font-mono text-[11.5px] leading-tight text-zinc-500 dark:text-zinc-400">
+                                  {email || '—'}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[11.5px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                              {row.department ?? '—'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <span className="inline-flex items-center gap-1.5 text-[10.5px] font-medium text-zinc-500 dark:text-zinc-400">
+                              <span
+                                className={cn(
+                                  'inline-block h-1.5 w-1.5 rounded-full',
+                                  isHubstaff ? 'bg-blue-700 dark:bg-blue-500' : 'bg-emerald-700 dark:bg-emerald-500',
+                                )}
+                              />
+                              {isHubstaff ? 'Hubstaff' : 'Master'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3.5 text-[12.5px] text-zinc-500 dark:text-zinc-400">
+                            {formatStartDate(row.start_date)}
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-mono text-zinc-900 tabular-nums dark:text-white">
+                            {pay ? `${pay.hours.toFixed(2)}h` : '—'}
+                          </td>
+                          <td
+                            className={cn(
+                              'px-4 py-3.5 text-right font-mono tabular-nums',
+                              pay?.pay == null ? 'text-zinc-400 dark:text-zinc-600' : 'text-zinc-900 dark:text-white',
+                            )}
+                          >
+                            {pay ? formatPhp(pay.pay, 2) : '—'}
+                          </td>
+                          <td className="px-4 py-3.5 text-right">
+                            <button
+                              type="button"
+                              disabled={!email || !onViewRates}
+                              onClick={() => email && onViewRates?.(email)}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                              aria-label="View rates"
+                              title="View rates"
+                            >
+                              <ChevronRight className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pager */}
+            <div className="flex items-center justify-between border-t border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[12.5px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+              <div>
+                Showing{' '}
+                <strong className="font-medium text-zinc-900 dark:text-white">
+                  {filteredTotal === 0 ? 0 : (safePage - 1) * 10 + 1}–
+                  {Math.min(safePage * 10, filteredTotal)}
+                </strong>{' '}
+                of {filteredTotal}
+              </div>
+              <div className="flex gap-0.5">
+                <PagerEdgeBtn disabled={safePage <= 1} onClick={() => setPage(1)} aria-label="First page">
+                  <ChevronsLeft className="h-3.5 w-3.5" />
+                </PagerEdgeBtn>
+                <PagerEdgeBtn disabled={safePage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} aria-label="Previous page">
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </PagerEdgeBtn>
+                {buildPageRange(safePage, totalPages).map((p, idx) =>
+                  p === -1 ? (
+                    <span key={`e-${idx}`} className="flex h-7 min-w-[28px] items-center justify-center text-zinc-400">
+                      …
+                    </span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={cn(
+                        'h-7 min-w-[28px] rounded-md px-2 text-[12.5px] font-medium transition-colors',
+                        p === safePage
+                          ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                          : 'text-zinc-500 hover:bg-white hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100',
+                      )}
+                      aria-current={p === safePage ? 'page' : undefined}
+                    >
+                      {p}
+                    </button>
+                  ),
+                )}
+                <PagerEdgeBtn disabled={safePage >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} aria-label="Next page">
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </PagerEdgeBtn>
+                <PagerEdgeBtn disabled={safePage >= totalPages} onClick={() => setPage(totalPages)} aria-label="Last page">
+                  <ChevronsRight className="h-3.5 w-3.5" />
+                </PagerEdgeBtn>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Footnote */}
+        <div className="mt-14 flex flex-wrap justify-between gap-6 border-t border-zinc-200 pt-5 text-xs text-zinc-400 dark:border-zinc-800 dark:text-zinc-500">
+          <div>
+            Source:{' '}
+            <span className="font-mono text-zinc-500 dark:text-zinc-400">
+              {activeSourceFile ?? 'all uploads combined'}
+            </span>{' '}
+            · <span className="font-mono text-zinc-500 dark:text-zinc-400">global_master_list</span>
+          </div>
+          <div>Bonuses applied during payroll processing</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AttentionCard({
+  icon,
+  label,
+  tone,
+  tag,
+  value,
+  unit,
+  sub,
+  cta,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  tone: 'normal' | 'warn';
+  tag: string | null;
+  value: number;
+  unit: string;
+  sub: React.ReactNode;
+  cta: string;
+  onClick?: () => void;
+}) {
+  const interactive = !!onClick;
+  const Tag = interactive ? 'button' : 'div';
+  return (
+    <Tag
+      type={interactive ? 'button' : undefined}
+      onClick={onClick}
+      disabled={interactive ? false : undefined}
+      className={cn(
+        'group relative w-full rounded-xl border p-5 text-left transition-colors',
+        interactive && 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40',
+        tone === 'warn'
+          ? 'border-transparent bg-amber-50 dark:bg-amber-950/30'
+          : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40',
+        interactive && tone === 'warn' && 'hover:bg-amber-100/80 dark:hover:bg-amber-950/50',
+        interactive && tone !== 'warn' && 'hover:border-zinc-400 dark:hover:border-zinc-600',
+      )}
+    >
+      <div
+        className={cn(
+          'mb-4 flex items-center justify-between text-[11.5px] font-medium uppercase tracking-wider',
+          tone === 'warn'
+            ? 'text-amber-700 dark:text-amber-400'
+            : 'text-zinc-500 dark:text-zinc-400',
+        )}
+      >
+        <span className="flex items-center gap-1.5">
+          {icon}
+          {label}
+        </span>
+        {tag && (
+          <span
+            className={cn(
+              'rounded-full px-2 py-0.5 text-[10.5px] font-medium normal-case tracking-normal',
+              tone === 'warn'
+                ? 'bg-white text-amber-700 dark:bg-zinc-900 dark:text-amber-400'
+                : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+            )}
+          >
+            {tag}
+          </span>
+        )}
+      </div>
+      <div
+        className={cn(
+          'flex items-baseline gap-2 font-mono text-3xl font-semibold leading-none tracking-tight tabular-nums',
+          tone === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-900 dark:text-white',
+        )}
+      >
+        {value}
+        <span className="font-sans text-sm font-medium text-zinc-500 dark:text-zinc-400">{unit}</span>
+      </div>
+      <p className="mt-2.5 text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">{sub}</p>
+      <div
+        className={cn(
+          'mt-3.5 flex items-center gap-1 text-xs font-medium',
+          tone === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-900 dark:text-white',
+        )}
+      >
+        {cta}
+        <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+      </div>
+    </Tag>
+  );
+}
+
+function KpiTile({
+  label,
+  value,
+  sub,
+  icon,
+  tone = 'normal',
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  icon?: React.ReactNode;
+  tone?: 'normal' | 'warn';
+}) {
+  return (
+    <div className="min-w-0 border border-zinc-200/70 bg-white/70 p-3 dark:border-zinc-800/80 dark:bg-zinc-900/30">
+      <div
+        className={cn(
+          'mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide',
+          tone === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400',
+        )}
+      >
+        {icon}
+        <span className="truncate">{label}</span>
+      </div>
+      <div
+        className={cn(
+          'truncate font-mono text-lg font-semibold leading-tight tabular-nums',
+          tone === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-900 dark:text-zinc-100',
+        )}
+      >
+        {value}
+      </div>
+      {sub ? <div className="mt-1 truncate text-[11px] text-zinc-500 dark:text-zinc-500">{sub}</div> : null}
+    </div>
+  );
+}
+
+function CompactBonus({
+  icon,
+  label,
+  sub,
+  amount,
+  eligible,
+  total,
+  loading = false,
+  barClass,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  sub: string;
+  amount: string;
+  eligible: number;
+  total: number;
+  loading?: boolean;
+  barClass: string;
+}) {
+  const pct = total > 0 ? Math.round((eligible / total) * 100) : 0;
+  return (
+    <div className="rounded-lg border border-zinc-200/80 bg-white/70 p-2.5 dark:border-zinc-800/80 dark:bg-zinc-900/30">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1.5 text-[12px] font-semibold text-zinc-800 dark:text-zinc-200">
+          {icon}
+          <span className="truncate">{label}</span>
+        </span>
+        <span className="shrink-0 rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+          {amount}
+        </span>
+      </div>
+      <div className="mb-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">{sub}</div>
+      <div className="mb-1 flex h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+        <div
+          className={cn('h-full transition-all duration-500', barClass)}
+          style={{ width: `${Math.max(total > 0 ? 4 : 0, pct)}%` }}
+        />
+      </div>
+      <div className="text-[11px] text-zinc-600 dark:text-zinc-400">
+        {loading ? 'Loading…' : `${eligible} of ${total} eligible (${pct}%)`}
+      </div>
+    </div>
+  );
+}
+
+function PagerEdgeBtn({
+  disabled,
+  onClick,
+  children,
+  ...rest
+}: {
+  disabled?: boolean;
+  onClick?: () => void;
+  children: React.ReactNode;
+} & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick' | 'disabled'>) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'flex h-7 min-w-[28px] items-center justify-center rounded-md transition-colors',
+        disabled
+          ? 'cursor-default opacity-30'
+          : 'text-zinc-500 hover:bg-white hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100',
+      )}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
+export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}) {
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [employeesError, setEmployeesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -129,6 +985,121 @@ export default function Overview({ onViewRates }: OverviewProps = {}) {
     string,
     { name: string | null; department: string | null }
   > | null>(null);
+  /** Per-employee hours + initial pay for the selected payroll scope. */
+  const [employeePayByEmail, setEmployeePayByEmail] = useState<Record<
+    string,
+    { hours: number; pay: number | null }
+  >>({});
+  /** Pending counts surfaced in the simple view's attention row. */
+  const [pendingDisputes, setPendingDisputes] = useState<number | null>(null);
+  const [oldestDisputeDays, setOldestDisputeDays] = useState<number | null>(null);
+  const [pendingDisputeRows, setPendingDisputeRows] = useState<
+    Array<{ id: string; work_email: string; dispute_date: string; created_at?: string; reason: string }>
+  >([]);
+  const [pendingLeaves, setPendingLeaves] = useState<number | null>(null);
+  const [weekOrphanageVisits, setWeekOrphanageVisits] = useState<number | null>(null);
+  /** Which layout the user is currently viewing — persisted in localStorage. */
+  const [viewMode, setViewMode] = useState<'simple' | 'expanded'>('simple');
+
+  // Load persisted view mode on mount (client-only)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const saved = window.localStorage.getItem('overview.viewMode');
+      if (saved === 'simple' || saved === 'expanded') setViewMode(saved);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem('overview.viewMode', viewMode);
+    } catch {
+      /* ignore */
+    }
+  }, [viewMode]);
+
+  // Lightweight fetch for pending counts surfaced in the simple view attention cards.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/pab-disputes?status=pending&limit=500', { cache: 'no-store' });
+        const json = (await res.json()) as {
+          rows?: Array<{
+            id: string;
+            work_email: string;
+            dispute_date: string;
+            reason: string;
+            created_at?: string;
+          }>;
+        };
+        if (cancelled) return;
+        const rows = Array.isArray(json.rows) ? json.rows : [];
+        setPendingDisputes(rows.length);
+        setPendingDisputeRows(rows);
+        if (rows.length > 0) {
+          let oldestMs = Number.POSITIVE_INFINITY;
+          for (const r of rows) {
+            if (!r.created_at) continue;
+            const t = new Date(r.created_at).getTime();
+            if (!Number.isNaN(t) && t < oldestMs) oldestMs = t;
+          }
+          if (Number.isFinite(oldestMs)) {
+            const days = Math.max(0, Math.floor((Date.now() - oldestMs) / (24 * 3600 * 1000)));
+            setOldestDisputeDays(days);
+          } else {
+            setOldestDisputeDays(null);
+          }
+        } else {
+          setOldestDisputeDays(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setPendingDisputes(null);
+          setOldestDisputeDays(null);
+          setPendingDisputeRows([]);
+        }
+      }
+    })();
+    (async () => {
+      try {
+        const res = await fetch('/api/leave-requests?scope=all', { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: { status?: string }[] };
+        if (!cancelled) {
+          const n = Array.isArray(json.rows)
+            ? json.rows.filter((r) => (r.status ?? '').toLowerCase() === 'pending').length
+            : 0;
+          setPendingLeaves(n);
+        }
+      } catch {
+        if (!cancelled) setPendingLeaves(null);
+      }
+    })();
+    (async () => {
+      try {
+        // Orphanage visits in a ±3 day window around today (roughly "this week")
+        const today = new Date();
+        const fmt = (d: Date) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const from = new Date(today.getTime() - 3 * 24 * 3600 * 1000);
+        const to = new Date(today.getTime() + 4 * 24 * 3600 * 1000);
+        const res = await fetch(
+          `/api/pab-disputes/orphanage-visits?from=${fmt(from)}&to=${fmt(to)}`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as { rows?: { id: string }[] };
+        if (!cancelled) setWeekOrphanageVisits(Array.isArray(json.rows) ? json.rows.length : 0);
+      } catch {
+        if (!cancelled) setWeekOrphanageVisits(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /**
    * Tech Bonus eligibility: employees who have completed 30 days of service
@@ -270,32 +1241,36 @@ export default function Overview({ onViewRates }: OverviewProps = {}) {
         const paySet = new Set<string>();
         let sum = 0;
         let hasAnyPay = false;
+        const perEmployeePay: Record<string, { hours: number; pay: number | null }> = {};
+
+        const parseRate = (v: string | null | undefined): number | null => {
+          if (v == null) return null;
+          const n = parseFloat(String(v).trim().replace(/,/g, ''));
+          return Number.isFinite(n) ? n : null;
+        };
 
         if (isAllTime) {
           // Sum hours per employee across all files, split regular/OT per file
-          const perEmployee = new Map<string, { regularSec: number; otSec: number }>();
+          const perEmployee = new Map<string, { regularSec: number; otSec: number; totalHours: number }>();
           for (const row of allPayrollRows) {
             const em = normEmail(row.email);
             if (!em) continue;
             paySet.add(em);
             const { regularSec, otSec } = splitRegularOvertimeSeconds(row.hoursDecimal);
-            const existing = perEmployee.get(em) ?? { regularSec: 0, otSec: 0 };
+            const existing = perEmployee.get(em) ?? { regularSec: 0, otSec: 0, totalHours: 0 };
             existing.regularSec += regularSec;
             existing.otSec += otSec;
+            existing.totalHours += row.hoursDecimal ?? 0;
             perEmployee.set(em, existing);
           }
-          for (const [em, { regularSec, otSec }] of perEmployee) {
+          for (const [em, { regularSec, otSec, totalHours }] of perEmployee) {
             const rateRow = ratesByEmail.get(em);
-            const parseRate = (v: string | null | undefined): number | null => {
-              if (v == null) return null;
-              const n = parseFloat(String(v).trim().replace(/,/g, ''));
-              return Number.isFinite(n) ? n : null;
-            };
             const regularRate = parseRate(rateRow?.regular_rate);
             const otRate = parseRate(rateRow?.ot_rate);
             const regularPay = regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
             const otPay = otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
             const initialPay = regularPay != null && otPay != null ? Math.round((regularPay + otPay) * 100) / 100 : null;
+            perEmployeePay[em] = { hours: totalHours, pay: initialPay };
             if (initialPay != null) { sum += initialPay; hasAnyPay = true; }
           }
         } else {
@@ -304,16 +1279,12 @@ export default function Overview({ onViewRates }: OverviewProps = {}) {
             if (em) paySet.add(em);
             const { regularSec, otSec } = splitRegularOvertimeSeconds(row.hoursDecimal);
             const rateRow = em ? ratesByEmail.get(em) : undefined;
-            const parseRate = (v: string | null | undefined): number | null => {
-              if (v == null) return null;
-              const n = parseFloat(String(v).trim().replace(/,/g, ''));
-              return Number.isFinite(n) ? n : null;
-            };
             const regularRate = parseRate(rateRow?.regular_rate);
             const otRate = parseRate(rateRow?.ot_rate);
             const regularPay = regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
             const otPay = otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
             const initialPay = regularPay != null && otPay != null ? Math.round((regularPay + otPay) * 100) / 100 : null;
+            if (em) perEmployeePay[em] = { hours: row.hoursDecimal ?? 0, pay: initialPay };
             if (initialPay != null) { sum += initialPay; hasAnyPay = true; }
           }
         }
@@ -323,6 +1294,7 @@ export default function Overview({ onViewRates }: OverviewProps = {}) {
           setPayrollWorkerCount(paySet.size > 0 ? paySet.size : null);
           setTotalPayout(hasAnyPay ? sum : null);
           setPayrollIdentityByEmail(mergePayrollIdentity(allPayrollRows));
+          setEmployeePayByEmail(perEmployeePay);
         }
       } catch {
         if (!cancelled) {
@@ -331,6 +1303,7 @@ export default function Overview({ onViewRates }: OverviewProps = {}) {
           setPayrollWorkerCount(null);
           setActiveSourceFile(null);
           setPayrollIdentityByEmail(null);
+          setEmployeePayByEmail({});
         }
       } finally {
         if (!cancelled) setPayoutLoading(false);
@@ -598,14 +1571,108 @@ export default function Overview({ onViewRates }: OverviewProps = {}) {
     },
   ];
 
+  const activePeriod = useMemo(() => parsePeriodFromFilename(activeSourceFile), [activeSourceFile]);
+
+  /** Expanded view: average pay and hours per active worker. */
+  const { avgPay, avgHours } = useMemo(() => {
+    const entries = Object.values(employeePayByEmail);
+    if (entries.length === 0) return { avgPay: null as number | null, avgHours: null as number | null };
+    let paySum = 0;
+    let payCount = 0;
+    let hoursSum = 0;
+    for (const e of entries) {
+      hoursSum += e.hours;
+      if (e.pay != null) {
+        paySum += e.pay;
+        payCount += 1;
+      }
+    }
+    return {
+      avgPay: payCount > 0 ? paySum / payCount : null,
+      avgHours: entries.length > 0 ? hoursSum / entries.length : null,
+    };
+  }, [employeePayByEmail]);
+
+  /** Expanded view: top departments by headcount (merged master+hubstaff). */
+  const departmentMix = useMemo(() => {
+    const counts = new Map<string, number>();
+    let total = 0;
+    for (const e of mergedEmployees) {
+      const key = (e.department ?? '—').trim() || '—';
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      total += 1;
+    }
+    const sorted = [...counts.entries()]
+      .map(([dept, n]) => ({ dept, count: n, pct: total > 0 ? (n / total) * 100 : 0 }))
+      .sort((a, b) => b.count - a.count);
+    return { total, rows: sorted.slice(0, 6) };
+  }, [mergedEmployees]);
+
+  /** Quick lookup for rendering the activity feed with employee names. */
+  const nameByEmail = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of mergedEmployees) {
+      const key = normEmail(e.work_email ?? e.personal_email ?? '') ?? '';
+      if (key && e.name) m.set(key, e.name);
+    }
+    return m;
+  }, [mergedEmployees]);
+
+  const totalPendingActions = (pendingDisputes ?? 0) + (pendingLeaves ?? 0);
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-5 dark:bg-none dark:bg-[#0d1117]">
-      <div className="flex shrink-0 items-center justify-between">
-        <div>
+    <div className={cn(
+      'flex h-full min-h-0 flex-col gap-4 overflow-hidden p-5 transition-colors duration-300 ease-out dark:bg-[#0d1117]',
+      viewMode === 'simple'
+        ? 'bg-[#fafaf8] dark:bg-none'
+        : 'bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none',
+    )}>
+      <div className="flex shrink-0 items-center justify-between gap-3">
+        <div className="min-w-0">
           <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">System Overview</h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-500">Real-time HRIS and Payroll analytics</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* View mode toggle — with sliding active pill */}
+          <div
+            role="tablist"
+            aria-label="View mode"
+            className="relative inline-flex items-center rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
+          >
+            {(['simple', 'expanded'] as const).map((mode) => {
+              const isActive = viewMode === mode;
+              const Icon = mode === 'simple' ? Rows3 : LayoutGrid;
+              const label = mode === 'simple' ? 'Simple' : 'Expanded';
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setViewMode(mode)}
+                  className={cn(
+                    'relative z-10 flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors duration-200',
+                    isActive
+                      ? 'text-white dark:text-zinc-900'
+                      : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                  )}
+                >
+                  {isActive && (
+                    <motion.span
+                      layoutId="overview-viewmode-pill"
+                      aria-hidden
+                      className="absolute inset-0 rounded bg-zinc-900 dark:bg-zinc-100"
+                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center gap-1.5">
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
           <FileText className="h-4 w-4 shrink-0 text-orange-500" />
           <select
             value={selectedSourceFile ?? ''}
@@ -623,42 +1690,121 @@ export default function Overview({ onViewRates }: OverviewProps = {}) {
         </div>
       </div>
 
-      <div className="grid shrink-0 grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat, i) => (
-          <Card
-            key={i}
-            className="border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30"
+      <AnimatePresence mode="wait" initial={false}>
+        {viewMode === 'simple' ? (
+          <motion.div
+            key="simple"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
           >
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-zinc-600 dark:text-zinc-400">{stat.label}</CardTitle>
-              <stat.icon className="h-4 w-4 text-zinc-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="font-mono text-2xl font-bold text-zinc-900 dark:text-white">{stat.value}</div>
-              <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-600">
-                {(() => {
-                  const isAll = selectedSourceFile === '__all__';
-                  const src = activeSourceFile
-                    ? activeSourceFile
-                    : isAll ? 'all uploads combined' : 'latest Hubstaff data';
-                  if (stat.label === 'Total Payout') return `Sum of initial pay · ${src}`;
-                  if (stat.label === 'Active Workers') return `Distinct work emails · ${src}`;
-                  if (stat.label === 'Employees in Payroll but not in Master list')
-                    return `Emails in ${isAll ? 'all payroll files' : src} not in global_master_list`;
-                  if (stat.label === 'Employees in Masterlist but not in Payroll')
-                    return `Emails in global_master_list not in ${isAll ? 'any payroll file' : src}`;
-                  return '';
-                })()}
-              </p>
-            </CardContent>
-          </Card>
-        ))}
+            <SimpleView
+              totalPayout={totalPayout}
+              payoutLoading={payoutLoading}
+              payrollWorkerCount={payrollWorkerCount}
+              masterTotal={employees.length}
+              inPayrollNotMaster={inPayrollNotMaster}
+              inMasterNotPayroll={inMasterNotPayroll}
+              pendingDisputes={pendingDisputes}
+              oldestDisputeDays={oldestDisputeDays}
+              pendingLeaves={pendingLeaves}
+              weekOrphanageVisits={weekOrphanageVisits}
+              pabMetrics={pabMetrics}
+              techBonusEligibility={techBonusEligibility}
+              pageRows={pageRows}
+              filteredTotal={filteredEmployees.length}
+              totalPages={totalPages}
+              safePage={safePage}
+              setPage={setPage}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              departmentFilter={departmentFilter}
+              setDepartmentFilter={setDepartmentFilter}
+              departmentOptions={departmentOptions}
+              activeSourceFile={activeSourceFile}
+              activePeriod={activePeriod}
+              employeePayByEmail={employeePayByEmail}
+              onViewRates={onViewRates}
+              onNavigate={onNavigate}
+              loading={loading}
+            />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="expanded"
+            className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-px"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+
+      {/* Compact 6-tile KPI strip */}
+      <div className="grid shrink-0 grid-cols-2 gap-2 overflow-hidden rounded-xl bg-white ring-1 ring-orange-200/90 sm:grid-cols-3 lg:grid-cols-6 dark:bg-zinc-900/40 dark:ring-blue-900/70">
+        <KpiTile
+          label="Total payout"
+          value={
+            payoutLoading
+              ? '…'
+              : totalPayout != null
+                ? '₱' + totalPayout.toLocaleString('en-PH', { maximumFractionDigits: 0 })
+                : '—'
+          }
+          sub={activeSourceFile ? 'latest file' : selectedSourceFile === '__all__' ? 'all uploads' : 'pending'}
+          icon={<DollarSign className="h-3.5 w-3.5" />}
+        />
+        <KpiTile
+          label="Active workers"
+          value={payrollWorkerCount != null ? String(payrollWorkerCount) : '—'}
+          sub={`of ${employees.length} on master`}
+          icon={<Users className="h-3.5 w-3.5" />}
+        />
+        <KpiTile
+          label="Avg pay / worker"
+          value={avgPay != null ? '₱' + Math.round(avgPay).toLocaleString('en-PH') : '—'}
+          sub="initial pay"
+          icon={<DollarSign className="h-3.5 w-3.5" />}
+        />
+        <KpiTile
+          label="Avg hours / worker"
+          value={avgHours != null ? avgHours.toFixed(1) + 'h' : '—'}
+          sub="this period"
+          icon={<Clock className="h-3.5 w-3.5" />}
+        />
+        <KpiTile
+          label="Reconcile gaps"
+          value={
+            inPayrollNotMaster != null && inMasterNotPayroll != null
+              ? String(inPayrollNotMaster + inMasterNotPayroll)
+              : '—'
+          }
+          sub={
+            inPayrollNotMaster != null && inMasterNotPayroll != null
+              ? `${inPayrollNotMaster}↑ · ${inMasterNotPayroll}↓`
+              : ''
+          }
+          tone={
+            inPayrollNotMaster != null && inMasterNotPayroll != null && inPayrollNotMaster + inMasterNotPayroll > 0
+              ? 'warn'
+              : 'normal'
+          }
+          icon={<AlertTriangle className="h-3.5 w-3.5" />}
+        />
+        <KpiTile
+          label="Pending actions"
+          value={String(totalPendingActions)}
+          sub={`${pendingDisputes ?? 0} disputes · ${pendingLeaves ?? 0} leaves`}
+          tone={totalPendingActions > 0 ? 'warn' : 'normal'}
+          icon={<AlertCircle className="h-3.5 w-3.5" />}
+        />
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-3">
-        <Card className="flex min-h-0 flex-col overflow-hidden border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:col-span-2">
-          <CardHeader className="shrink-0 flex flex-row items-center justify-between gap-4 pb-2">
-            <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Employees</CardTitle>
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-hidden lg:grid-cols-3">
+        <Card size="sm" className="flex min-h-0 flex-col overflow-hidden bg-gradient-to-br from-white to-blue-50/20 shadow-sm ring-1 ring-orange-200/90 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-900/70 lg:col-span-2">
+          <CardHeader className="shrink-0 flex flex-row items-center justify-between gap-4 pb-1.5">
+            <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Employees</CardTitle>
             <Badge variant="outline" className="border-blue-500/20 bg-blue-500/10 font-mono text-[10px] text-blue-700 dark:border-blue-500/30 dark:text-blue-400">
               master + Hubstaff fallback
             </Badge>
@@ -675,9 +1821,11 @@ export default function Overview({ onViewRates }: OverviewProps = {}) {
               </p>
             ) : mergedEmployees.length === 0 ? (
               <p className="text-sm text-zinc-600 dark:text-zinc-500">
-                No employees to show. Load <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">global_master_list</code> via{' '}
-                <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE</code> and/or upload Hubstaff hours
-                so payroll can list workers.
+                No employees to show. Import the roster with{' '}
+                <span className="font-medium">Admin → Overview → Global master list CSV</span>, or load{' '}
+                <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">global_master_list</code> in Supabase (
+                <code className="font-mono text-xs text-zinc-800 dark:text-zinc-400">NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE</code>
+                ), and/or upload Hubstaff hours so payroll can list workers.
               </p>
             ) : (
               <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
@@ -930,157 +2078,163 @@ export default function Overview({ onViewRates }: OverviewProps = {}) {
           </CardContent>
         </Card>
 
-        <Card className="flex min-h-0 flex-col overflow-hidden border-orange-100/80 bg-gradient-to-br from-white to-orange-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5">
-          <CardHeader className="shrink-0 pb-2">
-            <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Bonus & Status</CardTitle>
-          </CardHeader>
-          <CardContent className="min-h-0 flex-1 space-y-5 overflow-y-auto">
-            {/* PAB Eligibility */}
-            <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <div className="mb-2.5 flex items-center gap-2">
-                <Award className="h-4 w-4 text-indigo-500" />
-                <span className="text-xs font-semibold text-zinc-900 dark:text-white">Perfect Attendance Bonus</span>
-              </div>
-              {pabMetrics.loading ? (
-                <div className="flex items-center gap-2 py-2 text-[11px] text-zinc-400">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Computing PAB eligibility…
+        {/* Side stack: bonuses · department mix · pending activity */}
+        <div className="flex min-h-0 flex-col gap-3 overflow-y-auto">
+          {/* Bonuses compact */}
+          <Card size="sm" className="shrink-0 overflow-hidden bg-gradient-to-br from-white to-orange-50/20 shadow-sm ring-1 ring-orange-200/90 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-900/70">
+            <CardHeader className="shrink-0 pb-1.5">
+              <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Bonuses</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <CompactBonus
+                icon={<Award className="h-3.5 w-3.5 text-indigo-500" />}
+                label="Perfect Attendance"
+                sub={pabMetrics.monthLabel ?? 'Month pending'}
+                amount="₱5,000"
+                eligible={pabMetrics.eligible}
+                total={pabTotalForExpanded(pabMetrics)}
+                loading={pabMetrics.loading}
+                barClass="bg-gradient-to-r from-emerald-400 to-emerald-500"
+              />
+              <CompactBonus
+                icon={<Laptop className="h-3.5 w-3.5 text-sky-500" />}
+                label="Technology"
+                sub="3rd paycheck · after 30d"
+                amount="₱1,850"
+                eligible={techBonusEligibility.eligible}
+                total={techBonusEligibility.total}
+                barClass="bg-sky-500"
+              />
+            </CardContent>
+          </Card>
+
+          {/* Department mix */}
+          <Card size="sm" className="shrink-0 overflow-hidden bg-white shadow-sm ring-1 ring-orange-200/90 dark:bg-zinc-900/40 dark:ring-blue-900/70">
+            <CardHeader className="shrink-0 flex flex-row items-center justify-between pb-1.5">
+              <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Department mix</CardTitle>
+              <Badge variant="outline" className="border-zinc-200 bg-zinc-50 font-mono text-[10px] text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                {departmentMix.total} total
+              </Badge>
+            </CardHeader>
+            <CardContent className="space-y-1.5">
+              {departmentMix.rows.length === 0 ? (
+                <p className="py-2 text-xs text-zinc-400">No employees loaded.</p>
+              ) : (
+                departmentMix.rows.map((row) => (
+                  <div key={row.dept} className="space-y-0.5">
+                    <div className="flex items-center justify-between text-[12px]">
+                      <span className="truncate text-zinc-700 dark:text-zinc-300" title={row.dept}>
+                        {row.dept}
+                      </span>
+                      <span className="font-mono tabular-nums text-zinc-500 dark:text-zinc-400">
+                        {row.count}
+                        <span className="ml-1 text-[10px] text-zinc-400">
+                          {row.pct.toFixed(0)}%
+                        </span>
+                      </span>
+                    </div>
+                    <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                      <div
+                        className="h-full bg-orange-400/70 transition-all duration-500 dark:bg-blue-500/70"
+                        style={{ width: `${Math.max(2, row.pct)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Pending activity */}
+          <Card size="sm" className="flex min-h-[220px] flex-col overflow-hidden bg-white shadow-sm ring-1 ring-orange-200/90 dark:bg-zinc-900/40 dark:ring-blue-900/70">
+            <CardHeader className="shrink-0 flex flex-row items-center justify-between pb-1.5">
+              <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Pending</CardTitle>
+              <Badge
+                variant="outline"
+                className={cn(
+                  'font-mono text-[10px]',
+                  totalPendingActions > 0
+                    ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-400'
+                    : 'border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400',
+                )}
+              >
+                {totalPendingActions} actions
+              </Badge>
+            </CardHeader>
+            <CardContent className="min-h-0 flex-1 overflow-y-auto">
+              {pendingDisputeRows.length === 0 && (pendingLeaves ?? 0) === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center gap-1.5 py-6 text-center">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">All caught up.</p>
                 </div>
               ) : (
-                <>
-                  {pabMetrics.monthLabel && (
-                    <p className="mb-2 text-[10px] text-indigo-600 dark:text-indigo-400">
-                      PAB period: <span className="font-semibold">{pabMetrics.monthLabel}</span>
-                    </p>
-                  )}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                        Eligible
-                      </div>
-                      <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                        {pabMetrics.eligible}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
-                        <XCircle className="h-3.5 w-3.5 text-red-400" />
-                        Not Eligible
-                      </div>
-                      <span className="font-mono text-sm font-bold text-red-500 dark:text-red-400">
-                        {pabMetrics.notEligible}
-                      </span>
-                    </div>
-                    {pabMetrics.totalEmployees > 0 && (
-                      <div className="mt-1.5">
-                        <div className="h-2 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-500"
-                            style={{ width: `${(pabMetrics.eligible / pabMetrics.totalEmployees) * 100}%` }}
-                          />
+                <div className="space-y-2">
+                  {pendingDisputeRows.slice(0, 6).map((row) => {
+                    const name = nameByEmail.get(row.work_email) ?? row.work_email;
+                    const ageDays = row.created_at
+                      ? Math.max(
+                          0,
+                          Math.floor((Date.now() - new Date(row.created_at).getTime()) / 86400000),
+                        )
+                      : null;
+                    return (
+                      <button
+                        type="button"
+                        key={row.id}
+                        onClick={() => onNavigate?.('disputes')}
+                        className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                      >
+                        <span className="mt-1 inline-flex h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[12px] font-medium text-zinc-800 dark:text-zinc-200">
+                            {name}
+                          </div>
+                          <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                            Dispute · {row.dispute_date}
+                            {ageDays != null && (
+                              <span className="ml-1.5 text-zinc-400">· {ageDays}d ago</span>
+                            )}
+                          </div>
                         </div>
-                        <p className="mt-1 text-right text-[10px] text-zinc-400">
-                          {Math.round((pabMetrics.eligible / pabMetrics.totalEmployees) * 100)}% eligible of {pabMetrics.totalEmployees}
-                        </p>
+                      </button>
+                    );
+                  })}
+                  {(pendingLeaves ?? 0) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate?.('leave-requests')}
+                      className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                    >
+                      <span className="mt-1 inline-flex h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[12px] font-medium text-zinc-800 dark:text-zinc-200">
+                          Leave requests
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                          {pendingLeaves} awaiting approval
+                        </div>
                       </div>
-                    )}
-                  </div>
-                </>
+                    </button>
+                  )}
+                  {pendingDisputeRows.length > 6 && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate?.('disputes')}
+                      className="flex w-full items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-medium text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100"
+                    >
+                      +{pendingDisputeRows.length - 6} more disputes
+                      <ArrowRight className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
               )}
-            </div>
-
-            {/* Technology Bonus */}
-            <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <div className="mb-2.5 flex items-center gap-2">
-                <Laptop className="h-4 w-4 text-sky-500" />
-                <span className="text-xs font-semibold text-zinc-900 dark:text-white">Technology Bonus</span>
-              </div>
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-600 dark:text-zinc-400">Amount per employee</span>
-                  <span className="font-mono text-sm font-bold text-sky-600 dark:text-sky-400">₱1,850</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                    Eligible
-                  </div>
-                  <span className="font-mono text-sm font-bold text-sky-600 dark:text-sky-400">
-                    {techBonusEligibility.eligible}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
-                    <Clock className="h-3.5 w-3.5 text-amber-500" />
-                    Pending 30d
-                  </div>
-                  <span className="font-mono text-sm font-bold text-amber-600 dark:text-amber-400">
-                    {techBonusEligibility.pending}
-                  </span>
-                </div>
-                {techBonusEligibility.unknown > 0 && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-zinc-600 dark:text-zinc-400">No start date</span>
-                    <span className="font-mono text-sm font-bold text-zinc-500">
-                      {techBonusEligibility.unknown}
-                    </span>
-                  </div>
-                )}
-                {techBonusEligibility.total > 0 && (
-                  <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
-                    <div
-                      className="h-full bg-sky-500 transition-all"
-                      style={{ width: `${(techBonusEligibility.eligible / techBonusEligibility.total) * 100}%` }}
-                    />
-                  </div>
-                )}
-                <p className="mt-1 text-right text-[10px] text-zinc-400">
-                  {techBonusEligibility.total > 0
-                    ? `${Math.round((techBonusEligibility.eligible / techBonusEligibility.total) * 100)}% eligible of ${techBonusEligibility.total}`
-                    : 'No employees loaded'}
-                </p>
-                <p className="mt-1 text-[10px] leading-snug text-zinc-400 dark:text-zinc-500">
-                  Paid on the 3rd paycheck of each month to employees with ≥ 30 days of service.
-                </p>
-              </div>
-            </div>
-
-            {/* Dispute Requests */}
-            <div className="rounded-lg border border-zinc-200/80 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <div className="mb-2.5 flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-amber-500" />
-                <span className="text-xs font-semibold text-zinc-900 dark:text-white">Dispute Requests</span>
-              </div>
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
-                    <Clock className="h-3.5 w-3.5 text-amber-500" />
-                    Pending
-                  </div>
-                  <span className="font-mono text-sm font-bold text-amber-600 dark:text-amber-400">0</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                    Resolved
-                  </div>
-                  <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">0</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
-                    <XCircle className="h-3.5 w-3.5 text-red-400" />
-                    Rejected
-                  </div>
-                  <span className="font-mono text-sm font-bold text-red-500 dark:text-red-400">0</span>
-                </div>
-                <p className="mt-1 text-[10px] leading-snug text-zinc-400 dark:text-zinc-500">
-                  Dispute system is planned. Counts will populate once the disputes feature is live.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
       </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
