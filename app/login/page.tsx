@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn, signOut, useSession } from 'next-auth/react';
 import { Loader2, LogIn, AlertCircle } from 'lucide-react';
@@ -32,7 +32,31 @@ const SESSION_ROLE_KEY = 'employee_session_role';
  * NextAuth only guarantees a valid @simple.biz email; Supabase is still the source of truth for
  * which departments/roles that email has.
  */
+/**
+ * Default export wraps the inner client component in a Suspense boundary because
+ * `useSearchParams()` triggers a CSR-bailout during Next.js static prerender without it.
+ * (Next 16 requires the Suspense wrapper even for fully client-rendered pages.)
+ */
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginSkeleton />}>
+      <LoginPageInner />
+    </Suspense>
+  );
+}
+
+function LoginSkeleton() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-white via-orange-50/40 to-blue-50/30 px-4 dark:from-[#0d1117] dark:via-[#0f1729] dark:to-[#0a1628]">
+      <div className="flex flex-col items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading sign-in…</span>
+      </div>
+    </main>
+  );
+}
+
+function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { data: session, status } = useSession();
@@ -58,7 +82,9 @@ export default function LoginPage() {
       }
 
       const views = viewsForRoles(roles);
-      const target = defaultViewFor(views);
+      // Everyone lands on the employee view by default after sign-in. Users with accounting
+      // or admin roles switch via the in-app view switcher — no more forced /accounting hop.
+      const target: typeof views[number] = views.includes('employee') ? 'employee' : defaultViewFor(views);
 
       try {
         sessionStorage.setItem(SESSION_EMAIL_KEY, email);
@@ -68,10 +94,23 @@ export default function LoginPage() {
         /* ignore */
       }
 
+      // Honor `?callbackUrl=…` if the middleware pushed us here from a specific page.
+      // Reject obviously-bad callback URLs (external, or a loop back to /login).
+      const rawCallback = searchParams.get('callbackUrl');
+      const safeCallback =
+        rawCallback && rawCallback.startsWith('/') && !rawCallback.startsWith('/login')
+          ? rawCallback
+          : null;
+
+      if (safeCallback) {
+        router.replace(safeCallback);
+        return;
+      }
+
       const base = VIEW_ROUTES[target];
       router.replace(`${base}?email=${encodeURIComponent(email)}`);
     })();
-  }, [status, session, router, resolvingRole]);
+  }, [status, session, router, resolvingRole, searchParams]);
 
   // Turn NextAuth error query params into a friendly toast exactly once on mount.
   useEffect(() => {

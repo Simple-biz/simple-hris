@@ -3,13 +3,20 @@
 import { Suspense, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
+/**
+ * Root `/` lands authenticated users on the Employee view by default. Users who also hold
+ * admin/accounting roles switch via the in-app view switcher; the app no longer auto-hops
+ * them into the accounting dashboard on every visit.
+ *
+ * Unauthenticated users never see this — the middleware bounces them to `/login` first.
+ */
 function RootRedirectInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   useEffect(() => {
     const qs = searchParams.toString();
-    router.replace(qs ? `/accounting?${qs}` : '/accounting');
+    router.replace(qs ? `/employee?${qs}` : '/employee');
   }, [router, searchParams]);
 
   return (
