@@ -44,7 +44,10 @@
       "Bash(npm run *)",
       "Bash(awk -F',' 'NR>3 && $5!~/@/ {print NR\": \"$0}' 'C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\references\\\\Global Master List - MASTERLIST.csv')",
       "Bash(awk -F',' 'NR>3' 'C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\references\\\\Global Master List - MASTERLIST.csv')",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(ls .env)",
+      "Bash(wc -l .env)",
+      "Bash(npm install *)"
     ]
   }
 }

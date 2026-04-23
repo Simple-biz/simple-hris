@@ -588,6 +588,11 @@ Reads a single application setting.
 **Known keys**:
 - `usd_to_php_rate` — USD to PHP exchange rate
 - `hubstaff_daily_breakdown` — cached daily breakdown data
+- `pab_period_overrides` — JSON map `{ "YYYY-MM": { start: "YYYY-MM-DD", end: "YYYY-MM-DD" } }`. Per-month PAB window overrides; months without an entry fall back to `getPabMonthRange(year, month)`. Written from the PAB settings modal in Payroll Wizard → Additions.
+- `pab_period_active_month` — `"YYYY-MM"`. Which month the Additions tab currently evaluates. Absent → today's PAB month.
+- `pab_scope_department_keys` — JSON array of department keys in PAB scope (`null`/missing = all, `[]` = none). Edited in System Settings.
+- `pab_period_manual`, `pab_period_start`, `pab_period_end` — **legacy** single-range override. Still read for back-compat; auto-migrated into `pab_period_overrides` on first load when the new map is empty. New code should write to `pab_period_overrides` instead.
+- `pab_dispute_reason_codes` — JSON array of permitted reason codes for `/api/pab-disputes`.
 
 **Response** `200`:
 ```json

@@ -107,13 +107,50 @@ Supporting functions: `colDayPrefix()`, `DAY_PREFIX_MAP`, `parseColDate()`, `col
 
 ### Detection steps (PayrollWizard)
 
-1. Merge all source files' rows, resolving canonical columns to ISO dates.
-2. Infer PAB month from column dates via `inferPabMonthFromColumns()`.
-3. Compute PAB date range via `getPabMonthRange()`.
-4. Filter weekday column groups to the PAB range via `filterColumnGroupsByPabRange()`.
-5. For each employee row, check every weekday group: if `maxSecondsAcrossWeekdayGroup() ≥ 25,200`, mark as passing.
-6. If **all** weekday groups pass: add the employee to the `perfectAttendanceEligible` set.
-7. A `useEffect` auto-applies the `perfect_attendance` bonus toggle.
+1. Merge **every** archived Hubstaff upload in parallel (one `fetch` per `source_file`), resolving canonical columns to ISO dates per file. The single-latest-file shortcut was removed — it caused empty calendars because one weekly CSV only covers five weekdays.
+2. Compute PAB date range from the **active month** saved in `app_settings` (`getPabMonthRange(year, month)`). See "PAB period configuration" below.
+3. Filter weekday column groups to the PAB range via `filterColumnGroupsByPabRange()`.
+4. For each employee row, check every weekday group: if `maxSecondsAcrossWeekdayGroup() ≥ 25,200` (or the day is forgiven via an approved dispute), mark as passing.
+5. If **all** weekday groups pass: add the employee to the `perfectAttendanceEligible` set.
+6. A `useEffect` auto-applies the `perfect_attendance` bonus toggle to assigned employees whenever `perfectAttendanceEligible` changes.
+
+### Tri-state PAB display (Additions tab)
+
+The PAB pill in the Additions table and the badge in the PAB Calendar modal render three states — the underlying `perfectAttendanceEligible` set is still strict-pass only, this is a display refinement so in-progress months don't render as "Ineligible" just because future weekdays haven't happened yet.
+
+| State | When | Color |
+|---|---|---|
+| `eligible` (✓) | PAB period end has passed AND every past weekday passed | emerald |
+| `ineligible` (✗) | At least one *past* weekday in the PAB range fell below 7h and wasn't forgiven | red |
+| `in_progress` (⏳) | Today ≤ `pabMonthRange.end` AND no past failures recorded yet | indigo |
+
+Computed in the `pabStatusByEmail` memo in `PayrollWizard.tsx`. Walks each employee's `employeeWeekdayHours` breakdown, compares each entry's ISO date to midnight-today, and decides from past failures + period-ended flag. The display doesn't affect bonus calculation — `perfectAttendanceEligible` still requires every weekday in the range to pass before `perfect_attendance` is auto-toggled on.
+
+### PAB period configuration (PayrollWizard → Additions)
+
+The Additions tab owns the PAB period UI (System Settings only keeps the department-scope picker). The setter is a compact button that opens a modal containing:
+
+- **Year nav** — prev/next year arrows.
+- **12-month grid** (Jan–Dec for the selected year). Each pill shows:
+  - Green dot if that month has at least one Hubstaff date column in merged uploads (`pabMonthDataCoverage` memo).
+  - Amber dot if a custom override is saved for that month.
+  - "Now" badge on today's PAB month.
+  - Non-selectable (dashed border) if no Hubstaff data exists *and* it's not today's month. Requirement: only months with data can be picked.
+- **Active-month editor** — start / end date inputs that auto-save an override for the currently selected month, plus:
+  - **Auto-calc** — writes the canonical `getPabMonthRange(year, month)` window as that month's override.
+  - **Reset override** — deletes the override so the month falls back to the default Mon–Fri formula.
+- **Refresh** — re-fetches PAB settings and Hubstaff uploads so downstream memos rebuild.
+
+Storage keys in `app_settings`:
+
+| Key | Shape | Notes |
+|---|---|---|
+| `pab_period_overrides` | JSON map `{ "YYYY-MM": { start, end } }` | Per-month memory; source of truth for custom windows. |
+| `pab_period_active_month` | `"YYYY-MM"` | Which month the Additions tab evaluates. Absent → today's PAB month via `getCurrentPabMonth()`. |
+| `pab_scope_department_keys` | JSON array | Unchanged. Set in System Settings. |
+| `pab_period_manual`, `pab_period_start`, `pab_period_end` | legacy | Still read by `fetchPabPeriodSettings`; auto-migrated into `pab_period_overrides` on first load when the new map is empty. Employee Dashboard's `validManualRange` still reads these for back-compat. |
+
+Resolution in `usePabPeriodSettings`: the hook exposes `activeMonthResolved`, `activeRange` ( = override for active month if present, else `getPabMonthRange(year, month)`), and legacy `validManualRange`.
 
 ### Detection steps (Employee Dashboard)
 

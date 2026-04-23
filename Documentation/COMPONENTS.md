@@ -237,10 +237,28 @@ The **unassigned count** badge in the header shows how many Hubstaff employees h
 - If **all** weekday values ≥ 25,200 seconds (7 hours), the employee is added to the eligible set.
 
 **Per-employee breakdown** (`employeeWeekdayHours` useMemo):
-- Maps each employee's normalized email to an array of `{ col, seconds, passes }` for each weekday column, sorted Mon→Fri.
-- Used to render colored day-pill indicators (M T W T F) in the PA toggle cell. Green = ≥7h, red = <7h. Hovering shows a tooltip with the full column name and logged hours.
+- Maps each employee's normalized email to an array of `{ col, seconds, passes, forgivenByDispute }` for each weekday column in the PAB range.
+- Used by the PAB cell pill and by the **PAB Calendar modal** (clickable from any cell in the Additions table) to render a full month view with per-day ✓/✗/★ states.
+
+**Tri-state PAB pill** (`pabStatusByEmail` useMemo): the Additions table pill and the calendar-modal badge display **Eligible** / **Ineligible** / **In Progress** based on:
+- Any past weekday in the PAB range with `!passes` → `ineligible` immediately (verdict locks, future days can't salvage the month).
+- Today ≤ `pabMonthRange.end` with no past failures → `in_progress`.
+- Period ended with all weekdays passing → `eligible`.
+
+The underlying `perfectAttendanceEligible` set is still strict-pass only; this memo is display-only so in-progress months don't read as "Ineligible" just because future weekdays haven't happened yet.
 
 **Auto-apply effect**: When `perfectAttendanceEligible` recomputes, a `useEffect` auto-toggles the `perfect_attendance` bonus for all department-assigned employees. Manual overrides after the effect are preserved.
+
+#### PAB settings modal (Additions header)
+
+PAB period configuration lives in the Payroll Wizard, not System Settings. A compact button in the Additions header (showing the active month + date range + any "Custom" badge) opens a modal containing:
+
+- **Year navigation** (prev/next year arrows) scoping the month grid.
+- **12-month picker**: each month pill shows a green dot when at least one Hubstaff date column falls in that month's range (`pabMonthDataCoverage` memo), an amber dot when a per-month override is saved, and a "Now" badge on today's PAB month. Months with no Hubstaff data are non-selectable (dashed border) — the constraint is *"a month can only be selected if it has data to evaluate"*, except the current month which is always selectable.
+- **Active-month editor**: start/end date inputs that auto-save as an override for the selected month, plus **Auto-calc** (writes the canonical `getPabMonthRange(year, month)` window) and **Reset override** (deletes the override so the default formula takes over).
+- **Refresh** — re-fetches PAB settings and Hubstaff uploads.
+
+Storage keys: `pab_period_overrides` (JSON map), `pab_period_active_month` (`"YYYY-MM"`). Legacy `pab_period_manual`/`_start`/`_end` still honored on read and auto-migrated. See BUSINESS_LOGIC §"PAB period configuration" for the detailed schema.
 
 #### Common Bonuses (all departments)
 

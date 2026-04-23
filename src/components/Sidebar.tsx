@@ -3,6 +3,7 @@
 import React from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
+import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   LayoutDashboard,
@@ -170,6 +171,12 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
         <Button
           variant="ghost"
           className="w-full justify-start gap-3 text-zinc-600 hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
+          onClick={() => {
+            try {
+              sessionStorage.removeItem(SESSION_EMAIL_KEY);
+            } catch { /* ignore */ }
+            void signOut({ callbackUrl: '/login' });
+          }}
         >
           <LogOut className="h-4 w-4" />
           Sign Out
