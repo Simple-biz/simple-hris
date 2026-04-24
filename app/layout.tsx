@@ -1,9 +1,15 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import NextAuthProvider from "@/components/auth/NextAuthProvider";
 import { Toaster } from "sonner";
 import "../src/index.css";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
 
 export const metadata: Metadata = {
   title: "Simple Accounting HRIS",
@@ -22,7 +28,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="light" suppressHydrationWarning>
-      <body>
+      <body className="min-h-dvh overflow-x-hidden">
         <NextAuthProvider>
           <ThemeProvider
             attribute="class"

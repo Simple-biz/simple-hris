@@ -28,6 +28,8 @@ import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 interface EmployeeSidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  /** Below `md`, sidebar is a drawer. Desktop ignores this. */
+  mobileOpen: boolean;
   employeeName?: string;
   department?: string;
   employeeId?: string;
@@ -50,6 +52,7 @@ const navItems = [
 export default function EmployeeSidebar({
   activeTab,
   setActiveTab,
+  mobileOpen,
   employeeName = 'Employee',
   department,
   employeeId,
@@ -69,7 +72,16 @@ export default function EmployeeSidebar({
     .slice(0, 2);
 
   return (
-    <div className="flex h-screen w-64 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400">
+    <div
+      className={cn(
+        'flex h-dvh w-64 max-w-[min(100vw,16rem)] shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 shadow-xl dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400 md:max-w-none md:shadow-none',
+        'fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-out md:static md:z-auto md:translate-x-0',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+      )}
+      id="employee-sidebar-nav"
+      role="navigation"
+      aria-label="Employee navigation"
+    >
       <div className="p-6">
         <div className="mb-8 flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/30">

@@ -8,7 +8,8 @@ import AdminRoles from '@/components/admin/AdminRoles';
 import AdminEmployees from '@/components/admin/AdminEmployees';
 import AdminWebhooks from '@/components/admin/AdminWebhooks';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
-import { Construction } from 'lucide-react';
+import { Construction, Menu } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
@@ -36,6 +37,7 @@ interface WebhookEntry {
 
 function AdminPageInner() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const [navCounts, setNavCounts] = useState({
     roles: 0,
@@ -98,10 +100,24 @@ function AdminPageInner() {
     };
   }, []);
 
+  const navigate = (tab: string) => {
+    setActiveTab(tab);
+    setMobileNavOpen(false);
+  };
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileNavOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobileNavOpen]);
+
   const renderContent = () => {
     switch (activeTab) {
       case 'overview':
-        return <AdminOverview userEmail={adminEmail} onNavigate={setActiveTab} />;
+        return <AdminOverview userEmail={adminEmail} onNavigate={navigate} />;
       case 'roles':
         return <AdminRoles />;
       case 'employees':
@@ -144,23 +160,51 @@ function AdminPageInner() {
   return (
     <div
       className={cn(
-        'flex h-screen w-full text-zinc-900 dark:text-zinc-100',
+        'flex h-dvh max-h-dvh w-full overflow-hidden text-zinc-900 dark:text-zinc-100',
         activeTab === 'overview' ? 'bg-zinc-50 dark:bg-zinc-950' : 'bg-white dark:bg-[#0d1117]',
       )}
     >
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px] md:hidden"
+          aria-label="Close navigation menu"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
       <AdminSidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={navigate}
+        mobileOpen={mobileNavOpen}
         viewerEmail={adminEmail}
         counts={navCounts}
       />
-      <main
-        className={cn(
-          'relative flex min-h-0 min-w-0 flex-1 flex-col',
-          activeTab === 'overview' ? 'overflow-hidden' : 'overflow-y-auto',
-        )}
-      >
-        {renderContent()}
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex shrink-0 items-center gap-3 border-b border-[#ececec] bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-zinc-800 dark:bg-zinc-950/95 md:hidden">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="shrink-0 border-[#ececec] bg-[#fafaf8] dark:border-zinc-800 dark:bg-zinc-900"
+            onClick={() => setMobileNavOpen(true)}
+            aria-expanded={mobileNavOpen}
+            aria-controls="admin-sidebar-nav"
+            aria-label="Open navigation menu"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+          <span className="min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            Admin
+          </span>
+        </header>
+        <div
+          className={cn(
+            'flex min-h-0 min-w-0 flex-1 flex-col',
+            activeTab === 'overview' ? 'overflow-hidden' : 'overflow-y-auto',
+          )}
+        >
+          {renderContent()}
+        </div>
       </main>
     </div>
   );

@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
+import { Menu } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import Sidebar from './components/Sidebar';
 import Overview from './components/Overview';
 import Rates from './components/Rates';
@@ -21,16 +23,12 @@ function isPlausibleEmail(s: string): boolean {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [focusRatesEmail, setFocusRatesEmail] = useState<string | null>(null);
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const searchParams = useSearchParams();
   const emailFromQuery = searchParams.get('email');
-
-  const handleViewRates = (email: string) => {
-    setFocusRatesEmail(email);
-    setActiveTab('rates');
-  };
 
   useEffect(() => {
     setMounted(true);
@@ -47,10 +45,29 @@ export default function App() {
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
+  const navigate = (tab: string) => {
+    setActiveTab(tab);
+    setMobileNavOpen(false);
+  };
+
+  const handleViewRates = (email: string) => {
+    setFocusRatesEmail(email);
+    navigate('rates');
+  };
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileNavOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobileNavOpen]);
+
   const renderContent = () => {
     switch (activeTab) {
       case 'overview':
-        return <Overview onViewRates={handleViewRates} onNavigate={setActiveTab} />;
+        return <Overview onViewRates={handleViewRates} onNavigate={navigate} />;
       case 'rates':
         return (
           <Rates
@@ -82,15 +99,40 @@ export default function App() {
       case 'leave-requests':
         return <LeaveRequestsPanel />;
       default:
-        return <Overview />;
+        return <Overview onViewRates={handleViewRates} onNavigate={navigate} />;
     }
   };
 
   return (
-    <div className="flex h-screen bg-white font-sans text-zinc-900 selection:bg-orange-500/20 selection:text-orange-900 dark:bg-[#0d1117] dark:text-zinc-100 dark:selection:bg-orange-500/30 dark:selection:text-orange-200">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-      <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-        {renderContent()}
+    <div className="flex h-dvh max-h-dvh overflow-hidden bg-white font-sans text-zinc-900 selection:bg-orange-500/20 selection:text-orange-900 dark:bg-[#0d1117] dark:text-zinc-100 dark:selection:bg-orange-500/30 dark:selection:text-orange-200">
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px] md:hidden"
+          aria-label="Close navigation menu"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+      <Sidebar activeTab={activeTab} setActiveTab={navigate} mobileOpen={mobileNavOpen} />
+      <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex shrink-0 items-center gap-3 border-b border-orange-100 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-blue-950/60 dark:bg-[#0d1117]/95 md:hidden">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="shrink-0 border-orange-200/80 bg-white/80 dark:border-blue-950/60 dark:bg-blue-950/30"
+            onClick={() => setMobileNavOpen(true)}
+            aria-expanded={mobileNavOpen}
+            aria-controls="accounting-sidebar-nav"
+            aria-label="Open navigation menu"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+          <span className="min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            Accounting HRIS
+          </span>
+        </header>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{renderContent()}</div>
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>

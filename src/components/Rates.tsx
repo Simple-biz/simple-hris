@@ -46,7 +46,6 @@ import {
   OFFICIAL_USD_TO_PHP_RATE,
   effectiveUsdToPhpRateFromStored,
 } from "@/lib/fx/usd-php";
-import type { EmployeeIdRow } from "@/lib/supabase/employee-ids";
 import EmployeeAvatar from "@/components/employee/EmployeeAvatar";
 
 type EmployeeRateProfile = {
@@ -58,6 +57,22 @@ type EmployeeRateProfile = {
   workEmail: string | null;
   personalEmail: string | null;
   fields: { key: string; value: unknown }[];
+};
+
+type EmployeeRateProfileSummary = {
+  id: string;
+  displayName: string;
+  subtitle: string | null;
+  department: string | null;
+  organization: string | null;
+  workEmail: string | null;
+  personalEmail: string | null;
+  employeeId: string | null;
+  regularRate: string | null;
+  otRate: string | null;
+  suspended: boolean;
+  profilePhotoUrl: string | null;
+  hasRatesRow: boolean;
 };
 
 const DEPARTMENT_OPTIONS = [
@@ -312,6 +327,55 @@ function getAvatarInfoFromProfile(
   };
 }
 
+function tableRowFromSummary(p: EmployeeRateProfileSummary) {
+  return {
+    employeeId: p.employeeId,
+    name: (p.displayName ?? "").trim() || "â€”",
+    department: p.department ?? null,
+    organization: p.organization ?? null,
+    workEmail: p.workEmail?.trim() || p.subtitle?.trim() || "â€”",
+    regularRate: formatRateDisplay(p.regularRate ?? "â€”"),
+    otRate: formatRateDisplay(p.otRate ?? "â€”"),
+    suspended: p.suspended,
+    hasRatesRow: p.hasRatesRow,
+  };
+}
+
+function getAvatarInfoFromSummary(
+  p: EmployeeRateProfileSummary,
+): { photoUrl: string | null; email: string | null; initials: string } {
+  const name = p.displayName?.trim() || "";
+  const parts = name.split(/\s+/).filter(Boolean);
+  let initials = "??";
+  if (parts.length >= 2) initials = (parts[0][0] + parts[1][0]).toUpperCase();
+  else if (parts.length === 1 && parts[0].length >= 2) initials = parts[0].slice(0, 2).toUpperCase();
+  return {
+    photoUrl: p.profilePhotoUrl,
+    email: p.workEmail ?? p.personalEmail ?? p.subtitle,
+    initials,
+  };
+}
+
+function profileStubFromSummary(p: EmployeeRateProfileSummary): EmployeeRateProfile {
+  return {
+    id: p.id,
+    displayName: p.displayName,
+    subtitle: p.subtitle,
+    department: p.department,
+    organization: p.organization,
+    workEmail: p.workEmail,
+    personalEmail: p.personalEmail,
+    fields: [
+      { key: "Work Email", value: p.workEmail },
+      { key: "Personal Email", value: p.personalEmail },
+      { key: "Regular Rate", value: p.regularRate },
+      { key: "OT Rate", value: p.otRate },
+      { key: "Suspended", value: p.suspended },
+      { key: "Profile Photo URL", value: p.profilePhotoUrl },
+    ],
+  };
+}
+
 function isHiddenField(key: string): boolean {
   return HIDDEN_FIELD_KEYS.has(normFieldKey(key));
 }
@@ -326,8 +390,7 @@ interface RatesProps {
 }
 
 export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) {
-  const [profiles, setProfiles] = useState<EmployeeRateProfile[]>([]);
-  const [employeeIdMap, setEmployeeIdMap] = useState<Map<string, string>>(new Map());
+  const [profiles, setProfiles] = useState<EmployeeRateProfileSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -335,6 +398,9 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   const [page, setPage] = useState(1);
   const [profileOpen, setProfileOpen] = useState(false);
   const [activeProfile, setActiveProfile] = useState<EmployeeRateProfile | null>(null);
+  const [activeProfileSummary, setActiveProfileSummary] = useState<EmployeeRateProfileSummary | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [mergeNotes, setMergeNotes] = useState<string[]>([]);
   /** Same `usd_to_php_rate` as Payroll — for reference next to ₱ hourly rates. */
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
@@ -420,11 +486,18 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   }
 
   // Delete state
-  const [deleteTarget, setDeleteTarget] = useState<EmployeeRateProfile | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<EmployeeRateProfileSummary | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   // Suspend state — stores the profile.id currently being toggled, or null
   const [isSuspending, setIsSuspending] = useState<string | null>(null);
+
+  function extractEmailsFromSummary(p: EmployeeRateProfileSummary): { workEmail: string | null; personalEmail: string | null } {
+    return {
+      workEmail: p.workEmail ?? p.subtitle ?? null,
+      personalEmail: p.personalEmail ?? null,
+    };
+  }
 
   function extractEmailsFromProfile(p: EmployeeRateProfile): { workEmail: string | null; personalEmail: string | null } {
     // Primary: explicit fields lifted during profile finalize.
@@ -452,11 +525,16 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     return { workEmail, personalEmail };
   }
 
+  function extractEmails(target: EmployeeRateProfileSummary | EmployeeRateProfile): { workEmail: string | null; personalEmail: string | null } {
+    if ("fields" in target) return extractEmailsFromProfile(target);
+    return extractEmailsFromSummary(target);
+  }
+
   async function handleDeleteEmployee() {
     if (!deleteTarget) return;
     setIsDeleting(true);
     try {
-      const { workEmail, personalEmail } = extractEmailsFromProfile(deleteTarget);
+      const { workEmail, personalEmail } = extractEmails(deleteTarget);
       const res = await fetch("/api/delete-employee", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
@@ -472,6 +550,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
       setDeleteTarget(null);
       setProfileOpen(false);
       setActiveProfile(null);
+      setActiveProfileSummary(null);
       await fetchProfiles();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to delete employee");
@@ -480,8 +559,8 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     }
   }
 
-  async function handleToggleSuspend(profile: EmployeeRateProfile, suspend: boolean) {
-    const { workEmail, personalEmail } = extractEmailsFromProfile(profile);
+  async function handleToggleSuspend(profile: EmployeeRateProfileSummary | EmployeeRateProfile, suspend: boolean) {
+    const { workEmail, personalEmail } = extractEmails(profile);
     if (!workEmail && !personalEmail) {
       toast.error("Cannot identify employee — no email found");
       return;
@@ -503,6 +582,9 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
       toast.success(`${profile.displayName} ${suspend ? "suspended" : "unsuspended"}`);
       // Refresh list and keep modal in sync
       await fetchProfiles();
+      setActiveProfileSummary((prev) =>
+        prev && prev.id === profile.id ? { ...prev, suspended: suspend } : prev,
+      );
       if (activeProfile?.id === profile.id) {
         setActiveProfile((prev) =>
           prev
@@ -524,15 +606,14 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
 
   const fetchProfiles = async () => {
     try {
-      const [profilesRes, idsRes, fxRes] = await Promise.all([
-        fetch("/api/employee-rate-profiles", { cache: "no-store" }),
-        fetch("/api/employee-ids", { cache: "no-store" }),
+      const [profilesRes, fxRes] = await Promise.all([
+        fetch("/api/employee-rate-profiles/summary", { cache: "no-store" }),
         fetch("/api/app-settings?key=usd_to_php_rate", { cache: "no-store" }),
       ]);
       if (!profilesRes.ok) throw new Error(`HTTP ${profilesRes.status}`);
 
       const json = (await profilesRes.json()) as {
-        profiles: EmployeeRateProfile[];
+        profiles: EmployeeRateProfileSummary[];
         error: string | null;
         mergeNotes?: string[];
       };
@@ -543,18 +624,6 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
       if (fxRes.ok) {
         const fxJson = (await fxRes.json()) as { value: string | null };
         setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
-      }
-
-      if (idsRes.ok) {
-        const idsJson = (await idsRes.json()) as { rows: EmployeeIdRow[] };
-        const map = new Map<string, string>();
-        for (const r of idsJson.rows ?? []) {
-          const we = normEmail(r.work_email ?? "");
-          const pe = normEmail(r.personal_email ?? "");
-          if (we) map.set(we, r.employee_id);
-          if (pe && !map.has(pe)) map.set(pe, r.employee_id);
-        }
-        setEmployeeIdMap(map);
       }
     } catch (e) {
       setProfiles([]);
@@ -569,6 +638,31 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     fetchProfiles();
   }, []);
 
+  const fetchProfileDetail = async (summary: EmployeeRateProfileSummary) => {
+    const query = summary.workEmail ?? summary.personalEmail ?? summary.subtitle ?? summary.id;
+    const key = summary.workEmail || summary.personalEmail || summary.subtitle ? "email" : "id";
+    setProfileLoading(true);
+    setProfileError(null);
+    try {
+      const res = await fetch(`/api/employee-rate-profiles?${key}=${encodeURIComponent(query)}`, {
+        cache: "no-store",
+      });
+      const json = (await res.json()) as {
+        profile?: EmployeeRateProfile | null;
+        error?: string | null;
+      };
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      if (!json.profile) throw new Error("Profile details not found");
+      setActiveProfile(json.profile);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load full profile";
+      setProfileError(msg);
+      toast.error(msg);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
   // Precompute `tableRowFromProfile` + a lowercased search blob once per profile.
   // Without this, each keystroke re-computed both for every profile (~900 × ~20
   // string ops) and made search unusably laggy. This memo re-runs only when the
@@ -576,7 +670,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   // substring check against pre-built blobs.
   const searchIndex = useMemo(() => {
     return profiles.map((p) => {
-      const row = tableRowFromProfile(p, employeeIdMap);
+      const row = tableRowFromSummary(p);
       const blob = [
         row.employeeId ?? "",
         p.displayName,
@@ -587,17 +681,16 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
         row.workEmail,
         row.regularRate,
         row.otRate,
-        ...p.fields.flatMap((f) => [f.key, formatFieldValue(f.key, f.value)]),
       ]
         .join(" ")
         .toLowerCase();
       return { profile: p, row, blob };
     });
-  }, [profiles, employeeIdMap]);
+  }, [profiles]);
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const result: EmployeeRateProfile[] = [];
+    const result: EmployeeRateProfileSummary[] = [];
     for (const { profile, row, blob } of searchIndex) {
       const missingRegular = row.regularRate === "—";
       const missingOt = row.otRate === "—";
@@ -627,16 +720,17 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     return filtered.slice(start, start + PAGE_SIZE);
   }, [filtered, safePage]);
 
-  function openProfile(p: EmployeeRateProfile) {
-    setActiveProfile(p);
+  function openProfile(p: EmployeeRateProfileSummary) {
+    setActiveProfileSummary(p);
+    setActiveProfile(profileStubFromSummary(p));
     setProfileOpen(true);
     setIsEditing(false);
     setIsEditingProfile(false);
+    setProfileError(null);
 
-    // Find current rates
-    const m = buildNormFieldMap(p.fields);
-    setEditRegularRate(normalizeRateForEdit(pickRawFromMap(m, ["Regular Rate", "regular_rate", "Regular_Rate"])));
-    setEditOtRate(normalizeRateForEdit(pickRawFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])));
+    setEditRegularRate(normalizeRateForEdit(p.regularRate ?? "â€”"));
+    setEditOtRate(normalizeRateForEdit(p.otRate ?? "â€”"));
+    void fetchProfileDetail(p);
   }
 
   useEffect(() => {
@@ -644,12 +738,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     const target = normEmail(focusEmail);
     if (!target) return;
     const match = profiles.find((p) => {
-      const m = buildNormFieldMap(p.fields);
-      const emails = [
-        pickFromMap(m, ["Email", "email", "Work Email", "work_email", "Work_Email"]),
-        pickFromMap(m, ["Personal Email", "personal_email", "Personal_Email"]),
-        p.subtitle ?? "",
-      ];
+      const emails = [p.workEmail ?? "", p.personalEmail ?? "", p.subtitle ?? ""];
       return emails.some((e) => normEmail(e) === target);
     });
     if (match) {
@@ -709,6 +798,15 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
       // We need to update the local activeProfile state and the profiles list
       // Simplest is to refetch all profiles
       await fetchProfiles();
+      setActiveProfileSummary((prev) =>
+        prev
+          ? {
+              ...prev,
+              regularRate: sanitizeRateForApi(editRegularRate) || null,
+              otRate: sanitizeRateForApi(editOtRate) || null,
+            }
+          : prev,
+      );
 
       // Also update activeProfile fields locally to reflect the change in the modal
       const rr = sanitizeRateForApi(editRegularRate);
@@ -799,6 +897,21 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
       toast.success("Profile updated successfully");
       setIsEditingProfile(false);
       await fetchProfiles();
+      setActiveProfileSummary((prev) =>
+        prev
+          ? {
+              ...prev,
+              displayName: editProfileForm.name.trim() || prev.displayName,
+              department: editProfileForm.department.trim() || null,
+              workEmail: editProfileForm.workEmail.trim() || null,
+              personalEmail: editProfileForm.personalEmail.trim() || null,
+              subtitle:
+                editProfileForm.workEmail.trim() ||
+                editProfileForm.personalEmail.trim() ||
+                prev.subtitle,
+            }
+          : prev,
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update profile");
     } finally {
@@ -1019,7 +1132,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   </TableHeader>
                   <TableBody>
                     {pageRows.map((p) => {
-                      const row = tableRowFromProfile(p, employeeIdMap);
+                      const row = tableRowFromSummary(p);
                       return (
                         <TableRow
                           key={p.id}
@@ -1039,7 +1152,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           </TableCell>
                           <TableCell className="min-w-[11rem] whitespace-normal break-words align-top font-medium leading-snug text-zinc-900 dark:text-zinc-100">
                             {(() => {
-                              const av = getAvatarInfoFromProfile(p);
+                              const av = getAvatarInfoFromSummary(p);
                               return (
                                 <div className="flex items-center gap-2.5">
                                   <EmployeeAvatar
@@ -1091,7 +1204,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           </TableCell>
                           <TableCell className="align-top">
                             {(() => {
-                              const isMasterOnly = p.id.startsWith("master:");
+                              const isMasterOnly = !row.hasRatesRow;
                               const ratesBlank =
                                 !isMasterOnly &&
                                 (row.regularRate === "—" || row.otRate === "—");
@@ -1448,7 +1561,10 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
           setProfileOpen(open);
           if (!open) {
             setActiveProfile(null);
+            setActiveProfileSummary(null);
             setIsEditingProfile(false);
+            setProfileLoading(false);
+            setProfileError(null);
           }
         }}
       >
@@ -1474,7 +1590,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
               <DialogHeader className="shrink-0 space-y-0 border-b border-orange-100/60 bg-gradient-to-r from-orange-50/80 via-white to-blue-50/60 px-6 py-5 dark:border-blue-950/60 dark:from-blue-950/60 dark:via-[#0f1729] dark:to-blue-950/40">
                 {(() => {
                   const av = getAvatarInfoFromProfile(activeProfile);
-                  const empId = tableRowFromProfile(activeProfile, employeeIdMap).employeeId;
+                  const empId = activeProfileSummary?.employeeId ?? null;
                   return (
                     <div className="flex items-start gap-4">
                       <div className="shrink-0 rounded-full ring-2 ring-white/80 dark:ring-zinc-800/80">
@@ -1611,7 +1727,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           variant="outline"
                           className="h-8 gap-1.5 border-zinc-200 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
                           onClick={openEditProfile}
-                          disabled={isEditingProfile}
+                          disabled={isEditingProfile || profileLoading}
                         >
                           <UserCog className="size-3.5" />
                           Edit Profile
@@ -1621,6 +1737,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           variant="outline"
                           className="h-8 gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-950/30"
                           onClick={() => setIsEditing(true)}
+                          disabled={profileLoading}
                         >
                           <Edit2 className="size-3.5" />
                           Edit rates
@@ -1655,7 +1772,9 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           size="sm"
                           variant="outline"
                           className="h-8 gap-1.5 border-red-200 text-red-500 hover:bg-red-50 hover:text-red-600 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/40"
-                          onClick={() => setDeleteTarget(activeProfile)}
+                          onClick={() => {
+                            if (activeProfileSummary) setDeleteTarget(activeProfileSummary);
+                          }}
                         >
                           <Trash2 className="size-3.5" />
                           Delete
@@ -1671,6 +1790,17 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   </span>
                 </p>
               </div>
+              {profileLoading ? (
+                <div className="mx-6 mt-3 inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
+                  <Loader2 className="size-3 animate-spin" />
+                  Loading full profile details…
+                </div>
+              ) : null}
+              {profileError ? (
+                <div className="mx-6 mt-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                  {profileError}
+                </div>
+              ) : null}
               <div className="overflow-y-auto overflow-x-hidden bg-gradient-to-b from-white to-orange-50/20 px-6 [-webkit-overflow-scrolling:touch] dark:from-[#0d1117] dark:to-blue-950/10" style={{ maxHeight: "min(58vh, 600px)" }}>
                 {isEditingProfile ? (
                   <div className="py-5">
@@ -1777,7 +1907,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                     <dl className="grid grid-cols-1 gap-x-10 gap-y-0 md:grid-cols-2">
                       {/* Employee ID — always first */}
                       {(() => {
-                        const empId = tableRowFromProfile(activeProfile, employeeIdMap).employeeId;
+                        const empId = activeProfileSummary?.employeeId ?? null;
                         if (!empId) return null;
                         return (
                           <motion.div

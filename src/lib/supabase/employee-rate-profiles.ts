@@ -23,10 +23,32 @@ export type EmployeeRateProfile = {
   fields: { key: string; value: unknown }[];
 };
 
+export type EmployeeRateProfileSummary = {
+  id: string;
+  displayName: string;
+  subtitle: string | null;
+  department: string | null;
+  organization: string | null;
+  workEmail: string | null;
+  personalEmail: string | null;
+  employeeId: string | null;
+  regularRate: string | null;
+  otRate: string | null;
+  suspended: boolean;
+  profilePhotoUrl: string | null;
+  hasRatesRow: boolean;
+};
+
 export type GetEmployeeRateProfilesResult = {
   profiles: EmployeeRateProfile[];
   error: string | null;
   /** Tables that failed to load or were excluded from merge (for UI). */
+  mergeNotes: string[];
+};
+
+export type GetEmployeeRateProfileSummariesResult = {
+  profiles: EmployeeRateProfileSummary[];
+  error: string | null;
   mergeNotes: string[];
 };
 
@@ -404,6 +426,56 @@ function resolveDisplayName(mergedRates: RawRow, master: RawRow | null): string 
     toStr(getField(mergedRates, ["Work Email", "work_email"])) ||
     toStr(getField(mergedRates, ["Personal Email", "personal_email"]));
   return em || "Unknown";
+}
+
+function buildEmployeeIdMapFromRows(rows: RawRow[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    const employeeId = toStr(getField(row, ["employee_id"]));
+    if (!employeeId) continue;
+    const work = normEmail(toStr(getField(row, ["work_email"])));
+    const personal = normEmail(toStr(getField(row, ["personal_email"])));
+    if (work) map.set(work, employeeId);
+    if (personal && !map.has(personal)) map.set(personal, employeeId);
+  }
+  return map;
+}
+
+async function fetchEmployeeIdRowsForProfiles(): Promise<{
+  rows: RawRow[];
+  error: string | null;
+}> {
+  const supabase =
+    createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return {
+      rows: [],
+      error:
+        "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env file.",
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("employee_ids")
+    .select("employee_id, work_email, personal_email");
+
+  if (error) return { rows: [], error: error.message };
+  return { rows: (data ?? []) as RawRow[], error: null };
+}
+
+function pickEmployeeId(
+  workEmail: string | null,
+  personalEmail: string | null,
+  primaryEmail: string | null,
+  employeeIdMap: Map<string, string>,
+): string | null {
+  for (const email of [workEmail, personalEmail, primaryEmail]) {
+    const normalized = normEmail(email);
+    if (!normalized) continue;
+    const found = employeeIdMap.get(normalized);
+    if (found) return found;
+  }
+  return null;
 }
 
 async function fetchRawFromTable(table: string): Promise<{
@@ -824,6 +896,209 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
       workEmail,
       personalEmail,
       fields,
+    });
+  }
+
+  profiles.sort((a, b) =>
+    a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" }),
+  );
+
+  return { profiles, error: null, mergeNotes };
+}
+
+export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRateProfileSummariesResult> {
+  const ratesTable =
+    process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() ||
+    "employee_hourly_rates";
+  const masterTable =
+    process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE?.trim() || "global_master_list";
+
+  const mergeNotes: string[] = [];
+  const currentRatesUploadId = await getCurrentRatesUploadIdForProfiles();
+
+  const [ratesRes, masterRes, idsRes] = await Promise.all([
+    fetchRatesRowsForProfiles(ratesTable, currentRatesUploadId),
+    fetchMasterRowsForProfiles(masterTable),
+    fetchEmployeeIdRowsForProfiles(),
+  ]);
+
+  if (ratesRes.error) {
+    return {
+      profiles: [],
+      error: `Could not load ${ratesTable}. Check RLS/service role or table name.`,
+      mergeNotes: masterRes.error ? [`Skipped ${masterTable}: ${masterRes.error}`] : [],
+    };
+  }
+
+  if (masterRes.error) mergeNotes.push(`Skipped ${masterTable}: ${masterRes.error}`);
+  if (idsRes.error) mergeNotes.push(`Skipped employee_ids: ${idsRes.error}`);
+
+  if (currentRatesUploadId) {
+    mergeNotes.push(
+      `Using current rates upload: ${currentRatesUploadId} (historical rows kept as fallback when current batch is incomplete).`,
+    );
+  } else {
+    mergeNotes.push("No current rates_uploads row found; using all employee_hourly_rates rows.");
+  }
+
+  const ratesRaw = ratesRes.rows;
+  const masterRaw = masterRes.rows;
+  const employeeIdMap = buildEmployeeIdMapFromRows(idsRes.rows);
+  const { byEmail, byName } = buildMasterIndexes(masterRaw);
+
+  const groupMap = new Map<string, RawRow[]>();
+  ratesRaw.forEach((row, i) => {
+    const master = findMasterForMergedRates(row, byEmail, byName);
+    const k = rateGroupKey(row, i, master);
+    if (!groupMap.has(k)) groupMap.set(k, []);
+    groupMap.get(k)!.push(row);
+  });
+
+  const profiles: EmployeeRateProfileSummary[] = [];
+  const matchedMasters = new Set<RawRow>();
+  const usedIds = new Set<string>();
+  const uniqueId = (base: string): string => {
+    if (!usedIds.has(base)) {
+      usedIds.add(base);
+      return base;
+    }
+    for (let n = 2; ; n++) {
+      const candidate = `${base}#${n}`;
+      if (!usedIds.has(candidate)) {
+        usedIds.add(candidate);
+        return candidate;
+      }
+    }
+  };
+
+  for (const [groupId, groupRows] of groupMap) {
+    const orderedGroupRows = [...groupRows].sort(
+      (a, b) => rateRowPriority(b, currentRatesUploadId) - rateRowPriority(a, currentRatesUploadId),
+    );
+    const mergedRates = mergeRowsUniqueFieldOrder(orderedGroupRows);
+    const master = findMasterForMergedRates(mergedRates, byEmail, byName);
+    if (master) matchedMasters.add(master);
+
+    const rawFields = mergeSourcesDeduped([mergedRates, master ?? {}]);
+    const { department, organization, primaryEmail, workEmail, personalEmail } =
+      finalizeProfileFields(rawFields);
+
+    profiles.push({
+      id: uniqueId(groupId),
+      displayName: resolveDisplayName(mergedRates, master),
+      subtitle: primaryEmail,
+      department,
+      organization,
+      workEmail,
+      personalEmail,
+      employeeId: pickEmployeeId(workEmail, personalEmail, primaryEmail, employeeIdMap),
+      regularRate:
+        toStr(getField(mergedRates, ["Regular Rate", "regular_rate", "Regular_Rate"])) || null,
+      otRate:
+        toStr(getField(mergedRates, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])) || null,
+      suspended: getField(mergedRates, ["suspended", "Suspended"]) === true,
+      profilePhotoUrl:
+        toStr(getField(master ?? {}, ["Profile Photo URL", "profile_photo_url", "Profile_Photo_URL"])) || null,
+      hasRatesRow: Object.keys(mergedRates).length > 0,
+    });
+  }
+
+  const rateRowsByEmail = new Map<string, RawRow[]>();
+  const pushRateByEmail = (email: string | null, r: RawRow) => {
+    if (!email) return;
+    const list = rateRowsByEmail.get(email);
+    if (list) list.push(r);
+    else rateRowsByEmail.set(email, [r]);
+  };
+  for (const rateRow of ratesRaw) {
+    const we = normEmail(toStr(getField(rateRow, ["Work Email", "work_email", "Work_Email"])));
+    const pe = normEmail(toStr(getField(rateRow, ["Personal Email", "personal_email", "Personal_Email"])));
+    pushRateByEmail(we, rateRow);
+    pushRateByEmail(pe, rateRow);
+  }
+
+  const rateToStrongMasters = new Map<RawRow, Set<RawRow>>();
+  for (const rateRow of ratesRaw) {
+    const rPersonal = normEmail(
+      toStr(getField(rateRow, ["Personal Email", "personal_email", "Personal_Email"])),
+    );
+    if (!rPersonal) continue;
+    const mastersWithEmail = byEmail.get(rPersonal);
+    if (!mastersWithEmail) continue;
+    let strongSet: Set<RawRow> | null = null;
+    for (const m of mastersWithEmail) {
+      const mPersonal = normEmail(
+        toStr(getField(m, ["Personal Email", "personal_email", "Personal_Email"])),
+      );
+      if (mPersonal === rPersonal) {
+        if (!strongSet) strongSet = new Set<RawRow>();
+        strongSet.add(m);
+      }
+    }
+    if (strongSet) rateToStrongMasters.set(rateRow, strongSet);
+  }
+
+  for (let i = 0; i < masterRaw.length; i++) {
+    const masterRow = masterRaw[i];
+    if (matchedMasters.has(masterRow)) continue;
+
+    const mPersonal = normEmail(
+      toStr(getField(masterRow, ["Personal Email", "personal_email", "Personal_Email"])),
+    );
+    const mWork = normEmail(
+      toStr(getField(masterRow, ["Work Email", "work_email", "Work_Email"])),
+    );
+    const masterEmails = [mWork, mPersonal].filter((x): x is string => Boolean(x));
+
+    const seenRateIds = new Set<unknown>();
+    const matchingRateRows: RawRow[] = [];
+    for (const email of masterEmails) {
+      const rows = rateRowsByEmail.get(email);
+      if (!rows) continue;
+      for (const r of rows) {
+        const rid = (r as { id?: unknown }).id;
+        if (rid !== undefined && seenRateIds.has(rid)) continue;
+        const strongMasters = rateToStrongMasters.get(r);
+        if (strongMasters && !strongMasters.has(masterRow)) continue;
+        if (rid !== undefined) seenRateIds.add(rid);
+        matchingRateRows.push(r);
+      }
+    }
+
+    const mergedRates: RawRow =
+      matchingRateRows.length > 0
+        ? mergeRowsUniqueFieldOrder(
+            [...matchingRateRows].sort(
+              (a, b) =>
+                rateRowPriority(b, currentRatesUploadId) -
+                rateRowPriority(a, currentRatesUploadId),
+            ),
+          )
+        : {};
+
+    const rawFields = mergeSourcesDeduped([mergedRates, masterRow]);
+    const { department, organization, primaryEmail, workEmail, personalEmail } =
+      finalizeProfileFields(rawFields);
+    const identity = buildIdentity(mergedRates, masterRow);
+    const idEmail = [...identity.emails][0] || identity.nameNorm || `row-${i}`;
+
+    profiles.push({
+      id: uniqueId(`master:${idEmail}`),
+      displayName: resolveDisplayName(mergedRates, masterRow),
+      subtitle: primaryEmail,
+      department,
+      organization,
+      workEmail,
+      personalEmail,
+      employeeId: pickEmployeeId(workEmail, personalEmail, primaryEmail, employeeIdMap),
+      regularRate:
+        toStr(getField(mergedRates, ["Regular Rate", "regular_rate", "Regular_Rate"])) || null,
+      otRate:
+        toStr(getField(mergedRates, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])) || null,
+      suspended: getField(mergedRates, ["suspended", "Suspended"]) === true,
+      profilePhotoUrl:
+        toStr(getField(masterRow, ["Profile Photo URL", "profile_photo_url", "Profile_Photo_URL"])) || null,
+      hasRatesRow: Object.keys(mergedRates).length > 0,
     });
   }
 

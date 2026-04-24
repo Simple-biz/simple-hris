@@ -33,6 +33,8 @@ function isPlausibleEmail(s: string): boolean {
 export type AdminSidebarProps = {
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  /** Below `md`, sidebar is a drawer. Desktop ignores this. */
+  mobileOpen: boolean;
   /** When set (e.g. from parent), used for the footer identity row */
   viewerEmail?: string | null;
   /** Optional counts for nav badges (from live data) */
@@ -64,6 +66,7 @@ const securityNav: Array<{ id: string; label: string; icon: typeof ShieldCheck }
 export default function AdminSidebar({
   activeTab,
   setActiveTab,
+  mobileOpen,
   viewerEmail: viewerEmailProp,
   counts,
 }: AdminSidebarProps) {
@@ -126,7 +129,16 @@ export default function AdminSidebar({
   );
 
   return (
-    <aside className="flex h-screen w-[220px] shrink-0 flex-col border-r border-[#ececec] bg-white dark:border-zinc-800 dark:bg-zinc-950">
+    <aside
+      className={cn(
+        'flex h-dvh w-[220px] max-w-[min(100vw,220px)] shrink-0 flex-col border-r border-[#ececec] bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950 md:max-w-none md:shadow-none',
+        'fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-out md:static md:z-auto md:translate-x-0',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+      )}
+      id="admin-sidebar-nav"
+      role="navigation"
+      aria-label="Admin navigation"
+    >
       <div className="flex flex-1 flex-col px-5 pb-4 pt-7">
         <div className="mb-10 flex items-center gap-2.5 px-1">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-[#18181b] text-sm font-bold tracking-[-0.02em] text-white dark:bg-zinc-100 dark:text-zinc-900">

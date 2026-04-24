@@ -11,7 +11,8 @@ import EmployeeLeaves from './EmployeeLeaves';
 import EmployeeOrphanageVisits from './EmployeeOrphanageVisits';
 import EmployeeSettings from './EmployeeSettings';
 import { Toaster } from '@/components/ui/sonner';
-import { FileText, Clock } from 'lucide-react';
+import { FileText, Clock, Menu } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
@@ -31,6 +32,7 @@ export default function EmployeeApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [employeeEmail, setEmployeeEmail] = useState<string | null>(null);
@@ -112,6 +114,20 @@ export default function EmployeeApp() {
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
+  const navigate = (tab: string) => {
+    setActiveTab(tab);
+    setMobileNavOpen(false);
+  };
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileNavOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobileNavOpen]);
+
   if (!employeeEmail) return null;
 
   const renderContent = () => {
@@ -126,7 +142,7 @@ export default function EmployeeApp() {
             employeeEmail={employeeEmail}
             profilePhotoUrl={profilePhotoUrl}
             onProfilePhotoUpdated={(url) => setProfilePhotoUrl(url)}
-            onNavigateToSettings={() => setActiveTab('settings')}
+            onNavigateToSettings={() => navigate('settings')}
           />
         );
       case 'hours':
@@ -171,17 +187,43 @@ export default function EmployeeApp() {
   };
 
   return (
-    <div className="flex h-screen bg-white font-sans text-zinc-900 selection:bg-orange-500/20 selection:text-orange-900 dark:bg-[#0d1117] dark:text-zinc-100 dark:selection:bg-orange-500/30 dark:selection:text-orange-200">
+    <div className="flex h-dvh max-h-dvh overflow-hidden bg-white font-sans text-zinc-900 selection:bg-orange-500/20 selection:text-orange-900 dark:bg-[#0d1117] dark:text-zinc-100 dark:selection:bg-orange-500/30 dark:selection:text-orange-200">
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px] md:hidden"
+          aria-label="Close navigation menu"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
       <EmployeeSidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={navigate}
+        mobileOpen={mobileNavOpen}
         employeeName={employeeName || employeeEmail?.split('@')[0]?.replace(/\./g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || 'Employee'}
         department={employeeDepartment || undefined}
         employeeId={employeeId || undefined}
         employeeEmail={employeeEmail}
         profilePhotoUrl={profilePhotoUrl}
       />
-      <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex shrink-0 items-center gap-3 border-b border-orange-100 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-blue-950/60 dark:bg-[#0d1117]/95 md:hidden">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="shrink-0 border-orange-200/80 bg-white/80 dark:border-blue-950/60 dark:bg-blue-950/30"
+            onClick={() => setMobileNavOpen(true)}
+            aria-expanded={mobileNavOpen}
+            aria-controls="employee-sidebar-nav"
+            aria-label="Open navigation menu"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+          <span className="min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            Employee
+          </span>
+        </header>
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -190,7 +232,7 @@ export default function EmployeeApp() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-            className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
+            className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
           >
             {renderContent()}
           </motion.div>

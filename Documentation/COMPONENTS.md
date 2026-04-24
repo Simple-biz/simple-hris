@@ -6,9 +6,13 @@ This document covers every UI component — what it renders, why it is designed 
 
 ## `src/App.tsx` — Root Shell
 
-The top-level `"use client"` component. Owns the `activeTab` state (string), resolves dark/light theme from `next-themes`, and renders the two-column layout: `<Sidebar>` on the left and the active view on the right.
+The top-level `"use client"` component. Owns the `activeTab` state (string), `mobileNavOpen` for the off-canvas nav below the `md` breakpoint, resolves dark/light theme from `next-themes`, and renders the two-column layout: `<Sidebar>` on the left and the active view on the right.
+
+On viewports narrower than `md` (768px), a top bar with a menu button opens the sidebar as a fixed drawer; backdrop tap or **Escape** closes it. `navigate()` wraps tab changes and closes the drawer.
 
 Also renders a global `<Toaster>` (sonner) for toast notifications that can be triggered from any child component.
+
+See [RESPONSIVE-DESIGN.md](./RESPONSIVE-DESIGN.md) for breakpoints, safe areas, and testing notes.
 
 Placeholder `<div>` cards are rendered for `hogan-suite`, `disputes`, and `settings` — they show a "Coming Soon" indicator so navigation works without errors.
 
@@ -16,7 +20,7 @@ Placeholder `<div>` cards are rendered for `hogan-suite`, `disputes`, and `setti
 
 ## `src/components/Sidebar.tsx`
 
-**Layout**: Fixed-width (`w-64`), full viewport height, flex column. Background uses the orange-to-white gradient (light) or navy gradient (dark) from CSS variables.
+**Layout**: Fixed-width (`w-64`), full height (`h-dvh`), flex column. Below `md`, the sidebar is `fixed` with a slide-in transform; `mobileOpen` (from `App`) controls visibility. From `md` up it is `static` in the flex row. Background uses the orange-to-white gradient (light) or navy gradient (dark) from CSS variables.
 
 **Nav items** (top section):
 - Overview, Rates, Payroll Wizard, Hogan Suite, Disputes, System Settings
@@ -29,7 +33,7 @@ Placeholder `<div>` cards are rendered for `hogan-suite`, `disputes`, and `setti
 - User card: Hardcoded "Fran M / Senior Admin" with an avatar using an orange-to-blue CSS gradient. This is intentional for a single-operator internal tool — no auth UI is needed.
 - Sign Out: Ghost button, red text on hover. No actual logout logic (placeholder).
 
-**Design rationale**: The sidebar is always visible and never collapses. The tool is desktop-only and intended for use on a workstation during payroll processing, so a persistent sidebar improves orientation across a long multi-step workflow.
+**Design rationale**: On laptop and desktop, the sidebar stays visible for orientation during long payroll workflows. On phones and small tablets, it becomes a drawer so content can use the full width.
 
 ---
 
@@ -343,11 +347,11 @@ For each department tab, shows a table of that department's employees:
 
 ### `EmployeeApp.tsx` — Employee Shell
 
-Top-level employee-side shell. Manages `activeTab` state (`'dashboard'` | `'profile'` | `'hours'` | `'disputes'` | `'settings'`), renders `<EmployeeSidebar>` and switches content via `renderContent()`. Resolves employee email from URL query params.
+Top-level employee-side shell. Manages `activeTab`, `mobileNavOpen` (drawer below `md`), renders `<EmployeeSidebar>` and switches content via `renderContent()`. Resolves employee email from URL query params. Uses the same mobile top bar, backdrop, and `navigate()` pattern as `App.tsx`.
 
 ### `EmployeeSidebar.tsx` — Employee Navigation
 
-Fixed sidebar with 5 nav items: My Dashboard, Profile, My Hours, My Disputes, Settings. Shows employee name, avatar, and dark mode toggle.
+Sidebar with nav items (dashboard, profile, hours, leaves, disputes, orphanage visits, settings). Shows employee name, avatar, view switcher, and dark mode toggle. Below `md` it is an off-canvas drawer controlled by `mobileOpen`; from `md` up it stays in the layout column.
 
 ### `EmployeeDashboard.tsx` — My Dashboard
 
