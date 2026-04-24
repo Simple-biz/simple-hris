@@ -1231,14 +1231,14 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   }
 
   return (
-    <div className="box-border flex h-full min-h-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-y-contain bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-3 pb-5 sm:px-4 sm:py-4 sm:pb-6 md:px-5 dark:bg-none dark:bg-[#0d1117]">
-      {/* Header */}
-      <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="box-border flex h-full min-h-0 flex-col gap-2 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [@media(max-height:900px)]:gap-1.5 sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:py-3 dark:bg-none dark:bg-[#0d1117]">
+      {/* Header — compact on short viewports (13" laptops ~800px tall) */}
+      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between lg:gap-3">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
+          <h2 className="text-lg font-bold tracking-tight text-zinc-900 sm:text-xl lg:text-2xl dark:text-white">
             My Dashboard
           </h2>
-          <p className="text-xs text-zinc-600 sm:text-sm dark:text-zinc-500">
+          <p className="text-[11px] text-zinc-600 leading-snug sm:text-xs lg:text-sm dark:text-zinc-500">
             Hours, pay, and monthly Perfect Attendance (PAB). Pay totals follow the Hubstaff file you select; PAB uses all
             uploads for the month.
           </p>
@@ -1372,6 +1372,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         </div>
       </div>
 
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto overscroll-y-contain lg:gap-3 [scrollbar-gutter:stable]">
       {dataError && (
         <Card className="shrink-0 border-red-200 bg-red-50/50 dark:border-red-500/20 dark:bg-red-950/20">
           <CardContent className="flex items-center gap-3 py-3">
@@ -1406,16 +1407,16 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           </CardContent>
         </Card>
       ) : !row ? null : (
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 lg:gap-3">
           <Card
             size="sm"
             className="shrink-0 border-indigo-200/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm dark:border-indigo-950/50 dark:from-indigo-950/15 dark:to-indigo-950/5"
           >
-            <CardHeader className="pb-2 pt-3">
+            <CardHeader className="pb-1.5 pt-2 lg:pb-2 lg:pt-3">
               <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
                 Monthly PAB &amp; other bonuses
               </CardTitle>
-              <p className="text-[11px] font-normal leading-snug text-zinc-500 dark:text-zinc-400">
+              <p className="text-[11px] font-normal leading-snug text-zinc-500 max-xl:line-clamp-3 xl:line-clamp-none dark:text-zinc-400">
                 PAB uses every Mon–Fri in the PAB period below (merged Hubstaff uploads); each day must be ≥ 7 hours. If
                 the month doesn&apos;t start on a Monday, the first week is skipped and counting starts on the{' '}
                 <span className="font-medium text-zinc-600 dark:text-zinc-300">second Monday</span> (e.g. March 2026:
@@ -1601,13 +1602,13 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           </Card>
 
           {/* Stats — min-w-0 + responsive type so PHP amounts don’t overflow narrow cells */}
-          <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-6 md:gap-3">
+          <div className="grid shrink-0 grid-cols-2 gap-1.5 md:grid-cols-6 md:gap-2 lg:gap-3">
             {/* Total Hours */}
             <Card
               size="sm"
               className="min-w-0 border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30"
             >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
                 <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
                   Total Hours
                 </CardTitle>
@@ -1628,7 +1629,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               size="sm"
               className="min-w-0 border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30"
             >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
                 <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
                   Regular Pay
                 </CardTitle>
@@ -1652,7 +1653,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               size="sm"
               className="min-w-0 border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30"
             >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
                 <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
                   Overtime Pay
                 </CardTitle>
@@ -1684,7 +1685,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                   : 'border-zinc-200/80 bg-gradient-to-br from-white to-zinc-50/30 dark:border-zinc-800/60 dark:bg-none dark:from-zinc-900/20 dark:to-zinc-900/10'
               }`}
             >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
                 <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
                   PAB
                 </CardTitle>
@@ -1727,7 +1728,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                   : 'border-zinc-200/80 bg-gradient-to-br from-white to-zinc-50/30 dark:border-zinc-800/60 dark:bg-none dark:from-zinc-900/20 dark:to-zinc-900/10'
               }`}
             >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
                 <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
                   Tech Bonus
                 </CardTitle>
@@ -1754,7 +1755,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               size="sm"
               className="min-w-0 border-emerald-200/80 bg-gradient-to-br from-white to-emerald-50/30 shadow-sm transition-colors duration-300 hover:to-emerald-50/60 dark:border-emerald-950/60 dark:bg-none dark:from-emerald-950/20 dark:to-emerald-950/10 dark:hover:from-emerald-950/30"
             >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-3">
+              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
                 <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
                   Initial Pay
                 </CardTitle>
@@ -1777,13 +1778,13 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           </div>
 
           {/* Daily Hours + PAB Calendar + Pay Summary */}
-          <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-4">
+          <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row lg:items-stretch lg:gap-3 xl:gap-4">
             {/* Daily Hours Bar Chart — always visible */}
             <Card
               size="sm"
-              className="flex min-h-[12rem] flex-1 flex-col border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:min-h-0"
+              className="flex min-h-[7.5rem] flex-1 flex-col border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm [@media(max-height:900px)]:min-h-[6.5rem] dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 sm:min-h-[9rem] lg:min-h-0"
             >
-              <CardHeader className="shrink-0 pb-2 pt-3">
+              <CardHeader className="shrink-0 pb-1.5 pt-2 lg:pb-2 lg:pt-3">
                 <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
                   Daily Hours Breakdown
                 </CardTitle>
@@ -1866,7 +1867,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             {/* PAB Calendar — beside Daily Hours */}
             <Card
               size="sm"
-              className="flex min-h-[12rem] flex-1 flex-col border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 lg:min-h-0"
+              className="flex min-h-[7.5rem] flex-1 flex-col border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm [@media(max-height:900px)]:min-h-[6.5rem] dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 sm:min-h-[9rem] lg:min-h-0"
             >
               <CardHeader className="shrink-0 pb-2 pt-3">
                 <div className="flex items-start justify-between gap-2">
@@ -2160,6 +2161,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           </div>
         </div>
       )}
+      </div>
       {selectedDisputeDay && (
         <DisputeDialog
           open={disputeDialogOpen}

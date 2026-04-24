@@ -47,7 +47,7 @@ export default function LoginPage() {
 
 function LoginSkeleton() {
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-white px-4">
+    <main className="relative flex min-h-screen items-center justify-center overflow-x-hidden bg-white px-4 py-10">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,146,60,0.12),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(59,130,246,0.10),transparent_32%),linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)]" />
       <div className="absolute left-[8%] top-[10%] h-64 w-64 rounded-full bg-orange-200/20 blur-3xl" aria-hidden />
       <div className="absolute bottom-[12%] right-[10%] h-72 w-72 rounded-full bg-sky-200/20 blur-3xl" aria-hidden />
@@ -127,7 +127,7 @@ function LoginPageInner() {
 
   return (
     <>
-      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-white px-4 py-10">
+      <main className="relative flex min-h-screen items-center justify-center overflow-x-hidden bg-white px-4 py-10">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,146,60,0.14),transparent_32%),radial-gradient(circle_at_top_right,rgba(255,255,255,0.92),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(59,130,246,0.10),transparent_30%),linear-gradient(180deg,#ffffff_0%,#f8fafc_52%,#ffffff_100%)]" />
         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.65)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.65)_1px,transparent_1px)] bg-[size:28px_28px] opacity-50" />
         <div className="absolute left-[-6rem] top-[-4rem] h-72 w-72 rounded-full bg-orange-200/30 blur-3xl" aria-hidden />

@@ -8,6 +8,11 @@ import {
 } from '@/lib/supabase/leave-requests';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { normEmail } from '@/lib/email/norm-email';
+import {
+  authorizeEmailAccess,
+  deniedResponse,
+  requireElevatedSession,
+} from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -25,6 +30,8 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const scope = searchParams.get('scope');
     if (scope === 'all') {
+      const authz = await requireElevatedSession();
+      if (!authz.ok) return deniedResponse(authz);
       const { rows, error } = await listAllLeaveRequests(300);
       if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
       return NextResponse.json({ rows, error: null });
@@ -34,7 +41,9 @@ export async function GET(request: Request) {
     if (!em) {
       return NextResponse.json({ error: 'Missing employee_email' }, { status: 400 });
     }
-    const { rows, error } = await listLeaveRequestsByEmployee(em);
+    const authz = await authorizeEmailAccess(em);
+    if (!authz.ok) return deniedResponse(authz);
+    const { rows, error } = await listLeaveRequestsByEmployee(authz.effectiveEmail);
     if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
     return NextResponse.json({ rows, error: null });
   } catch (e) {
@@ -59,6 +68,10 @@ export async function POST(request: Request) {
     if (!employee_email) {
       return NextResponse.json({ error: 'employee_email is required' }, { status: 400 });
     }
+
+    const authz = await authorizeEmailAccess(employee_email);
+    if (!authz.ok) return deniedResponse(authz);
+
     const start_date = body.start_date?.trim();
     const end_date = body.end_date?.trim();
     const leave_type = body.leave_type?.trim();
@@ -80,7 +93,7 @@ export async function POST(request: Request) {
     const manager_email = resolveManagerEmail(dept, managersJson);
 
     const { id, error } = await insertLeaveRequest({
-      employee_email,
+      employee_email: authz.effectiveEmail,
       employee_name: body.employee_name?.trim() || null,
       department: dept,
       start_date: start_date.slice(0, 10),
@@ -93,7 +106,7 @@ export async function POST(request: Request) {
     if (error) return NextResponse.json({ error }, { status: 500 });
 
     void insertAuditLog({
-      user_name: employee_email,
+      user_name: authz.effectiveEmail,
       user_role: 'Employee',
       action: 'leave.request',
       resource: 'leave_requests',

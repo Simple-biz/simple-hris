@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { listDisputes, createDispute, type PabDisputeStatus } from '@/lib/supabase/pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
+import {
+  authorizeEmailAccess,
+  deniedResponse,
+  requireElevatedSession,
+} from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -15,7 +20,14 @@ export async function GET(request: Request) {
     const limitRaw = searchParams.get('limit');
     const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
 
-    const { rows, error } = await listDisputes({ email, from, to, status, limit });
+    // Per-email lookup is self-or-elevated; cross-employee listing (no email) is elevated-only.
+    const authz = email
+      ? await authorizeEmailAccess(email)
+      : await requireElevatedSession();
+    if (!authz.ok) return deniedResponse(authz);
+
+    const scopedEmail = email ? authz.effectiveEmail : undefined;
+    const { rows, error } = await listDisputes({ email: scopedEmail, from, to, status, limit });
     if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
     return NextResponse.json({ rows, error: null });
   } catch (e) {
@@ -39,6 +51,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'work_email is required' }, { status: 400 });
     }
 
+    // Can't file a dispute on behalf of another employee unless you're elevated.
+    const authz = await authorizeEmailAccess(work_email);
+    if (!authz.ok) return deniedResponse(authz);
+
     const dispute_date = body.dispute_date?.trim();
     if (!dispute_date || !/^\d{4}-\d{2}-\d{2}$/.test(dispute_date)) {
       return NextResponse.json({ error: 'dispute_date is required (YYYY-MM-DD)' }, { status: 400 });
@@ -50,7 +66,7 @@ export async function POST(request: Request) {
     }
 
     const { id, error } = await createDispute({
-      work_email,
+      work_email: authz.effectiveEmail,
       dispute_date,
       reason,
       explanation: body.explanation,

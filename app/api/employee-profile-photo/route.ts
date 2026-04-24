@@ -4,8 +4,10 @@ import {
 } from "@/lib/supabase/employee-profile-photo";
 import { MAX_PROFILE_PHOTO_BYTES } from "@/lib/images/compress-profile-photo";
 import { NextResponse } from "next/server";
+import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 /**
  * GET ?email= — returns stored profile photo URL from the master list (if any).
@@ -18,7 +20,10 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "email query parameter is required" }, { status: 400 });
     }
 
-    const profilePhotoUrl = await getProfilePhotoUrlForEmail(email);
+    const authz = await authorizeEmailAccess(email);
+    if (!authz.ok) return deniedResponse(authz);
+
+    const profilePhotoUrl = await getProfilePhotoUrlForEmail(authz.effectiveEmail);
     return NextResponse.json({ profilePhotoUrl });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -46,6 +51,10 @@ export async function POST(req: Request) {
     if (!email) {
       return NextResponse.json({ error: "email is required" }, { status: 400 });
     }
+
+    const authz = await authorizeEmailAccess(email);
+    if (!authz.ok) return deniedResponse(authz);
+
     if (!(file instanceof Blob)) {
       return NextResponse.json({ error: "file is required" }, { status: 400 });
     }
@@ -65,7 +74,7 @@ export async function POST(req: Request) {
     }
 
     const buf = await file.arrayBuffer();
-    const result = await uploadEmployeeProfilePhotoAndUpdateRow(email, buf);
+    const result = await uploadEmployeeProfilePhotoAndUpdateRow(authz.effectiveEmail, buf);
     if ("error" in result) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }

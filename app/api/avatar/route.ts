@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 /**
  * Redirects to Gravatar for `email` (MD5 hash, same algorithm Gravatar uses).
@@ -21,7 +23,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing email" }, { status: 400 });
   }
 
-  const hash = createHash("md5").update(email).digest("hex");
+  const authz = await authorizeEmailAccess(email);
+  if (!authz.ok) return deniedResponse(authz);
+
+  const hash = createHash("md5").update(authz.effectiveEmail).digest("hex");
   const s = req.nextUrl.searchParams.get("s") ?? "128";
   const d = req.nextUrl.searchParams.get("d") ?? "404";
 

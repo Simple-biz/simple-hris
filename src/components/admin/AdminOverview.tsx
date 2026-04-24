@@ -134,7 +134,7 @@ const card =
 const panelHead =
   'flex h-9 shrink-0 items-center justify-between gap-2 border-b border-zinc-200/90 bg-zinc-50/90 px-3 dark:border-zinc-800/90 dark:bg-zinc-900/60';
 const statCard =
-  'group relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-zinc-200/90 bg-white/95 p-3 shadow-sm transition-colors hover:border-zinc-300/90 dark:border-zinc-800/80 dark:bg-zinc-900/50 dark:hover:border-zinc-700/80';
+  'group relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-zinc-200/90 bg-white/95 p-2.5 shadow-sm transition-colors hover:border-zinc-300/90 [@media(max-height:900px)]:p-2 xl:p-3 dark:border-zinc-800/80 dark:bg-zinc-900/50 dark:hover:border-zinc-700/80';
 
 export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewProps) {
   const [employeeCount, setEmployeeCount] = useState<number | null>(null);
@@ -433,7 +433,7 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-zinc-50 font-sans text-sm text-zinc-800 antialiased dark:bg-zinc-950 dark:text-zinc-300">
-      <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-200/90 bg-white/70 px-3 py-2.5 text-[11px] backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/70">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-zinc-200/90 bg-white/70 px-3 py-2 text-[11px] backdrop-blur-sm [@media(max-height:900px)]:py-1.5 lg:gap-x-4 lg:py-2.5 dark:border-zinc-800 dark:bg-zinc-950/70">
         <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-500">
           <Terminal className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden />
           <span className="font-medium text-emerald-700 dark:text-emerald-400/90">Admin</span>
@@ -493,15 +493,15 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
           <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Loading overview…</p>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3">
-          <section className="shrink-0 rounded-lg border border-zinc-200/90 bg-gradient-to-br from-white via-white to-zinc-50/90 p-4 shadow-sm dark:border-zinc-800/80 dark:from-zinc-900/80 dark:via-zinc-900/60 dark:to-zinc-950/90">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2 [@media(max-height:900px)]:gap-1.5 [@media(max-height:900px)]:p-1.5 lg:gap-3 lg:p-3">
+          <section className="shrink-0 rounded-lg border border-zinc-200/90 bg-gradient-to-br from-white via-white to-zinc-50/90 p-3 shadow-sm [@media(max-height:900px)]:p-2.5 xl:p-4 dark:border-zinc-800/80 dark:from-zinc-900/80 dark:via-zinc-900/60 dark:to-zinc-950/90">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between lg:gap-3">
               <div className="min-w-0 space-y-1">
                 <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-500">Dashboard</p>
-                <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-2xl">
+                <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-xl lg:text-2xl">
                   Hi, {greet}
                 </h1>
-                <p className="max-w-xl text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                <p className="max-w-xl text-[12px] leading-snug text-zinc-600 [@media(max-height:900px)]:line-clamp-2 xl:line-clamp-none xl:text-[13px] xl:leading-relaxed dark:text-zinc-400">
                   <span className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">{employeeCount ?? '—'}</span>{' '}
                   employees on record ·{' '}
                   <span className="font-medium tabular-nums text-zinc-800 dark:text-zinc-200">{nonViewerElevated}</span> with
@@ -539,11 +539,11 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
             </div>
           </section>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden lg:flex-row lg:items-stretch">
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden lg:flex-row lg:items-stretch lg:gap-3">
           {/* Left — metrics + rbac / hooks */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 lg:min-w-0">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:gap-3">
           {/* Signals */}
-          <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:gap-3">
             {[
               {
                 k: 'Employees',

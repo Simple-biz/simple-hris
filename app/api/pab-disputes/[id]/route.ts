@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { decideDispute, editDisputeDecision, withdrawDispute } from '@/lib/supabase/pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
+import { authorizeEmailAccess, deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -95,7 +96,10 @@ export async function DELETE(
       return NextResponse.json({ error: 'employee_email query param is required' }, { status: 400 });
     }
 
-    const { error } = await withdrawDispute(id, { employee_email: email });
+    const authz = await authorizeEmailAccess(email);
+    if (!authz.ok) return deniedResponse(authz);
+
+    const { error } = await withdrawDispute(id, { employee_email: authz.effectiveEmail });
     if (error) {
       const code = error === 'Dispute not found' ? 404
         : error === 'Forbidden' ? 403

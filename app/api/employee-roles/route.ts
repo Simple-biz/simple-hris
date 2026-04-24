@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import {
+  authorizeEmailAccess,
+  deniedResponse,
+  requireElevatedSession,
+} from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -27,6 +32,12 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const email = searchParams.get('email');
 
+  // Listing all assignments is elevated-only; querying for one email is self-or-elevated.
+  const authz = email
+    ? await authorizeEmailAccess(email)
+    : await requireElevatedSession();
+  if (!authz.ok) return deniedResponse(authz);
+
   const supabase = getClient();
   if (!supabase) return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
 
@@ -36,7 +47,7 @@ export async function GET(request: Request) {
     .is('revoked_at', null)
     .order('assigned_at', { ascending: false });
 
-  if (email) q = q.ilike('work_email', email.trim());
+  if (email) q = q.ilike('work_email', authz.effectiveEmail);
 
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

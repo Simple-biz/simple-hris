@@ -102,10 +102,29 @@ function parsePeriodFromFilename(file: string | null): { label: string; week: nu
 }
 
 /** Donut-chart SVG with a single arc showing `pct` (0–100) of a 100-unit ring. */
-function Donut({ pct, color, size = 96, stroke = 3.2 }: { pct: number; color: string; size?: number; stroke?: number }) {
+function Donut({
+  pct,
+  color,
+  size = 96,
+  stroke = 3.2,
+  fillContainer,
+}: {
+  pct: number;
+  color: string;
+  size?: number;
+  stroke?: number;
+  /** When true, omit fixed px size so the parent box (e.g. h-20 xl:h-24) controls dimensions. */
+  fillContainer?: boolean;
+}) {
   const safe = Math.max(0, Math.min(100, pct));
   return (
-    <svg viewBox="0 0 36 36" width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+    <svg
+      viewBox="0 0 36 36"
+      className={fillContainer ? 'h-full w-full' : undefined}
+      width={fillContainer ? undefined : size}
+      height={fillContainer ? undefined : size}
+      style={{ transform: 'rotate(-90deg)' }}
+    >
       <circle cx="18" cy="18" r="15.915" fill="none" stroke="currentColor" strokeWidth={stroke} className="text-zinc-200 dark:text-zinc-800" />
       <circle cx="18" cy="18" r="15.915" fill="none" stroke={color} strokeWidth={stroke} strokeDasharray={`${safe} 100`} strokeLinecap="round" />
     </svg>
@@ -277,30 +296,30 @@ function SimpleView({
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <div className="mx-auto max-w-[1360px] px-2 pb-12">
+      <div className="mx-auto max-w-[min(100%,1360px)] px-2 pb-6 [@media(max-height:900px)]:pb-4 xl:pb-12">
 
-        {/* Hero */}
-        <section className="mb-10 grid grid-cols-1 items-end gap-8 border-b border-zinc-200 pb-8 lg:grid-cols-[1fr_auto] dark:border-zinc-800">
+        {/* Hero — scales up at xl/2xl so 13" laptops (~1280×800) are not dominated by md:text-7xl */}
+        <section className="mb-5 grid grid-cols-1 items-end gap-4 border-b border-zinc-200 pb-5 [@media(max-height:900px)]:mb-4 [@media(max-height:900px)]:gap-3 [@media(max-height:900px)]:pb-4 lg:mb-8 lg:gap-6 lg:pb-6 lg:grid-cols-[1fr_auto] xl:mb-10 xl:gap-8 xl:pb-8 dark:border-zinc-800">
           <div>
-            <p className="mb-4 text-[13px] text-zinc-500 dark:text-zinc-400">
+            <p className="mb-2 text-[13px] text-zinc-500 [@media(max-height:900px)]:mb-1 lg:mb-3 xl:mb-4 dark:text-zinc-400">
               <span>{greeting}. Accounting team dashboard.</span>
             </p>
-            <p className="mb-3 text-[12.5px] font-medium text-zinc-500 dark:text-zinc-400">
+            <p className="mb-2 text-[12.5px] font-medium text-zinc-500 xl:mb-3 dark:text-zinc-400">
               Total payout for this accounting pay run
             </p>
             <div className="flex items-baseline">
-              <span className="mr-1.5 text-5xl font-medium text-zinc-400 md:text-6xl">₱</span>
+              <span className="mr-1.5 text-4xl font-medium text-zinc-400 lg:text-5xl xl:text-6xl 2xl:text-7xl">₱</span>
               {payoutLoading ? (
-                <span className="inline-block h-[1em] w-[280px] animate-pulse rounded-md bg-zinc-200/80 align-bottom text-5xl md:h-[1em] md:w-[420px] md:text-7xl dark:bg-zinc-800" />
+                <span className="inline-block h-[1em] w-[220px] animate-pulse rounded-md bg-zinc-200/80 align-bottom text-4xl lg:w-[280px] lg:text-5xl xl:w-[360px] xl:text-6xl 2xl:w-[420px] 2xl:text-7xl dark:bg-zinc-800" />
               ) : (
-                <span className="font-mono text-5xl font-semibold tracking-tight text-zinc-900 md:text-7xl dark:text-white">
+                <span className="font-mono text-4xl font-semibold tracking-tight text-zinc-900 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-white">
                   {totalPayout != null
                     ? totalPayout.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                     : '—'}
                 </span>
               )}
             </div>
-            <p className="mt-4 flex flex-wrap items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
+            <p className="mt-2 flex flex-wrap items-center gap-3 text-[13px] text-zinc-500 [@media(max-height:900px)]:mt-1.5 lg:mt-3 xl:mt-4 dark:text-zinc-400">
               <span>
                 <strong className="font-semibold text-zinc-900 dark:text-white">
                   {payrollWorkerCount ?? '—'}
@@ -364,7 +383,7 @@ function SimpleView({
         </section>
 
         {/* Attention row */}
-        <section className="mb-14 grid grid-cols-1 gap-3.5 md:grid-cols-3">
+        <section className="mb-6 grid grid-cols-1 gap-3.5 [@media(max-height:900px)]:mb-4 lg:mb-10 xl:mb-14 md:grid-cols-3">
           <AttentionCard
             icon={<AlertCircle className="h-3.5 w-3.5" />}
             label="Needs your decision"
@@ -418,8 +437,8 @@ function SimpleView({
         </section>
 
         {/* Monthly bonuses */}
-        <section className="mb-14">
-          <div className="mb-5 flex items-baseline justify-between">
+        <section className="mb-6 [@media(max-height:900px)]:mb-4 lg:mb-10 xl:mb-14">
+          <div className="mb-3 flex items-baseline justify-between lg:mb-5">
             <h3 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-white">
               Monthly bonuses
             </h3>
@@ -428,14 +447,14 @@ function SimpleView({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 gap-12 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 [@media(max-height:900px)]:gap-5 md:grid-cols-2 lg:gap-8 xl:gap-12">
             {/* PAB */}
-            <div className="grid grid-cols-[120px_1fr] items-center gap-7">
+            <div className="grid grid-cols-[120px_1fr] items-center gap-4 lg:gap-6 xl:gap-7">
               <div className="flex flex-col items-center gap-2.5">
-                <div className="relative h-24 w-24">
-                  <Donut pct={pabPct} color="#047857" />
+                <div className="relative h-20 w-20 xl:h-24 xl:w-24">
+                  <Donut pct={pabPct} color="#047857" fillContainer />
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                    <span className="text-base font-semibold tracking-tight text-zinc-900 xl:text-xl dark:text-white">
                       {pabTotal > 0 ? `${pabPct}%` : '—'}
                     </span>
                     {pabTotal > 0 && (
@@ -453,7 +472,7 @@ function SimpleView({
                 <h4 className="mb-1 text-[13px] font-semibold text-zinc-900 dark:text-white">
                   Perfect Attendance Bonus · ₱5,000
                 </h4>
-                <p className="mb-3.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <p className="mb-2 text-xs text-zinc-500 [@media(max-height:900px)]:mb-1.5 xl:mb-3.5 dark:text-zinc-400">
                   {pabMetrics.monthLabel ?? '—'} · merged month
                 </p>
                 <div className="grid grid-cols-[auto_auto] gap-x-5 gap-y-1 text-[13px]">
@@ -480,12 +499,12 @@ function SimpleView({
             </div>
 
             {/* Tech Bonus */}
-            <div className="grid grid-cols-[120px_1fr] items-center gap-7">
+            <div className="grid grid-cols-[120px_1fr] items-center gap-4 lg:gap-6 xl:gap-7">
               <div className="flex flex-col items-center gap-2.5">
-                <div className="relative h-24 w-24">
-                  <Donut pct={techPct} color="#18181b" />
+                <div className="relative h-20 w-20 xl:h-24 xl:w-24">
+                  <Donut pct={techPct} color="#18181b" fillContainer />
                   <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                    <span className="text-base font-semibold tracking-tight text-zinc-900 xl:text-xl dark:text-white">
                       {techTotal > 0 ? `${techPct}%` : '—'}
                     </span>
                     {techTotal > 0 && (
@@ -503,7 +522,7 @@ function SimpleView({
                 <h4 className="mb-1 text-[13px] font-semibold text-zinc-900 dark:text-white">
                   Technology Bonus · ₱1,850
                 </h4>
-                <p className="mb-3.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <p className="mb-2 text-xs text-zinc-500 [@media(max-height:900px)]:mb-1.5 xl:mb-3.5 dark:text-zinc-400">
                   Paid on 3rd paycheck of each month · after 30 days of service
                 </p>
                 <div className="grid grid-cols-[auto_auto] gap-x-5 gap-y-1 text-[13px]">
@@ -544,7 +563,7 @@ function SimpleView({
 
         {/* Workers table */}
         <section>
-          <div className="mb-5 flex items-baseline justify-between">
+          <div className="mb-3 flex items-baseline justify-between lg:mb-5">
             <h3 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-white">
               Workers in this payroll run
             </h3>

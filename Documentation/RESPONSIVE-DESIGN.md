@@ -20,6 +20,16 @@ This document describes how Simple HRIS behaves on phones, tablets, laptops, and
 
 Tailwind’s `md` breakpoint is the main switch for navigation chrome.
 
+## 13" laptops and short viewports
+
+Many 13" machines use **1280×800** or **1440×900** logical pixels, and after OS scaling and browser chrome the **visible height is often ~760–880px**. Dashboards use:
+
+- **Accounting Overview** (`Overview.tsx`): The main payout figure scales as `text-4xl → … → 2xl:text-7xl` (it no longer jumps to `text-7xl` at `md`). Section margins, bonus grids, and donut charts are tighter below `xl` and when `[@media(max-height:900px)]` matches.
+- **Employee dashboard**: Header and stat cards use reduced padding/gaps; the **scrollable region is only the block below the header** so the shell stays within `dvh`. Chart/calendar cards use lower `min-height` before `lg` row layout.
+- **Admin overview**: Denser padding, smaller hero title on small heights, and `line-clamp` on the intro blurb until `xl`.
+
+Arbitrary variant **`[@media(max-height:900px)]:`** (not `max-[height:900px]:`, which Tailwind v4 miscompiles) is used for vertical compaction when the viewport is short regardless of width (typical laptop with dock/taskbar).
+
 ## App shells (three surfaces)
 
 Each primary surface uses the same pattern:
