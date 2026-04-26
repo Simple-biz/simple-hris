@@ -2,18 +2,23 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  Briefcase,
+  CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
   DollarSign,
   Edit2,
   Eye,
+  IdCard,
   Loader2,
+  Mail,
   Plus,
   Search,
   Trash2,
   UserCheck,
   UserCog,
+  UserPlus,
   UserX,
   X,
 } from "lucide-react";
@@ -707,6 +712,22 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
 
+  /** Quick-glance counts for the stats strip in the header. */
+  const stats = useMemo(() => {
+    const isMissing = (v?: string | null) => !v || v === "—" || v.trim() === "";
+    let missingAny = 0;
+    let missingBoth = 0;
+    let suspended = 0;
+    for (const p of profiles) {
+      const reg = isMissing(p.regularRate);
+      const ot = isMissing(p.otRate);
+      if (reg || ot) missingAny++;
+      if (reg && ot) missingBoth++;
+      if (p.suspended) suspended++;
+    }
+    return { total: profiles.length, missingAny, missingBoth, suspended };
+  }, [profiles]);
+
   useEffect(() => {
     setPage(1);
   }, [searchQuery, rateFilter]);
@@ -920,42 +941,90 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-4 sm:p-5 dark:bg-none dark:bg-[#0d1117]">
-      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h2 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
-            Rates &amp; profiles
-          </h2>
-          <p className="line-clamp-2 text-xs text-zinc-600 sm:text-sm dark:text-zinc-500">
-            Rows match by work/personal email (or name). Open a row for the full merged profile from
-            Supabase.
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 sm:px-4 sm:py-3 md:px-5 lg:gap-4 lg:py-3 dark:bg-none dark:bg-[#0d1117]">
+      {/* Editorial header */}
+      <motion.header
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+        className="flex shrink-0 flex-col gap-3 border-b border-zinc-200/70 pb-3 dark:border-zinc-800/70 lg:flex-row lg:items-end lg:justify-between lg:gap-6"
+      >
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-amber-700/80 dark:text-amber-500/70">
+            Accounting
+            <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">/</span>
+            Roster
           </p>
-          <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-blue-800/90 dark:text-blue-300/90">
-            <span className="font-medium">USD → PHP</span>
-            <span className="font-mono tabular-nums">
-              ₱{usdToPhpRate.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 5 })} = $1 USD
-            </span>
-            <span className="text-zinc-500 dark:text-zinc-500">(payroll conversion)</span>
+          <h1 className="mt-1 font-mono text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl lg:text-[2.25rem] lg:leading-none dark:text-white">
+            Rates &amp; Profiles
+          </h1>
+          <p className="mt-1.5 text-xs leading-snug text-zinc-500 dark:text-zinc-500">
+            Merged from{" "}
+            <span className="font-mono text-zinc-600 dark:text-zinc-400">employee_hourly_rates</span>{" "}
+            and <span className="font-mono text-zinc-600 dark:text-zinc-400">global_master_list</span>{" "}
+            — rows match by work/personal email or name. Open any row for the full profile.
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             type="button"
-            onClick={() => { resetAddForm(); setAddOpen(true); }}
-            className="gap-1.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-sm shadow-orange-500/25 hover:from-orange-600 hover:to-orange-700 dark:from-orange-500 dark:to-orange-600 dark:hover:from-orange-600 dark:hover:to-orange-700"
+            onClick={() => {
+              resetAddForm();
+              setAddOpen(true);
+            }}
+            className="gap-1.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-sm shadow-orange-500/25 ring-1 ring-orange-500/20 transition-all hover:from-orange-600 hover:to-orange-700 hover:shadow-md hover:shadow-orange-500/30 active:scale-[0.98] dark:from-orange-500 dark:to-orange-600 dark:hover:from-orange-600 dark:hover:to-orange-700"
           >
-            <Plus className="size-4" />
+            <UserPlus className="size-4" />
             Add Employee
           </Button>
-          <Badge
-            variant="outline"
-            className="w-fit border-blue-500/20 bg-gradient-to-r from-orange-500/10 to-blue-500/10 px-3 py-1 text-blue-700 dark:border-blue-500/30 dark:text-blue-400"
-          >
-            <DollarSign className="mr-1 inline size-3" />
-            Supabase
-          </Badge>
         </div>
-      </div>
+      </motion.header>
+
+      {/* Stats strip — at-a-glance roster context */}
+      <motion.div
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.06, ease: [0.16, 1, 0.3, 1] }}
+        className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3"
+      >
+        <div className="flex flex-col gap-0.5 rounded-lg border border-zinc-200/80 bg-white/60 px-3 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/30">
+          <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+            Employees
+          </span>
+          <span className="font-mono text-lg font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
+            {stats.total}
+          </span>
+        </div>
+        <div className="flex flex-col gap-0.5 rounded-lg border border-amber-200/80 bg-amber-50/60 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20">
+          <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">
+            Missing rates
+          </span>
+          <span className="font-mono text-lg font-bold tabular-nums leading-none text-amber-800 dark:text-amber-300">
+            {stats.missingAny}
+            {stats.missingBoth > 0 && (
+              <span className="ml-1.5 align-middle text-[10px] font-medium text-amber-600 dark:text-amber-500">
+                ({stats.missingBoth} both)
+              </span>
+            )}
+          </span>
+        </div>
+        <div className="flex flex-col gap-0.5 rounded-lg border border-zinc-200/80 bg-white/60 px-3 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/30">
+          <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+            Suspended
+          </span>
+          <span className="font-mono text-lg font-bold tabular-nums leading-none text-zinc-700 dark:text-zinc-300">
+            {stats.suspended}
+          </span>
+        </div>
+        <div className="flex flex-col gap-0.5 rounded-lg border border-blue-200/70 bg-blue-50/50 px-3 py-2 dark:border-blue-900/40 dark:bg-blue-950/20">
+          <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-blue-700 dark:text-blue-400">
+            USD → PHP
+          </span>
+          <span className="font-mono text-base font-bold tabular-nums leading-none text-blue-900 dark:text-blue-300">
+            ₱{usdToPhpRate.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
+          </span>
+        </div>
+      </motion.div>
 
       {mergeNotes.length > 0 ? (
         <div className="max-h-20 shrink-0 overflow-y-auto rounded-lg border border-amber-500/25 bg-amber-500/[0.08] px-3 py-2 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100/95">
@@ -968,49 +1037,35 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
         </div>
       ) : null}
 
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5">
-        <CardHeader className="shrink-0 space-y-0 pb-2 pt-3">
-          <CardTitle className="text-base font-semibold text-zinc-900 sm:text-lg dark:text-white">
-            Employee rates
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden pt-0">
-          <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end">
-            <div className="max-w-md flex-1 space-y-1.5">
-              <Label htmlFor="rates-search" className="text-xs text-zinc-600 dark:text-zinc-500">
-                Search
-              </Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
-                <Input
-                  id="rates-search"
-                  placeholder="Name, email, rates…"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  disabled={loading || !!error}
-                  className="h-9 border-zinc-200 bg-white pl-9 text-zinc-900 placeholder:text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600"
-                />
-              </div>
-            </div>
-            <div className="w-full space-y-1.5 sm:w-56">
-              <Label htmlFor="rates-filter" className="text-xs text-zinc-600 dark:text-zinc-500">
-                Rate filter
-              </Label>
-              <select
-                id="rates-filter"
-                value={rateFilter}
-                onChange={(e) => setRateFilter(e.target.value as typeof rateFilter)}
-                disabled={loading || !!error}
-                className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200"
-              >
-                <option value="all">All employees</option>
-                <option value="missing_any">Missing any rate</option>
-                <option value="missing_regular">Missing Regular Rate</option>
-                <option value="missing_ot">Missing OT Rate</option>
-                <option value="missing_both">Missing both rates</option>
-              </select>
-            </div>
+      {/* Table section — single light container, no card-on-card chrome */}
+      <section className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden rounded-xl border border-zinc-200/80 bg-white/60 p-3 shadow-sm sm:p-4 dark:border-zinc-800/80 dark:bg-zinc-900/30">
+        {/* Refined toolbar — no labels, full-width search + compact filter */}
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+            <Input
+              id="rates-search"
+              placeholder="Search name, email, or rate…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              disabled={loading || !!error}
+              className="h-9 border-zinc-200 bg-white pl-9 text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+            />
           </div>
+          <select
+            id="rates-filter"
+            value={rateFilter}
+            onChange={(e) => setRateFilter(e.target.value as typeof rateFilter)}
+            disabled={loading || !!error}
+            className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50 sm:w-56 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+          >
+            <option value="all">All employees</option>
+            <option value="missing_any">Missing any rate</option>
+            <option value="missing_regular">Missing Regular Rate</option>
+            <option value="missing_ot">Missing OT Rate</option>
+            <option value="missing_both">Missing both rates</option>
+          </select>
+        </div>
 
           {loading ? (
             <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
@@ -1101,31 +1156,33 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
               </div>
               <div className="min-h-0 flex-1 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
                 <Table>
-                  <TableHeader className="sticky top-0 z-10 bg-gradient-to-r from-orange-50/95 to-blue-50/60 backdrop-blur-sm dark:from-blue-950/90 dark:to-blue-950/70">
+                  <TableHeader className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50/95 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/90">
                     <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
-                      <TableHead className="w-[7rem] shrink-0 text-zinc-600 dark:text-zinc-400">
+                      <TableHead className="w-[7rem] shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                         Employee ID
                       </TableHead>
-                      <TableHead className="min-w-[11rem] whitespace-normal text-zinc-600 dark:text-zinc-400">
+                      <TableHead className="min-w-[11rem] whitespace-normal text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                         Name
                       </TableHead>
-                      <TableHead className="min-w-[9rem] whitespace-normal text-zinc-600 dark:text-zinc-400">
+                      <TableHead className="min-w-[9rem] whitespace-normal text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                         Department
                       </TableHead>
-                      <TableHead className="min-w-[9rem] whitespace-normal text-zinc-600 dark:text-zinc-400">
+                      <TableHead className="min-w-[9rem] whitespace-normal text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                         Organization
                       </TableHead>
-                      <TableHead className="min-w-[10rem] whitespace-normal text-zinc-600 dark:text-zinc-400">
+                      <TableHead className="min-w-[10rem] whitespace-normal text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                         Work Email
                       </TableHead>
-                      <TableHead className="text-right text-zinc-600 dark:text-zinc-400">
+                      <TableHead className="text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                         Regular Rate
                       </TableHead>
-                      <TableHead className="text-right text-zinc-600 dark:text-zinc-400">OT Rate</TableHead>
-                      <TableHead className="min-w-[8rem] text-zinc-600 dark:text-zinc-400">
+                      <TableHead className="text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
+                        OT Rate
+                      </TableHead>
+                      <TableHead className="min-w-[8rem] text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                         Status
                       </TableHead>
-                      <TableHead className="w-[160px] text-right text-zinc-600 dark:text-zinc-400">
+                      <TableHead className="w-[160px] text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
                         Action
                       </TableHead>
                     </TableRow>
@@ -1291,8 +1348,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
               </div>
             </div>
           )}
-        </CardContent>
-      </Card>
+      </section>
 
       {/* Delete Confirmation Dialog */}
       <Dialog
@@ -1368,7 +1424,14 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
         </DialogContent>
       </Dialog>
 
-      {/* Add Employee Modal */}
+      {/*
+        Add Employee Modal — rebuilt 2026-04-25.
+        Same state (`addForm`), same handlers (`handleAddEmployee`, `resetAddForm`),
+        same `/api/add-employee` POST. Layout is now `flex h-full min-h-0 flex-col`
+        with a single scrollable body sandwiched between a sticky header and
+        sticky footer, so the submit button can never get clipped or pushed off
+        the bottom regardless of viewport height.
+      */}
       <Dialog
         open={addOpen}
         onOpenChange={(open) => {
@@ -1379,119 +1442,176 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
         <DialogContent
           showCloseButton
           className={cn(
-            "w-[min(92vw,560px)] max-w-[min(92vw,560px)] rounded-2xl border-orange-100/60 bg-gradient-to-br from-white via-orange-50/20 to-blue-50/30 p-0",
-            "shadow-[0_25px_50px_-12px_rgba(249,115,22,0.12),0_10px_20px_-5px_rgba(0,0,0,0.10)] dark:border-blue-950/60 dark:from-[#0d1117] dark:via-[#0f1729] dark:to-[#0a1628] dark:shadow-black/50",
-            "sm:max-w-[min(92vw,560px)]",
-            "duration-[340ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-            "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.93] data-open:slide-in-from-bottom-8",
-            "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.97] data-closed:slide-out-to-bottom-4 data-closed:duration-[180ms] data-closed:ease-in",
+            "flex h-[min(92vh,720px)] w-[min(94vw,560px)] max-w-[min(94vw,560px)] flex-col overflow-hidden rounded-2xl border border-zinc-200/80 bg-white p-0 shadow-2xl",
+            "dark:border-zinc-800 dark:bg-[#0d1117] dark:shadow-black/60",
+            "sm:max-w-[min(94vw,560px)]",
+            "duration-[280ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+            "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.96] data-open:slide-in-from-bottom-4",
+            "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] data-closed:slide-out-to-bottom-2 data-closed:duration-[160ms] data-closed:ease-in",
           )}
         >
-          <form onSubmit={handleAddEmployee}>
-            <DialogHeader className="border-b border-orange-100/60 bg-gradient-to-r from-orange-50/90 via-white to-blue-50/60 px-6 py-5 dark:border-blue-950/60 dark:from-blue-950/60 dark:via-[#0f1729] dark:to-blue-950/40">
-              <DialogTitle className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
-                Add Employee
-              </DialogTitle>
-              <DialogDescription className="text-sm text-zinc-500 dark:text-zinc-400">
-                Creates a new profile in both <span className="font-mono text-xs">employee_hourly_rates</span> and <span className="font-mono text-xs">global_master_list</span>.
+          <form onSubmit={handleAddEmployee} className="flex min-h-0 flex-1 flex-col">
+            {/* HEADER */}
+            <DialogHeader className="shrink-0 space-y-0 border-b border-zinc-200/80 px-6 py-4 dark:border-zinc-800/80">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600 ring-1 ring-orange-500/20 dark:bg-orange-500/15 dark:text-orange-400">
+                  <UserPlus className="h-4.5 w-4.5" aria-hidden />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-700/80 dark:text-amber-500/70">
+                    New Profile
+                  </p>
+                  <DialogTitle className="mt-0.5 font-mono text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
+                    Add Employee
+                  </DialogTitle>
+                </div>
+              </div>
+              <DialogDescription className="mt-2 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-500">
+                Writes to{' '}
+                <span className="font-mono text-zinc-700 dark:text-zinc-300">employee_hourly_rates</span>{' '}
+                and{' '}
+                <span className="font-mono text-zinc-700 dark:text-zinc-300">global_master_list</span>.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-5 overflow-y-auto px-6 py-6" style={{ maxHeight: "min(70vh, 560px)" }}>
-              {/* Name & Department */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="add-name" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                    Name <span className="text-red-500">*</span>
-                  </Label>
-                  <Input
-                    id="add-name"
-                    placeholder="Full name"
-                    value={addForm.name}
-                    onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
-                    required
-                    className="h-9 border-zinc-200 bg-white text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
-                  />
+            {/* BODY — single scroll region, takes remaining height */}
+            <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-5 [-webkit-overflow-scrolling:touch]">
+              {/* Identity */}
+              <fieldset className="space-y-3">
+                <legend className="mb-1 flex w-full items-center gap-2 border-b border-zinc-200/70 pb-1.5 dark:border-zinc-800/70">
+                  <IdCard className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                    Identity
+                  </span>
+                </legend>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="add-name" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      Name <span className="text-red-500">*</span>
+                    </Label>
+                    <Input
+                      id="add-name"
+                      placeholder="Full name"
+                      value={addForm.name}
+                      onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
+                      required
+                      autoFocus
+                      className="h-9 border-zinc-200 bg-white text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="add-department" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      Department
+                    </Label>
+                    <DepartmentSelect
+                      id="add-department"
+                      value={addForm.department}
+                      onChange={(v) => setAddForm((f) => ({ ...f, department: v }))}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="add-department" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                    Department
-                  </Label>
-                  <DepartmentSelect
-                    id="add-department"
-                    value={addForm.department}
-                    onChange={(v) => setAddForm((f) => ({ ...f, department: v }))}
-                  />
-                </div>
-              </div>
+              </fieldset>
 
-              {/* Emails */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="add-work-email" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                    Work Email
-                  </Label>
-                  <Input
-                    id="add-work-email"
-                    type="email"
-                    placeholder="name@company.com"
-                    value={addForm.workEmail}
-                    onChange={(e) => setAddForm((f) => ({ ...f, workEmail: e.target.value }))}
-                    className="h-9 border-zinc-200 bg-white font-mono text-sm text-zinc-900 placeholder:font-sans placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
-                  />
+              {/* Contact */}
+              <fieldset className="space-y-3">
+                <legend className="mb-1 flex w-full items-center gap-2 border-b border-zinc-200/70 pb-1.5 dark:border-zinc-800/70">
+                  <Mail className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                    Contact
+                  </span>
+                  <span className="ml-auto text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                    Need at least one
+                  </span>
+                </legend>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="add-work-email" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      Work Email
+                    </Label>
+                    <div className="relative">
+                      <Mail className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+                      <Input
+                        id="add-work-email"
+                        type="email"
+                        placeholder="name@company.com"
+                        value={addForm.workEmail}
+                        onChange={(e) => setAddForm((f) => ({ ...f, workEmail: e.target.value }))}
+                        className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="add-personal-email" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      Personal Email
+                    </Label>
+                    <div className="relative">
+                      <Mail className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+                      <Input
+                        id="add-personal-email"
+                        type="email"
+                        placeholder="personal@email.com"
+                        value={addForm.personalEmail}
+                        onChange={(e) => setAddForm((f) => ({ ...f, personalEmail: e.target.value }))}
+                        className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                      />
+                    </div>
+                  </div>
                 </div>
+              </fieldset>
+
+              {/* Employment */}
+              <fieldset className="space-y-3">
+                <legend className="mb-1 flex w-full items-center gap-2 border-b border-zinc-200/70 pb-1.5 dark:border-zinc-800/70">
+                  <Briefcase className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                    Employment
+                  </span>
+                </legend>
                 <div className="space-y-1.5">
-                  <Label htmlFor="add-personal-email" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                    Personal Email
+                  <Label htmlFor="add-start-date" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    Start Date
                   </Label>
-                  <Input
-                    id="add-personal-email"
-                    type="email"
-                    placeholder="personal@email.com"
-                    value={addForm.personalEmail}
-                    onChange={(e) => setAddForm((f) => ({ ...f, personalEmail: e.target.value }))}
-                    className="h-9 border-zinc-200 bg-white font-mono text-sm text-zinc-900 placeholder:font-sans placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
-                  />
+                  <div className="relative">
+                    <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+                    <Input
+                      id="add-start-date"
+                      type="date"
+                      value={addForm.startDate}
+                      onChange={(e) => setAddForm((f) => ({ ...f, startDate: e.target.value }))}
+                      max={new Date().toISOString().slice(0, 10)}
+                      className="h-9 w-full border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                    />
+                  </div>
                 </div>
-              </div>
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-600 -mt-2">
-                At least one email is required.
-              </p>
+              </fieldset>
 
-              {/* Start Date */}
-              <div className="space-y-1.5">
-                <Label htmlFor="add-start-date" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                  Start Date
-                </Label>
-                <Input
-                  id="add-start-date"
-                  type="date"
-                  value={addForm.startDate}
-                  onChange={(e) => setAddForm((f) => ({ ...f, startDate: e.target.value }))}
-                  className="h-9 w-full border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
-                />
-              </div>
-
-              {/* Rates */}
-              <div className="rounded-lg border border-orange-100/80 bg-gradient-to-br from-orange-50/60 to-blue-50/40 p-4 dark:border-blue-950/50 dark:from-blue-950/30 dark:to-blue-950/10">
-                <p className="mb-3 text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                  Hourly Rates
-                </p>
-                <div className="grid grid-cols-2 gap-4">
+              {/* Compensation */}
+              <fieldset className="space-y-3">
+                <legend className="mb-1 flex w-full items-center gap-2 border-b border-zinc-200/70 pb-1.5 dark:border-zinc-800/70">
+                  <DollarSign className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                    Compensation
+                  </span>
+                  <span className="ml-auto font-mono text-[10px] tabular-nums text-blue-700 dark:text-blue-400">
+                    ₱{usdToPhpRate.toFixed(5)} / $1
+                  </span>
+                </legend>
+                <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="add-regular-rate" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
                       Regular Rate
                     </Label>
                     <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400" aria-hidden>
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-orange-500" aria-hidden>
                         ₱
                       </span>
                       <Input
                         id="add-regular-rate"
                         placeholder="0.00"
+                        inputMode="decimal"
                         value={addForm.regularRate}
                         onChange={(e) => setAddForm((f) => ({ ...f, regularRate: e.target.value }))}
-                        className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                        className="h-9 border-zinc-200 bg-white pl-7 font-mono tabular-nums text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                       />
                     </div>
                   </div>
@@ -1500,42 +1620,41 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                       OT Rate
                     </Label>
                     <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400" aria-hidden>
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-orange-500" aria-hidden>
                         ₱
                       </span>
                       <Input
                         id="add-ot-rate"
                         placeholder="0.00"
+                        inputMode="decimal"
                         value={addForm.otRate}
                         onChange={(e) => setAddForm((f) => ({ ...f, otRate: e.target.value }))}
-                        className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                        className="h-9 border-zinc-200 bg-white pl-7 font-mono tabular-nums text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                       />
                     </div>
                   </div>
                 </div>
-                <p className="mt-3 border-t border-orange-100/70 pt-3 text-[10px] text-zinc-500 dark:border-blue-950/40 dark:text-zinc-500">
-                  USD → PHP:{" "}
-                  <span className="font-mono font-medium text-blue-700 dark:text-blue-300">
-                    ₱{usdToPhpRate.toFixed(5)} = $1 USD
-                  </span>
-                </p>
-              </div>
+              </fieldset>
             </div>
 
-            <DialogFooter className="border-t border-orange-100/60 bg-gradient-to-r from-orange-50/70 to-blue-50/40 px-6 py-4 dark:border-blue-950/60 dark:from-blue-950/50 dark:to-blue-950/30">
+            {/* FOOTER — sticky at the bottom of the dialog */}
+            <DialogFooter className="shrink-0 gap-2 border-t border-zinc-200/80 bg-zinc-50/60 px-6 py-3 dark:border-zinc-800/80 dark:bg-zinc-950/60">
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => { setAddOpen(false); resetAddForm(); }}
+                onClick={() => {
+                  setAddOpen(false);
+                  resetAddForm();
+                }}
                 disabled={isAdding}
-                className="text-zinc-600 hover:bg-orange-50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-blue-950/40 dark:hover:text-white"
+                className="h-9 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
               >
                 Cancel
               </Button>
               <Button
                 type="submit"
                 disabled={isAdding}
-                className="gap-1.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-sm shadow-orange-500/25 hover:from-orange-600 hover:to-orange-700"
+                className="h-9 gap-1.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-sm shadow-orange-500/25 transition-all hover:from-orange-600 hover:to-orange-700 hover:shadow-md hover:shadow-orange-500/30 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isAdding ? (
                   <>
@@ -1544,7 +1663,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   </>
                 ) : (
                   <>
-                    <Plus className="size-3.5" />
+                    <UserPlus className="size-3.5" />
                     Add Employee
                   </>
                 )}
@@ -1571,9 +1690,9 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
         <DialogContent
           showCloseButton
           className={cn(
-            "w-[min(92vw,1200px)] max-w-[min(92vw,1200px)] max-h-[min(92vh,960px)] overflow-hidden rounded-2xl border-orange-100/60 bg-gradient-to-br from-white via-orange-50/20 to-blue-50/30 p-0",
-            "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.18)] dark:border-blue-950/60 dark:from-[#0d1117] dark:via-[#0f1729] dark:to-[#0a1628] dark:shadow-black/50",
-            "sm:max-w-[min(92vw,1200px)]",
+            "w-[min(92vw,1100px)] max-w-[min(92vw,1100px)] max-h-[min(92vh,960px)] overflow-hidden rounded-2xl border-zinc-200/80 bg-white p-0",
+            "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.18)] dark:border-zinc-800 dark:bg-[#0d1117] dark:shadow-black/50",
+            "sm:max-w-[min(92vw,1100px)]",
             "duration-[380ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
             "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.96] data-open:slide-in-from-bottom-6",
             "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.98] data-closed:slide-out-to-bottom-3 data-closed:duration-[200ms] data-closed:ease-in",
@@ -1582,55 +1701,58 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
           {activeProfile ? (
             <motion.div
               key={activeProfile.id}
-              initial={{ opacity: 0, y: 12 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, ease: dialogEase }}
               className="flex flex-col"
             >
-              <DialogHeader className="shrink-0 space-y-0 border-b border-orange-100/60 bg-gradient-to-r from-orange-50/80 via-white to-blue-50/60 px-6 py-5 dark:border-blue-950/60 dark:from-blue-950/60 dark:via-[#0f1729] dark:to-blue-950/40">
+              {/* Editorial header — slim, no gradient */}
+              <DialogHeader className="shrink-0 space-y-0 border-b border-zinc-200/80 px-6 py-4 dark:border-zinc-800/80">
                 {(() => {
                   const av = getAvatarInfoFromProfile(activeProfile);
                   const empId = activeProfileSummary?.employeeId ?? null;
                   return (
                     <div className="flex items-start gap-4">
-                      <div className="shrink-0 rounded-full ring-2 ring-white/80 dark:ring-zinc-800/80">
+                      <div className="shrink-0 rounded-full ring-2 ring-zinc-100 dark:ring-zinc-800">
                         <EmployeeAvatar
                           photoUrl={av.photoUrl}
                           email={av.email}
                           initials={av.initials}
-                          className="h-14 w-14 text-lg"
-                          pixelSize={112}
+                          className="h-12 w-12 text-base"
+                          pixelSize={96}
                         />
                       </div>
-                      <div className="min-w-0 flex-1 space-y-1.5">
-                        <div className="flex items-start gap-3 pr-10">
-                          <DialogTitle className="text-xl font-semibold leading-snug tracking-tight text-zinc-900 dark:text-white">
-                            {activeProfile.displayName}
-                          </DialogTitle>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-amber-700/80 dark:text-amber-500/70">
+                          Profile
                           {empId ? (
-                            <span className="mt-0.5 inline-flex shrink-0 items-center rounded-md border border-orange-200 bg-orange-50 px-2.5 py-1 font-mono text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
-                              {empId}
-                            </span>
+                            <>
+                              <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">/</span>
+                              <span className="font-mono text-zinc-600 dark:text-zinc-400">{empId}</span>
+                            </>
                           ) : null}
-                        </div>
+                        </p>
+                        <DialogTitle className="mt-0.5 truncate font-mono text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
+                          {activeProfile.displayName}
+                        </DialogTitle>
                         {(activeProfile.department || activeProfile.organization) ? (
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-500">
                             {activeProfile.department ? (
-                              <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
+                              <span className="inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
                                 {activeProfile.department}
                               </span>
                             ) : null}
                             {activeProfile.organization ? (
-                              <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-400">
+                              <span className="inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                                 {activeProfile.organization}
                               </span>
                             ) : null}
+                            {activeProfile.subtitle ? (
+                              <span className="font-mono text-zinc-400 dark:text-zinc-600">
+                                · {activeProfile.subtitle}
+                              </span>
+                            ) : null}
                           </div>
-                        ) : null}
-                        {activeProfile.subtitle ? (
-                          <DialogDescription className="text-left font-mono text-xs leading-relaxed text-zinc-500 dark:text-zinc-500">
-                            {activeProfile.subtitle}
-                          </DialogDescription>
                         ) : (
                           <DialogDescription className="sr-only">
                             Complete merged fields for this employee.
@@ -1642,60 +1764,83 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                 })()}
               </DialogHeader>
 
-              {/* Suspended banner */}
+              {/* Suspended banner — left-border accent, no gradient fill */}
               {isSuspendedFromProfile(activeProfile) && (
-                <div className="shrink-0 flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-6 py-2.5 dark:border-amber-800/50 dark:bg-amber-950/30">
-                  <UserX className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                  <span className="text-sm font-medium text-amber-700 dark:text-amber-300">
-                    This account is currently suspended — excluded from payroll runs.
+                <div className="shrink-0 flex items-center gap-2 border-b border-amber-200/70 border-l-2 border-l-amber-500 bg-amber-50/60 px-6 py-2 dark:border-amber-900/50 dark:border-l-amber-500 dark:bg-amber-950/20">
+                  <UserX className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                    Account suspended — excluded from payroll runs.
                   </span>
                 </div>
               )}
 
-              {/* Quick Rate Editor Section */}
-              <div className="shrink-0 border-b border-orange-100/40 bg-gradient-to-r from-white to-orange-50/30 px-6 py-4 dark:border-blue-950/40 dark:from-[#0d1117] dark:to-blue-950/10">
-                <div className="flex items-center justify-between">
-                  <div className="flex gap-8">
-                    <div className="space-y-1">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              {/* Rate panel + actions — flat layout, no gradient */}
+              <div className="shrink-0 border-b border-zinc-200/80 px-6 py-4 dark:border-zinc-800/80">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                  {/* Rates */}
+                  <div className="flex items-stretch gap-6">
+                    <div className="flex flex-col gap-1">
+                      <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
                         Regular Rate
                       </p>
                       {isEditing ? (
-                        <Input
-                          value={editRegularRate}
-                          onChange={(e) => setEditRegularRate(e.target.value)}
-                          className="h-8 w-24 border-zinc-200 bg-white px-2 py-0 text-sm font-mono focus-visible:ring-orange-500 dark:border-zinc-800 dark:bg-zinc-900"
-                        />
+                        <div className="relative">
+                          <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm font-medium text-orange-500">
+                            ₱
+                          </span>
+                          <Input
+                            value={editRegularRate}
+                            onChange={(e) => setEditRegularRate(e.target.value)}
+                            className="h-9 w-32 border-zinc-200 bg-white pl-7 font-mono tabular-nums text-base font-semibold text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                          />
+                        </div>
                       ) : (
-                        <p className="font-mono text-lg font-semibold text-zinc-900 dark:text-white">
+                        <p className="font-mono text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
                           {formatRateDisplay(editRegularRate)}
                         </p>
                       )}
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                    <div className="w-px self-stretch bg-zinc-200 dark:bg-zinc-800" />
+                    <div className="flex flex-col gap-1">
+                      <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
                         OT Rate
                       </p>
                       {isEditing ? (
-                        <Input
-                          value={editOtRate}
-                          onChange={(e) => setEditOtRate(e.target.value)}
-                          className="h-8 w-24 border-zinc-200 bg-white px-2 py-0 text-sm font-mono focus-visible:ring-orange-500 dark:border-zinc-800 dark:bg-zinc-900"
-                        />
+                        <div className="relative">
+                          <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm font-medium text-orange-500">
+                            ₱
+                          </span>
+                          <Input
+                            value={editOtRate}
+                            onChange={(e) => setEditOtRate(e.target.value)}
+                            className="h-9 w-32 border-zinc-200 bg-white pl-7 font-mono tabular-nums text-base font-semibold text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                          />
+                        </div>
                       ) : (
-                        <p className="font-mono text-lg font-semibold text-zinc-900 dark:text-white">
+                        <p className="font-mono text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
                           {formatRateDisplay(editOtRate)}
                         </p>
                       )}
                     </div>
+                    <div className="w-px self-stretch bg-zinc-200 dark:bg-zinc-800" />
+                    <div className="flex flex-col gap-1">
+                      <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-blue-600 dark:text-blue-400">
+                        USD → PHP
+                      </p>
+                      <p className="font-mono text-sm font-medium tabular-nums leading-none text-blue-900 dark:text-blue-300">
+                        ₱{usdToPhpRate.toFixed(5)}
+                      </p>
+                    </div>
                   </div>
-                  <div>
+
+                  {/* Action buttons */}
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     {isEditing ? (
-                      <div className="flex gap-2">
+                      <>
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="h-8 w-8 p-0 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+                          className="h-8 gap-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
                           onClick={() => {
                             setIsEditing(false);
                             const m = buildNormFieldMap(activeProfile.fields);
@@ -1704,11 +1849,12 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           }}
                           disabled={isSaving}
                         >
-                          <X className="size-4" />
+                          <X className="size-3.5" />
+                          Cancel
                         </Button>
                         <Button
                           size="sm"
-                          className="h-8 gap-1.5 bg-gradient-to-r from-orange-500 to-orange-600 px-3 text-white hover:from-orange-600 hover:to-orange-700 shadow-sm shadow-orange-500/20"
+                          className="h-8 gap-1.5 bg-gradient-to-r from-orange-500 to-orange-600 px-3 text-white shadow-sm shadow-orange-500/20 transition-all hover:from-orange-600 hover:to-orange-700 hover:shadow-md active:scale-[0.98]"
                           onClick={handleSaveRates}
                           disabled={isSaving}
                         >
@@ -1717,15 +1863,15 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           ) : (
                             <Check className="size-3.5" />
                           )}
-                          Save
+                          Save Rates
                         </Button>
-                      </div>
+                      </>
                     ) : (
-                      <div className="flex flex-wrap items-center gap-2">
+                      <>
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-8 gap-1.5 border-zinc-200 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                          className="h-8 gap-1.5 border-zinc-200 text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
                           onClick={openEditProfile}
                           disabled={isEditingProfile || profileLoading}
                         >
@@ -1735,12 +1881,12 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-8 gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-950/30"
+                          className="h-8 gap-1.5 border-orange-200 text-orange-700 hover:border-orange-300 hover:bg-orange-50 dark:border-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-950/30"
                           onClick={() => setIsEditing(true)}
                           disabled={profileLoading}
                         >
                           <Edit2 className="size-3.5" />
-                          Edit rates
+                          Edit Rates
                         </Button>
                         <Button
                           size="sm"
@@ -1750,8 +1896,8 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           className={cn(
                             "h-8 gap-1.5",
                             isSuspendedFromProfile(activeProfile)
-                              ? "border-emerald-200 text-emerald-600 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
-                              : "border-amber-200 text-amber-600 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:hover:bg-amber-950/30",
+                              ? "border-emerald-200 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                              : "border-amber-200 text-amber-700 hover:border-amber-300 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:hover:bg-amber-950/30",
                           )}
                         >
                           {isSuspending === activeProfile.id ? (
@@ -1771,7 +1917,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-8 gap-1.5 border-red-200 text-red-500 hover:bg-red-50 hover:text-red-600 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/40"
+                          className="h-8 gap-1.5 border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/30"
                           onClick={() => {
                             if (activeProfileSummary) setDeleteTarget(activeProfileSummary);
                           }}
@@ -1779,16 +1925,10 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           <Trash2 className="size-3.5" />
                           Delete
                         </Button>
-                      </div>
+                      </>
                     )}
                   </div>
                 </div>
-                <p className="mt-3 text-[10px] text-zinc-500 dark:text-zinc-500">
-                  USD → PHP:{" "}
-                  <span className="font-mono font-medium text-blue-700 dark:text-blue-300">
-                    ₱{usdToPhpRate.toFixed(5)} = $1 USD
-                  </span>
-                </p>
               </div>
               {profileLoading ? (
                 <div className="mx-6 mt-3 inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
@@ -1801,27 +1941,29 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   {profileError}
                 </div>
               ) : null}
-              <div className="overflow-y-auto overflow-x-hidden bg-gradient-to-b from-white to-orange-50/20 px-6 [-webkit-overflow-scrolling:touch] dark:from-[#0d1117] dark:to-blue-950/10" style={{ maxHeight: "min(58vh, 600px)" }}>
+              <div className="overflow-y-auto overflow-x-hidden bg-zinc-50/40 px-6 [-webkit-overflow-scrolling:touch] dark:bg-[#0a0d12]" style={{ maxHeight: "min(58vh, 600px)" }}>
                 {isEditingProfile ? (
                   <div className="py-5">
-                    <p className="mb-4 text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                      Edit Profile
-                    </p>
-                    <div className="space-y-4">
-                      {/* Name (full width) */}
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                          Name
-                        </Label>
-                        <Input
-                          placeholder="Full name"
-                          value={editProfileForm.name}
-                          onChange={(e) => setEditProfileForm((f) => ({ ...f, name: e.target.value }))}
-                          className="h-9 border-zinc-200 bg-white text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
-                        />
+                    {/* Identity */}
+                    <section className="space-y-3">
+                      <div className="flex items-center gap-2 border-b border-zinc-200/70 pb-1.5 dark:border-zinc-800/70">
+                        <IdCard className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                          Identity
+                        </p>
                       </div>
-                      {/* Department + Start Date */}
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                            Name
+                          </Label>
+                          <Input
+                            placeholder="Full name"
+                            value={editProfileForm.name}
+                            onChange={(e) => setEditProfileForm((f) => ({ ...f, name: e.target.value }))}
+                            className="h-9 border-zinc-200 bg-white text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                          />
+                        </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
                             Department
@@ -1831,48 +1973,77 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                             onChange={(v) => setEditProfileForm((f) => ({ ...f, department: v }))}
                           />
                         </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
-                            Start Date
-                          </Label>
-                          <Input
-                            type="date"
-                            value={editProfileForm.startDate}
-                            onChange={(e) => setEditProfileForm((f) => ({ ...f, startDate: e.target.value }))}
-                            className="h-9 border-zinc-200 bg-white text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
-                          />
-                        </div>
                       </div>
-                      {/* Emails */}
+                    </section>
+
+                    {/* Contact */}
+                    <section className="mt-5 space-y-3">
+                      <div className="flex items-center gap-2 border-b border-zinc-200/70 pb-1.5 dark:border-zinc-800/70">
+                        <Mail className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                          Contact
+                        </p>
+                      </div>
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
                           <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
                             Work Email
                           </Label>
-                          <Input
-                            type="email"
-                            placeholder="name@company.com"
-                            value={editProfileForm.workEmail}
-                            onChange={(e) => setEditProfileForm((f) => ({ ...f, workEmail: e.target.value }))}
-                            className="h-9 border-zinc-200 bg-white font-mono text-sm text-zinc-900 placeholder:font-sans placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
-                          />
+                          <div className="relative">
+                            <Mail className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+                            <Input
+                              type="email"
+                              placeholder="name@company.com"
+                              value={editProfileForm.workEmail}
+                              onChange={(e) => setEditProfileForm((f) => ({ ...f, workEmail: e.target.value }))}
+                              className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                            />
+                          </div>
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
                             Personal Email
                           </Label>
+                          <div className="relative">
+                            <Mail className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+                            <Input
+                              type="email"
+                              placeholder="personal@email.com"
+                              value={editProfileForm.personalEmail}
+                              onChange={(e) => setEditProfileForm((f) => ({ ...f, personalEmail: e.target.value }))}
+                              className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+
+                    {/* Employment */}
+                    <section className="mt-5 space-y-3">
+                      <div className="flex items-center gap-2 border-b border-zinc-200/70 pb-1.5 dark:border-zinc-800/70">
+                        <Briefcase className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                          Employment
+                        </p>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                          Start Date
+                        </Label>
+                        <div className="relative">
+                          <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
                           <Input
-                            type="email"
-                            placeholder="personal@email.com"
-                            value={editProfileForm.personalEmail}
-                            onChange={(e) => setEditProfileForm((f) => ({ ...f, personalEmail: e.target.value }))}
-                            className="h-9 border-zinc-200 bg-white font-mono text-sm text-zinc-900 placeholder:font-sans placeholder:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+                            type="date"
+                            value={editProfileForm.startDate}
+                            onChange={(e) => setEditProfileForm((f) => ({ ...f, startDate: e.target.value }))}
+                            className="h-9 w-full border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                           />
                         </div>
                       </div>
-                    </div>
+                    </section>
+
                     {/* Form actions */}
-                    <div className="mt-6 flex justify-end gap-2 border-t border-zinc-100 pt-5 dark:border-zinc-800">
+                    <div className="mt-6 flex justify-end gap-2 border-t border-zinc-200/80 pt-4 dark:border-zinc-800/80">
                       <Button
                         type="button"
                         variant="ghost"
@@ -1886,7 +2057,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         type="button"
                         onClick={handleSaveProfile}
                         disabled={isSavingProfile}
-                        className="gap-1.5 bg-gradient-to-r from-zinc-800 to-zinc-900 text-white shadow-sm hover:from-zinc-700 hover:to-zinc-800 dark:from-zinc-200 dark:to-zinc-100 dark:text-zinc-900 dark:hover:from-white dark:hover:to-zinc-200"
+                        className="gap-1.5 bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-sm shadow-orange-500/25 transition-all hover:from-orange-600 hover:to-orange-700 hover:shadow-md active:scale-[0.98]"
                       >
                         {isSavingProfile ? (
                           <>

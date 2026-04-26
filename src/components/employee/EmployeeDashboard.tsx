@@ -3,11 +3,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Clock,
-  DollarSign,
   AlertCircle,
-  TrendingUp,
   CalendarDays,
-  Award,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -15,16 +12,23 @@ import {
   Laptop,
   FileText,
   RefreshCw,
+  CircleHelp,
 } from 'lucide-react';
+import { motion } from 'motion/react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import {
   OFFICIAL_USD_TO_PHP_RATE,
-  PHILIPPINE_PESO_OFFICIAL,
-  USD_TO_PHP_DECIMAL_SHIFT,
   effectiveUsdToPhpRateFromStored,
 } from '@/lib/fx/usd-php';
 import {
@@ -49,9 +53,6 @@ import {
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { PabCalendarDay } from '@/lib/hubstaff/calendar-column-dedupe';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
-import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import { isDeptInPabScope } from '@/lib/pab-period-settings';
-import DisputeDialog from '@/components/employee/DisputeDialog';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -159,6 +160,12 @@ interface DayHours {
 
 interface EmployeeDashboardProps {
   employeeEmail: string;
+  /**
+   * Called when an employee taps a sub-7h day in the PAB calendar. Hands the
+   * date (and Hubstaff seconds, for display) to the disputes page so the form
+   * lands pre-filled.
+   */
+  onNavigateToDisputes?: (prefill?: { date: string; seconds?: number }) => void;
 }
 
 /** Align with mapHubstaffHoursRow / PayrollWizard so rows match after Supabase sync. */
@@ -249,7 +256,7 @@ function isoDateToUtcDow(iso: string): number | null {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardProps) {
+export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
   /** All normalized emails known for this employee (login + work + personal). */
@@ -274,21 +281,12 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
   const [allTimeOtSec, setAllTimeOtSec] = useState(0);
 
   const pabPeriodSettings = usePabPeriodSettings();
-  /** `undefined` = master list not loaded yet; `null` = no mappable department */
-  const [employeeDeptKey, setEmployeeDeptKey] = useState<string | null | undefined>(undefined);
 
   const email = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
 
   const [myDisputes, setMyDisputes] = useState<import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow[]>([]);
-  const [disputeDialogOpen, setDisputeDialogOpen] = useState(false);
-  const [selectedDisputeDay, setSelectedDisputeDay] = useState<{ date: string; seconds: number } | null>(null);
-  const [selectedExistingDispute, setSelectedExistingDispute] = useState<import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow | null>(null);
-
-  const pabAppliesToEmployee = useMemo(() => {
-    if (pabPeriodSettings.scopeDepartmentKeys === null) return true;
-    if (employeeDeptKey === undefined) return true;
-    return isDeptInPabScope(employeeDeptKey ?? null, pabPeriodSettings.scopeDepartmentKeys);
-  }, [employeeDeptKey, pabPeriodSettings.scopeDepartmentKeys]);
+  /** Mobile: PAB rules, bonus status, and pay numbers live in this sheet (charts stay on the main view). */
+  const [mobileHelpOpen, setMobileHelpOpen] = useState(false);
 
   // Fetch the employee's master row once to get their start_date
   // (used to gate Tech Bonus on the 30-day-of-service requirement).
@@ -319,7 +317,6 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           if (pe) aliases.add(pe);
         }
         setAliasEmails([...aliases]);
-        setEmployeeDeptKey(me?.department != null ? normalizeDeptToKey(String(me.department)) : null);
         if (!me?.start_date) {
           setEmployeeStartDate(null);
           return;
@@ -329,7 +326,6 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       } catch {
         if (!cancelled) {
           setEmployeeStartDate(null);
-          setEmployeeDeptKey(null);
         }
       }
     })();
@@ -374,7 +370,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         const files = filesJson.files ?? [];
         setSourceFiles(files);
         if (files.length > 0) {
-          setSelectedFile(files[files.length - 1]); // latest
+          setSelectedFile(files[0]); // latest (API returns newest-first)
         } else {
           // No source files — fall back to loading all data
           await loadHoursData(null, cancelled);
@@ -645,7 +641,6 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
    * Falls back to single-file dailyHours if merged data isn't available.
    */
   const pabDailyHours = useMemo<DayHours[]>(() => {
-    if (!pabAppliesToEmployee) return [];
     const useSelected = !!selectedFile && selectedFile !== '__all__';
     // Hours always come from merged data so every day in the PAB period fills.
     const pabRow = pabMergedRow ?? row;
@@ -699,13 +694,12 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
         if (da && db) return da.getTime() - db.getTime();
         return a.order - b.order;
       });
-  }, [pabAppliesToEmployee, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange]);
+  }, [pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange]);
 
   /** PAB month + date range for display.
    * Default: latest PAB period in merged CSV data (or today if none).
    * When user manually picks a CSV: use that file's inferred period. */
   const pabMonthRange = useMemo(() => {
-    if (!pabAppliesToEmployee) return null;
     const manual = pabPeriodSettings.validManualRange;
     if (manual) {
       const { start, end } = manual;
@@ -740,7 +734,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
-  }, [pabAppliesToEmployee, pabMergedColumns, columns, row, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange]);
+  }, [pabMergedColumns, columns, row, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange]);
 
   const fetchMyDisputes = useCallback(() => {
     if (!pabMonthRange || !email) return;
@@ -793,7 +787,6 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       setAliasEmails((prev) =>
         prev.length === aliases.length && prev.every((a, i) => a === aliases[i]) ? prev : aliases,
       );
-      setEmployeeDeptKey(me?.department != null ? normalizeDeptToKey(String(me.department)) : null);
       if (!me?.start_date) {
         setEmployeeStartDate(null);
       } else {
@@ -826,7 +819,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
       let nextSelected = selectedFile;
       if (nextSelected && nextSelected !== '__all__' && !files.includes(nextSelected)) {
-        nextSelected = files.length > 0 ? files[files.length - 1] : null;
+        nextSelected = files.length > 0 ? files[0] : null;
         setSelectedFile(nextSelected);
       }
 
@@ -869,7 +862,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   /** PAB calendar grid: one row per Mon–Fri work week in the PAB range. */
   const pabCalendar = useMemo<PabCalendarDay[][] | null>(() => {
-    if (!pabAppliesToEmployee || !pabMonthRange) return null;
+    if (!pabMonthRange) return null;
     const useSelected = !!selectedFile && selectedFile !== '__all__';
     // Always use merged data for hours lookup so every week in the derived
     // PAB period is populated, regardless of which file drives the period.
@@ -949,7 +942,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
       return weekStart.getTime() <= cutoff.getTime();
     });
     return trimmed.length > 0 ? trimmed : weeks.slice(0, 1);
-  }, [pabAppliesToEmployee, pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, myDisputes]);
+  }, [pabMonthRange, pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, myDisputes]);
 
   /** PAB: every expected weekday in the PAB period must be ≥ 7 h. */
   const pabWeekdayHours = pabDailyHours.filter((d) => d.weekday);
@@ -985,9 +978,8 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     !isPabPeriodInProgress && allPabDays.length > 0 && allPabDays.every((d) => d.passes);
 
   const perfectAttendanceBonusStatus = useMemo<
-    'eligible' | 'not_eligible' | 'pending' | 'unknown' | 'out_of_scope'
+    'eligible' | 'not_eligible' | 'pending' | 'unknown'
   >(() => {
-    if (!pabAppliesToEmployee) return 'out_of_scope';
     if (!row && !pabMergedRow) return 'unknown';
     const days = pabCalendar?.flat();
     if (!days || days.length === 0) return 'unknown';
@@ -996,7 +988,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     if (pabViolations.length > 0) return 'not_eligible';
     if (isPabPeriodInProgress) return 'pending';
     return days.every((d) => d.passes) ? 'eligible' : 'not_eligible';
-  }, [pabAppliesToEmployee, row, pabMergedRow, pabCalendar, isPabPeriodInProgress, pabViolations]);
+  }, [row, pabMergedRow, pabCalendar, isPabPeriodInProgress, pabViolations]);
 
   /** Number of PAB-eligible months (currently 1 month evaluated). Pending periods don't count. */
   const pabEligibleCount = isPAEligible ? 1 : 0;
@@ -1023,7 +1015,6 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   /** PAB month containing this file's Monday — used to gate weekly bonuses. */
   const weekPabRange = useMemo(() => {
-    if (!pabAppliesToEmployee) return null;
     if (pabPeriodSettings.validManualRange) {
       const { start, end } = pabPeriodSettings.validManualRange;
       return {
@@ -1038,7 +1029,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
     const daysBackToMon = dow === 0 ? 6 : dow - 1;
     const mon = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() - daysBackToMon);
     return { pabMonth: { year: mon.getFullYear(), month: mon.getMonth() }, ...getPabMonthRange(mon.getFullYear(), mon.getMonth()) };
-  }, [pabAppliesToEmployee, selectedFileWeek, pabPeriodSettings.validManualRange]);
+  }, [selectedFileWeek, pabPeriodSettings.validManualRange]);
 
   /** When viewing a specific weekly file, PAB attaches only to the final week of that week's PAB month. */
   const isFinalPabWeekForSelected = useMemo(() => {
@@ -1063,12 +1054,11 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   const pabBonusAmount = useMemo(() => {
     if (!hasRates) return 0;
-    if (!pabAppliesToEmployee) return 0;
     if (!isPAEligible) return 0;
     if (isAllTime) return pabEligibleCount * PERFECT_ATTENDANCE_BONUS_PHP;
     if (selectedFileWeek) return isFinalPabWeekForSelected ? PERFECT_ATTENDANCE_BONUS_PHP : 0;
     return 0;
-  }, [hasRates, pabAppliesToEmployee, isPAEligible, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
+  }, [hasRates, isPAEligible, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
 
   /**
    * Tech Bonus rules:
@@ -1148,17 +1138,189 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   const maxBarSeconds = Math.max(...dailyHours.map((d) => d.seconds), 8 * 3600);
 
+  const renderPabBonusStatusRows = () => {
+    if (!row) return null;
+    return (
+      <>
+        <div className="flex flex-col gap-2 rounded-lg border border-zinc-200/90 bg-white/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="flex min-w-0 flex-1 gap-3">
+            <div
+              className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                perfectAttendanceBonusStatus === 'eligible'
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                  : perfectAttendanceBonusStatus === 'not_eligible'
+                    ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                    : perfectAttendanceBonusStatus === 'pending'
+                      ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                      : 'bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+              }`}
+            >
+              {perfectAttendanceBonusStatus === 'eligible' ? (
+                <CheckCircle2 className="h-4 w-4" />
+              ) : perfectAttendanceBonusStatus === 'not_eligible' ? (
+                <XCircle className="h-4 w-4" />
+              ) : perfectAttendanceBonusStatus === 'pending' ? (
+                <CalendarDays className="h-4 w-4" />
+              ) : (
+                <Info className="h-4 w-4" />
+              )}
+            </div>
+            <div className="min-w-0 space-y-1">
+              <p className="text-xs font-medium text-zinc-900 dark:text-white">
+                Monthly period Perfect Attendance Bonus ·{' '}
+                {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}
+              </p>
+              {pabMonthRange && (
+                <p className="flex items-start gap-1 text-[10px] leading-relaxed text-indigo-600 dark:text-indigo-400">
+                  <CalendarDays className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span>
+                    <span className="font-semibold">
+                      {pabMonthRange.monthName} {pabMonthRange.year}
+                    </span>
+                    {' · '}
+                    <span className="font-medium">Start</span> {formatPabCalendarDate(pabMonthRange.start)}
+                    {' · '}
+                    <span className="font-medium">End</span> {formatPabCalendarDate(pabMonthRange.end)}
+                    {' · '}
+                    {pabWeekdayHours.length} Mon–Fri day{pabWeekdayHours.length !== 1 ? 's' : ''} in this PAB month
+                  </span>
+                </p>
+              )}
+              {perfectAttendanceBonusStatus === 'eligible' && (
+                <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                  Eligible: each Mon–Fri in the PAB date range above is logged at 7 hours or more.
+                </p>
+              )}
+              {perfectAttendanceBonusStatus === 'not_eligible' && (
+                <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                  No longer Eligible for PAB, Try again next month
+                  {pabViolations.length > 0 && (
+                    <>
+                      {' — '}
+                      <span className="font-normal">
+                        violated on{' '}
+                        {pabViolations.map((v) => formatPabCalendarDate(v.date)).join(', ')}
+                      </span>
+                    </>
+                  )}
+                </p>
+              )}
+              {perfectAttendanceBonusStatus === 'pending' && (
+                <p className="text-xs text-indigo-700 dark:text-indigo-300">
+                  This PAB period is still in progress — eligibility and bonus will be finalized once all Mon–Fri days
+                  have elapsed. Not yet included in the pay summary.
+                </p>
+              )}
+              {perfectAttendanceBonusStatus === 'unknown' && (
+                <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                  Can&apos;t evaluate monthly PAB: need Mon–Fri daily hours in the merged Hubstaff uploads. If this
+                  persists, ask your team to re-upload the CSVs.
+                </p>
+              )}
+            </div>
+          </div>
+          <Badge
+            variant="outline"
+            className={
+              perfectAttendanceBonusStatus === 'eligible'
+                ? 'shrink-0 border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+                : perfectAttendanceBonusStatus === 'not_eligible'
+                  ? 'shrink-0 border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-300'
+                  : perfectAttendanceBonusStatus === 'pending'
+                    ? 'shrink-0 border-indigo-500/40 bg-indigo-500/10 text-indigo-800 dark:text-indigo-300'
+                    : 'shrink-0 border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
+            }
+          >
+            {perfectAttendanceBonusStatus === 'eligible'
+              ? 'Eligible'
+              : perfectAttendanceBonusStatus === 'not_eligible'
+                ? 'Not eligible'
+                : perfectAttendanceBonusStatus === 'pending'
+                  ? 'In progress'
+                  : 'Unknown'}
+          </Badge>
+        </div>
+
+        <div
+          className={`flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 ${
+            techServiceStatus.state === 'pending'
+              ? 'border-amber-200/80 bg-amber-50/40 dark:border-amber-900/40 dark:bg-amber-950/20'
+              : 'border-zinc-200/90 bg-white/80 dark:border-zinc-800 dark:bg-zinc-900/40'
+          }`}
+        >
+          <div className="flex min-w-0 flex-1 gap-2">
+            <div
+              className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                techServiceStatus.state === 'pending'
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                  : 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+              }`}
+            >
+              <Laptop className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-xs font-medium text-zinc-900 dark:text-white">
+                Technology Bonus · {formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')}
+              </p>
+              {techServiceStatus.state === 'pending' ? (
+                <p className="text-xs text-amber-800 dark:text-amber-300">
+                  Not eligible yet. You need 30 days of service before your first Tech Bonus — you&apos;ll become eligible
+                  on{' '}
+                  <span className="font-semibold">
+                    {techServiceStatus.eligibleFrom.toLocaleDateString('en-US', {
+                      month: 'long',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </span>{' '}
+                  ({techServiceStatus.daysRemaining} day{techServiceStatus.daysRemaining === 1 ? '' : 's'} to go). The
+                  bonus is paid on the 3rd paycheck of the month.
+                </p>
+              ) : techServiceStatus.state === 'eligible' ? (
+                <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                  You&apos;re past your 30-day service mark. ₱1,850 is paid on the 3rd paycheck of each month to help
+                  cover your technology expenses (equipment, internet).
+                </p>
+              ) : (
+                <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                  Paid on the 3rd paycheck of each month, but only after 30 days of service. Your start date isn&apos;t on
+                  file yet — please contact your coordinator.
+                </p>
+              )}
+            </div>
+          </div>
+          <Badge
+            variant="outline"
+            className={`shrink-0 ${
+              techServiceStatus.state === 'pending'
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:border-amber-500/30 dark:text-amber-300'
+                : techServiceStatus.state === 'eligible'
+                  ? 'border-sky-500/35 bg-sky-500/10 text-sky-900 dark:border-sky-500/30 dark:text-sky-300'
+                  : 'border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400'
+            }`}
+          >
+            {techServiceStatus.state === 'pending'
+              ? `Pending · ${techServiceStatus.daysRemaining}d left`
+              : techServiceStatus.state === 'eligible'
+                ? 'Eligible'
+                : 'Start date unknown'}
+          </Badge>
+        </div>
+      </>
+    );
+  };
+
   if (loading) {
     return (
       <div className="box-border flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-3 sm:px-4 sm:py-4 md:px-5 dark:bg-none dark:bg-[#0d1117]">
         {/* Header skeleton */}
         <div className="flex shrink-0 flex-col gap-2">
           <div className="h-7 w-40 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
-          <div className="h-4 w-72 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
-          <div className="h-3.5 w-48 animate-pulse rounded bg-zinc-200/50 dark:bg-zinc-800/50" />
+          <div className="hidden h-4 w-72 animate-pulse rounded bg-zinc-200/70 lg:block dark:bg-zinc-800/70" />
+          <div className="hidden h-3.5 w-48 animate-pulse rounded bg-zinc-200/50 lg:block dark:bg-zinc-800/50" />
         </div>
-        {/* Bonus indicators skeleton */}
-        <div className="shrink-0 rounded-xl border border-zinc-200/80 bg-white/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/30">
+        {/* Bonus indicators skeleton — desktop only (mobile is charts-first) */}
+        <div className="hidden shrink-0 rounded-xl border border-zinc-200/80 bg-white/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/30 lg:block">
           <div className="mb-3 h-4 w-44 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
           <div className="space-y-2.5">
             <div className="flex items-center gap-3 rounded-lg border border-zinc-200/60 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
@@ -1232,63 +1394,90 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
 
   return (
     <div className="box-border flex h-full min-h-0 flex-col gap-2 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [@media(max-height:900px)]:gap-1.5 sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:py-3 dark:bg-none dark:bg-[#0d1117]">
-      {/* Header — compact on short viewports (13" laptops ~800px tall) */}
-      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between lg:gap-3">
-        <div>
-          <h2 className="text-lg font-bold tracking-tight text-zinc-900 sm:text-xl lg:text-2xl dark:text-white">
-            My Dashboard
-          </h2>
-          <p className="text-[11px] text-zinc-600 leading-snug sm:text-xs lg:text-sm dark:text-zinc-500">
-            Hours, pay, and monthly Perfect Attendance (PAB). Pay totals follow the Hubstaff file you select; PAB uses all
-            uploads for the month.
-          </p>
-          {pabMonthRange && (
-            <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-snug text-indigo-800 dark:text-indigo-200">
-              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-indigo-500 dark:text-indigo-400" />
-              <span>
-                <span className="font-semibold">PAB period starts</span>{' '}
-                {formatPabCalendarDate(pabMonthRange.start)}
-                <span className="text-zinc-400 dark:text-zinc-500"> · </span>
-                <span className="font-medium">ends</span> {formatPabCalendarDate(pabMonthRange.end)}
-              </span>
-            </p>
-          )}
-          {/* Source file selector */}
-          {sourceFiles.length > 0 && (
-            <div className="mt-2 flex max-w-xl flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <FileText className="h-3.5 w-3.5 shrink-0 text-orange-500" />
-                <select
-                  value={selectedFile ?? ''}
-                  onChange={(e) => {
-                    setSelectedFile(e.target.value || null);
-                    setManualFileSelect(true);
-                  }}
-                  className="h-7 rounded-md border border-zinc-200 bg-white px-2 pr-6 font-mono text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-                >
-                  <option value="__all__">All Time (all uploads combined)</option>
-                  {[...sourceFiles].reverse().map((file, i) => (
-                    <option key={file} value={file}>
-                      {file}{i === 0 ? ' (latest)' : ''}
-                    </option>
-                  ))}
-                </select>
-                {fileLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />}
-              </div>
-              <p className="pl-5 text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">
-                {isAllTime
-                  ? 'Showing combined totals across all uploaded files. PAB calendar is unaffected.'
-                  : 'Monthly PAB merges every upload — this file only drives the hours/pay cards below.'}
+      {/* Header — editorial: eyebrow + display title + source picker; lg actions on the right */}
+      <header className="flex shrink-0 flex-col gap-3 border-b border-zinc-200/70 pb-2.5 dark:border-zinc-800/70 lg:flex-row lg:items-end lg:justify-between lg:gap-6 lg:pb-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-amber-700/80 dark:text-amber-500/70">
+                Employee
+                {pabMonthRange ? (
+                  <>
+                    <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">/</span>
+                    {pabMonthRange.monthName} {pabMonthRange.year}
+                  </>
+                ) : null}
               </p>
+              <h1 className="mt-1 font-mono text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl lg:text-[2.25rem] lg:leading-none dark:text-white">
+                Overview
+              </h1>
+              <p className="mt-1.5 hidden text-xs leading-snug text-zinc-500 lg:block dark:text-zinc-500">
+                Hours, pay, and Perfect Attendance — figures are estimates until payroll confirms them.
+              </p>
+            </div>
+            {/* Mobile-only action buttons */}
+            <div className="flex shrink-0 items-center gap-1.5 lg:hidden">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 rounded-full border-zinc-200 bg-white/90 text-zinc-700 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-300"
+                title="PAB rules, bonuses & pay snapshot"
+                aria-label="Open PAB and bonus help"
+                onClick={() => setMobileHelpOpen(true)}
+              >
+                <CircleHelp className="size-4.5" aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 rounded-full border-zinc-200 bg-white/90 dark:border-zinc-800 dark:bg-zinc-900/70"
+                disabled={refreshing}
+                onClick={() => void refreshDashboard()}
+                aria-label="Refresh dashboard data"
+              >
+                {refreshing ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <RefreshCw className="size-4" aria-hidden />
+                )}
+              </Button>
+            </div>
+          </div>
+          {/* Source file selector — minimal, inline */}
+          {sourceFiles.length > 0 && (
+            <div className="mt-3 flex max-w-xl items-center gap-2">
+              <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+              <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                Source
+              </span>
+              <select
+                value={selectedFile ?? ''}
+                onChange={(e) => {
+                  setSelectedFile(e.target.value || null);
+                  setManualFileSelect(true);
+                }}
+                className="h-7 min-w-0 flex-1 rounded-md border border-zinc-200 bg-white/90 px-2 pr-6 font-mono text-[11px] text-zinc-700 transition-colors hover:border-zinc-300 focus:border-emerald-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:border-zinc-700 dark:focus:border-emerald-400"
+              >
+                <option value="__all__">All Time · combined</option>
+                {sourceFiles.map((file, i) => (
+                  <option key={file} value={file}>
+                    {file}{i === 0 ? ' (latest)' : ''}
+                  </option>
+                ))}
+              </select>
+              {fileLoading && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-emerald-500" />}
             </div>
           )}
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        {/* Right column — actions only (status badges now live in the data ribbon) */}
+        <div className="hidden shrink-0 items-center gap-2 lg:flex">
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-7 gap-1.5 border-zinc-200 bg-white/80 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-300"
+            className="h-8 gap-1.5 border-zinc-200 bg-white/70 text-xs font-medium text-zinc-700 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:border-zinc-700"
             disabled={refreshing}
             onClick={() => void refreshDashboard()}
             aria-label="Refresh dashboard data"
@@ -1300,77 +1489,20 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
             )}
             Refresh
           </Button>
-          {row && perfectAttendanceBonusStatus === 'eligible' && (
-            <Badge
-              variant="outline"
-              className="gap-1 border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-emerald-700 dark:border-emerald-500/30 dark:text-emerald-400"
-              title={pabMonthRange ? `${formatPabCalendarDate(pabMonthRange.start)} – ${formatPabCalendarDate(pabMonthRange.end)}` : undefined}
-            >
-              <Award className="h-3 w-3" />
-              PAB eligible{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
-            </Badge>
-          )}
-          {row && perfectAttendanceBonusStatus === 'not_eligible' && (
-            <Badge
-              variant="outline"
-              className="gap-1 border-amber-500/30 bg-amber-500/10 px-3 py-1 text-amber-800 dark:border-amber-500/30 dark:text-amber-400"
-              title={pabMonthRange ? `${formatPabCalendarDate(pabMonthRange.start)} – ${formatPabCalendarDate(pabMonthRange.end)}` : undefined}
-            >
-              <XCircle className="h-3 w-3" />
-              PAB not met{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
-            </Badge>
-          )}
-          {row && perfectAttendanceBonusStatus === 'pending' && (
-            <Badge
-              variant="outline"
-              className="gap-1 border-indigo-400/30 bg-indigo-500/10 px-3 py-1 text-indigo-700 dark:border-indigo-500/30 dark:text-indigo-300"
-              title={pabMonthRange ? `Period in progress: ${formatPabCalendarDate(pabMonthRange.start)} – ${formatPabCalendarDate(pabMonthRange.end)}` : undefined}
-            >
-              <CalendarDays className="h-3 w-3" />
-              PAB in progress{pabMonthRange ? ` · ${pabMonthRange.monthName.slice(0, 3)}` : ''}
-            </Badge>
-          )}
-          {row && perfectAttendanceBonusStatus === 'out_of_scope' && (
-            <Badge
-              variant="outline"
-              className="gap-1 border-zinc-400/40 bg-zinc-200/40 px-3 py-1 text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300"
-              title="Your department is not selected for PAB in System Settings."
-            >
-              <Info className="h-3 w-3" />
-              PAB not in scope
-            </Badge>
-          )}
-          {row && perfectAttendanceBonusStatus === 'unknown' && (
-            <Badge
-              variant="outline"
-              className="gap-1 border-zinc-300 bg-zinc-100/80 px-3 py-1 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-400"
-            >
-              <Info className="h-3 w-3" />
-              PAB can&apos;t be assessed
-            </Badge>
-          )}
-          {row && (
-            <Badge
-              variant="outline"
-              className="gap-1 border-sky-500/25 bg-sky-500/10 px-3 py-1 text-sky-800 dark:border-sky-500/30 dark:text-sky-300"
-              title="Technology Bonus is enabled by payroll each cycle; not calculated from hours here."
-            >
-              <Laptop className="h-3 w-3" />
-              Tech bonus ({formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')})
-            </Badge>
-          )}
-          <Badge
+          <Button
+            type="button"
             variant="outline"
-            className="border-orange-500/20 bg-gradient-to-r from-orange-500/10 to-blue-500/10 px-3 py-1 text-orange-700 dark:border-orange-500/30 dark:text-orange-400"
-            title={pabMonthRange ? `PAB: ${formatPabCalendarDate(pabMonthRange.start)} – ${formatPabCalendarDate(pabMonthRange.end)}` : undefined}
+            size="sm"
+            className="h-8 gap-1.5 border-zinc-200 bg-white/70 text-xs font-medium text-zinc-700 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:border-zinc-700"
+            title="PAB rules, bonuses & pay snapshot — click to read"
+            aria-label="Open PAB and bonus help"
+            onClick={() => setMobileHelpOpen(true)}
           >
-            <CalendarDays className="mr-1 h-3 w-3" />
-            {pabMonthRange && pabDailyHours.length > 0
-              ? `PAB · starts ${formatPabCalendarDate(pabMonthRange.start)}`
-              : 'Monthly PAB'}
-          </Badge>
+            <CircleHelp className="size-3.5" aria-hidden />
+            Details
+          </Button>
         </div>
-      </div>
+      </header>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto overscroll-y-contain lg:gap-3 [scrollbar-gutter:stable]">
       {dataError && (
@@ -1378,19 +1510,6 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           <CardContent className="flex items-center gap-3 py-3">
             <AlertCircle className="h-5 w-5 shrink-0 text-red-500" />
             <p className="text-sm text-red-800 dark:text-red-300">{dataError}</p>
-          </CardContent>
-        </Card>
-      )}
-
-      {row && employeeDeptKey !== undefined && !pabAppliesToEmployee && (
-        <Card className="shrink-0 border-amber-200/90 bg-amber-50/70 dark:border-amber-900/40 dark:bg-amber-950/25">
-          <CardContent className="flex items-start gap-3 py-3">
-            <Info className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
-            <p className="text-sm leading-relaxed text-amber-900 dark:text-amber-100">
-              Perfect Attendance (PAB) is not enabled for your department in{' '}
-              <span className="font-semibold">System Settings → Perfect Attendance (PAB)</span>. The PAB calendar and monthly PAB estimate
-              stay hidden until an administrator includes your department under <span className="font-medium">Departments in scope</span>.
-            </p>
           </CardContent>
         </Card>
       )}
@@ -1407,416 +1526,281 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
           </CardContent>
         </Card>
       ) : !row ? null : (
-        <div className="flex min-h-0 flex-1 flex-col gap-2 lg:gap-3">
-          <Card
-            size="sm"
-            className="shrink-0 border-indigo-200/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm dark:border-indigo-950/50 dark:from-indigo-950/15 dark:to-indigo-950/5"
+        <div className="flex min-h-0 flex-1 flex-col gap-3 lg:gap-4">
+          {/* Hero — editorial pay statement: typographic on the left, divided list on the right */}
+          <motion.section
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+            className="grid shrink-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,17rem)] lg:gap-8"
           >
-            <CardHeader className="pb-1.5 pt-2 lg:pb-2 lg:pt-3">
-              <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
-                Monthly PAB &amp; other bonuses
-              </CardTitle>
-              <p className="text-[11px] font-normal leading-snug text-zinc-500 max-xl:line-clamp-3 xl:line-clamp-none dark:text-zinc-400">
-                PAB uses every Mon–Fri in the PAB period below (merged Hubstaff uploads); each day must be ≥ 7 hours. If
-                the month doesn&apos;t start on a Monday, the first week is skipped and counting starts on the{' '}
-                <span className="font-medium text-zinc-600 dark:text-zinc-300">second Monday</span> (e.g. March 2026:
-                Mar 9–Apr 3). Figures here are estimates until payroll confirms them.
+            {/* Hero pay block */}
+            <div className="relative min-w-0 border-l-2 border-emerald-500/80 pl-4 lg:pl-5 dark:border-emerald-400/70">
+              <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                Estimated Take-Home
               </p>
-            </CardHeader>
-            <CardContent className="space-y-2 pt-0">
-              <div className="flex flex-col gap-2 rounded-lg border border-zinc-200/90 bg-white/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                <div className="flex min-w-0 flex-1 gap-3">
-                  <div
-                    className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                      perfectAttendanceBonusStatus === 'eligible'
-                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                        : perfectAttendanceBonusStatus === 'not_eligible'
-                          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                          : perfectAttendanceBonusStatus === 'pending'
-                            ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
-                            : perfectAttendanceBonusStatus === 'out_of_scope'
-                              ? 'bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
-                              : 'bg-zinc-200/80 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
+              <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span
+                  className="break-words font-mono text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white"
+                  title={totalPay != null ? formatPHP(totalPay + pabBonusAmount + technologyBonusAmount) : undefined}
+                >
+                  {totalPay != null
+                    ? formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)
+                    : '—'}
+                </span>
+                {totalPay != null && (
+                  <span className="font-mono text-xs text-zinc-500 sm:text-sm dark:text-zinc-500">
+                    ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount) / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                  </span>
+                )}
+              </div>
+              <p className="mt-1.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-500">
+                {totalPay != null
+                  ? `${isAllTime ? 'All uploads · combined' : 'Selected upload'}${pabMonthRange ? ` · PAB ${pabMonthRange.monthName} ${pabMonthRange.year}` : ''} · FX ${formatPHP(usdToPhpRate)}/USD`
+                  : 'Pending rate assignment — your hourly rate has not been set yet.'}
+              </p>
+
+              {/* Data ribbon */}
+              <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-zinc-200/80 pt-4 sm:grid-cols-4 sm:gap-x-6 dark:border-zinc-800/80">
+                <div className="min-w-0">
+                  <dt className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                    Regular
+                  </dt>
+                  <dd
+                    className="mt-1 break-words font-mono text-base font-medium tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
+                    title={regularPay != null ? formatPHP(regularPay) : undefined}
+                  >
+                    {regularPay != null ? formatPHP(regularPay) : '—'}
+                  </dd>
+                  <p className="mt-0.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                    {regularHours.toFixed(2)}h
+                    {regularRate != null ? ` · ${formatPHP(regularRate)}/h` : ''}
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                    Overtime
+                  </dt>
+                  <dd
+                    className="mt-1 break-words font-mono text-base font-medium tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
+                    title={otPay != null ? formatPHP(otPay) : undefined}
+                  >
+                    {otPay != null ? formatPHP(otPay) : otHours > 0 ? '—' : formatPHP(0)}
+                  </dd>
+                  <p className="mt-0.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                    {otHours > 0
+                      ? `${otHours.toFixed(2)}h${otRate != null ? ` · ${formatPHP(otRate)}/h` : ''}`
+                      : 'No overtime'}
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <dt className={`text-[10px] font-medium uppercase tracking-[0.14em] ${pabBonusAmount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-500 dark:text-zinc-500'}`}>
+                    PAB Bonus
+                  </dt>
+                  <dd
+                    className={`mt-1 break-words font-mono text-base font-medium tabular-nums leading-tight sm:text-lg ${
+                      pabBonusAmount > 0
+                        ? 'text-indigo-700 dark:text-indigo-300'
+                        : perfectAttendanceBonusStatus === 'pending'
+                          ? 'text-indigo-500/80 dark:text-indigo-400/70'
+                          : 'text-zinc-400 dark:text-zinc-600'
                     }`}
                   >
-                    {perfectAttendanceBonusStatus === 'eligible' ? (
-                      <CheckCircle2 className="h-4 w-4" />
-                    ) : perfectAttendanceBonusStatus === 'not_eligible' ? (
-                      <XCircle className="h-4 w-4" />
-                    ) : perfectAttendanceBonusStatus === 'pending' ? (
-                      <CalendarDays className="h-4 w-4" />
-                    ) : (
-                      <Info className="h-4 w-4" />
-                    )}
-                  </div>
-                  <div className="min-w-0 space-y-1">
-                    <p className="text-xs font-medium text-zinc-900 dark:text-white">
-                      Monthly period Perfect Attendance Bonus ·{' '}
-                      {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}
-                    </p>
-                    {pabMonthRange && (
-                      <p className="flex items-start gap-1 text-[10px] leading-relaxed text-indigo-600 dark:text-indigo-400">
-                        <CalendarDays className="mt-0.5 h-3 w-3 shrink-0" />
-                        <span>
-                          <span className="font-semibold">{pabMonthRange.monthName} {pabMonthRange.year}</span>
-                          {' · '}
-                          <span className="font-medium">Start</span> {formatPabCalendarDate(pabMonthRange.start)}
-                          {' · '}
-                          <span className="font-medium">End</span> {formatPabCalendarDate(pabMonthRange.end)}
-                          {' · '}
-                          {pabWeekdayHours.length} Mon–Fri day{pabWeekdayHours.length !== 1 ? 's' : ''} in this PAB month
-                        </span>
-                      </p>
-                    )}
-                    {perfectAttendanceBonusStatus === 'eligible' && (
-                      <p className="text-xs text-emerald-700 dark:text-emerald-400">
-                        Eligible: each Mon–Fri in the PAB date range above is logged at 7 hours or more.
-                      </p>
-                    )}
-                    {perfectAttendanceBonusStatus === 'not_eligible' && (
-                      <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
-                        No longer Eligible for PAB, Try again next month
-                        {pabViolations.length > 0 && (
-                          <>
-                            {' — '}
-                            <span className="font-normal">
-                              violated on{' '}
-                              {pabViolations
-                                .map((v) => formatPabCalendarDate(v.date))
-                                .join(', ')}
-                            </span>
-                          </>
-                        )}
-                      </p>
-                    )}
-                    {perfectAttendanceBonusStatus === 'pending' && (
-                      <p className="text-xs text-indigo-700 dark:text-indigo-300">
-                        This PAB period is still in progress — eligibility and bonus will be finalized once all Mon–Fri days have elapsed. Not yet included in the pay summary.
-                      </p>
-                    )}
-                    {perfectAttendanceBonusStatus === 'out_of_scope' && (
-                      <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                        Your department is not selected under System Settings → Perfect Attendance (PAB) → Departments in scope.
-                      </p>
-                    )}
-                    {perfectAttendanceBonusStatus === 'unknown' && (
-                      <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                        Can&apos;t evaluate monthly PAB: need Mon–Fri daily hours in the merged Hubstaff uploads. If this
-                        persists, ask your team to re-upload the CSVs.
-                      </p>
-                    )}
-                  </div>
+                    {perfectAttendanceBonusStatus === 'pending'
+                      ? 'Pending'
+                      : pabBonusAmount > 0
+                        ? `+${formatPHP(pabBonusAmount)}`
+                        : formatPHP(0)}
+                  </dd>
+                  <p className="mt-0.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                    {perfectAttendanceBonusStatus === 'pending'
+                      ? 'Period in progress'
+                      : isAllTime
+                        ? pabEligibleCount > 0
+                          ? `${pabEligibleCount} month${pabEligibleCount !== 1 ? 's' : ''} eligible`
+                          : 'Not eligible'
+                        : isPAEligible
+                          ? 'Eligible this month'
+                          : perfectAttendanceBonusStatus === 'unknown'
+                            ? 'Pending data'
+                            : 'Not eligible'}
+                  </p>
                 </div>
-                <Badge
-                  variant="outline"
-                  className={
+                <div className="min-w-0">
+                  <dt className={`text-[10px] font-medium uppercase tracking-[0.14em] ${technologyBonusAmount > 0 ? 'text-sky-600 dark:text-sky-400' : 'text-zinc-500 dark:text-zinc-500'}`}>
+                    Tech Bonus
+                  </dt>
+                  <dd
+                    className={`mt-1 break-words font-mono text-base font-medium tabular-nums leading-tight sm:text-lg ${
+                      technologyBonusAmount > 0 ? 'text-sky-700 dark:text-sky-300' : 'text-zinc-400 dark:text-zinc-600'
+                    }`}
+                  >
+                    {technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0)}
+                  </dd>
+                  <p className="mt-0.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                    {isTechnologyBonusActive ? 'Unlocked · week 3' : 'Unlocks week 3'}
+                  </p>
+                </div>
+              </dl>
+            </div>
+
+            {/* Status panel — divide-y list, no card chrome */}
+            <motion.aside
+              initial={{ opacity: 0, x: 8 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.4, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
+              className="flex min-w-0 flex-col divide-y divide-zinc-200/80 rounded-md border border-zinc-200/70 bg-white/50 backdrop-blur-sm dark:divide-zinc-800/80 dark:border-zinc-800/70 dark:bg-zinc-900/30"
+            >
+              <div className="flex items-baseline justify-between gap-3 px-3.5 py-2.5">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                  Hours
+                </span>
+                <span className="font-mono text-sm font-medium tabular-nums text-zinc-900 dark:text-white">
+                  {totalHours.toFixed(2)}<span className="text-zinc-400">h</span>
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 px-3.5 py-2.5">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                  Reg / OT
+                </span>
+                <span className="font-mono text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {regularHours.toFixed(1)}<span className="text-zinc-400">h</span>
+                  <span className="mx-1 text-zinc-300 dark:text-zinc-700">/</span>
+                  {otHours.toFixed(1)}<span className="text-zinc-400">h</span>
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 px-3.5 py-2.5">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                  Hourly
+                </span>
+                <span className="font-mono text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
+                  {regularRate != null ? formatPHP(regularRate) : '—'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-indigo-600 dark:text-indigo-400">
+                  PAB
+                </span>
+                <span
+                  className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
                     perfectAttendanceBonusStatus === 'eligible'
-                      ? 'shrink-0 border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
-                      : perfectAttendanceBonusStatus === 'not_eligible'
-                        ? 'shrink-0 border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-300'
-                        : perfectAttendanceBonusStatus === 'pending'
-                          ? 'shrink-0 border-indigo-500/40 bg-indigo-500/10 text-indigo-800 dark:text-indigo-300'
-                          : perfectAttendanceBonusStatus === 'out_of_scope'
-                            ? 'shrink-0 border-zinc-400/40 bg-zinc-200/40 text-zinc-700 dark:border-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300'
-                            : 'shrink-0 border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-400'
-                  }
+                      ? 'text-emerald-700 dark:text-emerald-400'
+                      : perfectAttendanceBonusStatus === 'pending'
+                        ? 'text-indigo-700 dark:text-indigo-300'
+                        : perfectAttendanceBonusStatus === 'not_eligible'
+                          ? 'text-amber-700 dark:text-amber-400'
+                          : 'text-zinc-500 dark:text-zinc-500'
+                  }`}
                 >
+                  <span
+                    className={`inline-block h-1.5 w-1.5 rounded-full ${
+                      perfectAttendanceBonusStatus === 'eligible'
+                        ? 'bg-emerald-500'
+                        : perfectAttendanceBonusStatus === 'pending'
+                          ? 'bg-indigo-500 animate-pulse'
+                          : perfectAttendanceBonusStatus === 'not_eligible'
+                            ? 'bg-amber-500'
+                            : 'bg-zinc-400'
+                    }`}
+                  />
                   {perfectAttendanceBonusStatus === 'eligible'
                     ? 'Eligible'
-                    : perfectAttendanceBonusStatus === 'not_eligible'
-                      ? 'Not eligible'
-                      : perfectAttendanceBonusStatus === 'pending'
-                        ? 'In progress'
-                        : perfectAttendanceBonusStatus === 'out_of_scope'
-                          ? 'Not in scope'
-                          : 'Unknown'}
-                </Badge>
+                    : perfectAttendanceBonusStatus === 'pending'
+                      ? 'In progress'
+                      : perfectAttendanceBonusStatus === 'not_eligible'
+                        ? 'Not met'
+                        : 'Unknown'}
+                </span>
               </div>
-
-              <div
-                className={`flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 ${
-                  techServiceStatus.state === 'pending'
-                    ? 'border-amber-200/80 bg-amber-50/40 dark:border-amber-900/40 dark:bg-amber-950/20'
-                    : 'border-zinc-200/90 bg-white/80 dark:border-zinc-800 dark:bg-zinc-900/40'
-                }`}
-              >
-                <div className="flex min-w-0 flex-1 gap-2">
-                  <div
-                    className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                      techServiceStatus.state === 'pending'
-                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                        : 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+              <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-sky-600 dark:text-sky-400">
+                  Tech
+                </span>
+                <span
+                  className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
+                    isTechnologyBonusActive
+                      ? 'text-sky-700 dark:text-sky-300'
+                      : techServiceStatus.state === 'pending'
+                        ? 'text-amber-700 dark:text-amber-400'
+                        : 'text-zinc-500 dark:text-zinc-500'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-1.5 w-1.5 rounded-full ${
+                      isTechnologyBonusActive
+                        ? 'bg-sky-500'
+                        : techServiceStatus.state === 'pending'
+                          ? 'bg-amber-500'
+                          : 'bg-zinc-400'
                     }`}
-                  >
-                    <Laptop className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0 space-y-0.5">
-                    <p className="text-xs font-medium text-zinc-900 dark:text-white">
-                      Technology Bonus · {formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')}
-                    </p>
-                    {techServiceStatus.state === 'pending' ? (
-                      <p className="text-xs text-amber-800 dark:text-amber-300">
-                        Not eligible yet. You need 30 days of service before your first Tech Bonus — you&apos;ll become
-                        eligible on{' '}
-                        <span className="font-semibold">
-                          {techServiceStatus.eligibleFrom.toLocaleDateString('en-US', {
-                            month: 'long',
-                            day: 'numeric',
-                            year: 'numeric',
-                          })}
-                        </span>{' '}
-                        ({techServiceStatus.daysRemaining} day{techServiceStatus.daysRemaining === 1 ? '' : 's'} to go).
-                        The bonus is paid on the 3rd paycheck of the month.
-                      </p>
-                    ) : techServiceStatus.state === 'eligible' ? (
-                      <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                        You&apos;re past your 30-day service mark. ₱1,850 is paid on the 3rd paycheck of each month to help
-                        cover your technology expenses (equipment, internet).
-                      </p>
-                    ) : (
-                      <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                        Paid on the 3rd paycheck of each month, but only after 30 days of service. Your start date isn&apos;t
-                        on file yet — please contact your coordinator.
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <Badge
-                  variant="outline"
-                  className={`shrink-0 ${
-                    techServiceStatus.state === 'pending'
-                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:border-amber-500/30 dark:text-amber-300'
-                      : techServiceStatus.state === 'eligible'
-                        ? 'border-sky-500/35 bg-sky-500/10 text-sky-900 dark:border-sky-500/30 dark:text-sky-300'
-                        : 'border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400'
-                  }`}
-                >
-                  {techServiceStatus.state === 'pending'
-                    ? `Pending · ${techServiceStatus.daysRemaining}d left`
-                    : techServiceStatus.state === 'eligible'
-                      ? 'Eligible'
-                      : 'Start date unknown'}
-                </Badge>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Stats — min-w-0 + responsive type so PHP amounts don’t overflow narrow cells */}
-          <div className="grid shrink-0 grid-cols-2 gap-1.5 md:grid-cols-6 md:gap-2 lg:gap-3">
-            {/* Total Hours */}
-            <Card
-              size="sm"
-              className="min-w-0 border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30"
-            >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
-                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
-                  Total Hours
-                </CardTitle>
-                <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-              </CardHeader>
-              <CardContent className="pb-3 pt-0">
-                <div className="break-words font-mono text-base font-bold tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white">
-                  {totalHours.toFixed(2)}h
-                </div>
-                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
-                  Reg {regularHours.toFixed(1)}h + OT {otHours.toFixed(1)}h
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* Regular Pay */}
-            <Card
-              size="sm"
-              className="min-w-0 border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30"
-            >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
-                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
-                  Regular Pay
-                </CardTitle>
-                <DollarSign className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-              </CardHeader>
-              <CardContent className="pb-3 pt-0">
-                <div
-                  className="break-words font-mono text-base font-bold tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
-                  title={regularPay != null ? formatPHP(regularPay) : undefined}
-                >
-                  {regularPay != null ? formatPHP(regularPay) : '—'}
-                </div>
-                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
-                  {regularRate != null ? `${formatPHP(regularRate)}/hr × ${regularHours.toFixed(1)}h` : 'Rate not set'}
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* OT Pay */}
-            <Card
-              size="sm"
-              className="min-w-0 border-orange-100/80 bg-gradient-to-br from-white to-orange-50/30 shadow-sm transition-colors duration-300 hover:to-orange-50/60 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/10 dark:hover:from-blue-950/30"
-            >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
-                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
-                  Overtime Pay
-                </CardTitle>
-                <TrendingUp className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-              </CardHeader>
-              <CardContent className="pb-3 pt-0">
-                <div
-                  className="break-words font-mono text-base font-bold tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
-                  title={otPay != null ? formatPHP(otPay) : undefined}
-                >
-                  {otPay != null ? formatPHP(otPay) : otHours > 0 ? '—' : formatPHP(0)}
-                </div>
-                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
-                  {otHours > 0
-                    ? otRate != null
-                      ? `${formatPHP(otRate)}/hr × ${otHours.toFixed(1)}h`
-                      : 'OT rate not set'
-                    : isAllTime ? 'No overtime across all files' : 'No overtime in this file'}
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* Perfect Attendance Bonus */}
-            <Card
-              size="sm"
-              className={`min-w-0 shadow-sm transition-colors duration-300 ${
-                isPAEligible
-                  ? 'border-indigo-200/80 bg-gradient-to-br from-white to-indigo-50/30 hover:to-indigo-50/60 dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/10 dark:hover:from-indigo-950/30'
-                  : 'border-zinc-200/80 bg-gradient-to-br from-white to-zinc-50/30 dark:border-zinc-800/60 dark:bg-none dark:from-zinc-900/20 dark:to-zinc-900/10'
-              }`}
-            >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
-                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
-                  PAB
-                </CardTitle>
-                <Award className={`h-3.5 w-3.5 shrink-0 ${isPAEligible ? 'text-indigo-500' : 'text-zinc-400'}`} />
-              </CardHeader>
-              <CardContent className="pb-3 pt-0">
-                <div
-                  className={`break-words font-mono text-base font-bold tabular-nums leading-tight sm:text-lg ${
-                    pabBonusAmount > 0 ? 'text-indigo-700 dark:text-indigo-400' : 'text-zinc-400 dark:text-zinc-500'
-                  }`}
-                >
-                  {perfectAttendanceBonusStatus === 'pending'
-                    ? 'Pending'
-                    : pabBonusAmount > 0
-                      ? formatPHP(pabBonusAmount)
-                      : formatPHP(0)}
-                </div>
-                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
-                  {perfectAttendanceBonusStatus === 'pending'
-                    ? 'Period in progress — not finalized'
-                    : isAllTime
-                      ? pabEligibleCount > 0
-                        ? `${pabEligibleCount} month${pabEligibleCount !== 1 ? 's' : ''} eligible × ${formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}`
-                        : 'Not eligible this period'
-                      : isPAEligible
-                        ? 'Eligible this month'
-                        : perfectAttendanceBonusStatus === 'unknown'
-                          ? 'Pending data'
-                          : 'Not eligible'}
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* Technology Bonus */}
-            <Card
-              size="sm"
-              className={`min-w-0 shadow-sm transition-colors duration-300 ${
-                isTechnologyBonusActive
-                  ? 'border-sky-200/80 bg-gradient-to-br from-white to-sky-50/30 hover:to-sky-50/60 dark:border-sky-950/60 dark:bg-none dark:from-sky-950/20 dark:to-sky-950/10 dark:hover:from-sky-950/30'
-                  : 'border-zinc-200/80 bg-gradient-to-br from-white to-zinc-50/30 dark:border-zinc-800/60 dark:bg-none dark:from-zinc-900/20 dark:to-zinc-900/10'
-              }`}
-            >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
-                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
-                  Tech Bonus
-                </CardTitle>
-                <Laptop className={`h-3.5 w-3.5 shrink-0 ${isTechnologyBonusActive ? 'text-sky-500' : 'text-zinc-400'}`} />
-              </CardHeader>
-              <CardContent className="pb-3 pt-0">
-                <div
-                  className={`break-words font-mono text-base font-bold tabular-nums leading-tight sm:text-lg ${
-                    technologyBonusAmount > 0 ? 'text-sky-700 dark:text-sky-400' : 'text-zinc-400 dark:text-zinc-500'
-                  }`}
-                >
-                  {technologyBonusAmount > 0 ? formatPHP(technologyBonusAmount) : formatPHP(0)}
-                </div>
-                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
+                  />
                   {isTechnologyBonusActive
-                    ? 'Unlocked · 3rd week reached'
-                    : 'Unlocks on week 3 of PAB'}
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* Total Pay */}
-            <Card
-              size="sm"
-              className="min-w-0 border-emerald-200/80 bg-gradient-to-br from-white to-emerald-50/30 shadow-sm transition-colors duration-300 hover:to-emerald-50/60 dark:border-emerald-950/60 dark:bg-none dark:from-emerald-950/20 dark:to-emerald-950/10 dark:hover:from-emerald-950/30"
-            >
-              <CardHeader className="flex flex-row items-start justify-between gap-1 pb-1 pt-2 lg:pt-3">
-                <CardTitle className="min-w-0 truncate text-[11px] font-medium leading-tight text-zinc-600 sm:text-xs dark:text-zinc-400">
-                  Initial Pay
-                </CardTitle>
-                <DollarSign className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-              </CardHeader>
-              <CardContent className="pb-3 pt-0">
-                <div
-                  className="break-words font-mono text-base font-bold tabular-nums leading-tight text-emerald-700 sm:text-lg dark:text-emerald-400"
-                  title={totalPay != null ? formatPHP(totalPay) : undefined}
-                >
-                  {totalPay != null ? formatPHP(totalPay) : '—'}
+                    ? 'Unlocked'
+                    : techServiceStatus.state === 'pending'
+                      ? `${techServiceStatus.daysRemaining}d to go`
+                      : 'Locked'}
+                </span>
+              </div>
+              {pabMonthRange && (
+                <div className="flex items-center justify-between gap-3 bg-amber-50/40 px-3.5 py-2 dark:bg-amber-950/20">
+                  <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-amber-700/80 dark:text-amber-500/80">
+                    Period
+                  </span>
+                  <span className="font-mono text-[10px] tabular-nums text-amber-800/90 dark:text-amber-300/90">
+                    {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    <span className="mx-1 text-amber-400">–</span>
+                    {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </span>
                 </div>
-                <p className="mt-1 line-clamp-2 text-[10px] leading-tight text-zinc-500 dark:text-zinc-600">
-                  {totalPay != null
-                    ? `≈ $${(totalPay / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`
-                    : 'Pending rate assignment'}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
+              )}
+            </motion.aside>
+          </motion.section>
 
-          {/* Daily Hours + PAB Calendar + Pay Summary */}
-          <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row lg:items-stretch lg:gap-3 xl:gap-4">
-            {/* Daily Hours Bar Chart — always visible */}
+          {/* Daily Hours + PAB Calendar — fills remaining vertical space; side-by-side on lg+, stacked below */}
+          <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-3 xl:gap-4">
+            {/* Daily Hours Bar Chart — always visible. On mobile we grow the
+                card so all 7 weekday rows fit without an inner scroll. */}
             <Card
               size="sm"
-              className="flex min-h-[7.5rem] flex-1 flex-col border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm [@media(max-height:900px)]:min-h-[6.5rem] dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 sm:min-h-[9rem] lg:min-h-0"
+              className="flex min-h-[22rem] flex-1 flex-col rounded-2xl border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-md ring-1 ring-orange-500/5 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-950/30 sm:min-h-[20rem] lg:min-h-0 lg:rounded-xl lg:shadow-sm lg:ring-0"
             >
-              <CardHeader className="shrink-0 pb-1.5 pt-2 lg:pb-2 lg:pt-3">
-                <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              <CardHeader className="shrink-0 px-4 pb-2 pt-3 max-lg:px-4 max-lg:pt-3.5 lg:px-3 lg:pb-1.5 lg:pt-2">
+                <CardTitle className="text-sm font-semibold tracking-tight text-zinc-700 lg:text-xs lg:font-medium lg:tracking-normal dark:text-zinc-300 dark:lg:text-zinc-400">
                   Daily Hours Breakdown
                 </CardTitle>
               </CardHeader>
-              <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
+              <CardContent className="flex min-h-0 flex-1 flex-col px-4 pb-4 pt-0 max-lg:px-4 max-lg:pb-4 lg:px-3 lg:pb-3">
                 {dailyHours.length === 0 ? (
-                  <div className="flex flex-1 items-center gap-2 py-6 text-sm text-zinc-500">
-                    <AlertCircle className="h-4 w-4 text-amber-500" />
+                  <div className="flex flex-1 items-center gap-2 py-8 text-sm text-zinc-500">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
                     Daily breakdown not available
                   </div>
                 ) : (
                   <div className="flex min-h-0 flex-1 flex-col gap-0">
-                    <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-clip pr-2">
+                    <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-clip [-webkit-overflow-scrolling:touch] pr-0.5 sm:space-y-2 lg:space-y-1.5 lg:pr-2">
                     {dailyHours.map((day) => {
                       const hours = day.seconds / 3600;
                       const pct = maxBarSeconds > 0 ? (day.seconds / maxBarSeconds) * 100 : 0;
                       const meetsPA = day.weekday && day.seconds >= 7 * 3600;
                       const belowPA = day.weekday && day.seconds > 0 && day.seconds < 7 * 3600;
+                      const showHoursInBar = pct >= 18 && hours > 0.5;
                       return (
-                        <div key={day.col} className="flex items-center gap-2">
+                        <div
+                          key={day.col}
+                          className="flex min-w-0 items-center gap-2 sm:gap-2.5 lg:gap-2"
+                        >
                           <span
-                            className={`w-10 shrink-0 text-right text-xs font-medium ${
+                            className={`w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums leading-none sm:w-[2.5rem] sm:text-xs lg:w-10 lg:text-xs lg:font-medium ${
                               day.weekday
-                                ? 'text-zinc-700 dark:text-zinc-300'
+                                ? 'text-zinc-800 dark:text-zinc-200'
                                 : 'text-zinc-400 dark:text-zinc-600'
                             }`}
                           >
                             {day.label}
                           </span>
-                          <div className="relative h-6 flex-1 overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800/60">
+                          <div className="relative h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800/60 sm:h-8 sm:rounded-lg lg:h-6 lg:rounded-md">
                             <div
-                              className={`absolute inset-y-0 left-0 rounded-md transition-all duration-500 ${
+                              className={`absolute inset-y-0 left-0 rounded-lg transition-all duration-500 lg:rounded-md ${
                                 meetsPA
                                   ? 'bg-gradient-to-r from-emerald-400 to-emerald-500 dark:from-emerald-500 dark:to-emerald-600'
                                   : belowPA
@@ -1834,29 +1818,35 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                                 title="7h PAB threshold"
                               />
                             )}
-                            <span className="absolute inset-y-0 left-2 flex items-center text-[11px] font-medium text-white drop-shadow-sm">
-                              {hours > 0.5 ? `${hours.toFixed(1)}h` : ''}
-                            </span>
+                            {showHoursInBar ? (
+                              <span className="pointer-events-none absolute inset-y-0 left-2 flex max-w-[calc(100%-0.5rem)] items-center truncate text-xs font-semibold text-white drop-shadow-md lg:left-2 lg:text-[11px] lg:font-medium">
+                                {`${hours.toFixed(1)}h`}
+                              </span>
+                            ) : null}
                           </div>
-                          <span className="w-12 shrink-0 text-right font-mono text-[10px] text-zinc-500 sm:w-14 sm:text-xs dark:text-zinc-400">
+                          <span className="w-[3.5rem] shrink-0 text-right font-mono text-[11px] font-medium tabular-nums text-zinc-600 sm:w-[4.25rem] sm:text-xs lg:w-14 lg:text-[10px] lg:font-normal dark:text-zinc-400">
                             {secondsToDisplay(day.seconds)}
                           </span>
                         </div>
                       );
                     })}
                     </div>
-                    <div className="mt-2 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-200 pt-2 text-[9px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-600 sm:text-[10px]">
-                      <span className="flex items-center gap-1">
-                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 sm:h-2 sm:w-2" /> ≥ 7h (PA)
+                    <div className="mt-4 grid shrink-0 grid-cols-2 gap-x-4 gap-y-2.5 border-t border-zinc-200/90 pt-3 text-[10px] leading-snug text-zinc-600 dark:border-zinc-800 dark:text-zinc-500 sm:flex sm:flex-wrap sm:justify-center sm:gap-x-5 sm:gap-y-1 sm:text-[10px] lg:mt-2 lg:justify-start lg:gap-x-3 lg:pt-2 lg:text-[9px] dark:lg:text-zinc-600">
+                      <span className="flex items-center gap-1.5">
+                        <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500 lg:h-1.5 lg:w-1.5" />{' '}
+                        <span>≥ 7h (PA)</span>
                       </span>
-                      <span className="flex items-center gap-1">
-                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500 sm:h-2 sm:w-2" /> &lt; 7h
+                      <span className="flex items-center gap-1.5">
+                        <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-amber-500 lg:h-1.5 lg:w-1.5" />{' '}
+                        <span>&lt; 7h</span>
                       </span>
-                      <span className="flex items-center gap-1">
-                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-600 sm:h-2 sm:w-2" /> Weekend
+                      <span className="flex items-center gap-1.5">
+                        <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-zinc-400 dark:bg-zinc-600 lg:h-1.5 lg:w-1.5" />{' '}
+                        <span>Weekend</span>
                       </span>
-                      <span className="flex items-center gap-1">
-                        <span className="inline-block h-1 w-3 bg-red-400/50 sm:h-1.5" /> 7h line
+                      <span className="flex col-span-2 items-center justify-center gap-1.5 sm:col-span-1 lg:col-span-1 lg:justify-start">
+                        <span className="inline-block h-1.5 w-4 shrink-0 rounded-sm bg-red-400/60 lg:h-1 lg:w-3" />{' '}
+                        <span>7h threshold</span>
                       </span>
                     </div>
                   </div>
@@ -1864,10 +1854,12 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               </CardContent>
             </Card>
 
-            {/* PAB Calendar — beside Daily Hours */}
+            {/* PAB Calendar — beside Daily Hours on lg+, stacked on mobile.
+                Bumped min-h on small screens so the full PAB month fits without
+                a tight inner scroll. */}
             <Card
               size="sm"
-              className="flex min-h-[7.5rem] flex-1 flex-col border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-sm [@media(max-height:900px)]:min-h-[6.5rem] dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 sm:min-h-[9rem] lg:min-h-0"
+              className="flex min-h-[22rem] flex-1 flex-col rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 sm:min-h-[20rem] lg:min-h-0 lg:rounded-xl lg:shadow-sm lg:ring-0"
             >
               <CardHeader className="shrink-0 pb-2 pt-3">
                 <div className="flex items-start justify-between gap-2">
@@ -2012,9 +2004,7 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                                 title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
                                 style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
                                 onClick={cellClickable ? () => {
-                                  setSelectedDisputeDay({ date: dayIso, seconds: day.seconds });
-                                  setSelectedExistingDispute(dispute ?? null);
-                                  setDisputeDialogOpen(true);
+                                  onNavigateToDisputes?.({ date: dayIso, seconds: day.seconds });
                                 } : undefined}
                               >
                                 <span className="text-[7px] leading-none text-zinc-400 dark:text-zinc-500">
@@ -2081,36 +2071,72 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
               </CardContent>
             </Card>
 
-            {/* Pay Summary — fixed width on lg */}
-            <Card
-              size="sm"
-              className="flex w-full min-w-0 shrink-0 flex-col border-orange-100/80 bg-gradient-to-br from-white to-orange-50/20 shadow-sm dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 lg:h-full lg:w-[min(100%,20rem)] xl:w-[22rem]"
-            >
-              <CardHeader className="shrink-0 pb-2 pt-3">
-                <CardTitle className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                  Pay Summary
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-clip overscroll-contain pr-2 [-webkit-overflow-scrolling:touch]">
-                <div className="min-w-0 space-y-2.5 sm:space-y-3">
-                  <div className="flex min-w-0 items-start justify-between gap-2">
-                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">Regular Pay</span>
-                    <span className="max-w-[58%] break-words text-right font-mono text-xs text-zinc-700 sm:text-sm dark:text-zinc-300">
+          </div>
+        </div>
+      )}
+      </div>
+
+      <Dialog open={mobileHelpOpen} onOpenChange={setMobileHelpOpen}>
+        <DialogContent
+          className="max-h-[min(90vh,760px)] w-[calc(100vw-1.25rem)] max-w-md gap-0 overflow-y-auto border-orange-100/70 bg-gradient-to-br from-white via-orange-50/35 to-blue-50/25 p-0 sm:max-w-md dark:border-blue-950/50 dark:from-[#0d1117] dark:via-[#0f1729] dark:to-[#0a1628]"
+          showCloseButton
+        >
+          <DialogHeader className="border-b border-orange-100/60 px-4 py-3 dark:border-blue-950/50">
+            <DialogTitle className="text-base text-zinc-900 dark:text-white">PAB &amp; bonuses</DialogTitle>
+            <DialogDescription className="text-left text-xs text-zinc-600 dark:text-zinc-400">
+              Rules and your status. On mobile, your dashboard shows the hours and PAB calendar charts first — open this
+              anytime for eligibility, tech bonus, and pay snapshot.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 px-4 py-4">
+            <section className="rounded-xl border border-zinc-200/80 bg-white/90 p-3 text-[11px] leading-relaxed text-zinc-600 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-400">
+              <p className="font-semibold text-zinc-800 dark:text-zinc-200">Perfect Attendance (PAB)</p>
+              <p className="mt-1.5">
+                PAB uses every Mon–Fri in the PAB period (merged Hubstaff uploads); each weekday must be ≥ 7 hours. If the
+                month doesn&apos;t start on a Monday, the first week is skipped and counting starts on the{' '}
+                <span className="font-medium text-zinc-700 dark:text-zinc-300">second Monday</span> (e.g. March 2026: Mar
+                9–Apr 3). Figures are estimates until payroll confirms them.
+              </p>
+              <p className="mt-3 font-semibold text-zinc-800 dark:text-zinc-200">Technology bonus</p>
+              <p className="mt-1">
+                {formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')} after 30 days of service, typically paid on the
+                3rd paycheck of the month.
+              </p>
+            </section>
+
+            {renderPabBonusStatusRows()}
+
+            {!row && (
+              <p className="text-center text-xs text-zinc-500 dark:text-zinc-500">
+                When Hubstaff data is available, your personal eligibility appears here.
+              </p>
+            )}
+
+            {row && (
+              <section className="space-y-2 rounded-xl border border-orange-100/70 bg-white/80 p-3 dark:border-blue-950/50 dark:bg-blue-950/20">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+                  Pay snapshot
+                </p>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-zinc-500 dark:text-zinc-400">Total hours</span>
+                    <span className="font-mono font-medium text-zinc-900 dark:text-zinc-100">{totalHours.toFixed(2)}h</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-zinc-500 dark:text-zinc-400">Regular pay</span>
+                    <span className="font-mono text-zinc-800 dark:text-zinc-200">
                       {regularPay != null ? formatPHP(regularPay) : '—'}
                     </span>
                   </div>
-                  <div className="flex min-w-0 items-start justify-between gap-2">
-                    <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">OT Pay</span>
-                    <span className="max-w-[58%] break-words text-right font-mono text-xs text-zinc-700 sm:text-sm dark:text-zinc-300">
-                      {otPay != null ? formatPHP(otPay) : '—'}
+                  <div className="flex justify-between gap-2">
+                    <span className="text-zinc-500 dark:text-zinc-400">OT pay</span>
+                    <span className="font-mono text-zinc-800 dark:text-zinc-200">
+                      {otPay != null ? formatPHP(otPay) : otHours > 0 ? '—' : formatPHP(0)}
                     </span>
                   </div>
-                  <div className="flex min-w-0 items-start justify-between gap-2">
-                    <span className={`shrink-0 text-xs ${pabBonusAmount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
-                      PAB{isAllTime && pabEligibleCount > 0 ? ` (${pabEligibleCount}×)` : ''}
-                      {perfectAttendanceBonusStatus === 'pending' ? ' (pending)' : ''}
-                    </span>
-                    <span className={`max-w-[58%] break-words text-right font-mono text-xs sm:text-sm ${pabBonusAmount > 0 ? 'font-medium text-indigo-600 dark:text-indigo-400' : 'text-zinc-400 dark:text-zinc-500'}`}>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-zinc-500 dark:text-zinc-400">PAB</span>
+                    <span className="font-mono text-zinc-800 dark:text-zinc-200">
                       {perfectAttendanceBonusStatus === 'pending'
                         ? '—'
                         : pabBonusAmount > 0
@@ -2118,28 +2144,25 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                           : formatPHP(0)}
                     </span>
                   </div>
-                  <div className="flex min-w-0 items-start justify-between gap-2">
-                    <span className={`shrink-0 text-xs ${technologyBonusAmount > 0 ? 'text-sky-600 dark:text-sky-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
-                      Tech Bonus{isTechnologyBonusActive ? '' : ' (locked)'}
-                    </span>
-                    <span className={`max-w-[58%] break-words text-right font-mono text-xs sm:text-sm ${technologyBonusAmount > 0 ? 'font-medium text-sky-600 dark:text-sky-400' : 'text-zinc-400 dark:text-zinc-500'}`}>
-                      {technologyBonusAmount > 0
-                        ? `+${formatPHP(technologyBonusAmount)}`
-                        : formatPHP(0)}
+                  <div className="flex justify-between gap-2">
+                    <span className="text-zinc-500 dark:text-zinc-400">Tech bonus</span>
+                    <span className="font-mono text-zinc-800 dark:text-zinc-200">
+                      {technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0)}
                     </span>
                   </div>
-                  <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
-                  <div className="flex min-w-0 items-start justify-between gap-2">
-                    <span className="shrink-0 text-sm font-medium text-zinc-900 dark:text-white">Total</span>
-                    <span className="max-w-[60%] break-words text-right font-mono text-base font-bold leading-tight text-emerald-700 sm:text-lg dark:text-emerald-400">
+                  <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="flex justify-between gap-2">
+                    <span className="font-medium text-zinc-900 dark:text-white">Total</span>
+                    <span className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-400">
                       {totalPay != null
                         ? formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)
                         : '—'}
                     </span>
                   </div>
                   {totalPay != null && (
-                    <p className="break-words text-right font-mono text-[10px] text-blue-500 dark:text-blue-400">
-                      ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount) / usdToPhpRate).toLocaleString('en-US', {
+                    <p className="text-right font-mono text-[10px] text-blue-600 dark:text-blue-400">
+                      ≈{' '}
+                      {((totalPay + pabBonusAmount + technologyBonusAmount) / usdToPhpRate).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}{' '}
@@ -2147,32 +2170,12 @@ export default function EmployeeDashboard({ employeeEmail }: EmployeeDashboardPr
                     </p>
                   )}
                 </div>
-
-                <div className="shrink-0 rounded-lg border border-zinc-200 bg-zinc-50/80 px-2.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-                  <p className="text-[9px] leading-snug text-zinc-500 dark:text-zinc-500 sm:text-[10px]">
-                    Exchange rate: <span className="font-mono font-medium">{formatPHP(usdToPhpRate)}</span> = $1 USD (default from policy: ₱
-                    {PHILIPPINE_PESO_OFFICIAL.toLocaleString('en-PH')}
-                    {` ÷ 10^${USD_TO_PHP_DECIMAL_SHIFT}`}).
-                    Bonuses are applied during payroll processing and may vary.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+              </section>
+            )}
           </div>
-        </div>
-      )}
-      </div>
-      {selectedDisputeDay && (
-        <DisputeDialog
-          open={disputeDialogOpen}
-          onOpenChange={setDisputeDialogOpen}
-          employeeEmail={email}
-          disputeDate={selectedDisputeDay.date}
-          hoursWorked={selectedDisputeDay.seconds}
-          existingDispute={selectedExistingDispute}
-          onSubmitted={fetchMyDisputes}
-        />
-      )}
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }

@@ -22,6 +22,7 @@ import {
   Info,
   Users,
   RefreshCw,
+  Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -70,7 +71,7 @@ import {
 } from '@/lib/fx/usd-php';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import { isDeptInPabScope, parseLocalDateFromIso } from '@/lib/pab-period-settings';
+import { parseLocalDateFromIso } from '@/lib/pab-period-settings';
 import {
   Dialog,
   DialogContent,
@@ -1552,25 +1553,11 @@ export default function PayrollWizard() {
     if (!rows || rows.length === 0) return new Set();
     if (weekdayColumnGroups.length === 0) return new Set();
 
-    const resolveDeptKey = (workEmail: string): string | null => {
-      const assigned = employeeDepts[workEmail];
-      if (assigned) return assigned;
-      const em = normEmail(workEmail);
-      for (const e of masterEmployees) {
-        if (normEmail(e.work_email ?? null) === em || normEmail(e.personal_email ?? null) === em) {
-          return normalizeDeptToKey(e.department);
-        }
-      }
-      return null;
-    };
-
     const eligible = new Set<string>();
     for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
-
-      if (!isDeptInPabScope(resolveDeptKey(email), pabPeriodSettings.scopeDepartmentKeys)) continue;
 
       let perfect = true;
       const forgivenDates = approvedDisputeDates.get(email);
@@ -1600,9 +1587,6 @@ export default function PayrollWizard() {
     pabMonthRange,
     pabMonthColumnCoverageComplete,
     weekdayColumnGroups,
-    employeeDepts,
-    masterEmployees,
-    pabPeriodSettings.scopeDepartmentKeys,
     approvedDisputeDates,
   ]);
 
@@ -2982,43 +2966,49 @@ export default function PayrollWizard() {
             {/* ── TAB: Upload CSV (original content) ── */}
             {hubstaffActiveTab === 'upload' && (
               <div className="space-y-6">
-                {/* ── Global master list (roster) — separate from Hubstaff timesheets ── */}
-                <section className="space-y-4 rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex gap-3">
+                {/* ── 3 upload types in a uniform grid: roster · rates · timesheet ── */}
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {/* 1. Master list (employee roster) */}
+                  <section className="flex flex-col gap-3 rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+                    <div className="flex items-start gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-emerald-200/90 bg-white dark:border-emerald-800/60 dark:bg-emerald-950/50">
                         <Users className="h-5 w-5 text-emerald-700 dark:text-emerald-400" aria-hidden />
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-800/90 dark:text-emerald-400/90">
                           Global master list
                         </p>
-                        <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Employee roster CSV</h3>
-                        <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
-                          Only the <span className="font-medium">MASTERLIST</span> sheet: rows <span className="font-medium">1–2</span> must
-                          include <span className="font-mono">MASTERLIST</span> in any cell; row <span className="font-medium">3</span> is the
-                          header row; row <span className="font-medium">4+</span> is data. Hubstaff-style headers on row 3 are rejected. Upload{' '}
-                          <span className="font-medium">replaces every row</span> in{' '}
-                          <span className="font-mono text-zinc-700 dark:text-zinc-300">
-                            {process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE ?? 'global_master_list'}
-                          </span>{' '}
-                          (then inserts this file; <span className="font-mono">import_batch_id</span> is set when the column exists). Does not update{' '}
-                          <span className="font-mono text-zinc-600 dark:text-zinc-400">employee_hourly_rates</span>. Requires{' '}
-                          <span className="font-mono">SUPABASE_SERVICE_ROLE_KEY</span> and <span className="font-mono">id</span>.
-                        </p>
-                        <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
-                          <span className="font-medium text-zinc-700 dark:text-zinc-300">{masterEmployees.length}</span> employees
-                          loaded from Supabase for this payroll run.
-                        </p>
+                        <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
+                          Employee roster CSV
+                        </h3>
                       </div>
                     </div>
-                    <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                    <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                      Only the <span className="font-medium">MASTERLIST</span> sheet: rows{' '}
+                      <span className="font-medium">1–2</span> must include{' '}
+                      <span className="font-mono">MASTERLIST</span>; row{' '}
+                      <span className="font-medium">3</span> is headers; row{' '}
+                      <span className="font-medium">4+</span> is data. Upload{' '}
+                      <span className="font-medium">replaces every row</span> in{' '}
+                      <span className="font-mono text-zinc-700 dark:text-zinc-300">
+                        {process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE ?? 'global_master_list'}
+                      </span>
+                      . Does not touch{' '}
+                      <span className="font-mono text-zinc-600 dark:text-zinc-400">employee_hourly_rates</span>.
+                    </p>
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                        {masterEmployees.length}
+                      </span>{' '}
+                      employees loaded from Supabase for this payroll run.
+                    </p>
+                    <div className="mt-auto flex flex-col gap-2 pt-1">
                       <Button
                         type="button"
                         variant="outline"
                         disabled={masterListUploadLoading}
                         onClick={() => masterListFileInputRef.current?.click()}
-                        className="gap-2 border-emerald-300/80 bg-white text-emerald-900 hover:bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-950/70"
+                        className="w-full gap-2 border-emerald-300/80 bg-white text-emerald-900 hover:bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-950/70"
                       >
                         {masterListUploadLoading ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -3035,39 +3025,42 @@ export default function PayrollWizard() {
                         className="hidden"
                       />
                     </div>
-                  </div>
-                </section>
+                  </section>
 
-                <section className="space-y-4 rounded-xl border border-sky-200/80 bg-sky-50/40 p-4 dark:border-sky-900/40 dark:bg-sky-950/20">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex gap-3">
+                  {/* 2. Payroll rates (All Dept) */}
+                  <section className="flex flex-col gap-3 rounded-xl border border-sky-200/80 bg-sky-50/40 p-4 dark:border-sky-900/40 dark:bg-sky-950/20">
+                    <div className="flex items-start gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-sky-200/90 bg-white dark:border-sky-800/60 dark:bg-sky-950/50">
                         <DollarSign className="h-5 w-5 text-sky-700 dark:text-sky-400" aria-hidden />
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-800/90 dark:text-sky-400/90">
                           Payroll rates
                         </p>
-                        <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Import All Dept payroll CSV</h3>
-                        <p className="mt-1 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
-                          Upload the <span className="font-medium">All Dept</span> sheet exported from the new Payroll Dashboard.
-                          The importer reads <span className="font-mono">Work Email</span>, <span className="font-mono">Personal Email</span>,{' '}
-                          <span className="font-mono">Week</span>, <span className="font-mono">Regular Rate</span>, and{' '}
-                          <span className="font-mono">OT Rate</span>, then upserts{' '}
-                          <span className="font-mono text-zinc-700 dark:text-zinc-300">employee_hourly_rates</span> by work email.
-                        </p>
-                        <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
-                          Multiple weekly rows per employee are expected. The latest week wins for each employee.
-                        </p>
+                        <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
+                          All Dept payroll CSV
+                        </h3>
                       </div>
                     </div>
-                    <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                    <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                      Upload the <span className="font-medium">All Dept</span> sheet from the Payroll Dashboard.
+                      Reads <span className="font-mono">Work Email</span>,{' '}
+                      <span className="font-mono">Personal Email</span>, <span className="font-mono">Week</span>,{' '}
+                      <span className="font-mono">Regular Rate</span>, and <span className="font-mono">OT Rate</span>,
+                      then upserts{' '}
+                      <span className="font-mono text-zinc-700 dark:text-zinc-300">employee_hourly_rates</span>{' '}
+                      by work email.
+                    </p>
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                      Multiple weekly rows per employee are expected. The latest week wins.
+                    </p>
+                    <div className="mt-auto flex flex-col gap-2 pt-1">
                       <Button
                         type="button"
                         variant="outline"
                         disabled={ratesUploadLoading}
                         onClick={() => ratesFileInputRef.current?.click()}
-                        className="gap-2 border-sky-300/80 bg-white text-sky-900 hover:bg-sky-50 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100 dark:hover:bg-sky-950/70"
+                        className="w-full gap-2 border-sky-300/80 bg-white text-sky-900 hover:bg-sky-50 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100 dark:hover:bg-sky-950/70"
                       >
                         {ratesUploadLoading ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -3084,57 +3077,59 @@ export default function PayrollWizard() {
                         className="hidden"
                       />
                     </div>
-                  </div>
-                </section>
+                  </section>
 
-                <div className="flex items-center gap-3 py-1">
-                  <Separator className="flex-1 bg-zinc-200 dark:bg-zinc-800" />
-                  <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                    Hubstaff timesheets
-                  </span>
-                  <Separator className="flex-1 bg-zinc-200 dark:bg-zinc-800" />
-                </div>
-
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Upload Hubstaff weekly report</h3>
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                      Choose your Hubstaff export CSV. After you confirm, the rows are appended to the{' '}
-                      <span className="font-mono text-zinc-500">public.hubstaff_hours</span> table in Supabase (existing
-                      data is preserved). Requires <span className="font-mono">SUPABASE_SERVICE_ROLE_KEY</span> in{' '}
+                  {/* 3. Hubstaff weekly timesheet */}
+                  <section className="flex flex-col gap-3 rounded-xl border border-indigo-200/80 bg-indigo-50/40 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/20 md:col-span-2 xl:col-span-1">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-indigo-200/90 bg-white dark:border-indigo-800/60 dark:bg-indigo-950/50">
+                        <Clock className="h-5 w-5 text-indigo-700 dark:text-indigo-400" aria-hidden />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-800/90 dark:text-indigo-400/90">
+                          Hubstaff timesheets
+                        </p>
+                        <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
+                          Hubstaff weekly report
+                        </h3>
+                      </div>
+                    </div>
+                    <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                      Choose your Hubstaff export CSV. After you confirm, the rows are appended to{' '}
+                      <span className="font-mono text-zinc-500">public.hubstaff_hours</span> in Supabase
+                      (existing data is preserved). Requires{' '}
+                      <span className="font-mono">SUPABASE_SERVICE_ROLE_KEY</span> in{' '}
                       <span className="font-mono">.env</span>.
                     </p>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-stretch gap-3 sm:flex-row sm:items-center">
-                    <div className="flex items-center space-x-2 rounded-full border border-zinc-200 bg-zinc-100 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900">
-                      <Label htmlFor="hogan-switch" className="text-xs text-zinc-400">
+                    <div className="flex items-center justify-between gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                      <Label htmlFor="hogan-switch" className="text-xs text-zinc-600 dark:text-zinc-400">
                         Hogan cycle
                       </Label>
                       <Switch id="hogan-switch" checked={isHoganCycle} onCheckedChange={setIsHoganCycle} />
                     </div>
-
-                    <Button
-                      type="button"
-                      disabled={weeklyUploadLoading}
-                      onClick={() => fileInputWeeklyRef.current?.click()}
-                      className="gap-2 bg-indigo-600 text-white hover:bg-indigo-700"
-                    >
-                      {weeklyUploadLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Upload className="h-4 w-4" />
-                      )}
-                      Upload Hubstaff Weekly Report
-                    </Button>
-
-                    <input
-                      type="file"
-                      ref={fileInputWeeklyRef}
-                      onChange={(ev) => void handleWeeklyFileChosen(ev)}
-                      accept=".csv,.CSV,text/csv,application/csv,text/plain"
-                      className="hidden"
-                    />
-                  </div>
+                    <div className="mt-auto flex flex-col gap-2 pt-1">
+                      <Button
+                        type="button"
+                        disabled={weeklyUploadLoading}
+                        onClick={() => fileInputWeeklyRef.current?.click()}
+                        className="w-full gap-2 bg-indigo-600 text-white hover:bg-indigo-700"
+                      >
+                        {weeklyUploadLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Upload className="h-4 w-4" />
+                        )}
+                        Upload Hubstaff Weekly Report
+                      </Button>
+                      <input
+                        type="file"
+                        ref={fileInputWeeklyRef}
+                        onChange={(ev) => void handleWeeklyFileChosen(ev)}
+                        accept=".csv,.CSV,text/csv,application/csv,text/plain"
+                        className="hidden"
+                      />
+                    </div>
+                  </section>
                 </div>
 
                 <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">

@@ -40,7 +40,7 @@ interface EmployeeSidebarProps {
 }
 
 const navItems = [
-  { id: 'dashboard', label: 'My Dashboard', icon: LayoutDashboard },
+  { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
   { id: 'profile', label: 'Profile', icon: UserCircle },
   { id: 'hours', label: 'My Hours', icon: Clock },
   { id: 'leaves', label: 'Leave', icon: CalendarDays },
@@ -72,11 +72,16 @@ export default function EmployeeSidebar({
     .slice(0, 2);
 
   return (
-    <div
+    <aside
       className={cn(
-        'flex h-dvh w-64 max-w-[min(100vw,16rem)] shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 shadow-xl dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400 md:max-w-none md:shadow-none',
-        'fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-out md:static md:z-auto md:translate-x-0',
-        mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+        // Base shell — drawer on mobile, static column on md+.
+        'flex h-dvh w-[85vw] max-w-[20rem] shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400 md:w-64 md:max-w-none md:shadow-none',
+        // Off-canvas positioning and slide transition.
+        'fixed inset-y-0 left-0 z-50 will-change-transform md:static md:z-auto md:translate-x-0',
+        'transition-[transform,box-shadow] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+        mobileOpen
+          ? 'translate-x-0 shadow-2xl shadow-black/25'
+          : '-translate-x-full shadow-none md:translate-x-0',
       )}
       id="employee-sidebar-nav"
       role="navigation"
@@ -87,23 +92,31 @@ export default function EmployeeSidebar({
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/30">
             <User className="h-5 w-5 text-white" />
           </div>
-          <div className="rounded-md bg-white px-2 py-1">
+          <div className="rounded-md bg-white px-2.5 py-1.5">
             <img
               src="/simple-logo.png"
               alt="Simple HRIS"
-              className="h-5 w-auto object-contain"
+              className="h-7 w-auto object-contain"
             />
           </div>
         </div>
 
         <ScrollArea className="-mx-2 flex-1">
           <nav className="space-y-1 px-2">
-            {navItems.map((item) => (
+            {navItems.map((item, index) => (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
+                style={{
+                  // Stagger each nav item on mobile drawer open — no-op on desktop because
+                  // md: utilities pin opacity/translate to the visible state.
+                  transitionDelay: mobileOpen ? `${60 + index * 35}ms` : '0ms',
+                }}
                 className={cn(
-                  'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200',
+                  'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,transform,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                  mobileOpen
+                    ? 'translate-x-0'
+                    : '-translate-x-8 md:translate-x-0',
                   activeTab === item.id
                     ? 'bg-gradient-to-r from-orange-100 to-orange-50 text-orange-900 shadow-sm dark:from-blue-950/70 dark:to-blue-950/40 dark:text-white'
                     : 'hover:bg-orange-50 hover:text-zinc-900 dark:hover:bg-blue-950/30 dark:hover:text-zinc-200',
@@ -111,7 +124,7 @@ export default function EmployeeSidebar({
               >
                 <item.icon
                   className={cn(
-                    'h-4 w-4',
+                    'h-4 w-4 transition-colors duration-200',
                     activeTab === item.id
                       ? 'text-orange-500 dark:text-orange-400'
                       : 'text-zinc-500 group-hover:text-orange-500 dark:text-zinc-500 dark:group-hover:text-orange-400',
@@ -127,7 +140,15 @@ export default function EmployeeSidebar({
         </ScrollArea>
       </div>
 
-      <div className="mt-auto border-t border-orange-100 p-4 dark:border-blue-950/60">
+      <div
+        style={{
+          transitionDelay: mobileOpen ? `${60 + navItems.length * 35}ms` : '0ms',
+        }}
+        className={cn(
+          'mt-auto border-t border-orange-100 p-4 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none dark:border-blue-950/60',
+          mobileOpen ? 'translate-x-0' : '-translate-x-8 md:translate-x-0',
+        )}
+      >
         <ViewSwitcher email={employeeEmail} currentView="employee" />
         <button
           onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
@@ -179,6 +200,6 @@ export default function EmployeeSidebar({
           Log Out
         </Button>
       </div>
-    </div>
+    </aside>
   );
 }

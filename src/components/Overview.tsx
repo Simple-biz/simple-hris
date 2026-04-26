@@ -52,8 +52,7 @@ import {
   parseColDate,
   groupDateColumnsByCalendarDay,
 } from '@/lib/hubstaff/calendar-column-dedupe';
-import { fetchPabPeriodSettings, isDeptInPabScope, isValidManualPabRange } from '@/lib/pab-period-settings';
-import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { fetchPabPeriodSettings, isValidManualPabRange } from '@/lib/pab-period-settings';
 
 const PAGE_SIZE = 10;
 
@@ -296,7 +295,7 @@ function SimpleView({
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <div className="mx-auto max-w-[min(100%,1360px)] px-2 pb-6 [@media(max-height:900px)]:pb-4 xl:pb-12">
+      <div className="mx-auto w-full max-w-[1600px] px-3 pb-6 sm:px-4 md:px-6 lg:px-8 xl:px-10 [@media(max-height:900px)]:pb-4 xl:pb-12">
 
         {/* Hero — scales up at xl/2xl so 13" laptops (~1280×800) are not dominated by md:text-7xl */}
         <section className="mb-5 grid grid-cols-1 items-end gap-4 border-b border-zinc-200 pb-5 [@media(max-height:900px)]:mb-4 [@media(max-height:900px)]:gap-3 [@media(max-height:900px)]:pb-4 lg:mb-8 lg:gap-6 lg:pb-6 lg:grid-cols-[1fr_auto] xl:mb-10 xl:gap-8 xl:pb-8 dark:border-zinc-800">
@@ -1197,9 +1196,9 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         if (cancelled) return;
         const files = json.files ?? [];
         setSourceFiles(files);
-        // Default to latest file
+        // Default to latest file (API returns newest-first)
         if (files.length > 0) {
-          setSelectedSourceFile(files[files.length - 1]);
+          setSelectedSourceFile(files[0]);
         }
       } catch {
         /* no source files — will fall back to full fetch */
@@ -1372,15 +1371,6 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         const cols = [...allCols];
         const pabCfg = await fetchPabPeriodSettings();
 
-        const emailToDeptKey = new Map<string, string | null>();
-        for (const e of employees) {
-          const dk = normalizeDeptToKey(e.department);
-          const we = normEmail(e.work_email ?? null);
-          const pe = normEmail(e.personal_email ?? null);
-          if (we) emailToDeptKey.set(we, dk);
-          if (pe) emailToDeptKey.set(pe, dk);
-        }
-
         let start: Date;
         let end: Date;
         let monthLabel: string;
@@ -1407,7 +1397,6 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         let evaluated = 0;
 
         for (const [email, mergedRow] of rowsByEmail) {
-          if (!isDeptInPabScope(emailToDeptKey.get(email) ?? null, pabCfg.scopeDepartmentKeys)) continue;
           evaluated++;
           // Build date → seconds lookup
           const hoursByDateKey = new Map<string, number>();
@@ -1624,7 +1613,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     const sorted = [...counts.entries()]
       .map(([dept, n]) => ({ dept, count: n, pct: total > 0 ? (n / total) * 100 : 0 }))
       .sort((a, b) => b.count - a.count);
-    return { total, rows: sorted.slice(0, 6) };
+    return { total, rows: sorted };
   }, [mergedEmployees]);
 
   /** Quick lookup for rendering the activity feed with employee names. */
@@ -1699,7 +1688,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
             className="h-8 max-w-[min(100%,340px)] truncate rounded-md border border-zinc-200 bg-white px-2 pr-7 font-mono text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
           >
             <option value="__all__">All Time (all uploads combined)</option>
-            {[...sourceFiles].reverse().map((file, i) => (
+            {sourceFiles.map((file, i) => (
               <option key={file} value={file}>
                 {file}{i === 0 ? ' (latest)' : ''}
               </option>
@@ -1820,8 +1809,8 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         />
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-hidden lg:grid-cols-3">
-        <Card size="sm" className="flex min-h-0 flex-col overflow-hidden bg-gradient-to-br from-white to-blue-50/20 shadow-sm ring-1 ring-orange-200/90 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-900/70 lg:col-span-2">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-hidden lg:grid-cols-3 2xl:grid-cols-4">
+        <Card size="sm" className="flex min-h-0 flex-col overflow-hidden bg-gradient-to-br from-white to-blue-50/20 shadow-sm ring-1 ring-orange-200/90 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-900/70 lg:col-span-2 2xl:col-span-3">
           <CardHeader className="shrink-0 flex flex-row items-center justify-between gap-4 pb-1.5">
             <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Employees</CardTitle>
             <Badge variant="outline" className="border-blue-500/20 bg-blue-500/10 font-mono text-[10px] text-blue-700 dark:border-blue-500/30 dark:text-blue-400">
@@ -2135,31 +2124,33 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                 {departmentMix.total} total
               </Badge>
             </CardHeader>
-            <CardContent className="space-y-1.5">
+            <CardContent className="pb-3">
               {departmentMix.rows.length === 0 ? (
                 <p className="py-2 text-xs text-zinc-400">No employees loaded.</p>
               ) : (
-                departmentMix.rows.map((row) => (
-                  <div key={row.dept} className="space-y-0.5">
-                    <div className="flex items-center justify-between text-[12px]">
-                      <span className="truncate text-zinc-700 dark:text-zinc-300" title={row.dept}>
-                        {row.dept}
-                      </span>
-                      <span className="font-mono tabular-nums text-zinc-500 dark:text-zinc-400">
-                        {row.count}
-                        <span className="ml-1 text-[10px] text-zinc-400">
-                          {row.pct.toFixed(0)}%
+                <div className="max-h-[18rem] space-y-1.5 overflow-y-auto pr-1.5 [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]">
+                  {departmentMix.rows.map((row) => (
+                    <div key={row.dept} className="space-y-0.5">
+                      <div className="flex items-center justify-between text-[12px]">
+                        <span className="truncate text-zinc-700 dark:text-zinc-300" title={row.dept}>
+                          {row.dept}
                         </span>
-                      </span>
+                        <span className="font-mono tabular-nums text-zinc-500 dark:text-zinc-400">
+                          {row.count}
+                          <span className="ml-1 text-[10px] text-zinc-400">
+                            {row.pct.toFixed(0)}%
+                          </span>
+                        </span>
+                      </div>
+                      <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                        <div
+                          className="h-full bg-orange-400/70 transition-all duration-500 dark:bg-blue-500/70"
+                          style={{ width: `${Math.max(2, row.pct)}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                      <div
-                        className="h-full bg-orange-400/70 transition-all duration-500 dark:bg-blue-500/70"
-                        style={{ width: `${Math.max(2, row.pct)}%` }}
-                      />
-                    </div>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>

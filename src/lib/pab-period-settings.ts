@@ -6,7 +6,6 @@
  *    override; months without an entry fall back to `getPabMonthRange(year, month)`.
  *  - `pab_period_active_month`: "YYYY-MM". Which month the wizard's Additions tab is currently viewing.
  *    Defaults to today's PAB month when absent.
- *  - `pab_scope_department_keys`: JSON array of department keys. Null = all, [] = none.
  *
  * Legacy keys (`pab_period_manual`, `pab_period_start`, `pab_period_end`) are still honored on read
  * and auto-migrated into the overrides map + active_month on the first save of the new shape.
@@ -17,7 +16,6 @@ export const PAB_PERIOD_START_KEY = 'pab_period_start';
 export const PAB_PERIOD_END_KEY = 'pab_period_end';
 export const PAB_PERIOD_OVERRIDES_KEY = 'pab_period_overrides';
 export const PAB_PERIOD_ACTIVE_MONTH_KEY = 'pab_period_active_month';
-export const PAB_SCOPE_DEPARTMENT_KEYS_KEY = 'pab_scope_department_keys';
 
 /** Parse YYYY-MM-DD as a local calendar date (no UTC shift). */
 export function parseLocalDateFromIso(value: string | null | undefined): Date | null {
@@ -63,26 +61,11 @@ export type PabPeriodFetchResult = {
   overrides: PabOverridesMap;
   /** Which month the wizard is currently viewing (null → defaults to today's PAB month at resolution time). */
   activeMonth: { year: number; month: number } | null;
-  /**
-   * null = all departments in scope, [] = none, non-empty = allowlist.
-   */
-  scopeDepartmentKeys: string[] | null;
 };
 
 /** Legacy validity check — kept so existing callers (dashboard) keep working. */
 export function isValidManualPabRange(r: PabPeriodFetchResult): r is PabPeriodFetchResult & { start: Date; end: Date } {
   return !!(r.manual && r.start && r.end && r.start.getTime() <= r.end.getTime());
-}
-
-export function parsePabScopeDepartmentKeys(value: string | null | undefined): string[] | null {
-  if (value == null || String(value).trim() === '') return null;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) return null;
-    return parsed.filter((x): x is string => typeof x === 'string' && x.length > 0);
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -111,17 +94,6 @@ export function parsePabPeriodOverrides(value: string | null | undefined): PabOv
   return map;
 }
 
-/**
- * @param deptKey — normalized department key from `normalizeDeptToKey` or wizard tab assignment
- * @param scope — null = all departments; [] = none; non-empty = allowlist
- */
-export function isDeptInPabScope(deptKey: string | null, scope: string[] | null): boolean {
-  if (scope === null) return true;
-  if (scope.length === 0) return false;
-  if (!deptKey) return false;
-  return scope.includes(deptKey);
-}
-
 export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
   const keys = [
     PAB_PERIOD_MANUAL_KEY,
@@ -129,10 +101,9 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
     PAB_PERIOD_END_KEY,
     PAB_PERIOD_OVERRIDES_KEY,
     PAB_PERIOD_ACTIVE_MONTH_KEY,
-    PAB_SCOPE_DEPARTMENT_KEYS_KEY,
   ] as const;
 
-  const [mj, sj, ej, ov, am, sk] = await Promise.all(
+  const [mj, sj, ej, ov, am] = await Promise.all(
     keys.map((key) =>
       fetch(`/api/app-settings?key=${encodeURIComponent(key)}`, { cache: 'no-store' }).then(
         (res) => res.json() as Promise<{ value: string | null }>,
@@ -161,6 +132,5 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
     end: parseLocalDateFromIso(ej.value),
     overrides,
     activeMonth: parseYearMonthKey(am.value),
-    scopeDepartmentKeys: parsePabScopeDepartmentKeys(sk.value),
   };
 }

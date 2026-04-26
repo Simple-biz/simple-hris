@@ -105,15 +105,15 @@ function ProfileSkeleton() {
   return (
     <div className="box-border flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
       {/* Hero skeleton */}
-      <div className="shrink-0 border-b border-zinc-200/60 bg-gradient-to-r from-orange-50/60 via-white to-blue-50/40 px-4 py-6 sm:px-6 dark:border-zinc-800 dark:from-zinc-900/60 dark:via-zinc-950 dark:to-zinc-900/60">
-        <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:gap-5">
-          <div className="h-20 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800 sm:h-24 sm:w-24" />
-          <div className="flex flex-1 flex-col items-center gap-2 sm:items-start">
-            <div className="h-6 w-48 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
-            <div className="h-4 w-36 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+      <div className="shrink-0 border-b border-zinc-200/60 bg-gradient-to-r from-orange-50/60 via-white to-blue-50/40 px-4 py-4 sm:px-6 sm:py-6 dark:border-zinc-800 dark:from-zinc-900/60 dark:via-zinc-950 dark:to-zinc-900/60">
+        <div className="flex flex-row items-center gap-4 sm:gap-5">
+          <div className="h-16 w-16 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800 sm:h-24 sm:w-24" />
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            <div className="h-5 w-40 animate-pulse rounded-md bg-zinc-200 sm:h-6 sm:w-48 dark:bg-zinc-800" />
+            <div className="h-3.5 w-32 animate-pulse rounded bg-zinc-200/70 sm:h-4 sm:w-36 dark:bg-zinc-800/70" />
             <div className="mt-1 flex gap-2">
-              <div className="h-6 w-16 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-              <div className="h-6 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+              <div className="h-5 w-14 animate-pulse rounded-full bg-zinc-200 sm:h-6 sm:w-16 dark:bg-zinc-800" />
+              <div className="h-5 w-16 animate-pulse rounded-full bg-zinc-200 sm:h-6 sm:w-20 dark:bg-zinc-800" />
             </div>
           </div>
         </div>
@@ -157,11 +157,11 @@ function FieldRow({
 }) {
   if (!value) return null;
   return (
-    <div className="flex items-start gap-2.5 py-1.5">
-      {Icon && <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />}
+    <div className="flex items-start gap-2.5 py-2 sm:py-1.5">
+      {Icon && <Icon className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400 sm:h-3.5 sm:w-3.5 dark:text-zinc-500" />}
       <div className="min-w-0 flex-1">
-        <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</div>
-        <div className={`mt-0.5 text-xs text-zinc-900 dark:text-zinc-100 ${mono ? 'break-all font-mono text-[11px]' : ''}`}>{value}</div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[10px] dark:text-zinc-500">{label}</div>
+        <div className={`mt-0.5 text-sm text-zinc-900 sm:text-xs dark:text-zinc-100 ${mono ? 'break-all font-mono text-xs sm:text-[11px]' : ''}`}>{value}</div>
       </div>
     </div>
   );
@@ -183,11 +183,11 @@ function ProfilePanel({
     <div
       className={`flex min-h-0 flex-col rounded-xl border border-zinc-200/90 bg-white/90 shadow-sm transition-shadow hover:shadow-md dark:border-zinc-700/80 dark:bg-zinc-900/50 ${className ?? ''}`}
     >
-      <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+      <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-3 sm:py-2.5 dark:border-zinc-800">
         <Icon className="h-4 w-4 shrink-0 text-orange-500 dark:text-orange-400" />
-        <span className="text-xs font-semibold tracking-tight text-zinc-900 dark:text-white">{title}</span>
+        <span className="text-sm font-semibold tracking-tight text-zinc-900 sm:text-xs dark:text-white">{title}</span>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-0 px-4 py-2">{children}</div>
+      <div className="flex min-h-0 flex-1 flex-col gap-0 px-4 py-3 sm:py-2">{children}</div>
     </div>
   );
 }
@@ -345,16 +345,16 @@ export default function EmployeeProfile({
   return (
     <div className="box-border flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
       {/* ── Hero header ── */}
-      <div className="shrink-0 border-b border-zinc-200/60 bg-gradient-to-r from-orange-50/60 via-white to-blue-50/40 px-4 py-5 sm:px-6 sm:py-6 dark:border-zinc-800 dark:from-zinc-900/60 dark:via-zinc-950 dark:to-zinc-900/60">
-        <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:gap-5">
-          {/* Avatar — large */}
+      <div className="shrink-0 border-b border-zinc-200/60 bg-gradient-to-r from-orange-50/60 via-white to-blue-50/40 px-4 py-4 sm:px-6 sm:py-6 dark:border-zinc-800 dark:from-zinc-900/60 dark:via-zinc-950 dark:to-zinc-900/60">
+        <div className="flex flex-row items-center gap-4 sm:gap-5">
+          {/* Avatar */}
           <div className="group relative shrink-0">
             <div className="rounded-full ring-4 ring-white/80 dark:ring-zinc-900/80">
               <EmployeeAvatar
                 photoUrl={displayProfilePhotoUrl}
                 email={avatarEmail}
                 initials={avatarInitials}
-                className="h-20 w-20 text-2xl sm:h-24 sm:w-24 sm:text-3xl"
+                className="h-16 w-16 text-xl sm:h-24 sm:w-24 sm:text-3xl"
                 pixelSize={192}
               />
             </div>
@@ -384,39 +384,41 @@ export default function EmployeeProfile({
           </div>
 
           {/* Name & meta */}
-          <div className="flex flex-1 flex-col items-center gap-1.5 sm:items-start">
-            <h2 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
+          <div className="flex min-w-0 flex-1 flex-col gap-1 sm:gap-1.5">
+            <h2 className="truncate text-lg font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
               {displayName}
             </h2>
-            <p className="font-mono text-xs text-zinc-500 dark:text-zinc-400">{employeeEmail}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="truncate font-mono text-xs text-zinc-500 sm:text-xs dark:text-zinc-400">{employeeEmail}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:gap-2">
               {department && (
-                <Badge variant="outline" className="gap-1 border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-400">
+                <Badge variant="outline" className="gap-1 border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[10px] text-orange-700 sm:px-2 sm:text-xs dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-400">
                   <Building2 className="h-3 w-3" />
                   {department}
                 </Badge>
               )}
               {hubMeta?.jobTitle && (
-                <Badge variant="outline" className="gap-1 border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-400">
+                <Badge variant="outline" className="gap-1 border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700 sm:px-2 sm:text-xs dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-400">
                   <Briefcase className="h-3 w-3" />
                   {hubMeta.jobTitle}
                 </Badge>
               )}
               {master?.employee_id && (
-                <Badge variant="outline" className="gap-1 border-zinc-200 bg-zinc-50 font-mono text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
+                <Badge variant="outline" className="gap-1 border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-[10px] text-zinc-600 sm:px-2 sm:text-xs dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
                   <Hash className="h-3 w-3" />
                   {master.employee_id}
                 </Badge>
               )}
             </div>
           </div>
+        </div>
 
-          {/* Upload button — visible on mobile */}
+        {/* Mobile-only Change Photo button, below the hero row so it doesn't crowd the avatar+name. */}
+        <div className="mt-3 sm:hidden">
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-8 gap-1.5 text-[11px] sm:hidden"
+            className="h-8 w-full gap-1.5 text-[11px]"
             disabled={uploadingPhoto}
             onClick={() => fileInputRef.current?.click()}
           >
@@ -453,7 +455,7 @@ export default function EmployeeProfile({
           </div>
         )}
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 pb-2 sm:grid-cols-2 sm:gap-3">
           {/* Identity */}
           <ProfilePanel title="Identity" icon={User}>
             <FieldRow icon={User} label="Full Name" value={displayName === '—' ? null : displayName} />
@@ -479,16 +481,16 @@ export default function EmployeeProfile({
           <ProfilePanel title="Compensation" icon={Banknote}>
             <FieldRow icon={Banknote} label="Regular Rate" value={reg != null ? `${formatPHP(reg)} / hr` : null} />
             <FieldRow icon={Banknote} label="Overtime Rate" value={ot != null ? `${formatPHP(ot)} / hr` : null} />
-            <div className="border-t border-zinc-100 pt-2 dark:border-zinc-800">
-              <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+            <div className="border-t border-zinc-100 pt-2.5 sm:pt-2 dark:border-zinc-800">
+              <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[10px] dark:text-zinc-500">
                 USD → PHP (payroll)
               </div>
-              <p className="mt-1 font-mono text-xs text-zinc-700 dark:text-zinc-300">
+              <p className="mt-1 font-mono text-sm text-zinc-700 sm:text-xs dark:text-zinc-300">
                 ₱{usdToPhpRate.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 5 })} = $1 USD
               </p>
             </div>
             {!reg && !ot && (
-              <p className="py-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+              <p className="py-2 text-[11px] text-zinc-400 sm:text-[10px] dark:text-zinc-500">
                 No hourly rates set yet. Contact HR.
               </p>
             )}
@@ -497,10 +499,10 @@ export default function EmployeeProfile({
           {/* Bank Information */}
           <div className="col-span-1 sm:col-span-2">
             <div className="flex min-h-0 flex-col rounded-xl border border-zinc-200/90 bg-white/90 shadow-sm transition-shadow hover:shadow-md dark:border-zinc-700/80 dark:bg-zinc-900/50">
-              <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+              <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 sm:py-2.5 dark:border-zinc-800">
                 <div className="flex items-center gap-2">
                   <Landmark className="h-4 w-4 shrink-0 text-orange-500 dark:text-orange-400" />
-                  <span className="text-xs font-semibold tracking-tight text-zinc-900 dark:text-white">Bank Information</span>
+                  <span className="text-sm font-semibold tracking-tight text-zinc-900 sm:text-xs dark:text-white">Bank Information</span>
                 </div>
                 {onNavigateToSettings && (
                   <Button
@@ -520,74 +522,74 @@ export default function EmployeeProfile({
                 {bankInfo && (bankInfo.bank_name || bankInfo.account_number || bankInfo.alt_bank_name) ? (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {/* Primary Account */}
-                    <div className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-                      <div className="mb-2 flex items-center gap-1.5">
-                        <CreditCard className="h-3.5 w-3.5 text-zinc-500" />
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Primary Account</span>
+                    <div className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-4 sm:p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <div className="mb-2.5 flex items-center gap-1.5 sm:mb-2">
+                        <CreditCard className="h-4 w-4 text-zinc-500 sm:h-3.5 sm:w-3.5" />
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:text-[10px] dark:text-zinc-400">Primary Account</span>
                       </div>
-                      <div className="space-y-1.5">
+                      <div className="space-y-2 sm:space-y-1.5">
                         {bankInfo.bank_name && (
                           <div>
-                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Bank</div>
-                            <div className="text-xs font-medium text-zinc-900 dark:text-zinc-100">{bankInfo.bank_name}</div>
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Bank</div>
+                            <div className="text-sm font-medium text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.bank_name}</div>
                           </div>
                         )}
                         {bankInfo.account_holder_name && (
                           <div>
-                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Account Holder</div>
-                            <div className="text-xs text-zinc-900 dark:text-zinc-100">{bankInfo.account_holder_name}</div>
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Account Holder</div>
+                            <div className="text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.account_holder_name}</div>
                           </div>
                         )}
                         {bankInfo.account_number && (
                           <div>
-                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Account Number</div>
-                            <div className="font-mono text-xs text-zinc-900 dark:text-zinc-100">{maskAccountNumber(bankInfo.account_number)}</div>
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Account Number</div>
+                            <div className="font-mono text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{maskAccountNumber(bankInfo.account_number)}</div>
                           </div>
                         )}
                         {bankInfo.routing_number && (
                           <div>
-                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Routing Number</div>
-                            <div className="font-mono text-xs text-zinc-900 dark:text-zinc-100">{bankInfo.routing_number}</div>
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Routing Number</div>
+                            <div className="font-mono text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.routing_number}</div>
                           </div>
                         )}
                         {!bankInfo.bank_name && !bankInfo.account_number && (
-                          <p className="text-[10px] text-zinc-400">Not set</p>
+                          <p className="text-[11px] text-zinc-400 sm:text-[10px]">Not set</p>
                         )}
                       </div>
                     </div>
                     {/* Alternative Account */}
-                    <div className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-                      <div className="mb-2 flex items-center gap-1.5">
-                        <ShieldCheck className="h-3.5 w-3.5 text-zinc-500" />
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Alternative Account</span>
+                    <div className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-4 sm:p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <div className="mb-2.5 flex items-center gap-1.5 sm:mb-2">
+                        <ShieldCheck className="h-4 w-4 text-zinc-500 sm:h-3.5 sm:w-3.5" />
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:text-[10px] dark:text-zinc-400">Alternative Account</span>
                       </div>
-                      <div className="space-y-1.5">
+                      <div className="space-y-2 sm:space-y-1.5">
                         {bankInfo.alt_bank_name && (
                           <div>
-                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Bank</div>
-                            <div className="text-xs font-medium text-zinc-900 dark:text-zinc-100">{bankInfo.alt_bank_name}</div>
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Bank</div>
+                            <div className="text-sm font-medium text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.alt_bank_name}</div>
                           </div>
                         )}
                         {bankInfo.alt_account_holder_name && (
                           <div>
-                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Account Holder</div>
-                            <div className="text-xs text-zinc-900 dark:text-zinc-100">{bankInfo.alt_account_holder_name}</div>
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Account Holder</div>
+                            <div className="text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.alt_account_holder_name}</div>
                           </div>
                         )}
                         {bankInfo.alt_account_number && (
                           <div>
-                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Account Number</div>
-                            <div className="font-mono text-xs text-zinc-900 dark:text-zinc-100">{maskAccountNumber(bankInfo.alt_account_number)}</div>
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Account Number</div>
+                            <div className="font-mono text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{maskAccountNumber(bankInfo.alt_account_number)}</div>
                           </div>
                         )}
                         {bankInfo.alt_routing_number && (
                           <div>
-                            <div className="text-[9px] font-medium uppercase tracking-wide text-zinc-400">Routing Number</div>
-                            <div className="font-mono text-xs text-zinc-900 dark:text-zinc-100">{bankInfo.alt_routing_number}</div>
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Routing Number</div>
+                            <div className="font-mono text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.alt_routing_number}</div>
                           </div>
                         )}
                         {!bankInfo.alt_bank_name && !bankInfo.alt_account_number && (
-                          <p className="text-[10px] text-zinc-400">Not set</p>
+                          <p className="text-[11px] text-zinc-400 sm:text-[10px]">Not set</p>
                         )}
                       </div>
                     </div>
@@ -620,21 +622,21 @@ export default function EmployeeProfile({
             <div className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-emerald-50/40 to-zinc-50/30 p-4 shadow-sm dark:border-zinc-700/80 dark:from-emerald-950/20 dark:to-zinc-950/40">
               <div className="mb-2.5 flex items-center gap-2">
                 <BadgeCheck className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                <span className="text-xs font-semibold text-zinc-900 dark:text-white">Data Sources</span>
+                <span className="text-sm font-semibold text-zinc-900 sm:text-xs dark:text-white">Data Sources</span>
               </div>
-              <p className="mb-3 text-[10px] leading-relaxed text-zinc-600 sm:text-[11px] dark:text-zinc-400">
+              <p className="mb-3 text-[11px] leading-relaxed text-zinc-600 sm:text-[11px] dark:text-zinc-400">
                 Profile data is assembled from three Supabase tables. Contact HR to update official records.
               </p>
-              <div className="grid grid-cols-1 gap-2 text-[10px] sm:grid-cols-3 sm:gap-3 sm:text-[11px]">
-                <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
+              <div className="grid grid-cols-1 gap-2.5 text-[11px] sm:grid-cols-3 sm:gap-3 sm:text-[11px]">
+                <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2.5 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
                   <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">global_master_list</span>
                   <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">Name, emails, start date, employee ID</p>
                 </div>
-                <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
+                <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2.5 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
                   <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">employee_hourly_rates</span>
                   <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">Department, regular &amp; OT rates</p>
                 </div>
-                <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
+                <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2.5 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
                   <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">hubstaff_hours</span>
                   <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">Job type, title, organization</p>
                 </div>

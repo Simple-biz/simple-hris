@@ -2,6 +2,13 @@ import { createSupabaseServiceRoleClient } from './server';
 import { insertAuditLog } from './audit-log';
 import { getAppSetting } from './app-settings';
 import { normEmail } from '@/lib/email/norm-email';
+import {
+  DEFAULT_DISPUTE_REASON_CODES,
+  type PabDisputeReasonCode,
+} from './pab-dispute-reasons';
+
+export { DEFAULT_DISPUTE_REASON_CODES };
+export type { PabDisputeReasonCode };
 
 export type PabDisputeStatus = 'pending' | 'approved' | 'denied';
 
@@ -70,26 +77,21 @@ export async function resolveUserRole(
   return roles[0];
 }
 
-export type PabDisputeReasonCode = {
-  code: string;
-  label: string;
-  min_hours: number;
-};
-
 const TABLE = 'pab_day_disputes';
 
 export async function getDisputeReasonCodes(): Promise<PabDisputeReasonCode[]> {
   const raw = await getAppSetting('pab_dispute_reason_codes');
-  if (!raw) return [];
+  if (!raw) return DEFAULT_DISPUTE_REASON_CODES;
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
+    if (!Array.isArray(parsed)) return DEFAULT_DISPUTE_REASON_CODES;
+    const filtered = parsed.filter(
       (r): r is PabDisputeReasonCode =>
         typeof r === 'object' && r !== null && typeof r.code === 'string',
     );
+    return filtered.length > 0 ? filtered : DEFAULT_DISPUTE_REASON_CODES;
   } catch {
-    return [];
+    return DEFAULT_DISPUTE_REASON_CODES;
   }
 }
 

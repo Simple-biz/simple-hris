@@ -15,17 +15,11 @@ import {
   Activity,
   ClipboardList,
   ChevronRight,
-  ChevronDown,
-  Building2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
-import {
-  parsePabScopeDepartmentKeys,
-  PAB_SCOPE_DEPARTMENT_KEYS_KEY,
-} from '@/lib/pab-period-settings';
 
 // ─── Current user (hardcoded until RBAC is implemented) ───────────────────────
 
@@ -34,7 +28,7 @@ const CURRENT_USER = { name: 'Fran M', role: 'Senior Admin' };
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
-type RightTab  = 'ot' | 'pab' | 'audit';
+type RightTab  = 'ot' | 'audit';
 
 // ─── Custom Toggle ────────────────────────────────────────────────────────────
 
@@ -96,17 +90,6 @@ const DEPARTMENTS = [
   { key: 'hogan_smith_law',  name: 'Hogan Smith Law' },
 ] as const;
 
-/**
- * Departments whose employees can receive PAB in Payroll Wizard (matches wizard tabs).
- * The manual/automatic PAB window filters Hubstaff dates for everyone in these groups — not per-department exclusions.
- */
-const PAB_DEPARTMENTS: { key: string; name: string }[] = [
-  ...DEPARTMENTS,
-  { key: 'smm', name: 'Social Media' },
-  { key: 'pm_team', name: 'PM Team' },
-  { key: 'client_va', name: 'Client VA' },
-  { key: 'site_building', name: 'Site Building' },
-];
 
 // ─── Payroll Rules ────────────────────────────────────────────────────────────
 
@@ -267,8 +250,6 @@ export default function SystemSettings() {
   );
   const [globalOtSuspended, setGlobalOtSuspended] = useState(false);
   const [saveStates, setSaveStates] = useState<Record<string, SaveState>>({});
-  /** Checked department keys for PAB scope; empty array = no one. Missing server value = all departments (see load). */
-  const [pabScopeKeys, setPabScopeKeys] = useState<string[]>(() => PAB_DEPARTMENTS.map((d) => d.key));
 
   // ── Right panel tab ──
   const [rightTab, setRightTab] = useState<RightTab>('ot');
@@ -295,10 +276,6 @@ export default function SystemSettings() {
         }),
       );
       setDeptOt(Object.fromEntries(deptResults));
-
-      const sk = await fetchSetting(PAB_SCOPE_DEPARTMENT_KEYS_KEY).catch(() => null);
-      const parsedScope = parsePabScopeDepartmentKeys(sk);
-      setPabScopeKeys(parsedScope === null ? PAB_DEPARTMENTS.map((d) => d.key) : parsedScope);
     };
     load();
   }, []);
@@ -361,29 +338,6 @@ export default function SystemSettings() {
       setSaveStates((p) => ({ ...p, ot_global_suspended: 'error' }));
       toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
       setTimeout(() => setSaveStates((p) => ({ ...p, ot_global_suspended: 'idle' })), 3000);
-    }
-  }, []);
-
-  const savePabScopeKeys = useCallback(async (keys: string[]) => {
-    setPabScopeKeys(keys);
-    setSaveStates((p) => ({ ...p, pab_scope: 'saving' }));
-    try {
-      await saveSetting(PAB_SCOPE_DEPARTMENT_KEYS_KEY, JSON.stringify(keys));
-      void postAuditLog({
-        action: 'settings.pab_period.scope',
-        resource: 'app_settings',
-        resource_id: PAB_SCOPE_DEPARTMENT_KEYS_KEY,
-        details: { keys },
-      });
-      setSaveStates((p) => ({ ...p, pab_scope: 'saved' }));
-      toast.success('PAB department scope saved', {
-        description: keys.length === 0 ? 'No departments — PAB hidden for all employees.' : `${keys.length} department(s) in scope.`,
-      });
-      setTimeout(() => setSaveStates((p) => ({ ...p, pab_scope: 'idle' })), 2000);
-    } catch (e) {
-      setSaveStates((p) => ({ ...p, pab_scope: 'error' }));
-      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
-      setTimeout(() => setSaveStates((p) => ({ ...p, pab_scope: 'idle' })), 3000);
     }
   }, []);
 
@@ -480,23 +434,6 @@ export default function SystemSettings() {
                     <p className="text-[10px] text-zinc-400 dark:text-zinc-600">Per-department OT toggles</p>
                   </div>
                   <ChevronRight className={cn('mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-300 dark:text-zinc-600', rightTab === 'ot' && 'text-red-400')} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRightTab('pab')}
-                  className={cn(
-                    'flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left transition-colors',
-                    rightTab === 'pab'
-                      ? 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/50 dark:bg-emerald-950/20'
-                      : 'border-zinc-200 bg-zinc-50/60 hover:border-emerald-200 hover:bg-emerald-50/30 dark:border-zinc-700 dark:bg-zinc-800/20 dark:hover:border-emerald-800/40',
-                  )}
-                >
-                  <CheckCircle2 className={cn('mt-0.5 h-3 w-3 flex-shrink-0', rightTab === 'pab' ? 'text-emerald-600' : 'text-zinc-400')} />
-                  <div className="min-w-0 flex-1">
-                    <p className={cn('text-[11px] font-medium', rightTab === 'pab' ? 'text-emerald-800 dark:text-emerald-300' : 'text-zinc-600 dark:text-zinc-400')}>Perfect Attendance (PAB)</p>
-                    <p className="text-[10px] text-zinc-400 dark:text-zinc-600">Auto-compute and period window</p>
-                  </div>
-                  <ChevronRight className={cn('mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-300 dark:text-zinc-600', rightTab === 'pab' && 'text-emerald-500')} />
                 </button>
               </div>
             </div>
@@ -634,109 +571,6 @@ export default function SystemSettings() {
                     <span className="text-[10px] text-zinc-400">OT excluded (suspended)</span>
                   </div>
                 </div>
-              </div>
-            </>
-          )}
-
-          {/* ── Perfect Attendance (PAB) tab ── */}
-          {rightTab === 'pab' && (
-            <>
-              <div className="flex flex-shrink-0 items-center justify-between border-b border-zinc-100 px-5 py-3 dark:border-zinc-800">
-                <div className="flex items-center gap-2.5">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 dark:bg-emerald-950/30">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-zinc-900 dark:text-white">Perfect Attendance Bonus (PAB)</p>
-                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
-                      Control automatic PA evaluation and the evaluation date range (Payroll Wizard and employee dashboard)
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-5 py-3">
-                <div className="rounded-xl border border-indigo-200/70 bg-indigo-50/40 p-3 text-[11px] text-zinc-600 dark:border-indigo-900/40 dark:bg-indigo-950/15 dark:text-zinc-400">
-                  The PAB period window (Auto / Custom + start/end dates) now lives in{' '}
-                  <span className="font-medium text-indigo-700 dark:text-indigo-300">Payroll Wizard → Additions</span> so it sits next to the calendar it drives.
-                  This panel keeps the department-scope picker only.
-                </div>
-
-                <details
-                  className={cn(
-                    'group mt-4 overflow-hidden rounded-xl border border-emerald-200/80 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/15',
-                    '[&_summary::-webkit-details-marker]:hidden',
-                  )}
-                >
-                  <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 transition-colors hover:bg-emerald-100/30 dark:hover:bg-emerald-950/25">
-                    <ChevronDown className="h-4 w-4 shrink-0 text-emerald-600 transition-transform group-open:rotate-180 dark:text-emerald-400" />
-                    <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-100/90 dark:bg-emerald-950/50">
-                      <Building2 className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" />
-                    </div>
-                    <div className="min-w-0 flex-1 text-left">
-                      <p className="text-sm font-semibold text-zinc-900 dark:text-white">Departments in scope</p>
-                      <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
-                        {pabScopeKeys.length === 0
-                          ? 'No departments selected — PAB calendar is off for everyone.'
-                          : pabScopeKeys.length >= PAB_DEPARTMENTS.length
-                            ? 'All departments in scope (same as default).'
-                            : `${pabScopeKeys.length} of ${PAB_DEPARTMENTS.length} selected — only those employees get PAB.`}
-                      </p>
-                    </div>
-                    {saveStates['pab_scope'] === 'saving' && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-zinc-400" />}
-                    {saveStates['pab_scope'] === 'saved' && <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />}
-                  </summary>
-                  <div className="border-t border-emerald-200/60 px-4 pb-4 pt-1 dark:border-emerald-900/40">
-                    <p className="mb-3 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
-                      Only checked departments are included in Payroll Wizard PAB evaluation and the employee PAB calendar
-                      (master list <span className="font-medium">Department</span> column).
-                    </p>
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void savePabScopeKeys(PAB_DEPARTMENTS.map((d) => d.key))}
-                        disabled={saveStates['pab_scope'] === 'saving'}
-                        className="rounded-md border border-emerald-200 bg-white px-2.5 py-1 text-[10px] font-medium text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:bg-zinc-900 dark:text-emerald-200 dark:hover:bg-emerald-950/40"
-                      >
-                        Select all
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void savePabScopeKeys([])}
-                        disabled={saveStates['pab_scope'] === 'saving'}
-                        className="rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-[10px] font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800/80"
-                      >
-                        Clear all
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {PAB_DEPARTMENTS.map((dept) => (
-                        <label
-                          key={dept.key}
-                          className="flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-200/90 bg-white/90 px-2.5 py-2 dark:border-zinc-700 dark:bg-zinc-900/50"
-                        >
-                          <input
-                            type="checkbox"
-                            className="h-3.5 w-3.5 rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500 dark:border-zinc-600 dark:bg-zinc-900"
-                            checked={pabScopeKeys.includes(dept.key)}
-                            onChange={(e) => {
-                              const next = e.target.checked
-                                ? [...new Set([...pabScopeKeys, dept.key])]
-                                : pabScopeKeys.filter((k) => k !== dept.key);
-                              void savePabScopeKeys(next);
-                            }}
-                          />
-                          <span className="text-[11px] font-medium text-zinc-800 dark:text-zinc-200">{dept.name}</span>
-                        </label>
-                      ))}
-                    </div>
-                    <p className="mt-3 text-[10px] text-zinc-500 dark:text-zinc-500">
-                      Employees still need PH rates in Supabase for PAB to pay. Unmapped department strings do not match any key and are
-                      treated as out of scope when a restrict list is saved.
-                    </p>
-                  </div>
-                </details>
-
               </div>
             </>
           )}

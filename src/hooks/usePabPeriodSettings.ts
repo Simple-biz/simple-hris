@@ -18,7 +18,6 @@ export function usePabPeriodSettings() {
     end: null,
     overrides: new Map() as PabOverridesMap,
     activeMonth: null,
-    scopeDepartmentKeys: null,
   });
 
   const refresh = useCallback(async () => {
