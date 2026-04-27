@@ -8,6 +8,7 @@ import {
   Clock,
   FileText,
   Loader2,
+  Lock,
   RefreshCw,
   Send,
   XCircle,
@@ -21,6 +22,7 @@ import {
   type PabDisputeReasonCode,
 } from '@/lib/supabase/pab-dispute-reasons';
 import type { PabDayDisputeRow } from '@/lib/supabase/pab-day-disputes';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 import EmployeePabCalendar from './EmployeePabCalendar';
 
 type Prefill = {
@@ -76,6 +78,11 @@ export default function MyDisputes({
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Live "payroll is being processed" lock — when true, the form is disabled
+  // and a banner explains why. Subscribes to Supabase Realtime so updates
+  // from accounting (Lenny clicks Start/Stop) reach this dashboard instantly.
+  const { state: lockState } = useDispatchLock();
+  const dispatchLocked = lockState.locked;
 
   const [disputeDate, setDisputeDate] = useState<string>(() => todayIso());
   const [reason, setReason] = useState<string>('orphanage_visit');
@@ -182,6 +189,10 @@ export default function MyDisputes({
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
+      if (dispatchLocked) {
+        toast.error('Disputes are paused while accounting processes payroll');
+        return;
+      }
       if (!disputeDate) {
         toast.error('Pick a date for the dispute');
         return;
@@ -226,7 +237,16 @@ export default function MyDisputes({
         setSubmitting(false);
       }
     },
-    [disputeDate, reason, explanation, existingForSelectedDate, employeeEmail, employeeName, loadDisputes],
+    [
+      dispatchLocked,
+      disputeDate,
+      reason,
+      explanation,
+      existingForSelectedDate,
+      employeeEmail,
+      employeeName,
+      loadDisputes,
+    ],
   );
 
   const counts = useMemo(() => {
@@ -321,6 +341,24 @@ export default function MyDisputes({
               </p>
             </div>
 
+            {dispatchLocked && (
+              <motion.div
+                key="lock-banner"
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.25 }}
+                className="flex items-start gap-2 rounded-md border border-rose-300/70 bg-rose-50 px-2.5 py-2 text-[11px] text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-300"
+              >
+                <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                <div className="leading-snug">
+                  <strong className="font-semibold">Disputes are temporarily paused.</strong>{' '}
+                  Accounting is processing payroll right now. New disputes will reopen as soon as
+                  processing finishes — no action needed on your end.
+                </div>
+              </motion.div>
+            )}
+
             <div className="space-y-1.5">
               <label htmlFor="dispute-date" className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                 Date
@@ -407,14 +445,17 @@ export default function MyDisputes({
                 type="submit"
                 size="sm"
                 className="h-8 gap-1.5 bg-emerald-600 text-xs font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={submitting || !!existingForSelectedDate}
+                disabled={submitting || !!existingForSelectedDate || dispatchLocked}
+                title={dispatchLocked ? 'Disputes are paused — accounting is processing payroll' : undefined}
               >
                 {submitting ? (
                   <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                ) : dispatchLocked ? (
+                  <Lock className="size-3.5" aria-hidden />
                 ) : (
                   <Send className="size-3.5" aria-hidden />
                 )}
-                Submit
+                {dispatchLocked ? 'Locked' : 'Submit'}
               </Button>
             </div>
           </form>

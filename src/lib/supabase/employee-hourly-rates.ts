@@ -10,6 +10,15 @@ export type EmployeeHourlyRateRow = {
    *  employee_hourly_rates. When present this overrides the global_master_list
    *  department lookup entirely. */
   department: string | null;
+  /** Payment-dispatch fields, seeded from the All Dept payroll CSV. */
+  bank_preferred: string | null;
+  hurupay_email: string | null;
+  higlobe_email: string | null;
+  higlobe_account_name: string | null;
+  phone_number: string | null;
+  full_address: string | null;
+  city: string | null;
+  province_state: string | null;
 };
 
 type RawRow = Record<string, unknown>;
@@ -90,6 +99,50 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
     "dept",
     "Dept",
   ]);
+  const bank_preferred = getField(idx, [
+    "Bank Preferred",
+    "bank_preferred",
+    "Bank preferred",
+    "BankPreferred",
+  ]);
+  const hurupay_email = getField(idx, [
+    "Hurupay Email",
+    "hurupay_email",
+    "HuruPay Email Account",
+    "Hurupay Email Account",
+  ]);
+  const higlobe_email = getField(idx, [
+    "HiGlobe Email",
+    "higlobe_email",
+    "HiGlobe  Email",
+    "Higlobe Email",
+  ]);
+  const higlobe_account_name = getField(idx, [
+    "HiGlobe Account Name",
+    "higlobe_account_name",
+    "HiGlobe \nAccount Name",
+    "Higlobe Account Name",
+  ]);
+  const phone_number = getField(idx, [
+    "Phone Number",
+    "phone_number",
+    "phone",
+    "Phone",
+  ]);
+  const full_address = getField(idx, [
+    "Full Address",
+    "full_address",
+    "Full\nAddress",
+    "address",
+  ]);
+  const city = getField(idx, ["City", "city"]);
+  const province_state = getField(idx, [
+    "Province/State",
+    "province_state",
+    "Province /State",
+    "Province\n/State",
+    "province",
+  ]);
 
   return {
     work_email: toStr(work_email),
@@ -97,6 +150,14 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
     regular_rate: toStr(regular_rate),
     ot_rate: toStr(ot_rate),
     department: toStr(department),
+    bank_preferred: toStr(bank_preferred),
+    hurupay_email: toStr(hurupay_email),
+    higlobe_email: toStr(higlobe_email),
+    higlobe_account_name: toStr(higlobe_account_name),
+    phone_number: toStr(phone_number),
+    full_address: toStr(full_address),
+    city: toStr(city),
+    province_state: toStr(province_state),
   };
 }
 

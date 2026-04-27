@@ -14,6 +14,7 @@ import SystemSettings from './components/SystemSettings';
 import LeaveRequestsPanel from './components/LeaveRequestsPanel';
 import PabDisputeQueue from './components/payroll/PabDisputeQueue';
 import OrphanageVisits from './components/payroll/OrphanageVisits';
+import PayrollDispatch from './components/payroll-clerk/PayrollDispatch';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 
@@ -90,6 +91,8 @@ export default function App() {
             </p>
           </div>
         );
+      case 'payment-dispatch':
+        return <PayrollDispatch />;
       case 'disputes':
         return <PabDisputeQueue />;
       case 'orphanage-visits':

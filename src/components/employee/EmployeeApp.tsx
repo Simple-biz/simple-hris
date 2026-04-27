@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 import EmployeeSidebar from './EmployeeSidebar';
 import EmployeeDashboard from './EmployeeDashboard';
 import EmployeeProfile from './EmployeeProfile';
@@ -11,9 +12,11 @@ import EmployeeLeaves from './EmployeeLeaves';
 import EmployeeOrphanageVisits from './EmployeeOrphanageVisits';
 import EmployeeSettings from './EmployeeSettings';
 import MyDisputes from './MyDisputes';
+import PayrollLockBanner from './PayrollLockBanner';
 import { Toaster } from '@/components/ui/sonner';
-import { Clock, Menu } from 'lucide-react';
+import { Clock, Lock, Menu, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
@@ -47,6 +50,34 @@ export default function EmployeeApp() {
   const [employeeName, setEmployeeName] = useState<string | null>(null);
   const [employeeDepartment, setEmployeeDepartment] = useState<string | null>(null);
   const [employeeId, setEmployeeId] = useState<string | null>(null);
+
+  // Live payroll-processing lock — drives the global banner, sidebar lock
+  // indicator, and one-time toast notifications when the state flips.
+  const { state: lockState, loading: lockLoading } = useDispatchLock();
+  const previousLocked = useRef<boolean | null>(null);
+
+  // Detect transitions (only after first hydration so we don't toast on mount).
+  useEffect(() => {
+    if (lockLoading) return;
+    const current = lockState.locked;
+    const previous = previousLocked.current;
+    if (previous != null && previous !== current) {
+      if (current) {
+        toast.error('Payroll processing started', {
+          icon: <Lock className="h-4 w-4 text-rose-500" />,
+          description: 'Disputes are temporarily paused while accounting runs payroll.',
+          duration: 6000,
+        });
+      } else {
+        toast.success('Payroll processing finished', {
+          icon: <Unlock className="h-4 w-4 text-emerald-500" />,
+          description: 'You can file new disputes again.',
+          duration: 5000,
+        });
+      }
+    }
+    previousLocked.current = current;
+  }, [lockState.locked, lockLoading]);
 
   const emailFromQuery = searchParams.get('email');
 
@@ -229,6 +260,7 @@ export default function EmployeeApp() {
         employeeId={employeeId || undefined}
         employeeEmail={employeeEmail}
         profilePhotoUrl={profilePhotoUrl}
+        payrollLocked={lockState.locked}
       />
       <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-orange-100 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-blue-950/60 dark:bg-[#0d1117]/95 md:hidden">
@@ -248,6 +280,7 @@ export default function EmployeeApp() {
             Employee
           </span>
         </header>
+        <PayrollLockBanner state={lockState} />
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
