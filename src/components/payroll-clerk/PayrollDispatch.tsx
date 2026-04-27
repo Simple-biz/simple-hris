@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -158,13 +158,16 @@ export default function PayrollDispatch() {
   }, [pending]);
 
   const totalPending = pending.length;
-  const totalSent = paid.length;
-  const totalVolumeUSD = useMemo(
-    () => pending.reduce((sum, r) => sum + (r.amountUSD ?? 0), 0),
-    [pending],
+  // "Sent" counts only rows that actually went through (status='paid'). Rows
+  // logged with Threshold / Problem are excluded so the headline doesn't lie.
+  const paidRows = useMemo(() => paid.filter((p) => p.status === 'paid'), [paid]);
+  const totalSent = paidRows.length;
+  const totalPaidUSD = useMemo(
+    () => paidRows.reduce((sum, r) => sum + (r.amount_usd ?? 0), 0),
+    [paidRows],
   );
-  const knownAmountCount = useMemo(
-    () => pending.filter((r) => r.amountUSD != null).length,
+  const totalPendingUSD = useMemo(
+    () => pending.reduce((sum, r) => sum + (r.amountUSD ?? 0), 0),
     [pending],
   );
 
@@ -175,6 +178,17 @@ export default function PayrollDispatch() {
     }
     return [];
   }, [pending, activeTab]);
+
+  // Stable references so React.memo on ProcessorQueue / QueueRowItem actually
+  // skips re-renders when only sibling state changes (e.g. opening Mark Paid
+  // dialog). Without these the inline arrows force a full re-render of all
+  // ~1000 rows on every dialog open.
+  const handleOpenMarkPaid = useCallback((row: QueueRow) => {
+    setMarkPaidRow(row);
+  }, []);
+  const handleCloseMarkPaid = useCallback(() => {
+    setMarkPaidRow(null);
+  }, []);
 
   const handleConfirmPaid = async (payload: MarkPaidPayload) => {
     const row = pending.find((r) => r.id === payload.rowId);
@@ -198,19 +212,30 @@ export default function PayrollDispatch() {
           recipient_name: row.name,
           processor: row.processor,
           bank_preferred_raw: row.bankPreferredRaw,
+          recipient_preferred_bank: payload.recipientPreferredBank || null,
+          recipient_account_number: payload.recipientAccountNumber || null,
+          recipient_account_holder: payload.recipientAccountHolder || null,
+          recipient_swift_code: payload.recipientSwiftCode || null,
           amount_usd: row.amountUSD,
           amount_php: row.amountPHP,
           transaction_id: payload.transactionId,
           bank_used: payload.bankUsed,
           sent_date: payload.sentDate,
           arrival_date: payload.arrivalDate || null,
+          status: payload.status,
+          note: payload.note || null,
         }),
       });
       const json = (await res.json()) as { row?: unknown; error?: string };
       if (!res.ok || json.error) {
         throw new Error(json.error ?? 'Could not log dispatch');
       }
-      toast.success(`${row.name} marked paid`, { icon: '✨' });
+      toast.success(
+        payload.status === 'paid'
+          ? `${row.name} marked paid`
+          : `${row.name} logged · ${payload.status.replace('_', ' ')}`,
+        { icon: payload.status === 'paid' ? '✨' : '📝' },
+      );
       // Re-pull queue + history so paid count + persistence are accurate.
       void refresh();
     } catch (e) {
@@ -231,7 +256,7 @@ export default function PayrollDispatch() {
       <ProcessorQueue
         processor={activeTab === 'all' ? null : activeTab}
         rows={visibleRows}
-        onMarkPaid={(row) => setMarkPaidRow(row)}
+        onMarkPaid={handleOpenMarkPaid}
       />
     );
   };
@@ -315,13 +340,24 @@ export default function PayrollDispatch() {
             </div>
           </div>
         </motion.div>
+      </div>
 
-        {/* Hero stat strip */}
+      {/* ── Two-column layout: bank cards left, stats + table right ── */}
+      <div
+        className={cn(
+          'relative mt-4 flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4 sm:mt-6 sm:px-8 sm:pb-8',
+          // lg+ becomes a 2-col / 2-row grid: banks span the left column full
+          // height, stats top-right, table bottom-right.
+          'lg:grid lg:grid-cols-[260px_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-4',
+        )}
+      >
+        {/* RIGHT TOP — Hero stats. Order 1 on mobile so stats sit above
+            everything else. lg: top-right cell. */}
         <motion.div
           variants={containerStagger}
           initial="hidden"
           animate="visible"
-          className="mt-4 grid grid-cols-3 gap-2 sm:mt-5 sm:gap-4"
+          className="order-1 grid grid-cols-3 gap-2 sm:gap-4 lg:order-none lg:col-start-2 lg:row-start-1"
         >
           <HeroStat
             tone="orange"
@@ -339,89 +375,94 @@ export default function PayrollDispatch() {
           />
           <HeroStat
             tone="violet"
-            label="Volume"
-            value={knownAmountCount > 0 ? totalVolumeUSD : null}
+            label="Paid"
+            value={totalPaidUSD}
             sub={
-              knownAmountCount === 0
-                ? 'awaiting pay calc'
-                : knownAmountCount < totalPending
-                  ? `${knownAmountCount} of ${totalPending} priced`
-                  : 'all priced'
+              totalSent === 0
+                ? 'no payments logged yet'
+                : totalPendingUSD > 0
+                  ? `$${Math.round(totalPendingUSD).toLocaleString('en-US')} still owed`
+                  : `all paid · ${totalSent} dispatch${totalSent === 1 ? '' : 'es'}`
             }
             Icon={Coins}
             currency
           />
         </motion.div>
-      </div>
 
-      {/* ── Processor cards ── */}
-      <div className="relative shrink-0 px-4 pt-4 sm:px-8 sm:pt-6">
-        <div className="mb-2.5 flex items-center justify-between">
-          <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-            Filter by processor
-          </h2>
-          <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-            <AnimatedNumber value={visibleRows.length} /> in view
-          </span>
+        {/* LEFT — Bank cards (filter rail). Order 2 on mobile (between stats
+            and table); spans full height of left column on lg. */}
+        <div className="order-2 flex min-h-0 flex-col gap-2 lg:order-none lg:col-start-1 lg:row-span-2 lg:row-start-1">
+          <div className="flex shrink-0 items-center justify-between px-1">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+              Filter by processor
+            </h2>
+            <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+              <AnimatedNumber value={visibleRows.length} /> in view
+            </span>
+          </div>
+          <motion.div
+            variants={containerStagger}
+            initial="hidden"
+            animate="visible"
+            className={cn(
+              // Mobile: 2-col grid pack; sm: 4-col; lg: stack vertically inside
+              // the narrow left column.
+              'grid grid-cols-2 gap-1.5 sm:grid-cols-4 sm:gap-2 lg:grid-cols-1 lg:gap-2',
+              // Allow the rail to scroll independently of the table on lg.
+              'lg:overflow-y-auto lg:pr-1',
+            )}
+          >
+            <motion.div variants={itemPop}>
+              <ProcessorCard
+                id="all"
+                label="All pending"
+                subtitle={ALL_VISUAL.blurb}
+                count={totalPending}
+                Icon={ALL_VISUAL.Icon}
+                accent={ALL_VISUAL.accent}
+                glow={ALL_VISUAL.glow}
+                active={activeTab === 'all'}
+                onClick={() => setActiveTab('all')}
+                iconOnlyFallback
+              />
+            </motion.div>
+            {PROCESSORS.map((p) => {
+              const v = PROCESSOR_VISUALS[p.id];
+              return (
+                <motion.div key={p.id} variants={itemPop}>
+                  <ProcessorCard
+                    id={p.id}
+                    label={p.label}
+                    subtitle={v.blurb}
+                    count={counts[p.id] ?? 0}
+                    Icon={v.Icon}
+                    accent={v.accent}
+                    glow={v.glow}
+                    active={activeTab === p.id}
+                    onClick={() => setActiveTab(p.id)}
+                  />
+                </motion.div>
+              );
+            })}
+            <motion.div variants={itemPop}>
+              <ProcessorCard
+                id="history"
+                label="History"
+                subtitle={HISTORY_VISUAL.blurb}
+                count={totalSent}
+                Icon={HISTORY_VISUAL.Icon}
+                accent={HISTORY_VISUAL.accent}
+                glow={HISTORY_VISUAL.glow}
+                active={activeTab === 'history'}
+                onClick={() => setActiveTab('history')}
+                iconOnlyFallback
+              />
+            </motion.div>
+          </motion.div>
         </div>
-        <motion.div
-          variants={containerStagger}
-          initial="hidden"
-          animate="visible"
-          className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 sm:gap-2 lg:grid-cols-8"
-        >
-          <motion.div variants={itemPop}>
-            <ProcessorCard
-              id="all"
-              label="All pending"
-              subtitle={ALL_VISUAL.blurb}
-              count={totalPending}
-              Icon={ALL_VISUAL.Icon}
-              accent={ALL_VISUAL.accent}
-              glow={ALL_VISUAL.glow}
-              active={activeTab === 'all'}
-              onClick={() => setActiveTab('all')}
-              iconOnlyFallback
-            />
-          </motion.div>
-          {PROCESSORS.map((p) => {
-            const v = PROCESSOR_VISUALS[p.id];
-            return (
-              <motion.div key={p.id} variants={itemPop}>
-                <ProcessorCard
-                  id={p.id}
-                  label={p.label}
-                  subtitle={v.blurb}
-                  count={counts[p.id] ?? 0}
-                  Icon={v.Icon}
-                  accent={v.accent}
-                  glow={v.glow}
-                  active={activeTab === p.id}
-                  onClick={() => setActiveTab(p.id)}
-                />
-              </motion.div>
-            );
-          })}
-          <motion.div variants={itemPop}>
-            <ProcessorCard
-              id="history"
-              label="History"
-              subtitle={HISTORY_VISUAL.blurb}
-              count={totalSent}
-              Icon={HISTORY_VISUAL.Icon}
-              accent={HISTORY_VISUAL.accent}
-              glow={HISTORY_VISUAL.glow}
-              active={activeTab === 'history'}
-              onClick={() => setActiveTab('history')}
-              iconOnlyFallback
-            />
-          </motion.div>
-        </motion.div>
-      </div>
 
-      {/* ── Body ── */}
-      <div className="relative mt-4 min-h-0 flex-1 overflow-hidden px-4 pb-4 sm:mt-6 sm:px-8 sm:pb-8">
-        <div className="relative h-full overflow-hidden rounded-2xl border border-orange-100/80 bg-white/90 shadow-[0_8px_28px_-12px_rgba(255,138,76,0.18)] backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80">
+        {/* RIGHT BOTTOM — Table body. Order 3 on mobile, bottom-right cell on lg. */}
+        <div className="relative order-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-orange-100/80 bg-white/90 shadow-[0_8px_28px_-12px_rgba(255,138,76,0.18)] backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80 lg:order-none lg:col-start-2 lg:row-start-2">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab + (loading || !hydrated ? '-loading' : error ? '-error' : !cycleReady ? '-locked' : '-ok')}
@@ -437,7 +478,7 @@ export default function PayrollDispatch() {
         </div>
       </div>
 
-      <MarkPaidDialog row={markPaidRow} onClose={() => setMarkPaidRow(null)} onConfirm={handleConfirmPaid} />
+      <MarkPaidDialog row={markPaidRow} onClose={handleCloseMarkPaid} onConfirm={handleConfirmPaid} />
       <LockToggleConfirmDialog
         open={confirmingLockToggle}
         locked={lockState.locked}

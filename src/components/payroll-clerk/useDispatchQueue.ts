@@ -71,7 +71,14 @@ async function loadAll(signal?: AbortSignal): Promise<{
     paid = dispatchJson.rows ?? [];
   }
 
-  const paidEmails = new Set(paid.map((p) => p.recipient_email.trim().toLowerCase()));
+  // Only `status='paid'` rows lock a recipient out of the pending queue —
+  // Threshold and Problem rows leave the person available for retry, since
+  // money never actually moved for those.
+  const paidEmails = new Set(
+    paid
+      .filter((p) => p.status === 'paid')
+      .map((p) => p.recipient_email.trim().toLowerCase()),
+  );
   const allQueue = buildQueueFromRates(ratesJson.rows ?? [], payJson.byEmail ?? {});
   const pendingQueue = allQueue.filter((r) => !paidEmails.has(r.id));
 

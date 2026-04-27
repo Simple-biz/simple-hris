@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, Copy, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -99,10 +99,15 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-export default function ProcessorQueue({ processor, rows, onMarkPaid }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  // Stable toggle so memoized rows aren't invalidated on every parent render.
+  const handleToggleExpand = useCallback((id: string) => {
+    setExpanded((prev) => (prev === id ? null : id));
+  }, []);
 
   // True while the user is still typing (or the debounce timer is in flight).
   const isSearching = query.trim() !== debouncedQuery.trim();
@@ -226,294 +231,17 @@ export default function ProcessorQueue({ processor, rows, onMarkPaid }: Processo
               className="divide-y divide-orange-100/70 dark:divide-zinc-800"
             >
               <AnimatePresence initial={false}>
-                {filtered.map((row) => {
-                  const isOpen = expanded === row.id;
-                  const detailFields =
-                    PROCESSORS.find((p) => p.id === row.processor)?.detailFields ?? ['email'];
-                  return (
-                    <motion.li
-                      key={row.id}
-                      layout
-                      variants={{
-                        hidden: { opacity: 0, y: 6 },
-                        visible: {
-                          opacity: 1,
-                          y: 0,
-                          transition: { type: 'spring' as const, stiffness: 320, damping: 26 },
-                        },
-                      }}
-                      exit={{
-                        opacity: 0,
-                        x: 60,
-                        scale: 0.96,
-                        transition: { duration: 0.22 },
-                      }}
-                      className="bg-white/90 backdrop-blur-sm transition-colors hover:bg-orange-50/40 dark:bg-zinc-950/90 dark:hover:bg-zinc-900/50"
-                    >
-                      {/* Mobile: stacked card layout */}
-                      <div className="flex flex-col gap-2.5 px-3 py-3 md:hidden">
-                        <div className="flex items-start gap-2.5">
-                          <div
-                            className={cn(
-                              'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-[11px] font-bold text-white shadow-sm',
-                              avatarColors(row.id),
-                            )}
-                            aria-hidden
-                          >
-                            {initials(row.name)}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setExpanded(isOpen ? null : row.id)}
-                            className="flex min-w-0 flex-1 items-start justify-between gap-2 text-left"
-                            aria-expanded={isOpen}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-1">
-                                <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                                  {row.name}
-                                </span>
-                                <motion.span
-                                  animate={{ rotate: isOpen ? 180 : 0 }}
-                                  transition={{ duration: 0.2 }}
-                                  className="shrink-0 text-zinc-400"
-                                >
-                                  <ChevronDown className="h-3.5 w-3.5" />
-                                </motion.span>
-                              </div>
-                              <div className="truncate font-mono text-[11px] text-zinc-500">
-                                {row.email}
-                              </div>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <div
-                                className={cn(
-                                  'font-mono text-sm font-semibold tabular-nums',
-                                  row.amountUSD == null
-                                    ? 'text-zinc-400'
-                                    : 'text-zinc-900 dark:text-zinc-100',
-                                )}
-                              >
-                                {formatUSD(row.amountUSD)}
-                              </div>
-                              <div
-                                className={cn(
-                                  'font-mono text-[10.5px] tabular-nums',
-                                  row.amountPHP == null
-                                    ? 'text-zinc-400'
-                                    : 'text-zinc-500 dark:text-zinc-400',
-                                )}
-                              >
-                                {formatPHP(row.amountPHP)}
-                              </div>
-                            </div>
-                          </button>
-                        </div>
-
-                        <div className="flex flex-wrap items-center justify-between gap-2 pl-[2.875rem]">
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-                            <BankCell processor={row.processor} bankPreferredRaw={row.bankPreferredRaw} />
-                            {row.totalHours != null && (
-                              <>
-                                <span className="text-zinc-300 dark:text-zinc-600">·</span>
-                                <span className="font-mono tabular-nums text-zinc-600 dark:text-zinc-300">
-                                  {row.totalHours.toFixed(2)} hrs
-                                </span>
-                              </>
-                            )}
-                            {row.otHours != null && row.otHours > 0 && (
-                              <>
-                                <span className="text-zinc-300 dark:text-zinc-600">·</span>
-                                <span className="font-mono font-semibold tabular-nums text-amber-600 dark:text-amber-400">
-                                  {row.otHours.toFixed(2)} OT
-                                </span>
-                              </>
-                            )}
-                          </div>
-                          <motion.div whileTap={{ scale: 0.94 }}>
-                            <Button
-                              size="sm"
-                              onClick={() => onMarkPaid(row)}
-                              className="h-8 gap-1.5 bg-gradient-to-br from-emerald-500 to-teal-600 px-3 text-[11px] font-medium text-white shadow-sm shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700"
-                            >
-                              <Send className="h-3 w-3" />
-                              Mark paid
-                            </Button>
-                          </motion.div>
-                        </div>
-                      </div>
-
-                      {/* Desktop: 5/6-column grid */}
-                      <div className={cn('hidden items-center gap-3 px-6 py-3 md:grid', rowGrid)}>
-                        {/* Avatar */}
-                        <div
-                          className={cn(
-                            'flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br text-[11px] font-bold text-white shadow-sm',
-                            avatarColors(row.id),
-                          )}
-                          aria-hidden
-                        >
-                          {initials(row.name)}
-                        </div>
-
-                        {/* Identity (name + email + chevron) */}
-                        <button
-                          type="button"
-                          onClick={() => setExpanded(isOpen ? null : row.id)}
-                          className="min-w-0 text-left"
-                          aria-expanded={isOpen}
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                              {row.name}
-                            </span>
-                            <motion.span
-                              animate={{ rotate: isOpen ? 180 : 0 }}
-                              transition={{ duration: 0.2 }}
-                              className="shrink-0 text-zinc-400"
-                            >
-                              <ChevronDown className="h-3.5 w-3.5" />
-                            </motion.span>
-                          </div>
-                          <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
-                            {row.email}
-                          </div>
-                        </button>
-
-                        {/* Bank column — only in "All pending" view */}
-                        {isAllView && (
-                          <div className="min-w-0">
-                            <BankCell processor={row.processor} bankPreferredRaw={row.bankPreferredRaw} />
-                          </div>
-                        )}
-
-                        {/* Current pay column — USD on top, PHP underneath */}
-                        <div className="text-right">
-                          <div
-                            className={cn(
-                              'font-mono text-sm font-semibold tabular-nums',
-                              row.amountUSD == null
-                                ? 'text-zinc-400'
-                                : 'text-zinc-900 dark:text-zinc-100',
-                            )}
-                          >
-                            {formatUSD(row.amountUSD)}
-                          </div>
-                          <div
-                            className={cn(
-                              'font-mono text-[11px] tabular-nums',
-                              row.amountPHP == null
-                                ? 'text-zinc-400'
-                                : 'text-zinc-500 dark:text-zinc-400',
-                            )}
-                          >
-                            {formatPHP(row.amountPHP)}
-                          </div>
-                        </div>
-
-                        {/* Hours column — total + OT */}
-                        <div className="text-right">
-                          <div
-                            className={cn(
-                              'font-mono text-sm font-semibold tabular-nums',
-                              row.totalHours == null
-                                ? 'text-zinc-400'
-                                : 'text-zinc-900 dark:text-zinc-100',
-                            )}
-                          >
-                            {row.totalHours != null ? row.totalHours.toFixed(2) : '—'}
-                            <span className="ml-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-                              {row.totalHours != null ? 'hrs' : ''}
-                            </span>
-                          </div>
-                          <div
-                            className={cn(
-                              'font-mono text-[11px] tabular-nums',
-                              row.otHours != null && row.otHours > 0
-                                ? 'text-amber-600 dark:text-amber-400'
-                                : 'text-zinc-400',
-                            )}
-                          >
-                            {row.otHours != null
-                              ? `${row.otHours.toFixed(2)} OT`
-                              : '—'}
-                          </div>
-                        </div>
-
-                        {/* Action column */}
-                        <motion.div whileTap={{ scale: 0.94 }} whileHover={{ scale: 1.03 }} className="justify-self-end">
-                          <Button
-                            size="sm"
-                            onClick={() => onMarkPaid(row)}
-                            className="h-8 w-[7.5rem] gap-1.5 bg-gradient-to-br from-emerald-500 to-teal-600 px-3 text-[11px] font-medium text-white shadow-sm shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700"
-                          >
-                            <Send className="h-3 w-3" />
-                            Mark paid
-                          </Button>
-                        </motion.div>
-                      </div>
-
-                      <AnimatePresence initial={false}>
-                        {isOpen && (
-                          <motion.div
-                            key="details"
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                            className="overflow-hidden border-t border-dashed border-orange-100 bg-gradient-to-b from-orange-50/40 to-white dark:border-zinc-800 dark:from-zinc-900/60 dark:to-zinc-950"
-                          >
-                            <div className="px-6 py-3">
-                              <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
-                                {detailFields.map((field) => {
-                                  const value =
-                                    field === 'email'
-                                      ? row.email
-                                      : ((row.details as Record<string, string | undefined>)[field] ?? '');
-                                  return (
-                                    <div key={field} className="flex items-start gap-2">
-                                      <div className="min-w-0 flex-1">
-                                        <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-                                          {FIELD_LABELS[field] ?? field}
-                                        </div>
-                                        <div
-                                          className={cn(
-                                            'mt-0.5 truncate text-xs text-zinc-900 dark:text-zinc-100',
-                                            field === 'phone_number' && 'font-mono',
-                                          )}
-                                        >
-                                          {value || '—'}
-                                        </div>
-                                      </div>
-                                      {value && (
-                                        <button
-                                          type="button"
-                                          onClick={() => copy(String(value))}
-                                          className="shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-orange-100 hover:text-orange-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-                                          aria-label="Copy"
-                                        >
-                                          <Copy className="h-3 w-3" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                              {row.bankPreferredRaw &&
-                                /^x?\d{3,5}$/i.test(row.bankPreferredRaw.trim()) && (
-                                  <div className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-400">
-                                    Account suffix in source:&nbsp;
-                                    <span className="font-mono">{row.bankPreferredRaw}</span>
-                                    &nbsp;· treat as manual wire
-                                  </div>
-                                )}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </motion.li>
-                  );
-                })}
+                {filtered.map((row) => (
+                  <QueueRowItem
+                    key={row.id}
+                    row={row}
+                    isOpen={expanded === row.id}
+                    isAllView={isAllView}
+                    rowGrid={rowGrid}
+                    onToggleExpand={handleToggleExpand}
+                    onMarkPaid={onMarkPaid}
+                  />
+                ))}
               </AnimatePresence>
             </motion.ul>
           )}
@@ -522,6 +250,290 @@ export default function ProcessorQueue({ processor, rows, onMarkPaid }: Processo
     </div>
   );
 }
+
+/**
+ * Single queue row, memoized so the table doesn't re-render every row when
+ * sibling parent state changes (e.g. opening Mark Paid dialog, the search
+ * input typing, etc). Heavy: at ~1000 rows this is the difference between
+ * a 16ms frame and a 200ms hitch when the modal opens.
+ */
+interface QueueRowItemProps {
+  row: QueueRow;
+  isOpen: boolean;
+  isAllView: boolean;
+  rowGrid: string;
+  onToggleExpand: (id: string) => void;
+  onMarkPaid: (row: QueueRow) => void;
+}
+
+const QueueRowItem = React.memo(function QueueRowItem({
+  row,
+  isOpen,
+  isAllView,
+  rowGrid,
+  onToggleExpand,
+  onMarkPaid,
+}: QueueRowItemProps) {
+  const detailFields =
+    PROCESSORS.find((p) => p.id === row.processor)?.detailFields ?? ['email'];
+
+  return (
+    <motion.li
+      variants={{
+        hidden: { opacity: 0, y: 6 },
+        visible: {
+          opacity: 1,
+          y: 0,
+          transition: { type: 'spring' as const, stiffness: 320, damping: 26 },
+        },
+      }}
+      exit={{
+        opacity: 0,
+        x: 60,
+        scale: 0.96,
+        transition: { duration: 0.22 },
+      }}
+      className="bg-white/90 backdrop-blur-sm transition-colors hover:bg-orange-50/40 dark:bg-zinc-950/90 dark:hover:bg-zinc-900/50"
+    >
+      {/* Mobile: stacked card layout */}
+      <div className="flex flex-col gap-2.5 px-3 py-3 md:hidden">
+        <div className="flex items-start gap-2.5">
+          <div
+            className={cn(
+              'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-[11px] font-bold text-white shadow-sm',
+              avatarColors(row.id),
+            )}
+            aria-hidden
+          >
+            {initials(row.name)}
+          </div>
+          <button
+            type="button"
+            onClick={() => onToggleExpand(row.id)}
+            className="flex min-w-0 flex-1 items-start justify-between gap-2 text-left"
+            aria-expanded={isOpen}
+          >
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1">
+                <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  {row.name}
+                </span>
+                <motion.span
+                  animate={{ rotate: isOpen ? 180 : 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="shrink-0 text-zinc-400"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </motion.span>
+              </div>
+              <div className="truncate font-mono text-[11px] text-zinc-500">{row.email}</div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div
+                className={cn(
+                  'font-mono text-sm font-semibold tabular-nums',
+                  row.amountUSD == null ? 'text-zinc-400' : 'text-zinc-900 dark:text-zinc-100',
+                )}
+              >
+                {formatUSD(row.amountUSD)}
+              </div>
+              <div
+                className={cn(
+                  'font-mono text-[10.5px] tabular-nums',
+                  row.amountPHP == null ? 'text-zinc-400' : 'text-zinc-500 dark:text-zinc-400',
+                )}
+              >
+                {formatPHP(row.amountPHP)}
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 pl-[2.875rem]">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+            <BankCell processor={row.processor} bankPreferredRaw={row.bankPreferredRaw} />
+            {row.totalHours != null && (
+              <>
+                <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                <span className="font-mono tabular-nums text-zinc-600 dark:text-zinc-300">
+                  {row.totalHours.toFixed(2)} hrs
+                </span>
+              </>
+            )}
+            {row.otHours != null && row.otHours > 0 && (
+              <>
+                <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                <span className="font-mono font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+                  {row.otHours.toFixed(2)} OT
+                </span>
+              </>
+            )}
+          </div>
+          <Button
+            size="sm"
+            onClick={() => onMarkPaid(row)}
+            className="h-8 gap-1.5 bg-gradient-to-br from-emerald-500 to-teal-600 px-3 text-[11px] font-medium text-white shadow-sm shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700 active:scale-95"
+          >
+            <Send className="h-3 w-3" />
+            Mark paid
+          </Button>
+        </div>
+      </div>
+
+      {/* Desktop: 5/6-column grid */}
+      <div className={cn('hidden items-center gap-3 px-6 py-3 md:grid', rowGrid)}>
+        <div
+          className={cn(
+            'flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br text-[11px] font-bold text-white shadow-sm',
+            avatarColors(row.id),
+          )}
+          aria-hidden
+        >
+          {initials(row.name)}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onToggleExpand(row.id)}
+          className="min-w-0 text-left"
+          aria-expanded={isOpen}
+        >
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              {row.name}
+            </span>
+            <motion.span
+              animate={{ rotate: isOpen ? 180 : 0 }}
+              transition={{ duration: 0.2 }}
+              className="shrink-0 text-zinc-400"
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+            </motion.span>
+          </div>
+          <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
+            {row.email}
+          </div>
+        </button>
+
+        {isAllView && (
+          <div className="min-w-0">
+            <BankCell processor={row.processor} bankPreferredRaw={row.bankPreferredRaw} />
+          </div>
+        )}
+
+        <div className="text-right">
+          <div
+            className={cn(
+              'font-mono text-sm font-semibold tabular-nums',
+              row.amountUSD == null ? 'text-zinc-400' : 'text-zinc-900 dark:text-zinc-100',
+            )}
+          >
+            {formatUSD(row.amountUSD)}
+          </div>
+          <div
+            className={cn(
+              'font-mono text-[11px] tabular-nums',
+              row.amountPHP == null ? 'text-zinc-400' : 'text-zinc-500 dark:text-zinc-400',
+            )}
+          >
+            {formatPHP(row.amountPHP)}
+          </div>
+        </div>
+
+        <div className="text-right">
+          <div
+            className={cn(
+              'font-mono text-sm font-semibold tabular-nums',
+              row.totalHours == null ? 'text-zinc-400' : 'text-zinc-900 dark:text-zinc-100',
+            )}
+          >
+            {row.totalHours != null ? row.totalHours.toFixed(2) : '—'}
+            <span className="ml-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+              {row.totalHours != null ? 'hrs' : ''}
+            </span>
+          </div>
+          <div
+            className={cn(
+              'font-mono text-[11px] tabular-nums',
+              row.otHours != null && row.otHours > 0
+                ? 'text-amber-600 dark:text-amber-400'
+                : 'text-zinc-400',
+            )}
+          >
+            {row.otHours != null ? `${row.otHours.toFixed(2)} OT` : '—'}
+          </div>
+        </div>
+
+        <Button
+          size="sm"
+          onClick={() => onMarkPaid(row)}
+          className="h-8 w-[7.5rem] justify-self-end gap-1.5 bg-gradient-to-br from-emerald-500 to-teal-600 px-3 text-[11px] font-medium text-white shadow-sm shadow-emerald-500/30 transition-transform hover:from-emerald-600 hover:to-teal-700 active:scale-95"
+        >
+          <Send className="h-3 w-3" />
+          Mark paid
+        </Button>
+      </div>
+
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            key="details"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden border-t border-dashed border-orange-100 bg-gradient-to-b from-orange-50/40 to-white dark:border-zinc-800 dark:from-zinc-900/60 dark:to-zinc-950"
+          >
+            <div className="px-6 py-3">
+              <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+                {detailFields.map((field) => {
+                  const value =
+                    field === 'email'
+                      ? row.email
+                      : ((row.details as Record<string, string | undefined>)[field] ?? '');
+                  return (
+                    <div key={field} className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+                          {FIELD_LABELS[field] ?? field}
+                        </div>
+                        <div
+                          className={cn(
+                            'mt-0.5 truncate text-xs text-zinc-900 dark:text-zinc-100',
+                            field === 'phone_number' && 'font-mono',
+                          )}
+                        >
+                          {value || '—'}
+                        </div>
+                      </div>
+                      {value && (
+                        <button
+                          type="button"
+                          onClick={() => copy(String(value))}
+                          className="shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-orange-100 hover:text-orange-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                          aria-label="Copy"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {row.bankPreferredRaw && /^x?\d{3,5}$/i.test(row.bankPreferredRaw.trim()) && (
+                <div className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-400">
+                  Account suffix in source:&nbsp;
+                  <span className="font-mono">{row.bankPreferredRaw}</span>
+                  &nbsp;· treat as manual wire
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.li>
+  );
+});
 
 function SearchBar({
   value,
@@ -675,3 +687,5 @@ function EmptyQueueState({ processorLabel }: { processorLabel: string | null }) 
     </motion.div>
   );
 }
+
+export default React.memo(ProcessorQueue);

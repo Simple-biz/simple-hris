@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Menu } from 'lucide-react';
 import { useTheme } from 'next-themes';
@@ -89,6 +89,15 @@ export default function PayrollClerkApp() {
     return [];
   }, [pending, activeTab]);
 
+  // Stable refs so the memoized ProcessorQueue + rows don't re-render when
+  // markPaidRow toggles.
+  const handleOpenMarkPaid = useCallback((row: QueueRow) => {
+    setMarkPaidRow(row);
+  }, []);
+  const handleCloseMarkPaid = useCallback(() => {
+    setMarkPaidRow(null);
+  }, []);
+
   const handleConfirmPaid = async (payload: MarkPaidPayload) => {
     const row = pending.find((r) => r.id === payload.rowId);
     if (!row) return;
@@ -109,12 +118,18 @@ export default function PayrollClerkApp() {
           recipient_name: row.name,
           processor: row.processor,
           bank_preferred_raw: row.bankPreferredRaw,
+          recipient_preferred_bank: payload.recipientPreferredBank || null,
+          recipient_account_number: payload.recipientAccountNumber || null,
+          recipient_account_holder: payload.recipientAccountHolder || null,
+          recipient_swift_code: payload.recipientSwiftCode || null,
           amount_usd: row.amountUSD,
           amount_php: row.amountPHP,
           transaction_id: payload.transactionId,
           bank_used: payload.bankUsed,
           sent_date: payload.sentDate,
           arrival_date: payload.arrivalDate || null,
+          status: payload.status,
+          note: payload.note || null,
         }),
       });
       const json = (await res.json()) as { error?: string };
@@ -172,7 +187,7 @@ export default function PayrollClerkApp() {
       <ProcessorQueue
         processor={activeTab === 'all' ? null : (activeTab as ProcessorId)}
         rows={visibleRows}
-        onMarkPaid={(row) => setMarkPaidRow(row)}
+        onMarkPaid={handleOpenMarkPaid}
       />
     );
   };
@@ -225,7 +240,7 @@ export default function PayrollClerkApp() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{renderContent()}</div>
       </main>
 
-      <MarkPaidDialog row={markPaidRow} onClose={() => setMarkPaidRow(null)} onConfirm={handleConfirmPaid} />
+      <MarkPaidDialog row={markPaidRow} onClose={handleCloseMarkPaid} onConfirm={handleConfirmPaid} />
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>
   );
