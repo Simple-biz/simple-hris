@@ -12,6 +12,7 @@ import {
   FileSpreadsheet,
   Globe2,
   History,
+  Loader2,
   Lock,
   Play,
   Send,
@@ -128,6 +129,7 @@ export default function PayrollDispatch() {
   const [pending, setPending] = useState<QueueRow[]>([]);
   const [markPaidRow, setMarkPaidRow] = useState<QueueRow | null>(null);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
+  const [togglingLock, setTogglingLock] = useState(false);
   // Lenny can only dispatch when she's "started processing" (i.e. lock=true)
   // and a Hubstaff cycle is loaded. The "ready" mental model from the meeting
   // maps cleanly onto: cycle exists AND processing started.
@@ -235,18 +237,24 @@ export default function PayrollDispatch() {
   };
 
   const handleLockToggle = async () => {
+    if (togglingLock) return;
+    setTogglingLock(true);
+    const goingLocked = !lockState.locked;
     try {
-      await setLocked(!lockState.locked);
+      await setLocked(goingLocked);
       toast.success(
-        lockState.locked
-          ? 'Processing stopped — employees can dispute again'
-          : 'Processing started — employee disputes are paused',
-        { icon: lockState.locked ? '🔓' : '🔒' },
+        goingLocked
+          ? 'Processing started — employee disputes are paused'
+          : 'Processing stopped — employees can dispute again',
+        { icon: goingLocked ? '🔒' : '🔓' },
       );
+      // Close after success so the dialog gracefully animates out alongside
+      // the parent state changes — feels like one motion, not two.
+      setConfirmingLockToggle(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not update lock');
     } finally {
-      setConfirmingLockToggle(false);
+      setTogglingLock(false);
     }
   };
 
@@ -300,30 +308,10 @@ export default function PayrollDispatch() {
             <PeriodPill period={period} />
             <div className="flex items-center gap-2">
               <ProcessingPill locked={lockState.locked} />
-              <Button
-                size="sm"
+              <ProcessingToggleButton
+                locked={lockState.locked}
                 onClick={() => setConfirmingLockToggle(true)}
-                className={cn(
-                  'h-8 gap-1.5 text-[11px] font-semibold shadow-sm',
-                  lockState.locked
-                    ? 'bg-gradient-to-br from-rose-500 to-red-600 text-white shadow-rose-500/30 hover:from-rose-600 hover:to-red-700'
-                    : 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700',
-                )}
-              >
-                {lockState.locked ? (
-                  <>
-                    <StopCircle className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Stop processing</span>
-                    <span className="sm:hidden">Stop</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Start processing</span>
-                    <span className="sm:hidden">Start</span>
-                  </>
-                )}
-              </Button>
+              />
             </div>
           </div>
         </motion.div>
@@ -453,6 +441,7 @@ export default function PayrollDispatch() {
       <LockToggleConfirmDialog
         open={confirmingLockToggle}
         locked={lockState.locked}
+        submitting={togglingLock}
         onClose={() => setConfirmingLockToggle(false)}
         onConfirm={handleLockToggle}
       />
@@ -484,6 +473,56 @@ function BackgroundOrbs() {
         className="absolute bottom-0 left-1/3 h-64 w-64 rounded-full bg-rose-200/30 blur-3xl dark:bg-fuchsia-700/10"
       />
     </div>
+  );
+}
+
+function ProcessingToggleButton({
+  locked,
+  onClick,
+}: {
+  locked: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      whileHover={{ y: -1 }}
+      whileTap={{ scale: 0.95 }}
+      transition={{ type: 'spring', stiffness: 380, damping: 26 }}
+      className={cn(
+        'relative inline-flex h-8 min-w-[7.25rem] items-center justify-center gap-1.5 overflow-hidden rounded-md px-3 text-[11px] font-semibold text-white shadow-sm transition-[box-shadow,background-image] duration-300',
+        locked
+          ? 'bg-gradient-to-br from-rose-500 to-red-600 shadow-rose-500/30 hover:from-rose-600 hover:to-red-700'
+          : 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700',
+      )}
+      aria-pressed={locked}
+    >
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span
+          key={locked ? 'stop' : 'start'}
+          initial={{ opacity: 0, y: 6, scale: 0.92 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -6, scale: 0.92 }}
+          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+          className="flex items-center gap-1.5"
+        >
+          {locked ? (
+            <>
+              <StopCircle className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Stop processing</span>
+              <span className="sm:hidden">Stop</span>
+            </>
+          ) : (
+            <>
+              <Play className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Start processing</span>
+              <span className="sm:hidden">Start</span>
+            </>
+          )}
+        </motion.span>
+      </AnimatePresence>
+    </motion.button>
   );
 }
 
@@ -639,17 +678,25 @@ function NoCycleState() {
 function LockToggleConfirmDialog({
   open,
   locked,
+  submitting,
   onClose,
   onConfirm,
 }: {
   open: boolean;
   locked: boolean;
+  submitting: boolean;
   onClose: () => void;
   onConfirm: () => void;
 }) {
   const isStarting = !locked;
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        // Don't allow dismissing the dialog while the toggle POST is in flight.
+        if (!o && !submitting) onClose();
+      }}
+    >
       <DialogContent className="sm:max-w-[440px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg">
@@ -675,20 +722,33 @@ function LockToggleConfirmDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
           <Button
             onClick={onConfirm}
+            disabled={submitting}
             className={cn(
-              'gap-2 text-white',
+              'gap-2 text-white transition-colors',
               isStarting
-                ? 'bg-emerald-600 hover:bg-emerald-700'
-                : 'bg-rose-600 hover:bg-rose-700',
+                ? 'bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/80'
+                : 'bg-rose-600 hover:bg-rose-700 disabled:bg-rose-600/80',
             )}
           >
-            {isStarting ? <Play className="h-4 w-4" /> : <StopCircle className="h-4 w-4" />}
-            {isStarting ? 'Start processing' : 'Stop processing'}
+            {submitting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : isStarting ? (
+              <Play className="h-4 w-4" />
+            ) : (
+              <StopCircle className="h-4 w-4" />
+            )}
+            {submitting
+              ? isStarting
+                ? 'Starting…'
+                : 'Stopping…'
+              : isStarting
+                ? 'Start processing'
+                : 'Stop processing'}
           </Button>
         </DialogFooter>
       </DialogContent>

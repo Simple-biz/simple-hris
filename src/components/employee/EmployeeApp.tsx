@@ -228,6 +228,7 @@ export default function EmployeeApp() {
             employeeName={employeeName}
             prefill={disputesPrefill}
             onPrefillConsumed={() => setDisputesPrefill(null)}
+            payrollLocked={lockState.locked}
           />
         );
       case 'orphanage-visits':

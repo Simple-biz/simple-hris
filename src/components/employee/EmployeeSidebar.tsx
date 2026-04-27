@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { motion } from 'motion/react';
 import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
@@ -135,7 +136,24 @@ export default function EmployeeSidebar({
                   )}
                 />
                 {item.label}
-                {activeTab === item.id && (
+                {item.id === 'disputes' && payrollLocked && (
+                  <motion.span
+                    initial={{ opacity: 0, scale: 0.6 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ type: 'spring', stiffness: 320, damping: 20 }}
+                    className={cn(
+                      'ml-auto flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide',
+                      activeTab === item.id
+                        ? 'border-rose-300 bg-rose-100 text-rose-800 dark:border-rose-500/40 dark:bg-rose-500/20 dark:text-rose-200'
+                        : 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300',
+                    )}
+                    aria-label="Disputes paused — payroll is being processed"
+                  >
+                    <Lock className="h-2.5 w-2.5" aria-hidden />
+                    Paused
+                  </motion.span>
+                )}
+                {activeTab === item.id && !(item.id === 'disputes' && payrollLocked) && (
                   <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70" />
                 )}
               </button>

@@ -13,7 +13,7 @@ import {
   Send,
   XCircle,
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -22,7 +22,6 @@ import {
   type PabDisputeReasonCode,
 } from '@/lib/supabase/pab-dispute-reasons';
 import type { PabDayDisputeRow } from '@/lib/supabase/pab-day-disputes';
-import { useDispatchLock } from '@/hooks/useDispatchLock';
 import EmployeePabCalendar from './EmployeePabCalendar';
 
 type Prefill = {
@@ -37,6 +36,8 @@ type MyDisputesProps = {
   prefill?: Prefill | null;
   /** Called once the prefill has been consumed so the parent can clear it. */
   onPrefillConsumed?: () => void;
+  /** Live "payroll being processed" flag from the parent shell. */
+  payrollLocked?: boolean;
 };
 
 const STATUS_BADGE: Record<string, string> = {
@@ -72,17 +73,17 @@ export default function MyDisputes({
   employeeName,
   prefill,
   onPrefillConsumed,
+  payrollLocked = false,
 }: MyDisputesProps) {
   const [reasonCodes, setReasonCodes] = useState<PabDisputeReasonCode[]>(DEFAULT_DISPUTE_REASON_CODES);
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  // Live "payroll is being processed" lock — when true, the form is disabled
-  // and a banner explains why. Subscribes to Supabase Realtime so updates
-  // from accounting (Lenny clicks Start/Stop) reach this dashboard instantly.
-  const { state: lockState } = useDispatchLock();
-  const dispatchLocked = lockState.locked;
+  // Live "payroll is being processed" lock — flows down from EmployeeApp's
+  // single useDispatchLock subscription. Updates instantly when Lenny flips
+  // the toggle in Payment Dispatch.
+  const dispatchLocked = payrollLocked;
 
   const [disputeDate, setDisputeDate] = useState<string>(() => todayIso());
   const [reason, setReason] = useState<string>('orphanage_visit');
@@ -341,23 +342,27 @@ export default function MyDisputes({
               </p>
             </div>
 
-            {dispatchLocked && (
-              <motion.div
-                key="lock-banner"
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.25 }}
-                className="flex items-start gap-2 rounded-md border border-rose-300/70 bg-rose-50 px-2.5 py-2 text-[11px] text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-300"
-              >
-                <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                <div className="leading-snug">
-                  <strong className="font-semibold">Disputes are temporarily paused.</strong>{' '}
-                  Accounting is processing payroll right now. New disputes will reopen as soon as
-                  processing finishes — no action needed on your end.
-                </div>
-              </motion.div>
-            )}
+            <AnimatePresence initial={false}>
+              {dispatchLocked && (
+                <motion.div
+                  key="lock-banner"
+                  initial={{ opacity: 0, height: 0, y: -4 }}
+                  animate={{ opacity: 1, height: 'auto', y: 0 }}
+                  exit={{ opacity: 0, height: 0, y: -4 }}
+                  transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+                  className="overflow-hidden"
+                >
+                  <div className="flex items-start gap-2 rounded-md border border-rose-300/70 bg-rose-50 px-2.5 py-2 text-[11px] text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-300">
+                    <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    <div className="leading-snug">
+                      <strong className="font-semibold">Disputes are temporarily paused.</strong>{' '}
+                      Accounting is processing payroll right now. New disputes will reopen as soon as
+                      processing finishes — no action needed on your end.
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div className="space-y-1.5">
               <label htmlFor="dispute-date" className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
