@@ -18,6 +18,7 @@ import {
   User,
   UserCircle,
   Settings,
+  Lock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,8 @@ interface EmployeeSidebarProps {
   employeeEmail?: string | null;
   /** Supabase profile photo URL when set. */
   profilePhotoUrl?: string | null;
+  /** True while payroll dispatch is locked (read-only / limited actions). */
+  payrollLocked?: boolean;
 }
 
 const navItems = [
@@ -58,6 +61,7 @@ export default function EmployeeSidebar({
   employeeId,
   employeeEmail = null,
   profilePhotoUrl = null,
+  payrollLocked = false,
 }: EmployeeSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
@@ -149,6 +153,12 @@ export default function EmployeeSidebar({
           mobileOpen ? 'translate-x-0' : '-translate-x-8 md:translate-x-0',
         )}
       >
+        {payrollLocked && (
+          <p className="mb-2 flex items-center gap-1.5 rounded-md border border-amber-200/80 bg-amber-50/90 px-2.5 py-1.5 text-[10px] leading-tight text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100/90">
+            <Lock className="h-3 w-3 shrink-0" aria-hidden />
+            Payroll is being processed. Some changes may be unavailable.
+          </p>
+        )}
         <ViewSwitcher email={employeeEmail} currentView="employee" />
         <button
           onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
