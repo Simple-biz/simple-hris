@@ -15,8 +15,8 @@ export const metadata: Metadata = {
   title: "Simple Accounting HRIS",
   description: "Dedicated accounting HRIS for payroll, reconciliation, and workforce operations",
   icons: {
-    icon: "/icon.svg",
-    shortcut: "/icon.svg",
+    icon: [{ url: "/favicon.png", type: "image/png" }],
+    shortcut: "/favicon.png",
     apple: "/favicon.png",
   },
 };

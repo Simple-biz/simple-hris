@@ -5,15 +5,25 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
+  Banknote,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
   ClipboardList,
   Clock,
+  FileSpreadsheet,
+  KeyRound,
+  Layers,
   Loader2,
   RefreshCw,
+  Search,
+  Settings,
+  ShieldCheck,
   Trash2,
+  UserCog,
+  Users,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -22,6 +32,120 @@ import type { AuditLogEntry } from '@/lib/supabase/audit-log';
 type SortKey = 'created_at' | 'action' | 'user_name';
 type SortDir = 'asc' | 'desc';
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+
+type CategoryId =
+  | 'all'
+  | 'settings'
+  | 'csv'
+  | 'employees'
+  | 'auth'
+  | 'rbac'
+  | 'leave'
+  | 'disputes'
+  | 'payment';
+
+interface CategoryDef {
+  id: CategoryId;
+  label: string;
+  /** Short label used inside the row badge so the category is visible at a glance. */
+  shortLabel: string;
+  Icon: React.ComponentType<{ className?: string }>;
+  /** Tailwind classes for the row-level badge (icon-tile + text). */
+  tone: { dot: string; chip: string };
+  /** Predicate matching action strings to this category. */
+  match: (action: string) => boolean;
+}
+
+/**
+ * Categories map raw `audit_log.action` strings to the dashboard surface
+ * where the action originated. Used both for the filter dropdown and for the
+ * inline category badge on each row.
+ */
+const CATEGORIES: CategoryDef[] = [
+  {
+    id: 'all',
+    label: 'All activity',
+    shortLabel: 'All',
+    Icon: Layers,
+    tone: { dot: 'bg-zinc-400', chip: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300' },
+    match: () => true,
+  },
+  {
+    id: 'settings',
+    label: 'System Settings',
+    shortLabel: 'Settings',
+    Icon: Settings,
+    tone: { dot: 'bg-violet-500', chip: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300' },
+    match: (a) => a.startsWith('settings.'),
+  },
+  {
+    id: 'csv',
+    label: 'CSV uploads',
+    shortLabel: 'CSV',
+    Icon: FileSpreadsheet,
+    tone: { dot: 'bg-blue-500', chip: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300' },
+    match: (a) => a.startsWith('csv.'),
+  },
+  {
+    id: 'employees',
+    label: 'Employee Management',
+    shortLabel: 'Employees',
+    Icon: Users,
+    tone: { dot: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' },
+    match: (a) =>
+      a.startsWith('employee.') &&
+      !a.startsWith('employee.login') &&
+      !a.startsWith('employee.password_reset'),
+  },
+  {
+    id: 'auth',
+    label: 'Authentication',
+    shortLabel: 'Auth',
+    Icon: KeyRound,
+    tone: { dot: 'bg-cyan-500', chip: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300' },
+    match: (a) => a.startsWith('employee.login') || a.startsWith('employee.password_reset'),
+  },
+  {
+    id: 'rbac',
+    label: 'Roles (RBAC)',
+    shortLabel: 'Roles',
+    Icon: ShieldCheck,
+    tone: { dot: 'bg-fuchsia-500', chip: 'bg-fuchsia-50 text-fuchsia-700 dark:bg-fuchsia-950/40 dark:text-fuchsia-300' },
+    match: (a) => a.startsWith('rbac.'),
+  },
+  {
+    id: 'leave',
+    label: 'Leave Management',
+    shortLabel: 'Leave',
+    Icon: UserCog,
+    tone: { dot: 'bg-lime-500', chip: 'bg-lime-50 text-lime-700 dark:bg-lime-950/40 dark:text-lime-300' },
+    match: (a) => a.startsWith('leave.'),
+  },
+  {
+    id: 'disputes',
+    label: 'PAB Disputes',
+    shortLabel: 'Disputes',
+    Icon: ClipboardList,
+    tone: { dot: 'bg-amber-500', chip: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' },
+    match: (a) => a.startsWith('pab_dispute.'),
+  },
+  {
+    id: 'payment',
+    label: 'Payment Dispatch',
+    shortLabel: 'Payment',
+    Icon: Banknote,
+    tone: { dot: 'bg-orange-500', chip: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300' },
+    match: (a) => a.startsWith('payment.') || a.startsWith('payroll.'),
+  },
+];
+
+/** First non-`all` category whose `match()` returns true; else `all`. */
+function categoryFromAction(action: string): CategoryDef {
+  for (const cat of CATEGORIES) {
+    if (cat.id !== 'all' && cat.match(action)) return cat;
+  }
+  return CATEGORIES[0];
+}
 
 async function loadAuditLog(limit = 500): Promise<AuditLogEntry[]> {
   const res = await fetch(`/api/audit-log?limit=${limit}`, { cache: 'no-store' });
@@ -65,6 +189,8 @@ export function formatActionLabel(action: string, details: Record<string, unknow
     }
     case 'csv.master.upload':
       return `Master list CSV replaced: ${details?.file ?? 'file'} (${details?.rows ?? '?'} rows)`;
+    case 'csv.rates.upload':
+      return `Rates CSV uploaded: ${details?.file ?? 'file'} (${details?.rows ?? '?'} rows)`;
     case 'csv.delete':
       return `CSV deleted: ${details?.file ?? details?.resource_id ?? 'file'}`;
     case 'employee.create':
@@ -111,8 +237,20 @@ export function formatActionLabel(action: string, details: Record<string, unknow
       return `PAB dispute approved: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
     case 'pab_dispute.denied':
       return `PAB dispute denied: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
+    case 'pab_dispute.edited':
+      return `PAB dispute edited: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
     case 'pab_dispute.withdrawn':
       return `PAB dispute withdrawn: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
+    case 'payment.dispatched': {
+      const recip = String(details?.recipient_email ?? '?');
+      const proc = String(details?.processor ?? '?');
+      const usd = details?.amount_usd != null ? `$${details.amount_usd}` : '';
+      return `Payment dispatched: ${recip} via ${proc}${usd ? ` (${usd})` : ''}`;
+    }
+    case 'payroll.dispatch.locked':
+      return `Payroll dispatch started — disputes paused`;
+    case 'payroll.dispatch.unlocked':
+      return `Payroll dispatch ended — disputes re-opened`;
     default:
       return action;
   }
@@ -144,7 +282,12 @@ function actionDot(action: string): string {
   if (action === 'pab_dispute.submitted') return 'bg-amber-500';
   if (action === 'pab_dispute.approved') return 'bg-green-600';
   if (action === 'pab_dispute.denied') return 'bg-rose-600';
+  if (action === 'pab_dispute.edited') return 'bg-yellow-500';
   if (action === 'pab_dispute.withdrawn') return 'bg-zinc-500';
+  if (action === 'payment.dispatched') return 'bg-orange-500';
+  if (action === 'payroll.dispatch.locked') return 'bg-rose-500';
+  if (action === 'payroll.dispatch.unlocked') return 'bg-emerald-500';
+  if (action === 'csv.rates.upload') return 'bg-sky-600';
   return 'bg-zinc-400';
 }
 
@@ -163,15 +306,29 @@ function PageBtn({ children, onClick, disabled }: { children: React.ReactNode; o
 
 function AuditRow({ entry }: { entry: AuditLogEntry }) {
   const details = entry.details as Record<string, unknown> | null;
+  const category = categoryFromAction(entry.action);
+  const CatIcon = category.Icon;
 
   return (
     <div className="flex items-start gap-3 rounded-lg border border-zinc-100 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
       <span className={cn('mt-1.5 h-2 w-2 flex-shrink-0 rounded-full', actionDot(entry.action))} />
 
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold leading-snug text-zinc-800 dark:text-zinc-100">
-          {formatActionLabel(entry.action, details)}
-        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
+              category.tone.chip,
+            )}
+            title={category.label}
+          >
+            <CatIcon className="h-2.5 w-2.5" />
+            {category.shortLabel}
+          </span>
+          <p className="text-xs font-semibold leading-snug text-zinc-800 dark:text-zinc-100">
+            {formatActionLabel(entry.action, details)}
+          </p>
+        </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400">{entry.user_name}</span>
           <span className="text-[9px] text-zinc-300 dark:text-zinc-600">·</span>
@@ -193,29 +350,6 @@ function AuditRow({ entry }: { entry: AuditLogEntry }) {
   );
 }
 
-const LEGEND = [
-  { dot: 'bg-violet-500', label: 'Payroll Rule' },
-  { dot: 'bg-red-500', label: 'Global OT' },
-  { dot: 'bg-orange-400', label: 'Dept OT' },
-  { dot: 'bg-blue-500', label: 'CSV Upload' },
-  { dot: 'bg-rose-500', label: 'CSV Deleted' },
-  { dot: 'bg-emerald-500', label: 'Employee Added' },
-  { dot: 'bg-red-600', label: 'Employee Deleted' },
-  { dot: 'bg-amber-500', label: 'Rate Change' },
-  { dot: 'bg-sky-500', label: 'Profile Edit' },
-  { dot: 'bg-orange-600', label: 'Suspended' },
-  { dot: 'bg-teal-500', label: 'Reinstated' },
-  { dot: 'bg-cyan-500', label: 'Login OK' },
-  { dot: 'bg-red-500', label: 'Login Fail' },
-  { dot: 'bg-indigo-400', label: 'Pwd Reset' },
-  { dot: 'bg-fuchsia-500', label: 'Role Granted' },
-  { dot: 'bg-pink-600', label: 'Role Revoked' },
-  { dot: 'bg-lime-500', label: 'Leave filed' },
-  { dot: 'bg-green-600', label: 'Leave approved' },
-  { dot: 'bg-rose-600', label: 'Leave rejected' },
-  { dot: 'bg-zinc-500', label: 'Leave cancelled' },
-] as const;
-
 export type AuditLogPanelProps = {
   /** System Settings only: show “OT Settings” and call when clicked */
   onNavigateToOtSettings?: () => void;
@@ -232,9 +366,58 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25);
+  const [categoryId, setCategoryId] = useState<CategoryId>('all');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  /**
+   * Total count per category across the *unfiltered* loaded set, so the
+   * dropdown options show counts the user can rely on even when something
+   * is already selected.
+   */
+  const counts = useMemo(() => {
+    const out: Record<CategoryId, number> = {
+      all: auditLogs.length,
+      settings: 0,
+      csv: 0,
+      employees: 0,
+      auth: 0,
+      rbac: 0,
+      leave: 0,
+      disputes: 0,
+      payment: 0,
+    };
+    for (const entry of auditLogs) {
+      const cat = categoryFromAction(entry.action);
+      if (cat.id !== 'all') out[cat.id] += 1;
+    }
+    return out;
+  }, [auditLogs]);
+
+  const filteredLogs = useMemo(() => {
+    const cat = CATEGORIES.find((c) => c.id === categoryId) ?? CATEGORIES[0];
+    const q = searchTerm.trim().toLowerCase();
+    return auditLogs.filter((entry) => {
+      if (cat.id !== 'all' && !cat.match(entry.action)) return false;
+      if (!q) return true;
+      // Match against label, action, user_name, user_role, and any string
+      // value inside `details` so e.g. searching by recipient email works.
+      const label = formatActionLabel(entry.action, entry.details).toLowerCase();
+      if (label.includes(q)) return true;
+      if (entry.action.toLowerCase().includes(q)) return true;
+      if (entry.user_name?.toLowerCase().includes(q)) return true;
+      if (entry.user_role?.toLowerCase().includes(q)) return true;
+      if (entry.details) {
+        for (const v of Object.values(entry.details)) {
+          if (typeof v === 'string' && v.toLowerCase().includes(q)) return true;
+          if (typeof v === 'number' && String(v).includes(q)) return true;
+        }
+      }
+      return false;
+    });
+  }, [auditLogs, categoryId, searchTerm]);
 
   const sortedLogs = useMemo(() => {
-    const arr = [...auditLogs];
+    const arr = [...filteredLogs];
     arr.sort((a, b) => {
       const av = (a[sortKey] ?? '') as string;
       const bv = (b[sortKey] ?? '') as string;
@@ -242,7 +425,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
       return sortDir === 'asc' ? cmp : -cmp;
     });
     return arr;
-  }, [auditLogs, sortKey, sortDir]);
+  }, [filteredLogs, sortKey, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(sortedLogs.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -251,7 +434,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
 
   useEffect(() => {
     setPage(1);
-  }, [sortKey, sortDir, pageSize, auditLogs.length]);
+  }, [sortKey, sortDir, pageSize, categoryId, searchTerm, auditLogs.length]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -389,45 +572,89 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">
-            <div className="mb-2 flex flex-shrink-0 flex-wrap items-center gap-x-4 gap-y-1">
-              {LEGEND.map(({ dot, label }) => (
-                <div key={label} className="flex items-center gap-1.5">
-                  <span className={cn('h-2 w-2 rounded-full', dot)} />
-                  <span className="text-[10px] text-zinc-400">{label}</span>
-                </div>
-              ))}
-              <span className="ml-auto text-[10px] text-zinc-400">
-                {auditLogs.length} {auditLogs.length === 1 ? 'entry' : 'entries'}
-              </span>
-            </div>
-
+            {/* Filter bar — category dropdown + search + sort + page-size */}
             <div className="mb-2 flex flex-shrink-0 flex-wrap items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50/60 px-2.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Sort</span>
-              {([
-                { k: 'created_at', label: 'Date' },
-                { k: 'action',     label: 'Action' },
-                { k: 'user_name',  label: 'User' },
-              ] as { k: SortKey; label: string }[]).map(({ k, label }) => {
-                const active = sortKey === k;
-                return (
+              {/* Category dropdown */}
+              <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                <Layers className="h-3 w-3" />
+                Dashboard
+                <select
+                  value={categoryId}
+                  onChange={(e) => setCategoryId(e.target.value as CategoryId)}
+                  className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                >
+                  {CATEGORIES.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label} ({counts[c.id]})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {/* Search */}
+              <div className="relative flex items-center">
+                <Search className="pointer-events-none absolute left-1.5 h-3 w-3 text-zinc-400" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search user, email, action…"
+                  className="w-44 rounded border border-zinc-200 bg-white py-0.5 pl-5 pr-5 text-[10px] text-zinc-700 placeholder-zinc-400 focus:border-indigo-300 focus:outline-none focus:ring-1 focus:ring-indigo-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                />
+                {searchTerm && (
                   <button
-                    key={k}
                     type="button"
-                    onClick={() => toggleSort(k)}
-                    className={cn(
-                      'flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition',
-                      active
-                        ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300'
-                        : 'text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800',
-                    )}
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-1 flex h-3 w-3 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
+                    aria-label="Clear search"
                   >
-                    {label}
-                    {active && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
+                    <X className="h-2.5 w-2.5" />
                   </button>
-                );
-              })}
+                )}
+              </div>
+
+              {/* Sort */}
+              <div className="flex items-center gap-1 border-l border-zinc-200 pl-2 dark:border-zinc-700">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">Sort</span>
+                {([
+                  { k: 'created_at', label: 'Date' },
+                  { k: 'action',     label: 'Action' },
+                  { k: 'user_name',  label: 'User' },
+                ] as { k: SortKey; label: string }[]).map(({ k, label }) => {
+                  const active = sortKey === k;
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => toggleSort(k)}
+                      className={cn(
+                        'flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition',
+                        active
+                          ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300'
+                          : 'text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800',
+                      )}
+                    >
+                      {label}
+                      {active && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
+                    </button>
+                  );
+                })}
+              </div>
 
               <div className="ml-auto flex items-center gap-1.5">
+                {(categoryId !== 'all' || searchTerm) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCategoryId('all');
+                      setSearchTerm('');
+                    }}
+                    className="flex items-center gap-0.5 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[9px] font-semibold text-zinc-500 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                    Clear filters
+                  </button>
+                )}
                 <label className="flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400">
                   Per page
                   <select
@@ -441,6 +668,38 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
                   </select>
                 </label>
               </div>
+            </div>
+
+            {/* Category chips — quick visual filter */}
+            <div className="mb-2 flex flex-shrink-0 flex-wrap gap-1.5">
+              {CATEGORIES.map((c) => {
+                const active = c.id === categoryId;
+                const CIcon = c.Icon;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setCategoryId(c.id)}
+                    className={cn(
+                      'flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition',
+                      active
+                        ? 'border-indigo-300 bg-indigo-50 text-indigo-700 shadow-sm dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-200'
+                        : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800',
+                    )}
+                  >
+                    <CIcon className="h-2.5 w-2.5" />
+                    {c.shortLabel}
+                    <span className={cn('rounded px-1 text-[9px] font-bold tabular-nums', active ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-100' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400')}>
+                      {counts[c.id]}
+                    </span>
+                  </button>
+                );
+              })}
+              <span className="ml-auto self-center text-[10px] text-zinc-400">
+                {sortedLogs.length === auditLogs.length
+                  ? `${auditLogs.length} ${auditLogs.length === 1 ? 'entry' : 'entries'}`
+                  : `${sortedLogs.length} of ${auditLogs.length} entries`}
+              </span>
             </div>
 
             <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
