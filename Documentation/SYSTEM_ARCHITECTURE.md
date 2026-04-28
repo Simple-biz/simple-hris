@@ -237,7 +237,10 @@ After uploading a CSV, the component re-parses the CSV text client-side (`parseC
 **8. No authentication (planned)**
 The admin app currently has no session gate — the user identity is hardcoded as `"Fran M / Senior Admin"`. A full RBAC implementation plan with 6 roles, API guards, RLS policies, and audit logging is documented in `Documentation/IMPLEMENTATION_PLAN_RBAC.md`.
 
-**9. Employee / Accounting login (`/login`)**
+**9. Flat analytic table for weekly reports (`disbursement_records`)** *(added 2026-04-28)*
+The Reports tab in Payment Dispatch reads from a flat `public.disbursement_records` table — one row per (Hubstaff cycle, employee). It's seeded from the existing tables (`hubstaff_hours` × `employee_hourly_rates` × `payment_dispatches`) by `references/seed_disbursement_records.sql`. Two triggers on `payment_dispatches` (`*_sync_disbursement` for INSERT/UPDATE, `*_unsync_disbursement` for DELETE) keep the flat table live without the API doing the join itself. **Why:** the original report endpoint joined three tables + ran `computeCurrentPay()` on every render — fine for 7 cycles, painful at a year of pulls. The flat table makes a weekly rollup a single grouped scan. See [PAYMENT_DISPATCH.md §6.5](./PAYMENT_DISPATCH.md) and [DATA_SOURCES.md §5](./DATA_SOURCES.md) for the full schema.
+
+**10. Employee / Accounting login (`/login`)**
 A unified login page at `/login` authenticates users via bcrypt-hashed passwords stored in `employee_hourly_rates`. The form has an **Employee / Accounting** role toggle; on success the verified work email is written to `sessionStorage` (`employee_session_email`, `employee_session_role`) and the user is routed to `/employee` (Employee) or `/` (Accounting). The admin dashboard gate is currently disabled pending full wiring; the login form and APIs are live.
 
 - **`POST /api/employee-login`** — calls Supabase RPC `verify_employee_password(p_email, p_password)` which returns `password_hash = crypt(p_password, password_hash)`. Successes and failures are written to `audit_log` (`employee.login.success` / `employee.login.failed`) with the submitted work email in `details`.

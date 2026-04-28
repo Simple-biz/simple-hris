@@ -6,6 +6,7 @@ import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   Banknote,
+  ClipboardList,
   Coins,
   Globe2,
   LogOut,
@@ -178,7 +179,10 @@ export default function PayrollClerkSidebar({
           <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
             History
           </p>
-          <nav className="flex flex-col gap-px">{navBtn('history', 'Sent payments', Banknote)}</nav>
+          <nav className="flex flex-col gap-px">
+            {navBtn('history', 'Sent payments', Banknote)}
+            {navBtn('reports', 'Weekly reports', ClipboardList)}
+          </nav>
 
           <div className="mt-6 border-t border-[#ececec] pt-4 dark:border-zinc-800">
             <ViewSwitcher email={viewerEmail} currentView="accounting" />

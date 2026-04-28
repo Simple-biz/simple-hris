@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import PayrollClerkSidebar from './PayrollClerkSidebar';
 import ProcessorQueue from './ProcessorQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
+import DispatchReports from './DispatchReports';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
@@ -145,6 +146,11 @@ export default function PayrollClerkApp() {
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
   const renderContent = () => {
+    // Reports view stands on its own — it doesn't need the dispatch queue or
+    // a "ready" cycle because it's reading historical Hubstaff uploads.
+    if (activeTab === 'reports') {
+      return <DispatchReports />;
+    }
     if (!cycleReady) {
       return (
         <div className="flex h-full flex-col items-center justify-center gap-4 bg-[#fafaf8] px-6 text-center dark:bg-[#0d1117]">

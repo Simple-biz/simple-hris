@@ -437,6 +437,291 @@ Uses Sonner with custom rose / emerald icons. 6 s duration on lock, 5 s on unloc
 
 ---
 
+## 6.5 Weekly Disbursement Reports
+
+> Added 2026-04-28. The Reports tab gives Lenny (and accounting) a per-week rollup of every Hubstaff pull — who got paid, who's pending, how much went out, and how the spend split across processors.
+
+### 6.5.1 Why it exists
+
+Once dispatches accumulate across cycles, scrolling the History tab to answer "how much did we send out the week of April 12?" is unworkable. The Reports tab folds every Hubstaff CSV into one card per week with paid / pending / sent counts and totals, plus a click-through detail view.
+
+User direction during the build (chronological, condensed):
+
+- "We need a weekly report on who got paid, how much was pending, how much was sent, how much was paid. Tied to the hubstaff pulls."
+- "Format the cycle name as `April 12-18, 2026`."
+- "Get the date range from the filename — `simple-biz_daily_report_2026-04-05_to_2026-04-12.csv` already has it. No need to scan the DB."
+- "Drop the trailing `Disbursement Report` from the title."
+- "6 reports per page only."
+- "Add it to the standalone `/payroll-clerk` sidebar too — I'm not using the Accounting embed."
+- "Write a SQL query to seed all CSV files into a flat table called `disbursement_records`."
+- "Make all of them paid so I can see what the screen looks like with data."
+- "Show values broken down per pay processor."
+- "Add decimals on the report."
+
+### 6.5.2 Data model — `public.disbursement_records`
+
+A flat table where **one row = one (Hubstaff cycle, employee) pair**. This is the source of truth for the Reports tab — no more re-aggregating across `hubstaff_hours` × `employee_hourly_rates` × `payment_dispatches` on every render.
+
+| Column | Type | Source |
+|---|---|---|
+| `id` | UUID PK | gen_random_uuid() |
+| `cycle_period_start` | DATE | Parsed from `source_file` regex `(\d{4}-\d{2}-\d{2})_to_` |
+| `cycle_period_end` | DATE | Parsed from `source_file` regex `_to_(\d{4}-\d{2}-\d{2})` |
+| `source_file` | TEXT | `hubstaff_hours.source_file` |
+| `upload_id` | UUID FK | `hubstaff_hours.upload_id` → `hubstaff_uploads.id` |
+| `recipient_email` | TEXT | `hubstaff_hours."Email"` (lower-cased) |
+| `recipient_name` | TEXT | `hubstaff_hours."Member"` |
+| `total_hours` | NUMERIC(7,2) | Parsed from `"Total worked"` HH:MM:SS into decimal hours |
+| `regular_hours` | NUMERIC(7,2) | `LEAST(40, total_hours)` |
+| `ot_hours` | NUMERIC(7,2) | `GREATEST(0, total_hours - 40)` |
+| `regular_rate_php` | NUMERIC(10,2) | `employee_hourly_rates."Regular Rate"` |
+| `ot_rate_php` | NUMERIC(10,2) | `employee_hourly_rates."OT Rate"` |
+| `amount_php` | NUMERIC(12,2) | `regular_hours * regular_rate_php + ot_hours * ot_rate_php` |
+| `amount_usd` | NUMERIC(10,2) | `amount_php / fx_rate` |
+| `fx_rate` | NUMERIC(10,4) | `app_settings.usd_to_php_rate` at seed time |
+| `status` | TEXT | `'pending'` default; updated to `'paid' \| 'not_paid' \| 'threshold' \| 'problem'` by trigger |
+| `paid_amount_usd` | NUMERIC(10,2) | Mirrored from `payment_dispatches.amount_usd` when status='paid' |
+| `paid_at` | DATE | Mirrored from `payment_dispatches.sent_date` when status='paid' |
+| `bank_used` | TEXT | Mirrored from `payment_dispatches.bank_used` |
+| `transaction_id` | TEXT | Mirrored from `payment_dispatches.transaction_id` |
+| `dispatch_id` | UUID FK | `payment_dispatches.id` (latest dispatch for this row) |
+| `created_at` | TIMESTAMPTZ | DEFAULT now() |
+| `updated_at` | TIMESTAMPTZ | DEFAULT now(); touched by `disbursement_records_set_updated_at` trigger |
+
+**Constraints**
+- `UNIQUE(source_file, recipient_email)` — enables idempotent re-seeds via `ON CONFLICT … DO UPDATE`
+- CHECK on `status IN ('pending','paid','not_paid','threshold','problem')`
+
+**Indexes**
+- `idx_disbursement_records_period` on `(cycle_period_start, cycle_period_end)`
+- `idx_disbursement_records_recipient` on `LOWER(recipient_email)`
+- `idx_disbursement_records_status` on `status`
+- `idx_disbursement_records_source_file` on `source_file`
+- `idx_disbursement_records_upload` on `upload_id`
+
+**Triggers**
+- `disbursement_records_norm_email` — reuses project-wide `normalize_email_column()` so `recipient_email` is always lower-cased.
+- `disbursement_records_set_updated_at` — bumps `updated_at` on every UPDATE (re-seeds, sync trigger writes, etc.).
+- `payment_dispatches_sync_disbursement` (on `payment_dispatches`) — write-through: any INSERT or UPDATE on `payment_dispatches` updates the matching `disbursement_records` row's `status / paid_amount_usd / paid_at / bank_used / transaction_id / dispatch_id`. Match key: `(cycle_source_file, LOWER(recipient_email))`.
+- `payment_dispatches_unsync_disbursement` (on `payment_dispatches`) — DELETE reverts the disbursement record to `status='pending'`.
+
+### 6.5.3 Migrations (run in order)
+
+| Order | File | What it does |
+|---|---|---|
+| 1 | `references/seed_disbursement_records.sql` | CREATE TABLE + indexes + email-norm trigger + updated_at trigger; backfills via `INSERT … SELECT` joining `hubstaff_hours` × `employee_hourly_rates` × `payment_dispatches` × `app_settings.usd_to_php_rate`. Idempotent (`ON CONFLICT (source_file, recipient_email) DO UPDATE`). |
+| 2 | `references/seed_disbursement_records_sync.sql` | Adds the four sync triggers above; one-time UPDATE backfill from any existing `payment_dispatches`. Idempotent. |
+
+Both are wrapped in `BEGIN/COMMIT` and use `IF NOT EXISTS` / `OR REPLACE`. Run in Supabase SQL Editor. After they execute, re-running the seed any time you ingest a new Hubstaff CSV refreshes the rows in place.
+
+#### Sample rollup queries
+
+```sql
+-- Per-cycle summary
+SELECT
+  cycle_period_start,
+  cycle_period_end,
+  COUNT(*) AS recipients,
+  COUNT(*) FILTER (WHERE status = 'paid')  AS paid_count,
+  COUNT(*) FILTER (WHERE status <> 'paid') AS pending_count,
+  ROUND(SUM(amount_usd) FILTER (WHERE status = 'paid')::numeric, 2)  AS paid_usd,
+  ROUND(SUM(amount_usd) FILTER (WHERE status <> 'paid')::numeric, 2) AS pending_usd
+FROM public.disbursement_records
+GROUP BY cycle_period_start, cycle_period_end
+ORDER BY cycle_period_start DESC;
+
+-- Mass mark-as-paid (used during initial demo population)
+UPDATE public.disbursement_records
+SET status = 'paid',
+    paid_amount_usd = amount_usd,
+    paid_at = cycle_period_end,
+    bank_used = COALESCE(bank_used, 'BACKFILL'),
+    transaction_id = COALESCE(transaction_id, 'BACKFILL-' || LEFT(id::text, 8)),
+    updated_at = now()
+WHERE status <> 'paid';
+```
+
+### 6.5.4 API endpoints
+
+#### `GET /api/payment-dispatches/reports`
+
+Returns one summary per cycle, newest period first.
+
+**Response shape** (`reports[]`):
+
+```ts
+{
+  cycleId: string;             // hubstaff_uploads.id, or `source:<file>` synthetic id
+  periodStart: string | null;  // ISO YYYY-MM-DD
+  periodEnd:   string | null;  // ISO YYYY-MM-DD
+  sourceFile: string | null;
+  uploadedAt: string;          // ISO timestamp from hubstaff_uploads
+  uploadedBy: string | null;
+  rowCount:   number | null;
+  isCurrent:  boolean;         // hubstaff_uploads.is_current
+  reportName: string;          // e.g. "April 12-18, 2026"
+  totals: {
+    paidCount; paidUSD; paidPHP;
+    notPaidCount; thresholdCount; problemCount;
+    pendingDispatchedUSD;     // sum of amount_usd where status NOT IN ('paid','pending')
+    sentCount;                 // any non-pending status
+    totalDispatchedUSD;
+    outstandingCount;          // status='pending'
+    outstandingUSD;
+    totalRecipients;
+    totalOwedUSD;
+  };
+  byProcessor: Record<ProcessorId, { count: number; usd: number }>;
+}
+```
+
+Implementation: `listDisbursementReports()` in `src/lib/payroll/disbursement-reports.ts`.
+
+#### `GET /api/payment-dispatches/reports/[cycleId]`
+
+Returns a single report's full detail. `cycleId` accepts either a `hubstaff_uploads.id` UUID or the `source:<filename>` synthetic id from the list endpoint.
+
+**Response shape**:
+
+```ts
+{
+  ...ReportSummary,
+  dispatches: PaymentDispatchRow[];   // from payment_dispatches WHERE cycle_source_file=…
+  outstanding: Array<{
+    email: string;
+    amountUSD: number | null;
+    amountPHP: number | null;
+  }>;                                  // from disbursement_records WHERE status='pending'
+  outstandingUSD: number;
+}
+```
+
+Notes:
+- `outstanding` is now populated for **any cycle**, not just current. Previously the old code could only compute it for the active cycle (because it ran `computeCurrentPay()`); the new flow reads pre-computed pay from `disbursement_records` so historical cycles work too.
+- `dispatches` still comes from `payment_dispatches` so the table can show processor + banking detail. The flat record table doesn't store processor on each row by design (processor is a property of the employee, not the cycle).
+
+Implementation: `getDisbursementReportDetail()` in `src/lib/payroll/disbursement-reports.ts`.
+
+### 6.5.5 Library — `src/lib/payroll/disbursement-reports.ts`
+
+Single library powering both endpoints. Key functions:
+
+| Function | Role |
+|---|---|
+| `listDisbursementReports()` | Loads all `disbursement_records` (paged), all `hubstaff_uploads`, and a `Bank Preferred → processor` map from `employee_hourly_rates`. Groups records by `source_file`, tallies totals, derives byProcessor inline. |
+| `getDisbursementReportDetail(cycleId)` | Calls `listDisbursementReports()` for the summary, then queries `payment_dispatches` (for dispatch detail) and `disbursement_records WHERE status='pending'` (for outstanding) in parallel. |
+| `formatDisbursementReportName(start, end, fallback)` | "April 12-18, 2026" same-month, "April 30 - May 3, 2026" cross-month, "December 30, 2025 - January 5, 2026" cross-year. Returns `fallback` (typically the source filename minus `.csv`) when dates are missing. |
+| `tallyRecord(totals, record)` | Internal — increments the right counters based on `record.status`. Pending rows go to `outstandingCount/USD`; paid rows go to paid + sent + total dispatched. |
+| `loadProcessorByEmail()` | Builds `Map<email, processorId>` from `employee_hourly_rates."Bank Preferred"` using the canonical `processorIdFromBankPreferred()` matcher (Hurupay/Wepay/HiGlobe/Wise/Jeeves; `xNNNN` → Wires). Used to attribute paid records when the source data was set via direct UPDATE rather than Mark Paid (which would have left a `payment_dispatches` row). |
+
+#### Period resolution chain
+
+When `disbursement_records.cycle_period_start/end` are present (the normal case after seeding) they're used directly. The chain order in code is:
+
+1. **`disbursement_records.cycle_period_start/end`** — already DATE-typed, the canonical source.
+2. **Filename parser** (`parseDateRangeFromFilename` from `src/lib/hubstaff/calendar-column-dedupe.ts`) — sanity backup if the row is malformed. Regex: `(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})`.
+
+Older code paths also walked dispatch snapshots → `computeCurrentPay()` → ISO-date column scan; those are no longer needed because the seed pre-resolves dates per-row.
+
+#### byProcessor derivation
+
+Every `paid` record looks up the recipient's `Bank Preferred` from `employee_hourly_rates` and buckets the row by processor id. Per-processor `count + usd` is accumulated in the same loop as `tallyRecord`, so there's no extra DB pass. This is what makes the breakdown work even when `payment_dispatches` is empty (e.g. backfilled-paid demo data).
+
+Edge cases:
+- Recipients with no rate row → bucketed under `'unknown'` (not displayed by the current UI, which iterates over canonical PROCESSORS).
+- Recipients whose `Bank Preferred` doesn't match any known processor (e.g. blank, or a brand-new processor name not in the map) → also `'unknown'`.
+
+### 6.5.6 UI — `src/components/payroll-clerk/DispatchReports.tsx`
+
+Single component handling both list and detail. Top-level state machine:
+
+```
+              ┌───── selectedLoading ──────┐
+hovered card  ▼                            ▼
+─click──► ReportDetailView (loading) ─► ReportDetail
+             │
+             ▼ error
+          Detail error UI ─Back─► ReportListView
+```
+
+Switches to detail view via `setSelected*` triplet (`selected`, `selectedLoading`, `selectedError`). Back button clears all three.
+
+**List view** (`PaginatedReportGrid`):
+- 6 cards per page (`REPORTS_PER_PAGE = 6`); resets to page 0 on data reload.
+- Pagination footer: `Showing X-Y of Z` + Prev/Next + numbered buttons. Active page button uses orange→rose gradient.
+- Each card (`ReportCard`) shows period label, uploaded-at timestamp, source filename, mini-stats (Paid / Sent / Pending counts), and a bottom-bar "Total paid out" in USD.
+- The current cycle gets an animated orange "Current" pill in the top-right.
+
+**Detail view** (`ReportDetail`):
+- Header: report name, period range, uploaded timestamp, source filename, optional "Current cycle" pill.
+- 4 hero `DetailStat` cards (Paid / Sent / Pending / Total Paid). Total Paid uses 2-decimal formatting (`minimumFractionDigits: 2, maximumFractionDigits: 2`) — earlier code used `Math.round` which the user asked to fix.
+- **Paid by processor** card: 6-up grid of canonical processor tiles. Each shows count + USD total. Empty processors get a muted style; non-empty ones get the orange→rose tint.
+- **Not yet dispatched** card (only renders when outstanding > 0): scrollable email/USD list capped at 50 rows with `+ N more` overflow indicator.
+- **Dispatch detail** table: full per-row dispatches sorted with paid first, then by `sent_date` desc. Columns: Recipient, Status, Processor, USD, PHP, Bank used, Txn ID, Sent.
+
+Helper components inside the file:
+- `StatusBadge` — pill with icon + color per `'paid' | 'not_paid' | 'threshold' | 'problem'`.
+- `MiniStat` — small inline stat (used inside ReportCard).
+- `DetailStat` — large hero stat with gradient background (used in ReportDetail header).
+- `ReportListSkeleton` — animate-pulse loading skeleton.
+
+### 6.5.7 Where the Reports tab appears
+
+Two surfaces, both pointing at the same `DispatchReports` component:
+
+| Surface | File | How |
+|---|---|---|
+| **Embedded in Accounting** (`/accounting`) | `src/components/payroll-clerk/PayrollDispatch.tsx` | New `'reports'` tab id, `REPORTS_VISUAL` (violet→fuchsia gradient, ClipboardList icon), card in the in-page processor-filter rail. AnimatePresence key short-circuits to `'reports'` so queue-state flips don't re-mount the report fetch. |
+| **Standalone** (`/payroll-clerk`) | `src/components/payroll-clerk/PayrollClerkApp.tsx` + `PayrollClerkSidebar.tsx` | `'reports'` entry in the sidebar's "History" group with a ClipboardList icon. `renderContent()` short-circuits when `activeTab === 'reports'` so it doesn't gate on `cycleReady` or queue load state. |
+
+The `count` prop on `ProcessorCard` is now optional — the Reports nav card hides the badge entirely instead of showing a meaningless "0".
+
+### 6.5.8 Dataflow end-to-end
+
+```
+1. Hubstaff CSV upload  ─►  hubstaff_uploads (new row, is_current=true)
+                       ─►  hubstaff_hours (rows tagged with upload_id)
+
+2. Run seed_disbursement_records.sql  ─►  disbursement_records
+                                          (one row per (week, employee))
+
+3. Lenny clicks Mark Paid  ─►  POST /api/payment-dispatches
+                            ─►  INSERT into payment_dispatches
+                            ─►  Trigger: payment_dispatches_sync_disbursement
+                            ─►  UPDATE disbursement_records SET status='paid', …
+
+4. Reports tab opens  ─►  GET /api/payment-dispatches/reports
+                       ─►  listDisbursementReports()
+                            ├─ SELECT * FROM disbursement_records  (paged)
+                            ├─ listHubstaffUploads()  (for uploadedAt / isCurrent)
+                            └─ SELECT email + Bank Preferred FROM employee_hourly_rates
+                       ─►  group by source_file, tally byProcessor, format names
+
+5. Click a card  ─►  GET /api/payment-dispatches/reports/[cycleId]
+                  ─►  getDisbursementReportDetail(cycleId)
+                       ├─ summary from listDisbursementReports()
+                       ├─ SELECT * FROM payment_dispatches WHERE cycle_source_file=…
+                       └─ SELECT … FROM disbursement_records WHERE status='pending'
+```
+
+### 6.5.9 Decisions taken (and why)
+
+- **Filename-based period parsing over column scan.** The Hubstaff export has the dates baked into its name (`simple-biz_daily_report_YYYY-MM-DD_to_YYYY-MM-DD.csv`); parsing is exact and free. The previous code path scanned `hubstaff_hours` columns for ISO-shaped names — fragile because the table uses canonical `monday/tuesday/…` columns in production.
+- **Flat `disbursement_records` over per-render aggregation.** The first pass of the Reports endpoint joined `hubstaff_uploads × payment_dispatches` plus `computeCurrentPay()` on every request. With 7 cycles × ~700 employees, this was already slow; with a year of pulls it would be much worse. The flat table makes reports a single grouped scan.
+- **byProcessor from `Bank Preferred`, not `payment_dispatches.processor`.** Backfilled / direct-update rows have no `payment_dispatches` row. Sourcing processor from the employee's `Bank Preferred` works in both cases (real Mark Paid flow and direct UPDATE). It's also more accurate when an employee's preferred processor changes between cycles — though that's rare enough that we don't track historical processor on the record.
+- **Synthetic `source:<file>` cycle ids.** When `disbursement_records` exists for a cycle but `hubstaff_uploads` doesn't (legacy / weird state), the API still returns a usable `cycleId` so the detail route works. Frontend doesn't care which form it gets.
+- **Don't store processor or paid_php on `disbursement_records`.** Two reasons: (1) processor is a property of the employee in `employee_hourly_rates`, not the cycle — duplicating it is denormalization with no win; (2) `paid_php` would just be a derived quantity (`paid_amount_usd × fx_rate` or the snapshot `amount_php`); UI uses `amount_php` for the Total Paid PHP sub-label.
+- **Page size 6.** User-requested. The grid is 1 / 2 / 3 columns at sm/lg/xl, so 6 is exactly two rows on the widest layout.
+
+### 6.5.10 Open follow-ups (Reports-specific)
+
+- **Auto-seed on Hubstaff upload.** Right now `seed_disbursement_records.sql` is run manually after each new CSV. Extending `replaceHubstaffHoursFromCsvText` (in `src/lib/supabase/hubstaff-hours-db.ts`) to insert the new cycle's rows after CSV ingestion succeeds would close the loop.
+- **Snapshot processor at paid time.** If processor mappings ever change historically, current-month accuracy is fine but year-over-year reports could drift. A future column `paid_processor TEXT` filled by the sync trigger when status='paid' would freeze the attribution.
+- **Per-cycle PDF export.** Lenny mentioned wanting to email reports to Carla. A `?format=pdf` mode on the detail endpoint (or a `react-pdf` render of `ReportDetail`) would do it.
+- **RBAC on the reports.** Same gap as the rest of Payment Dispatch — anyone with accounting access can see all reports. When the `payroll_clerk` role lands, lock both endpoints to it + admin.
+
+---
+
 ## 7. Files
 
 ### New components
@@ -447,10 +732,11 @@ src/components/payroll-clerk/
   PayrollClerkApp.tsx           — standalone /payroll-clerk shell
   PayrollClerkSidebar.tsx       — sidebar for /payroll-clerk
   ProcessorQueue.tsx            — the table (mobile + desktop layouts)
-  ProcessorCard.tsx             — filter cards with shared-layout glow
+  ProcessorCard.tsx             — filter cards with shared-layout glow (count prop now optional, hides badge when omitted)
   ProcessorLogo.tsx             — brand-logo loader with fallback
   MarkPaidDialog.tsx            — confirmation modal
   SentPaymentsHistory.tsx       — history table
+  DispatchReports.tsx           — weekly disbursement report list + detail view (added 2026-04-28)
   QueueSkeleton.tsx             — loading skeleton (mobile + desktop)
   AnimatedNumber.tsx            — spring counter
   mock-queue.ts                 — types, processor metadata, builders
@@ -469,6 +755,7 @@ src/hooks/
 ```
 src/lib/
   payroll/current-pay.ts                         — server-side pay calculator
+  payroll/disbursement-reports.ts                — weekly-report aggregator (added 2026-04-28)
   supabase/payment-dispatches.ts                 — CRUD helpers
   supabase/payroll-dispatch-lock.ts              — get/set helpers
   supabase/browser.ts                            — singleton browser client (Realtime)
@@ -480,6 +767,8 @@ src/lib/
 app/api/
   payroll-current-pay/route.ts
   payment-dispatches/route.ts
+  payment-dispatches/reports/route.ts            — list weekly reports (added 2026-04-28)
+  payment-dispatches/reports/[cycleId]/route.ts  — single-report detail (added 2026-04-28)
   payroll-dispatch-lock/route.ts
 ```
 
@@ -495,6 +784,8 @@ app/payroll-clerk/page.tsx     — standalone Lenny page
 references/
   seed_payroll_dispatch_columns.sql              — bank/contact data (1,062 rows)
   seed_payment_dispatches.sql                    — log table + lock setting
+  seed_disbursement_records.sql                  — weekly-report flat table + backfill (added 2026-04-28)
+  seed_disbursement_records_sync.sql             — payment_dispatches → disbursement_records triggers (added 2026-04-28)
 scripts/
   gen-seed-payroll-dispatch.mjs                  — regenerator for the column seed
 public/processors/
@@ -514,14 +805,16 @@ public/processors/
 
 ## 8. Migrations to run
 
-Both files are in `references/`. Run in this order in the Supabase SQL Editor:
+All files are in `references/`. Run in this order in the Supabase SQL Editor:
 
 1. **`seed_payroll_dispatch_columns.sql`** — required for people to show up in the dispatch view (without the `Bank Preferred` column populated, the queue is empty).
 2. **`seed_payment_dispatches.sql`** — required for Mark paid persistence and the Start/Stop processing button.
+3. **`seed_disbursement_records.sql`** *(new 2026-04-28)* — required for the Reports tab. Creates `public.disbursement_records` and backfills one row per (week, employee) from existing `hubstaff_hours` × `employee_hourly_rates` × `payment_dispatches` data.
+4. **`seed_disbursement_records_sync.sql`** *(new 2026-04-28)* — required so Mark Paid keeps the Reports tab live. Adds the four `payment_dispatches → disbursement_records` triggers and runs a one-time backfill UPDATE for any existing dispatches.
 
-Both are idempotent — safe to re-run if you're unsure whether they executed cleanly.
+All four are idempotent — safe to re-run if you're unsure whether they executed cleanly.
 
-For Realtime to fire (vs. the 30-second poll fallback), the second migration's Step 3 must succeed. If it doesn't (e.g. RLS blocks the anon role from selecting `app_settings`), the lock UI still works — just with up-to-30-second latency instead of instant.
+For Realtime to fire (vs. the 30-second poll fallback), migration #2's Step 3 must succeed. If it doesn't (e.g. RLS blocks the anon role from selecting `app_settings`), the lock UI still works — just with up-to-30-second latency instead of instant.
 
 ---
 
@@ -547,6 +840,9 @@ The lock toggle should also be permission-gated server-side (currently any authe
 - **Per-row dispatch retry** — if Mark paid POST fails, the row is restored but the dialog is closed. Could keep the dialog open with the entered values pre-filled.
 - **`payment_dispatches` audit / undo** — there's no UI to delete a misclicked dispatch. Currently you'd have to delete the row via Supabase manually.
 - **Pre-flight summary** — before Lenny clicks Start, show a count of who's about to be billed, total volume, and any people missing bank info.
+- **Auto-seed `disbursement_records` on Hubstaff upload** — see §6.5.10. Currently the seed must be re-run manually after each new CSV.
+- **Snapshot processor onto disbursement record at paid time** — see §6.5.10. Avoids drift if `Bank Preferred` changes after a row is paid.
+- **Per-cycle PDF / email export of weekly reports** — see §6.5.10.
 
 ---
 
@@ -569,3 +865,18 @@ After both migrations run:
    - Submit button restores
 6. Open DevTools console in tab B — you should see `[dispatch-lock] Realtime ready (…)`. If you see `CHANNEL_ERROR`, Realtime is broken (probably the publication step in `seed_payment_dispatches.sql` didn't run); the 30-second poll keeps things working in degraded mode.
 7. Visit `/admin` → Audit log. Each Start/Stop and each Mark paid should have its own entry with full details.
+
+### Reports tab test plan (added 2026-04-28)
+
+After running migrations 3 + 4:
+
+1. Open `/payroll-clerk` → click **Weekly reports** in the sidebar (or `/accounting` → Payment Dispatch → **Reports** card in the in-page rail).
+2. You should see one card per Hubstaff CSV in `references/hubstaff_hours/` (currently 7), newest period first, paginated 6 per page. The April 12-18 card shows the orange "Current" pill if `hubstaff_uploads.is_current = true` for that upload.
+3. Each card shows mini-stats (Paid / Sent / Pending counts) and a "Total paid out" footer in USD with 2 decimals.
+4. Click a card → the detail view loads:
+   - Hero stats render with 2-decimal USD (`$106,963.89`, not `$106,964`).
+   - **Paid by processor** card shows non-zero counts + USD for processors that have paid records — Hurupay, Wepay, HiGlobe, Wise, Jeeves, Wires.
+   - **Not yet dispatched** card appears only when at least one row is `status='pending'` for that cycle.
+   - **Dispatch detail** table lists every `payment_dispatches` row for the cycle, paid first.
+5. From SQL Editor, INSERT or UPDATE a `payment_dispatches` row → re-load Reports → the matching `disbursement_records` row should now show `status='paid'` (the trigger fired).
+6. From SQL Editor, run the mass mark-as-paid UPDATE in §6.5.3 → re-load Reports → every cycle's "Pending" should drop to 0 and "Paid" should match its recipient count.

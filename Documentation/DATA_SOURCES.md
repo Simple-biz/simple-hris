@@ -133,7 +133,54 @@ An explicit `employee_id → email` mapping table for cases where the auto-gener
 
 ---
 
-### 5. Extra Profile Tables (optional, configurable)
+### 5. `disbursement_records` *(added 2026-04-28)*
+
+Flat analytic table — one row per (Hubstaff cycle, employee). Backs the Weekly Disbursement Reports feature in Payment Dispatch. See [PAYMENT_DISPATCH.md §6.5](./PAYMENT_DISPATCH.md) for the full spec.
+
+**Columns:**
+
+| Column | Type | Source |
+|---|---|---|
+| `id` | UUID PK | `gen_random_uuid()` |
+| `cycle_period_start` | DATE | regex-parsed from `source_file` |
+| `cycle_period_end` | DATE | regex-parsed from `source_file` |
+| `source_file` | TEXT | `hubstaff_hours.source_file` |
+| `upload_id` | UUID FK | `hubstaff_uploads.id` |
+| `recipient_email` | TEXT | `hubstaff_hours."Email"` (lower-cased) |
+| `recipient_name` | TEXT | `hubstaff_hours."Member"` |
+| `total_hours` / `regular_hours` / `ot_hours` | NUMERIC(7,2) | parsed from `"Total worked"` HH:MM:SS into decimal hours; OT split at 40h |
+| `regular_rate_php` / `ot_rate_php` | NUMERIC(10,2) | snapshot from `employee_hourly_rates` |
+| `amount_php` / `amount_usd` | NUMERIC | computed from hours × rate; USD divided by `fx_rate` |
+| `fx_rate` | NUMERIC(10,4) | `app_settings.usd_to_php_rate` at seed time |
+| `status` | TEXT (CHECK) | `'pending' \| 'paid' \| 'not_paid' \| 'threshold' \| 'problem'` |
+| `paid_amount_usd` / `paid_at` / `bank_used` / `transaction_id` | mixed | mirrored from `payment_dispatches` via trigger |
+| `dispatch_id` | UUID FK | `payment_dispatches.id` |
+
+**Constraints**: `UNIQUE(source_file, recipient_email)` for upsert-style re-seeds.
+
+**Indexes**: on `(cycle_period_start, cycle_period_end)`, `LOWER(recipient_email)`, `status`, `source_file`, `upload_id`.
+
+**Triggers**:
+- `disbursement_records_norm_email` — reuses project-wide `normalize_email_column()` (lower-cases on insert/update).
+- `disbursement_records_set_updated_at` — bumps `updated_at`.
+- `payment_dispatches_sync_disbursement` (on `payment_dispatches`) — write-through on INSERT/UPDATE matching `(cycle_source_file, LOWER(recipient_email))`.
+- `payment_dispatches_unsync_disbursement` (on `payment_dispatches`) — DELETE reverts the record to `status='pending'`.
+
+**Who reads it:**
+- `GET /api/payment-dispatches/reports` → `src/lib/payroll/disbursement-reports.ts: listDisbursementReports()`
+- `GET /api/payment-dispatches/reports/[cycleId]` → `getDisbursementReportDetail()`
+
+**Who writes it:**
+- `references/seed_disbursement_records.sql` (seed + re-seed via `ON CONFLICT … DO UPDATE`)
+- `payment_dispatches_sync_disbursement` trigger (status updates)
+- `payment_dispatches_unsync_disbursement` trigger (revert on delete)
+- Manual SQL UPDATEs (e.g. mass mark-as-paid for demo data) — these use the `bank_used = 'BACKFILL'` sentinel so they can be reverted in bulk.
+
+**Re-seed safety**: `INSERT ... SELECT … ON CONFLICT (source_file, recipient_email) DO UPDATE SET …` makes the seed idempotent. Run any time you ingest a new Hubstaff CSV (TODO: trigger this from `replaceHubstaffHoursFromCsvText` so it's automatic).
+
+---
+
+### 6. Extra Profile Tables (optional, configurable)
 
 Any number of additional tables can be merged into the employee profile view by listing them in `SUPABASE_PROFILE_TABLES` (comma-separated). The `import-daily-report` route creates tables in a separate `hubstaff_hours` schema, which may also be merged.
 
@@ -178,6 +225,11 @@ All routes are `export const dynamic = "force-dynamic"` (no caching).
 | `/api/update-employee-profile` | POST | Service role preferred | Both tables |
 | `/api/app-settings` | GET/POST | Anon read; service role preferred write | `app_settings` table |
 | `/api/import-daily-report` | POST | `DATABASE_URL` (pg direct) | `src/lib/supabase/import-daily-report.ts` |
+| `/api/payment-dispatches` | GET/POST | Service role preferred | `src/lib/supabase/payment-dispatches.ts` |
+| `/api/payment-dispatches/reports` *(2026-04-28)* | GET | Service role preferred | `src/lib/payroll/disbursement-reports.ts: listDisbursementReports()` |
+| `/api/payment-dispatches/reports/[cycleId]` *(2026-04-28)* | GET | Service role preferred | `src/lib/payroll/disbursement-reports.ts: getDisbursementReportDetail()` |
+| `/api/payroll-current-pay` | GET | Service role preferred | `src/lib/payroll/current-pay.ts` |
+| `/api/payroll-dispatch-lock` | GET/POST | Service role preferred | `src/lib/supabase/payroll-dispatch-lock.ts` |
 
 ---
 

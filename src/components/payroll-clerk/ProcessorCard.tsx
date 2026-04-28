@@ -9,7 +9,8 @@ import ProcessorLogo from './ProcessorLogo';
 export interface ProcessorCardProps {
   id: string;
   label: string;
-  count: number;
+  /** When omitted, the count badge is hidden — useful for nav-only cards. */
+  count?: number;
   /** Subtle blurb under the label. */
   subtitle?: string;
   Icon: React.ComponentType<{ className?: string }>;
@@ -86,16 +87,18 @@ export default function ProcessorCard({
           fallback={iconOnlyFallback ? 'icon' : 'monogram'}
           className="h-8 w-8"
         />
-        <div
-          className={cn(
-            'rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
-            active
-              ? 'bg-white/80 text-zinc-900 backdrop-blur-sm dark:bg-zinc-800/80 dark:text-zinc-100'
-              : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
-          )}
-        >
-          <AnimatedNumber value={count} />
-        </div>
+        {count !== undefined && (
+          <div
+            className={cn(
+              'rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
+              active
+                ? 'bg-white/80 text-zinc-900 backdrop-blur-sm dark:bg-zinc-800/80 dark:text-zinc-100'
+                : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+            )}
+          >
+            <AnimatedNumber value={count} />
+          </div>
+        )}
       </div>
 
       <div className="relative z-10 min-w-0 leading-tight">

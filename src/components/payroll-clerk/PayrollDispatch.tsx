@@ -8,6 +8,7 @@ import {
   Banknote,
   CalendarRange,
   CheckCircle2,
+  ClipboardList,
   Coins,
   FileSpreadsheet,
   Globe2,
@@ -27,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import ProcessorQueue from './ProcessorQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
+import DispatchReports from './DispatchReports';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import {
   Dialog,
@@ -43,7 +45,7 @@ import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-type TabId = 'all' | 'history' | ProcessorId;
+type TabId = 'all' | 'history' | 'reports' | ProcessorId;
 
 interface ProcessorVisual {
   Icon: React.ComponentType<{ className?: string }>;
@@ -105,6 +107,13 @@ const HISTORY_VISUAL: ProcessorVisual = {
   accent: 'from-emerald-500 to-green-600',
   glow: 'from-emerald-100/80 via-green-50/60 to-white dark:from-emerald-950/40 dark:via-green-950/30 dark:to-zinc-900',
   blurb: 'Sent this cycle',
+};
+
+const REPORTS_VISUAL: ProcessorVisual = {
+  Icon: ClipboardList,
+  accent: 'from-violet-500 to-fuchsia-500',
+  glow: 'from-violet-100/80 via-fuchsia-50/60 to-white dark:from-violet-950/40 dark:via-fuchsia-950/30 dark:to-zinc-900',
+  blurb: 'Weekly summary',
 };
 
 const containerStagger = {
@@ -248,6 +257,7 @@ export default function PayrollDispatch() {
   const renderBody = () => {
     // Show the skeleton while the network is still in flight OR while we
     // haven't mirrored the first server snapshot into local state yet.
+    if (activeTab === 'reports') return <DispatchReports />;
     if (loading || !hydrated) return <QueueSkeleton />;
     if (error) return <ErrorState message={error} />;
     if (!cycleReady) return <NoCycleState />;
@@ -458,6 +468,19 @@ export default function PayrollDispatch() {
                 iconOnlyFallback
               />
             </motion.div>
+            <motion.div variants={itemPop}>
+              <ProcessorCard
+                id="reports"
+                label="Reports"
+                subtitle={REPORTS_VISUAL.blurb}
+                Icon={REPORTS_VISUAL.Icon}
+                accent={REPORTS_VISUAL.accent}
+                glow={REPORTS_VISUAL.glow}
+                active={activeTab === 'reports'}
+                onClick={() => setActiveTab('reports')}
+                iconOnlyFallback
+              />
+            </motion.div>
           </motion.div>
         </div>
 
@@ -465,7 +488,18 @@ export default function PayrollDispatch() {
         <div className="relative order-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-orange-100/80 bg-white/90 shadow-[0_8px_28px_-12px_rgba(255,138,76,0.18)] backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80 lg:order-none lg:col-start-2 lg:row-start-2">
           <AnimatePresence mode="wait">
             <motion.div
-              key={activeTab + (loading || !hydrated ? '-loading' : error ? '-error' : !cycleReady ? '-locked' : '-ok')}
+              key={
+                activeTab === 'reports'
+                  ? 'reports'
+                  : activeTab +
+                    (loading || !hydrated
+                      ? '-loading'
+                      : error
+                        ? '-error'
+                        : !cycleReady
+                          ? '-locked'
+                          : '-ok')
+              }
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}

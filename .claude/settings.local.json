@@ -51,7 +51,8 @@
       "Bash(mkdir -p \"C:/Users/Itachi/Desktop/simple-hris/app/payroll-clerk\")",
       "Bash(mkdir -p \"C:/Users/Itachi/Desktop/simple-hris/src/components/payroll-clerk\")",
       "Read(//tmp/**)",
-      "Bash(awk -F, '{ *)"
+      "Bash(awk -F, '{ *)",
+      "Bash(echo \"EXIT=$?\")"
     ]
   }
 }
