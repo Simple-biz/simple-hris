@@ -334,8 +334,8 @@ export default function PayrollDispatch() {
               Payment dispatch
             </h1>
             <p className="mt-1 max-w-xl text-[13px] text-zinc-500 dark:text-zinc-400 sm:text-sm">
-              Send pay via processor and log each confirmation. Streamlined for Lenny — only
-              what&apos;s needed to move money safely.
+              Dispatch this week&apos;s payroll one transfer at a time. Pick a processor on the left,
+              log each payment as it goes out, and the queue clears as money moves.
             </p>
           </div>
 
@@ -889,16 +889,16 @@ function formatPeriodLabel(start: string | null, end: string | null): string {
   const e = parseISO(end);
   if (!s || !e) return `${start} → ${end}`;
   const sameMonth = s.getUTCMonth() === e.getUTCMonth() && s.getUTCFullYear() === e.getUTCFullYear();
-  const monthShort = (d: Date) => d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+  const monthLong = (d: Date) => d.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
   const day = (d: Date) => d.getUTCDate();
   const year = (d: Date) => d.getUTCFullYear();
   if (sameMonth) {
-    return `${monthShort(s)} ${day(s)} – ${day(e)}, ${year(e)}`;
+    return `${monthLong(s)} ${day(s)}-${day(e)}, ${year(e)} Week`;
   }
   if (s.getUTCFullYear() === e.getUTCFullYear()) {
-    return `${monthShort(s)} ${day(s)} – ${monthShort(e)} ${day(e)}, ${year(e)}`;
+    return `${monthLong(s)} ${day(s)} - ${monthLong(e)} ${day(e)}, ${year(e)} Week`;
   }
-  return `${monthShort(s)} ${day(s)} ${year(s)} – ${monthShort(e)} ${day(e)} ${year(e)}`;
+  return `${monthLong(s)} ${day(s)}, ${year(s)} - ${monthLong(e)} ${day(e)}, ${year(e)} Week`;
 }
 
 function parseISO(iso: string): Date | null {

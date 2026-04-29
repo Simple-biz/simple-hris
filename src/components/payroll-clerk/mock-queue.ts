@@ -1,4 +1,5 @@
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { CurrentPayEntry } from '@/lib/payroll/current-pay';
 
 export type ProcessorId = 'hurupay' | 'wepay' | 'higlobe' | 'wise' | 'jeeves' | 'wires';
@@ -68,13 +69,28 @@ export interface QueueRow {
   details: {
     email?: string;
     hurupay_email?: string;
+    wepay_email?: string;
     higlobe_email?: string;
     higlobe_account_name?: string;
+    wise_email?: string;
+    wise_tag?: string;
     phone_number?: string;
     full_address?: string;
     city?: string;
     province_state?: string;
+    // Wires / Jeeves bank fields (employee-provided via Settings)
+    bank_name?: string;
+    account_holder_name?: string;
+    account_number?: string;
+    swift_code?: string;
   };
+}
+
+function pickFirst(...values: Array<string | null | undefined>): string | undefined {
+  for (const v of values) {
+    if (v != null && String(v).trim() !== '') return String(v).trim();
+  }
+  return undefined;
 }
 
 /** Map the free-text "Bank Preferred" cell to one of our processor tabs. */
@@ -93,25 +109,47 @@ export function processorIdFromBankPreferred(raw: string | null | undefined): Pr
 }
 
 /**
- * Bucket every employee with a recognised "Bank Preferred" into a dispatch
- * row. Joins per-employee pay (computed server-side from the latest Hubstaff
+ * Bucket every employee with a recognised processor into a dispatch row.
+ * Joins per-employee pay (computed server-side from the latest Hubstaff
  * upload) onto each row by lowercased work email.
+ *
+ * `idsByEmail` is the lowercased-email → EmployeeIdRow map. When the row
+ * has a valid `preferred_processor`, it wins over the legacy `bank_preferred`
+ * on the rates row (so an employee picking "Higlobe" in Settings routes to
+ * Lenny's Higlobe tab even if their rate row still has a stale "x1161"
+ * wire suffix). The per-processor payout fields the employee filled in
+ * (hurupay_email, higlobe_email, etc.) also win over the rates-side
+ * equivalents — that's how Lenny sees the most current info on each row
+ * and how MarkPaidDialog auto-fills.
  */
 export function buildQueueFromRates(
   rows: EmployeeHourlyRateRow[],
   payByEmail: Record<string, CurrentPayEntry> = {},
+  idsByEmail: Map<string, EmployeeIdRow> = new Map(),
 ): QueueRow[] {
   const out: QueueRow[] = [];
   for (const r of rows) {
-    const processor = processorIdFromBankPreferred(r.bank_preferred);
-    if (!processor) continue;
     const email = r.work_email?.trim() || r.personal_email?.trim() || '';
     if (!email) continue;
+    const lowerEmail = email.toLowerCase();
+    const idsRow =
+      idsByEmail.get(lowerEmail) ??
+      (r.work_email ? idsByEmail.get(r.work_email.trim().toLowerCase()) : undefined) ??
+      (r.personal_email ? idsByEmail.get(r.personal_email.trim().toLowerCase()) : undefined);
+
+    // Prefer the employee's explicit choice; fall back to the rates-side
+    // legacy field for anyone who hasn't picked yet.
+    const choseProcessor = (idsRow?.preferred_processor ?? '').trim().toLowerCase();
+    const chosen = isKnownProcessor(choseProcessor) ? choseProcessor : null;
+    const processor = chosen ?? processorIdFromBankPreferred(r.bank_preferred);
+    if (!processor) continue;
     const name =
+      idsRow?.name?.trim() ||
       email
         .split('@')[0]!
         .replace(/[._-]+/g, ' ')
-        .replace(/\b\w/g, (c) => c.toUpperCase()) || email;
+        .replace(/\b\w/g, (c) => c.toUpperCase()) ||
+      email;
     const pay = payByEmail[email.toLowerCase()];
     out.push({
       id: email.toLowerCase(),
@@ -125,18 +163,34 @@ export function buildQueueFromRates(
       bankPreferredRaw: r.bank_preferred,
       details: {
         email,
-        hurupay_email: r.hurupay_email ?? undefined,
-        higlobe_email: r.higlobe_email ?? undefined,
-        higlobe_account_name: r.higlobe_account_name ?? undefined,
-        phone_number: r.phone_number ?? undefined,
-        full_address: r.full_address ?? undefined,
-        city: r.city ?? undefined,
-        province_state: r.province_state ?? undefined,
+        // Employee-provided values (employee_ids) win over rates-side ones.
+        hurupay_email: pickFirst(idsRow?.hurupay_email, r.hurupay_email),
+        wepay_email: pickFirst(idsRow?.wepay_email),
+        higlobe_email: pickFirst(idsRow?.higlobe_email, r.higlobe_email),
+        higlobe_account_name: pickFirst(idsRow?.higlobe_account_name, r.higlobe_account_name),
+        wise_email: pickFirst(idsRow?.wise_email),
+        wise_tag: pickFirst(idsRow?.wise_tag),
+        phone_number: pickFirst(idsRow?.phone_number, r.phone_number),
+        full_address: pickFirst(idsRow?.full_address, r.full_address),
+        city: pickFirst(r.city),
+        province_state: pickFirst(r.province_state),
+        // Wire-only fields live solely on employee_ids (employee-provided).
+        bank_name: pickFirst(idsRow?.bank_name),
+        account_holder_name: pickFirst(idsRow?.account_holder_name),
+        account_number: pickFirst(idsRow?.account_number),
+        swift_code: pickFirst(idsRow?.swift_code, idsRow?.routing_number),
       },
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
+}
+
+const KNOWN_PROCESSOR_IDS: ReadonlySet<string> = new Set([
+  'hurupay', 'wepay', 'higlobe', 'wise', 'jeeves', 'wires',
+]);
+function isKnownProcessor(v: string): v is ProcessorId {
+  return KNOWN_PROCESSOR_IDS.has(v);
 }
 
 export function formatUSD(n: number | null): string {

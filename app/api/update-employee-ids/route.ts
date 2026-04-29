@@ -26,12 +26,29 @@ export async function POST(req: Request) {
       "name", "personal_email",
       "bank_name", "account_holder_name", "account_number", "routing_number",
       "alt_bank_name", "alt_account_holder_name", "alt_account_number", "alt_routing_number",
+      "preferred_processor",
+      // Per-processor payout fields (employee-provided)
+      "hurupay_email", "wepay_email", "higlobe_email", "higlobe_account_name",
+      "wise_email", "wise_tag",
+      "phone_number", "swift_code", "full_address",
     ];
+    const ALLOWED_PROCESSORS = new Set([
+      "hurupay", "wepay", "higlobe", "wise", "jeeves", "wires",
+    ]);
     const update: Record<string, string | null> = {};
     for (const key of allowed) {
       if (fields[key] !== undefined) {
         const val = fields[key];
-        update[key] = val != null && String(val).trim() !== "" ? String(val) : null;
+        const trimmed = val != null && String(val).trim() !== "" ? String(val).trim() : null;
+        // Whitelist the processor server-side so a tampered request can't
+        // sneak "gcash" past the dropdown — matches the DB CHECK constraint.
+        if (key === "preferred_processor" && trimmed != null && !ALLOWED_PROCESSORS.has(trimmed)) {
+          return NextResponse.json(
+            { error: `Invalid preferred_processor: ${trimmed}` },
+            { status: 400 },
+          );
+        }
+        update[key] = trimmed;
       }
     }
 

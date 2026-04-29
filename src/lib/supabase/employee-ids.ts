@@ -14,6 +14,24 @@ export type EmployeeIdRow = {
   alt_account_holder_name: string | null;
   alt_account_number: string | null;
   alt_routing_number: string | null;
+  /**
+   * Employee-chosen payment processor. One of the known processor IDs (see
+   * src/components/payroll-clerk/mock-queue.ts ProcessorId). NULL when the
+   * employee hasn't picked yet — the constrained dropdown lives in
+   * EmployeeSettings.tsx.
+   */
+  preferred_processor: string | null;
+  // ── Per-processor payout fields, employee-provided. Dispatch queue
+  //    prefers these over the rates-side equivalents when present.
+  hurupay_email: string | null;
+  wepay_email: string | null;
+  higlobe_email: string | null;
+  higlobe_account_name: string | null;
+  wise_email: string | null;
+  wise_tag: string | null;
+  phone_number: string | null;
+  swift_code: string | null;
+  full_address: string | null;
 };
 
 export async function getEmployeeIds(): Promise<{
@@ -27,7 +45,7 @@ export async function getEmployeeIds(): Promise<{
 
   const { data, error } = await supabase
     .from("employee_ids")
-    .select("employee_id, name, work_email, personal_email, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number")
+    .select("employee_id, name, work_email, personal_email, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, preferred_processor, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address")
     .order("employee_id");
 
   if (error) return { rows: [], error: error.message };

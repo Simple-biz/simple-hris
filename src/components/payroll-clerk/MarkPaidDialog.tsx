@@ -74,48 +74,51 @@ function deriveDefaults(row: QueueRow): {
   const details = row.details ?? {};
   switch (processor) {
     case 'hurupay':
+      // Per Carla / Itachi: do NOT fall back to work email — the employee's
+      // Hurupay account may be registered to a personal address. If they
+      // haven't filled it in Settings, leave blank for Lenny to verify.
       return {
         preferredBank: 'Hurupay',
-        accountNumber: details.hurupay_email ?? row.email,
+        accountNumber: details.hurupay_email ?? '',
         accountHolder: row.name,
         swiftCode: '',
       };
     case 'wepay':
       return {
         preferredBank: 'Wepay',
-        accountNumber: row.email,
+        accountNumber: details.wepay_email ?? '',
         accountHolder: row.name,
         swiftCode: '',
       };
     case 'higlobe':
       return {
         preferredBank: 'HiGlobe',
-        accountNumber: details.higlobe_email ?? row.email,
+        accountNumber: details.higlobe_email ?? '',
         accountHolder: details.higlobe_account_name ?? row.name,
         swiftCode: '',
       };
     case 'wise':
       return {
         preferredBank: 'Wise',
-        accountNumber: row.email,
-        accountHolder: row.name,
+        accountNumber: details.wise_email ?? details.wise_tag ?? '',
+        accountHolder: details.account_holder_name ?? row.name,
         swiftCode: '',
       };
     case 'jeeves':
       return {
-        preferredBank: 'Jeeves',
-        accountNumber: details.phone_number ?? '',
-        accountHolder: row.name,
-        swiftCode: '',
+        preferredBank: details.bank_name ?? 'Jeeves',
+        accountNumber: details.account_number ?? details.phone_number ?? '',
+        accountHolder: details.account_holder_name ?? row.name,
+        swiftCode: details.swift_code ?? '',
       };
     case 'wires':
       return {
-        // Surface the raw "x1xxx" suffix from the CSV when present; Lenny
-        // overrides it with the actual bank name during confirmation.
-        preferredBank: row.bankPreferredRaw ?? '',
-        accountNumber: '',
-        accountHolder: row.name,
-        swiftCode: '',
+        // Prefer the bank name the employee typed in Settings; fall back to
+        // the raw "x1xxx" CSV suffix so Lenny still has a hint to verify.
+        preferredBank: details.bank_name ?? row.bankPreferredRaw ?? '',
+        accountNumber: details.account_number ?? '',
+        accountHolder: details.account_holder_name ?? row.name,
+        swiftCode: details.swift_code ?? '',
       };
     default:
       return { preferredBank: '', accountNumber: '', accountHolder: row.name, swiftCode: '' };

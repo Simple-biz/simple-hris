@@ -2,9 +2,27 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { CurrentPayResult, PayrollPeriod } from '@/lib/payroll/current-pay';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import { buildQueueFromRates, type QueueRow } from './mock-queue';
+
+/**
+ * Build a lowercased-email → EmployeeIdRow map. Both work_email and
+ * personal_email are indexed so a rate row keyed on either resolves to
+ * the employee's row (which carries their preferred_processor and the
+ * per-processor payout fields they filled in via Settings).
+ */
+function buildIdsMap(rows: EmployeeIdRow[]): Map<string, EmployeeIdRow> {
+  const m = new Map<string, EmployeeIdRow>();
+  for (const r of rows) {
+    const we = r.work_email?.trim().toLowerCase();
+    const pe = r.personal_email?.trim().toLowerCase();
+    if (we) m.set(we, r);
+    if (pe && !m.has(pe)) m.set(pe, r);
+  }
+  return m;
+}
 
 interface DispatchQueueState {
   /** Pending rows — already-paid recipients are filtered out. */
@@ -33,9 +51,10 @@ async function loadAll(signal?: AbortSignal): Promise<{
   fxRate: number;
   error: string | null;
 }> {
-  const [ratesRes, payRes] = await Promise.all([
+  const [ratesRes, payRes, idsRes] = await Promise.all([
     fetch('/api/employee-hourly-rates', { cache: 'no-store', signal }),
     fetch('/api/payroll-current-pay', { cache: 'no-store', signal }),
+    fetch('/api/employee-ids', { cache: 'no-store', signal }),
   ]);
   const ratesJson = (await ratesRes.json()) as {
     rows?: EmployeeHourlyRateRow[];
@@ -43,6 +62,10 @@ async function loadAll(signal?: AbortSignal): Promise<{
   };
   const payJson = (await payRes.json()) as Partial<CurrentPayResult> & {
     error?: string;
+  };
+  const idsJson = (await idsRes.json()) as {
+    rows?: EmployeeIdRow[];
+    error?: string | null;
   };
 
   if (ratesJson.error) {
@@ -54,6 +77,11 @@ async function loadAll(signal?: AbortSignal): Promise<{
       error: ratesJson.error,
     };
   }
+
+  // Employee-chosen processors and per-processor payout fields live on
+  // employee_ids. If that fetch fails we don't want to block the queue —
+  // we just fall back to the legacy fields on employee_hourly_rates.
+  const idsByEmail = buildIdsMap(idsJson.rows ?? []);
 
   const period = payJson.period ?? EMPTY_PERIOD;
   // Pull existing dispatches for the current cycle so we can hide them from
@@ -79,7 +107,11 @@ async function loadAll(signal?: AbortSignal): Promise<{
       .filter((p) => p.status === 'paid')
       .map((p) => p.recipient_email.trim().toLowerCase()),
   );
-  const allQueue = buildQueueFromRates(ratesJson.rows ?? [], payJson.byEmail ?? {});
+  const allQueue = buildQueueFromRates(
+    ratesJson.rows ?? [],
+    payJson.byEmail ?? {},
+    idsByEmail,
+  );
   const pendingQueue = allQueue.filter((r) => !paidEmails.has(r.id));
 
   return {
