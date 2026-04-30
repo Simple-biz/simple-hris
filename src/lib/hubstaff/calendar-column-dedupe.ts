@@ -348,6 +348,69 @@ export function buildPabCalendarWeeks(
   return weeks;
 }
 
+/**
+ * Calendar month grid Mon–Sun (7 columns), one row per week. Includes leading/trailing
+ * days from adjacent months in the first/last row; those cells use 0h unless Hubstaff
+ * has data (My Hours only — PAB views keep {@link buildPabCalendarWeeks}).
+ */
+export function buildCalendarMonthWeeksIncludingWeekends(
+  monthStart: Date,
+  monthEnd: Date,
+  hoursByDateKey: Map<string, number>,
+): PabCalendarDay[][] {
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const ms = new Date(monthStart.getFullYear(), monthStart.getMonth(), monthStart.getDate());
+  const me = new Date(monthEnd.getFullYear(), monthEnd.getMonth(), monthEnd.getDate());
+  const msTime = ms.getTime();
+  const meTime = me.getTime();
+
+  const firstMonday = new Date(ms);
+  {
+    const dow = firstMonday.getDay();
+    const back = dow === 0 ? 6 : dow - 1;
+    firstMonday.setDate(firstMonday.getDate() - back);
+  }
+
+  const lastSunday = new Date(me);
+  {
+    const dow = lastSunday.getDay();
+    const forward = dow === 0 ? 0 : 7 - dow;
+    lastSunday.setDate(lastSunday.getDate() + forward);
+  }
+
+  const weeks: PabCalendarDay[][] = [];
+  let currentWeek: PabCalendarDay[] = [];
+  const cur = new Date(firstMonday.getFullYear(), firstMonday.getMonth(), firstMonday.getDate());
+  const endT = lastSunday.getTime();
+
+  while (cur.getTime() <= endT) {
+    const t = cur.getTime();
+    const inMonth = t >= msTime && t <= meTime;
+    const dow = cur.getDay();
+    const weekend = dow === 0 || dow === 6;
+    const key = pabDateKey(cur);
+    const seconds = inMonth ? (hoursByDateKey.get(key) ?? 0) : 0;
+    const hasData = inMonth && hoursByDateKey.has(key);
+    /* Weekends / out-of-month don't count toward the PAB-style "all passes" strip. */
+    const passes = !inMonth || weekend || seconds >= 7 * 3600;
+    currentWeek.push({
+      date: new Date(cur),
+      dateStr: `${cur.getMonth() + 1}/${cur.getDate()}`,
+      dayLabel: dayNames[dow],
+      seconds,
+      passes,
+      hasData,
+    });
+    if (dow === 0) {
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  if (currentWeek.length > 0) weeks.push(currentWeek);
+  return weeks;
+}
+
 /** Stable key for a Date used in PAB lookup maps: `"YYYY-M-D"` (no zero-padding). */
 export function pabDateKey(d: Date): string {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;

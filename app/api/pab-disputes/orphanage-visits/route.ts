@@ -20,7 +20,9 @@ export async function GET(request: Request) {
     if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
 
     const filtered = rows.filter(
-      (r) => r.reason === 'orphanage_visit' && r.status === 'approved',
+      (r) =>
+        r.reason === 'orphanage_visit' &&
+        (r.status === 'accounting_approved' || r.status === 'approved'),
     );
     return NextResponse.json({ rows: filtered, error: null });
   } catch (e) {

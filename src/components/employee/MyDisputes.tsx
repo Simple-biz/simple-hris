@@ -21,7 +21,12 @@ import {
   DEFAULT_DISPUTE_REASON_CODES,
   type PabDisputeReasonCode,
 } from '@/lib/supabase/pab-dispute-reasons';
-import type { PabDayDisputeRow } from '@/lib/supabase/pab-day-disputes';
+import {
+  disputeGrantsPabForgiveness,
+  disputeIsAwaitingResolution,
+  disputeIsFinallyDenied,
+  type PabDayDisputeRow,
+} from '@/lib/supabase/pab-day-disputes';
 import EmployeePabCalendar from './EmployeePabCalendar';
 
 type Prefill = {
@@ -42,9 +47,28 @@ type MyDisputesProps = {
 
 const STATUS_BADGE: Record<string, string> = {
   pending: 'border-amber-400/60 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-300',
+  pending_orphanage_manager: 'border-amber-400/60 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-300',
+  orphanage_manager_approved: 'border-sky-400/60 bg-sky-50 text-sky-900 dark:border-sky-500/40 dark:bg-sky-950/40 dark:text-sky-300',
+  orphanage_manager_denied: 'border-rose-400/60 bg-rose-50 text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-300',
   approved: 'border-emerald-400/60 bg-emerald-50 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-950/40 dark:text-emerald-300',
+  accounting_approved: 'border-emerald-400/60 bg-emerald-50 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-950/40 dark:text-emerald-300',
   denied: 'border-rose-400/60 bg-rose-50 text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-300',
+  accounting_denied: 'border-rose-400/60 bg-rose-50 text-rose-800 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-300',
 };
+
+function statusLabel(status: string): string {
+  const map: Record<string, string> = {
+    pending: 'Pending',
+    pending_orphanage_manager: 'Awaiting orphanage review',
+    orphanage_manager_approved: 'Awaiting accounting',
+    orphanage_manager_denied: 'Orphanage mgr denied',
+    approved: 'Approved',
+    accounting_approved: 'Accounting approved',
+    denied: 'Denied',
+    accounting_denied: 'Accounting denied',
+  };
+  return map[status] ?? status.replace(/_/g, ' ');
+}
 
 function todayIso(): string {
   const d = new Date();
@@ -251,13 +275,15 @@ export default function MyDisputes({
   );
 
   const counts = useMemo(() => {
-    return disputes.reduce(
-      (acc, d) => {
-        acc[d.status] = (acc[d.status] ?? 0) + 1;
-        return acc;
-      },
-      {} as Record<string, number>,
-    );
+    let pending = 0;
+    let approved = 0;
+    let denied = 0;
+    for (const d of disputes) {
+      if (disputeIsAwaitingResolution(d)) pending += 1;
+      else if (disputeGrantsPabForgiveness(d)) approved += 1;
+      else if (disputeIsFinallyDenied(d)) denied += 1;
+    }
+    return { pending, approved, denied };
   }, [disputes]);
 
   const reasonLabel = useCallback(
@@ -472,7 +498,7 @@ export default function MyDisputes({
                 Pending
               </p>
               <p className="mt-1 font-mono text-base font-bold tabular-nums text-zinc-900 dark:text-white">
-                {counts['pending'] ?? 0}
+                {counts.pending}
               </p>
             </div>
             <div className="px-3 py-2.5 text-center">
@@ -480,7 +506,7 @@ export default function MyDisputes({
                 Approved
               </p>
               <p className="mt-1 font-mono text-base font-bold tabular-nums text-zinc-900 dark:text-white">
-                {counts['approved'] ?? 0}
+                {counts.approved}
               </p>
             </div>
             <div className="px-3 py-2.5 text-center">
@@ -488,7 +514,7 @@ export default function MyDisputes({
                 Denied
               </p>
               <p className="mt-1 font-mono text-base font-bold tabular-nums text-zinc-900 dark:text-white">
-                {counts['denied'] ?? 0}
+                {counts.denied}
               </p>
             </div>
           </div>
@@ -550,14 +576,14 @@ export default function MyDisputes({
                       </p>
                     </div>
                     <Badge variant="outline" className={`gap-1 ${STATUS_BADGE[d.status] ?? ''}`}>
-                      {d.status === 'approved' ? (
-                        <CheckCircle2 className="h-3 w-3" />
-                      ) : d.status === 'denied' ? (
+                      {disputeIsFinallyDenied(d) ? (
                         <XCircle className="h-3 w-3" />
+                      ) : disputeGrantsPabForgiveness(d) ? (
+                        <CheckCircle2 className="h-3 w-3" />
                       ) : (
                         <Clock className="h-3 w-3" />
                       )}
-                      {d.status[0].toUpperCase() + d.status.slice(1)}
+                      {statusLabel(d.status)}
                     </Badge>
                   </div>
                   {d.explanation && (

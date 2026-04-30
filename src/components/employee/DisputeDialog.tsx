@@ -28,8 +28,13 @@ type DisputeDialogProps = {
 
 const STATUS_STYLES: Record<string, string> = {
   pending: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400',
+  pending_orphanage_manager: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400',
+  orphanage_manager_approved: 'border-sky-400 bg-sky-50 text-sky-800 dark:border-sky-600 dark:bg-sky-950/40 dark:text-sky-300',
+  orphanage_manager_denied: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400',
   approved: 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400',
+  accounting_approved: 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400',
   denied: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400',
+  accounting_denied: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400',
 };
 
 export default function DisputeDialog({
@@ -136,7 +141,7 @@ export default function DisputeDialog({
             <div className="flex items-center gap-2">
               <span className="text-zinc-500">Status:</span>
               <Badge variant="outline" className={STATUS_STYLES[existingDispute.status] ?? ''}>
-                {existingDispute.status}
+                {existingDispute.status.replace(/_/g, ' ')}
               </Badge>
             </div>
             <div><span className="text-zinc-500">Reason:</span> {reasonLabel}</div>

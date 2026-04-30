@@ -29,7 +29,11 @@ import {
   resolveCanonicalColumnsToIso,
   type PabCalendarDay,
 } from '@/lib/hubstaff/calendar-column-dedupe';
-import type { PabDayDisputeRow } from '@/lib/supabase/pab-day-disputes';
+import {
+  disputeGrantsPabForgiveness,
+  disputeIsAwaitingResolution,
+  type PabDayDisputeRow,
+} from '@/lib/supabase/pab-day-disputes';
 
 type EmployeePabCalendarProps = {
   employeeEmail: string;
@@ -286,7 +290,7 @@ export default function EmployeePabCalendar({
     // Day-after forgiveness: an approved orphanage_visit on D also forgives D+1
     // unless a real dispute already exists on D+1.
     for (const d of disputes) {
-      if (d.reason !== 'orphanage_visit' || d.status !== 'approved') continue;
+      if (!disputeGrantsPabForgiveness(d)) continue;
       const [y, m, day] = d.dispute_date.split('-').map(Number);
       if (!y || !m || !day) continue;
       const next = new Date(y, m - 1, day + 1);
@@ -327,7 +331,7 @@ export default function EmployeePabCalendar({
     }
     // Approved dispute override_hours = SET semantics
     for (const d of disputes) {
-      if (d.status !== 'approved') continue;
+      if (!disputeGrantsPabForgiveness(d)) continue;
       const set = d.override_hours;
       if (set == null || set < 0) continue;
       const [y, m, day] = d.dispute_date.split('-').map(Number);
@@ -471,11 +475,14 @@ export default function EmployeePabCalendar({
                     const cellClickable = canDispute || !!dispute;
 
                     const forgiven =
-                      dispute?.status === 'approved' && !day.passes && day.seconds >= 4 * 3600;
+                      !!dispute &&
+                      disputeGrantsPabForgiveness(dispute) &&
+                      !day.passes &&
+                      day.seconds >= 4 * 3600;
                     const effectivelyPasses = day.passes || forgiven;
 
                     let cellBorder: string;
-                    if (dispute?.status === 'pending') {
+                    if (dispute != null && disputeIsAwaitingResolution(dispute)) {
                       cellBorder =
                         'border-amber-300 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-950/40';
                     } else if (effectivelyPasses) {
@@ -513,7 +520,7 @@ export default function EmployeePabCalendar({
                         </span>
                         <span
                           className={`font-mono text-[10px] font-bold leading-none ${
-                            dispute?.status === 'pending'
+                            dispute != null && disputeIsAwaitingResolution(dispute)
                               ? 'text-amber-700 dark:text-amber-400'
                               : effectivelyPasses
                                 ? 'text-emerald-700 dark:text-emerald-400'

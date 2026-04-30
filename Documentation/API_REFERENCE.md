@@ -726,13 +726,16 @@ Endpoints backing the PAB dispute flow (employees challenge failing days; Accoun
 List disputes, optionally filtered.
 
 **Query Parameters**:
-- `email` (optional): normalised work email filter
+- `email` (optional): normalised work email filter. When omitted, requires an **elevated** session (cross-employee listing).
 - `from` (optional): `YYYY-MM-DD` inclusive lower bound on `dispute_date`
 - `to` (optional): `YYYY-MM-DD` inclusive upper bound on `dispute_date`
-- `status` (optional): `pending` | `approved` | `denied`
+- `status` (optional): repeat param for a single status **or** multiple values, e.g. `status=approved&status=accounting_approved`. If a single value is sent, a simple equality filter is used; if multiple, `status IN (...)`.
+- `awaiting_accounting` (optional): when `1`, restricts to rows Accounting should see as actionable: `pending` **or** `orphanage_manager_approved` (used by `PabDisputeQueue` default filter).
+- `reason` (optional): filter by dispute reason code
 - `limit` (optional): integer; default unlimited, typical caller sets `500`
 
-**Response** `200`:
+**Response** `200`: Same shape as before. `status` may be any value from `PabDisputeStatus` (see [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#pab-day-dispute-system)).
+
 ```json
 {
   "rows": [
@@ -742,7 +745,7 @@ List disputes, optionally filtered.
       "dispute_date": "2026-04-14",
       "reason": "orphanage_visit",
       "explanation": "Visit to nearby orphanage, home late",
-      "status": "approved",
+      "status": "accounting_approved",
       "decided_by": "carla@simple.biz",
       "decided_at": "2026-04-15T02:15:00Z",
       "decision_note": "Confirmed with team lead",
@@ -790,6 +793,7 @@ Employee-facing: submit a new dispute against a failing day.
 
 - `work_email`, `dispute_date` (`YYYY-MM-DD`), `reason` are required.
 - `reason` is validated against the current `pab_dispute_reason_codes` list in `app_settings` when any codes are configured.
+- Initial `status`: `pending_orphanage_manager` when `reason === 'orphanage_visit'`, otherwise `pending`.
 
 **Response** `200`:
 ```json
@@ -810,44 +814,98 @@ Audit log: `pab_dispute.submitted` (user_role resolved from `employee_roles`, fa
 
 ### `PATCH /api/pab-disputes/[id]`
 
-Decide or edit a dispute. Gated server-side by `canActOnDisputes(decided_by)` — caller must have an active role in `DISPUTE_ACTOR_ROLES` (`payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `admin`).
+Decide, edit, run orphanage-manager steps, or return to the Orphanage queue. Gated server-side by role-specific helpers — Accounting actions require `canActOnDisputes(decided_by)` (active role in `DISPUTE_ACTOR_ROLES`: `payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `admin`). Orphanage Manager approve/deny uses `canActOnOrphanageManagerQueue`.
 
-**Body** (approve / deny a pending dispute):
+**Body** (Accounting: approve / deny a dispute that is pending in their queue):
+
+- Non-orphanage: `status` must be `pending`.
+- Orphanage visit: `status` must be `orphanage_manager_approved` before Accounting can approve or deny.
+
 ```json
 {
-  "action": "approve",          // or "deny"
+  "action": "approve",
   "decided_by": "carla@simple.biz",
   "decision_note": "Confirmed",
-  "override_hours": 6.5          // null or number >= 0; ignored when action=deny
+  "override_hours": 6.5
 }
 ```
 
-**Body** (edit an already-decided dispute):
+`action` may be `approve` or `deny`. `override_hours`: null or number ≥ 0; ignored when `deny`. **Ignored for `reason === 'orphanage_visit'`** (Hubstaff + orphanage rules apply).
+
+**Body** (Orphanage Manager — verify or deny a row in `pending_orphanage_manager`):
+
+```json
+{
+  "action": "orphanage_manager_approve",
+  "decided_by": "manager@simple.biz",
+  "decision_note": "Receipt on file"
+}
+```
+
+Use `orphanage_manager_deny` to deny. Moves row to `orphanage_manager_approved` or `orphanage_manager_denied`.
+
+**Body** (Accounting: push back to Orphanage Manager — only `orphanage_visit` with `orphanage_manager_approved`):
+
+```json
+{
+  "action": "return_to_orphanage",
+  "decided_by": "carla@simple.biz",
+  "decision_note": "Need clearer documentation"
+}
+```
+
+**Body** (edit an already-decided dispute — same authorization as approve/deny):
+
 ```json
 {
   "action": "edit",
-  "status": "approved",          // required; "approved" | "denied"
+  "status": "approved",
   "decided_by": "carla@simple.biz",
   "decision_note": "Updated note",
-  "override_hours": null         // null (clear), 0 (zero-out), or > 0 (set total)
+  "override_hours": null
 }
 ```
+
+`status` must be `approved` or `denied`. For `orphanage_visit`, the stored status is mapped to `accounting_approved` / `accounting_denied` automatically. Use `edit` with `status: "denied"` and `override_hours: null` to **revoke PAB forgiveness** after an approval (see [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#editing-decided-disputes)). Pending / in-review rows cannot use `edit`.
 
 **Response** `200`:
 ```json
 { "success": true, "stage": "final", "error": null }
 ```
 
+(`stage` may be omitted for some actions.)
+
 **Error Response**:
-- `400` — invalid action, missing `decided_by`, pending dispute edited via `edit` action
-- `403` — caller not in an accounting role (`Not authorized — only Accounting roles can …`)
+- `400` — invalid action, missing `decided_by`, wrong state for action (e.g. orphanage not yet manager-approved)
+- `403` — caller not authorized for the action
 - `404` — dispute id not found
 - `500` — server error
 
-Audit log: `pab_dispute.approved`, `pab_dispute.denied`, or `pab_dispute.edited` with the dynamically-resolved user role.
+Audit log: `pab_dispute.approved`, `pab_dispute.denied`, `pab_dispute.edited`, `pab_dispute.orphanage_manager_approved`, `pab_dispute.orphanage_manager_denied`, or `pab_dispute.orphanage_returned_to_manager` as appropriate, with dynamically resolved `user_role`.
 
 **Tables**: `pab_day_disputes`, `audit_log`, `employee_roles` (read)
 **Service Role**: Required
+
+---
+
+### `GET /api/orphanage-disputes`
+
+Orphanage Manager queue + recent verified log. Requires NextAuth session and `canActOnOrphanageManagerQueue(session email)` (`orphanage_manager` or `admin`).
+
+**Query Parameters**:
+- `section` (optional): `pending` | `verified` — return only that bucket; default returns both.
+
+**Response** `200`:
+```json
+{
+  "pending": [ /* rows: reason orphanage_visit, status pending_orphanage_manager */ ],
+  "verified": [ /* rows: reason orphanage_visit, status orphanage_manager_approved, sorted by decided_at desc */ ],
+  "error": null
+}
+```
+
+**Tables**: `pab_day_disputes`
+**Service Role**: Required (via server lib)
 
 ---
 

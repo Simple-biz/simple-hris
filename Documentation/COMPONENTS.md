@@ -14,7 +14,21 @@ Also renders a global `<Toaster>` (sonner) for toast notifications that can be t
 
 See [RESPONSIVE-DESIGN.md](./RESPONSIVE-DESIGN.md) for breakpoints, safe areas, and testing notes.
 
-Placeholder `<div>` cards are rendered for `hogan-suite`, `disputes`, and `settings` — they show a "Coming Soon" indicator so navigation works without errors.
+Placeholder `<div>` cards are rendered for `hogan-suite` and `settings` — they show a "Coming Soon" indicator so navigation works without errors. The **Disputes** tab renders `PabDisputeQueue`; see **Pab Dispute Queue** below.
+
+---
+
+## `src/components/payroll/PabDisputeQueue.tsx`
+
+**Accounting → Disputes.** Lists `pab_day_disputes` via `GET /api/pab-disputes` with `awaiting_accounting=1` when the status filter is **Pending** (so Accounting sees both plain `pending` and `orphanage_manager_approved` rows). Search, pagination, and filters for Approved / Denied / All.
+
+**Actions (gated by `DISPUTE_ACTOR_ROLES` from `/api/employee-roles`):**
+
+- **Approve / Deny** — for rows awaiting Accounting (`pending` or `orphanage_manager_approved`). Orphanage visits do not collect hour overrides at approval; others can set override hours in the dialog.
+- **Return** — only for `orphanage_visit` with `orphanage_manager_approved`; calls `PATCH` with `return_to_orphanage` and optional note.
+- **Edit** — for terminal rows. Toggle Approved/Denied, adjust hours (non-orphanage), notes. When the row currently grants PAB forgiveness (`disputeGrantsPabForgiveness`), shows **Revoke PAB forgiveness** → confirm dialog → `PATCH` `edit` with `status: denied` and `override_hours: null`.
+
+See [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#pab-day-dispute-system) and [API_REFERENCE.md](./API_REFERENCE.md#patch-apipab-disputesid).
 
 ---
 

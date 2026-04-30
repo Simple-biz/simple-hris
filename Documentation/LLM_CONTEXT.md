@@ -39,7 +39,7 @@ Read the documents in this folder **before** making changes to the codebase. The
 - **No auth currently**: User is hardcoded as "Fran M / Senior Admin". RBAC plan exists in `IMPLEMENTATION_PLAN_RBAC.md`.
 - **Employee Portal**: Accessible at `/employee?email=...` — provides Dashboard (hours/pay/PAB), Profile (with bank info), and Settings (bank info editing).
 - **System Overview CSV selector**: Dropdown to view stats for a specific source file or "All Time" (aggregated). Defaults to latest file.
-- **Bonus & Status panel**: Real-time PAB eligibility metrics (eligible/not eligible counts + progress bar), Technology Bonus status, Dispute Requests placeholder (ready for `hour_disputes` table).
+- **Bonus & Status panel**: Real-time PAB eligibility metrics (eligible/not eligible counts + progress bar), Technology Bonus status; dispute counts still summarized at a high level (detailed flow is `pab_day_disputes` / [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#pab-day-dispute-system)).
 - **Rates avatars**: Employee table and profile modal show avatars (photo/Gravatar/initials). Photo URL fields are hidden from the field list.
 
 ---

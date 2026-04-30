@@ -18,6 +18,7 @@ const VALID_ROLES = [
   'finance',
   'admin',
   'manager',
+  'orphanage_manager',
 ] as const;
 type Role = (typeof VALID_ROLES)[number];
 
@@ -97,7 +98,13 @@ export async function POST(request: Request) {
       error = insErr?.message ?? null;
     }
 
-    if (error) return NextResponse.json({ error }, { status: 500 });
+    if (error) {
+      const hint =
+        /employee_roles_role_check|violates check constraint.*employee_roles/i.test(error)
+          ? ' Run references/employee_roles_widen_role_check_orphanage_manager.sql (or widen employee_roles_role_check to include this role).'
+          : '';
+      return NextResponse.json({ error: `${error}${hint}` }, { status: 500 });
+    }
 
     void insertAuditLog({
       user_name: SYSTEM_USER.name,

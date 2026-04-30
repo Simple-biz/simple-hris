@@ -53,6 +53,10 @@ import {
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { PabCalendarDay } from '@/lib/hubstaff/calendar-column-dedupe';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
+import {
+  disputeGrantsPabForgiveness,
+  disputeIsAwaitingResolution,
+} from '@/lib/supabase/pab-day-disputes';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -847,7 +851,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
     // an approved entry for dispute_date+1 so the per-cell forgiveness check picks it up
     // uniformly. A real dispute already recorded on that date wins.
     for (const d of myDisputes) {
-      if (d.reason !== 'orphanage_visit' || d.status !== 'approved') continue;
+      if (d.reason !== 'orphanage_visit' || !disputeGrantsPabForgiveness(d)) continue;
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d.dispute_date);
       if (!m) continue;
       const dt = new Date(Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10)));
@@ -907,7 +911,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
     // Note: dispute_date is ISO "YYYY-MM-DD" but hoursByDateKey uses pabDateKey ("YYYY-M-D", no
     // zero-padding). Convert before writing or the override silently falls through.
     for (const d of myDisputes) {
-      if (d.status !== 'approved') continue;
+      if (!disputeGrantsPabForgiveness(d)) continue;
       const set = d.override_hours;
       if (set == null || set < 0) continue;
       const [y, m, day] = d.dispute_date.split('-').map(Number);
@@ -1976,13 +1980,16 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                             // dispute brought it into the 4–7h "forgivable" zone. An approved
                             // dispute below 4h does NOT pass — the day still counts as a PAB fail.
                             const forgiven =
-                              dispute?.status === 'approved' && !day.passes && day.seconds >= 4 * 3600;
+                              !!dispute &&
+                              disputeGrantsPabForgiveness(dispute) &&
+                              !day.passes &&
+                              day.seconds >= 4 * 3600;
                             const effectivelyPasses = day.passes || forgiven;
 
                             // Future / today with no data → neutral; pending dispute → amber;
                             // otherwise colour strictly by whether PAB is effectively passing.
                             let cellBorder: string;
-                            if (dispute?.status === 'pending') {
+                            if (dispute != null && disputeIsAwaitingResolution(dispute)) {
                               cellBorder =
                                 'border-amber-400 bg-amber-50 ring-1 ring-amber-400/35 dark:border-amber-600/60 dark:bg-amber-950/35';
                             } else if (effectivelyPasses) {
@@ -2012,7 +2019,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                                 </span>
                                 <span
                                   className={`font-mono text-[10px] font-bold leading-none ${
-                                    dispute?.status === 'pending'
+                                    dispute != null && disputeIsAwaitingResolution(dispute)
                                       ? 'text-amber-700 dark:text-amber-400'
                                       : effectivelyPasses
                                         ? 'text-emerald-700 dark:text-emerald-400'
@@ -2023,7 +2030,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                                 >
                                   {day.hasData ? `${hours.toFixed(1)}` : '—'}
                                 </span>
-                                {dispute?.status === 'pending' ? (
+                                {dispute != null && disputeIsAwaitingResolution(dispute) ? (
                                   <Clock className="h-2 w-2 text-amber-500" />
                                 ) : effectivelyPasses ? (
                                   <CheckCircle2 className="h-2 w-2 text-emerald-500" />

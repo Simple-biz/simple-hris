@@ -11,10 +11,11 @@ import EmployeeProfile from './EmployeeProfile';
 import EmployeeLeaves from './EmployeeLeaves';
 import EmployeeOrphanageVisits from './EmployeeOrphanageVisits';
 import EmployeeSettings from './EmployeeSettings';
+import EmployeeMyHours from './EmployeeMyHours';
 import MyDisputes from './MyDisputes';
 import PayrollLockBanner from './PayrollLockBanner';
 import { Toaster } from '@/components/ui/sonner';
-import { Clock, Lock, Menu, Unlock } from 'lucide-react';
+import { Lock, Menu, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { normEmail } from '@/lib/email/norm-email';
@@ -203,15 +204,13 @@ export default function EmployeeApp() {
         );
       case 'hours':
         return (
-          <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 p-8 text-center dark:bg-none dark:bg-[#0d1117]">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-500/10">
-              <Clock className="h-8 w-8 text-blue-500" />
-            </div>
-            <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">My Hours</h2>
-            <p className="max-w-md text-sm text-zinc-600 dark:text-zinc-500">
-              Detailed hour logs and historical pay period data will be available here.
-            </p>
-          </div>
+          <EmployeeMyHours
+            employeeEmail={employeeEmail}
+            onNavigateToDisputes={(prefill) => {
+              setDisputesPrefill(prefill ?? null);
+              navigate('disputes');
+            }}
+          />
         );
       case 'leaves':
         return (

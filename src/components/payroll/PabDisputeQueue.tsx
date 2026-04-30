@@ -14,6 +14,7 @@ import {
   Pencil,
   RefreshCw,
   Search,
+  Undo2,
   XCircle,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -40,7 +41,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { PabDayDisputeRow, PabDisputeReasonCode } from '@/lib/supabase/pab-day-disputes';
-import { DISPUTE_ACTOR_ROLES } from '@/lib/supabase/pab-day-disputes';
+import { DISPUTE_ACTOR_ROLES, disputeGrantsPabForgiveness } from '@/lib/supabase/pab-day-disputes';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 
 const PAGE_SIZE = 15;
@@ -57,8 +58,13 @@ function formatHours(hours: number | null | undefined): string | null {
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   pending: { label: 'Pending', className: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400' },
+  pending_orphanage_manager: { label: 'Awaiting orphanage review', className: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400' },
+  orphanage_manager_approved: { label: 'Awaiting accounting', className: 'border-sky-400 bg-sky-50 text-sky-800 dark:border-sky-600 dark:bg-sky-950/40 dark:text-sky-300' },
+  orphanage_manager_denied: { label: 'Orph. mgr denied', className: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400' },
   approved: { label: 'Approved', className: 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400' },
+  accounting_approved: { label: 'Accounting approved', className: 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400' },
   denied: { label: 'Denied', className: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400' },
+  accounting_denied: { label: 'Accounting denied', className: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400' },
 };
 
 export default function PabDisputeQueue() {
@@ -112,10 +118,19 @@ export default function PabDisputeQueue() {
   const [editHrs, setEditHrs] = useState('');
   const [editMins, setEditMins] = useState('');
   const [editing, setEditing] = useState(false);
+  const [revokeForgivenessOpen, setRevokeForgivenessOpen] = useState(false);
+
+  const [returnToOrphanageRow, setReturnToOrphanageRow] = useState<PabDayDisputeRow | null>(null);
+  const [returnNote, setReturnNote] = useState('');
+  const [returning, setReturning] = useState(false);
 
   const openEdit = useCallback((row: PabDayDisputeRow) => {
     setEditDialog(row);
-    setEditStatus(row.status === 'denied' ? 'denied' : 'approved');
+    const denied =
+      row.status === 'denied' ||
+      row.status === 'accounting_denied' ||
+      row.status === 'orphanage_manager_denied';
+    setEditStatus(denied ? 'denied' : 'approved');
     setEditNote(row.decision_note ?? '');
     const oh = row.override_hours ?? 0;
     const totalMins = Math.round(oh * 60);
@@ -127,8 +142,17 @@ export default function PabDisputeQueue() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (statusFilter !== 'all') params.set('status', statusFilter);
       params.set('limit', '500');
+      if (statusFilter === 'pending') {
+        params.set('awaiting_accounting', '1');
+      } else if (statusFilter === 'approved') {
+        params.append('status', 'approved');
+        params.append('status', 'accounting_approved');
+      } else if (statusFilter === 'denied') {
+        params.append('status', 'denied');
+        params.append('status', 'orphanage_manager_denied');
+        params.append('status', 'accounting_denied');
+      }
       const res = await fetch(`/api/pab-disputes?${params}`, { cache: 'no-store' });
       const json = await res.json();
       setDisputes(json.rows ?? []);
@@ -172,9 +196,24 @@ export default function PabDisputeQueue() {
 
   useEffect(() => { setPage(1); }, [searchQuery, statusFilter]);
 
-  const pendingCount = useMemo(() => disputes.filter(d => d.status === 'pending').length, [disputes]);
-  const approvedCount = useMemo(() => disputes.filter(d => d.status === 'approved').length, [disputes]);
-  const deniedCount = useMemo(() => disputes.filter(d => d.status === 'denied').length, [disputes]);
+  const pendingCount = useMemo(
+    () => disputes.filter((d) => d.status === 'pending' || d.status === 'orphanage_manager_approved').length,
+    [disputes],
+  );
+  const approvedCount = useMemo(
+    () => disputes.filter((d) => d.status === 'approved' || d.status === 'accounting_approved').length,
+    [disputes],
+  );
+  const deniedCount = useMemo(
+    () =>
+      disputes.filter(
+        (d) =>
+          d.status === 'denied' ||
+          d.status === 'orphanage_manager_denied' ||
+          d.status === 'accounting_denied',
+      ).length,
+    [disputes],
+  );
 
   const handleEdit = useCallback(async () => {
     if (!editDialog) return;
@@ -187,8 +226,13 @@ export default function PabDisputeQueue() {
       const totalHours = safeHrs + safeMins / 60;
       // Empty inputs → no override (fall back to Hubstaff). Explicit 0 → zero-out the day.
       const hasInput = editHrs.trim() !== '' || editMins.trim() !== '';
+      const isOrphan = editDialog.reason === 'orphanage_visit';
       const overrideToSend =
-        editStatus === 'approved' && hasInput ? totalHours : null;
+        isOrphan
+          ? null
+          : editStatus === 'approved' && hasInput
+            ? totalHours
+            : null;
       const res = await fetch(`/api/pab-disputes/${editDialog.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -212,6 +256,34 @@ export default function PabDisputeQueue() {
     }
   }, [editDialog, editStatus, editNote, editHrs, editMins, currentUser, fetchDisputes]);
 
+  const handleRevokeForgiveness = useCallback(async () => {
+    if (!editDialog) return;
+    setEditing(true);
+    try {
+      const res = await fetch(`/api/pab-disputes/${editDialog.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'edit',
+          status: 'denied',
+          decided_by: currentUser ?? '',
+          decision_note: editNote.trim() || null,
+          override_hours: null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Failed');
+      toast.success('PAB forgiveness revoked — dispute marked denied');
+      setRevokeForgivenessOpen(false);
+      setEditDialog(null);
+      fetchDisputes();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to revoke forgiveness');
+    } finally {
+      setEditing(false);
+    }
+  }, [editDialog, editNote, currentUser, fetchDisputes]);
+
   const handleDecide = useCallback(async () => {
     if (!decideDialog) return;
     setDeciding(true);
@@ -223,8 +295,13 @@ export default function PabDisputeQueue() {
       const totalHours = safeHrs + safeMins / 60;
       // Empty inputs → no override (fall back to Hubstaff). Explicit 0 → zero-out the day.
       const hasInput = overrideHrs.trim() !== '' || overrideMins.trim() !== '';
+      const isOrphan = decideDialog.dispute.reason === 'orphanage_visit';
       const overrideToSend =
-        decideDialog.action === 'approve' && hasInput ? totalHours : null;
+        isOrphan
+          ? null
+          : decideDialog.action === 'approve' && hasInput
+            ? totalHours
+            : null;
       const res = await fetch(`/api/pab-disputes/${decideDialog.dispute.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -249,6 +326,32 @@ export default function PabDisputeQueue() {
       setDeciding(false);
     }
   }, [decideDialog, decisionNote, overrideHrs, overrideMins, currentUser, fetchDisputes]);
+
+  const handleReturnToOrphanage = useCallback(async () => {
+    if (!returnToOrphanageRow) return;
+    setReturning(true);
+    try {
+      const res = await fetch(`/api/pab-disputes/${returnToOrphanageRow.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'return_to_orphanage',
+          decided_by: currentUser ?? '',
+          decision_note: returnNote.trim() || null,
+        }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed');
+      toast.success('Returned to Orphanage queue for re-review');
+      setReturnToOrphanageRow(null);
+      setReturnNote('');
+      fetchDisputes();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to return dispute');
+    } finally {
+      setReturning(false);
+    }
+  }, [returnToOrphanageRow, returnNote, currentUser, fetchDisputes]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-br from-white via-indigo-50/40 to-violet-50/20 p-4 sm:p-5 dark:bg-none dark:bg-[#0d1117]">
@@ -287,7 +390,8 @@ export default function PabDisputeQueue() {
           </>
         ) : (
           <>
-            You can review disputes but not act on them. Only users with an Accounting role can approve, deny, or edit.
+            You can review disputes but not act on them. Approve, Deny, Return, and Edit require payroll_coordinator,
+            payroll_manager, finance, hr_coordinator, or admin in employee_roles.
           </>
         )}
       </div>
@@ -393,7 +497,7 @@ export default function PabDisputeQueue() {
                   <TableHead className="text-zinc-600 dark:text-zinc-400">Status</TableHead>
                   <TableHead className="text-zinc-600 dark:text-zinc-400">Set hours</TableHead>
                   <TableHead className="text-zinc-600 dark:text-zinc-400">Decision</TableHead>
-                  <TableHead className="w-[140px] text-right text-zinc-600 dark:text-zinc-400">Action</TableHead>
+                  <TableHead className="min-w-[220px] text-right text-zinc-600 dark:text-zinc-400">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -415,7 +519,11 @@ export default function PabDisputeQueue() {
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
-                      {formatHours(d.override_hours) ? (
+                      {d.reason === 'orphanage_visit' ? (
+                        <span className="text-[10px] text-zinc-400" title="Uses logged Hubstaff time">
+                          Hubstaff
+                        </span>
+                      ) : formatHours(d.override_hours) ? (
                         <span className="rounded-md bg-emerald-50 px-2 py-0.5 font-mono text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
                           {formatHours(d.override_hours)}
                         </span>
@@ -431,14 +539,14 @@ export default function PabDisputeQueue() {
                         </div>
                       ) : '—'}
                     </TableCell>
-                    <TableCell className="text-right">
-                      {d.status === 'pending' ? (
-                        <div className="flex justify-end gap-1">
+                    <TableCell className="min-w-[220px] text-right align-top">
+                      {d.status === 'pending' || d.status === 'orphanage_manager_approved' ? (
+                        <div className="flex flex-wrap justify-end gap-1">
                           <Button
                             size="sm"
                             variant="outline"
                             disabled={!canApprove}
-                            title={!canApprove ? 'Only Accounting roles can approve' : undefined}
+                            title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
                             className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
                             onClick={() => {
                               setDecideDialog({ dispute: d, action: 'approve' });
@@ -453,19 +561,35 @@ export default function PabDisputeQueue() {
                             size="sm"
                             variant="outline"
                             disabled={!canApprove}
-                            title={!canApprove ? 'Only Accounting roles can deny' : undefined}
+                            title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
                             className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
                             onClick={() => { setDecideDialog({ dispute: d, action: 'deny' }); setDecisionNote(''); setOverrideHrs(''); setOverrideMins(''); }}
                           >
                             Deny
                           </Button>
+                          {d.reason === 'orphanage_visit' && d.status === 'orphanage_manager_approved' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={!canApprove}
+                              title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : 'Send back to Orphanage managers'}
+                              className="h-7 border-amber-300 px-2 text-[11px] text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-700 dark:text-amber-300"
+                              onClick={() => {
+                                setReturnToOrphanageRow(d);
+                                setReturnNote('');
+                              }}
+                            >
+                              <Undo2 className="mr-1 h-3 w-3" />
+                              Return
+                            </Button>
+                          )}
                         </div>
                       ) : (
                         <Button
                           size="sm"
                           variant="outline"
                           disabled={!canApprove}
-                          title={!canApprove ? 'Only Accounting roles can edit' : undefined}
+                          title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
                           className="h-7 border-zinc-300 px-2 text-[11px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300"
                           onClick={() => openEdit(d)}
                         >
@@ -492,10 +616,15 @@ export default function PabDisputeQueue() {
               </DialogTitle>
               <DialogDescription className="text-xs">
                 {decideDialog.dispute.work_email} — {decideDialog.dispute.dispute_date} — {reasonLabel(decideDialog.dispute.reason)}
+                {decideDialog.dispute.reason === 'orphanage_visit' && decideDialog.action === 'approve' && (
+                  <span className="mt-1 block text-[10px] text-zinc-500">
+                    Orphanage visits keep Hubstaff hours — no manual hour entry. Final calendar forgiveness applies after Accounting approves.
+                  </span>
+                )}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
-              {decideDialog.action === 'approve' && (
+              {decideDialog.action === 'approve' && decideDialog.dispute.reason !== 'orphanage_visit' && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">Set total hours for this day</Label>
                   <div className="flex items-center gap-2">
@@ -526,7 +655,7 @@ export default function PabDisputeQueue() {
                       <span className="text-xs text-zinc-500">mins</span>
                     </div>
                   </div>
-                  <p className="text-[10px] text-zinc-500">
+                    <p className="text-[10px] text-zinc-500">
                     Replaces Hubstaff hours for this day. E.g. set 7h to make the PAB calendar show 7h for this date, regardless of what Hubstaff logged. Original Hubstaff data stays untouched.
                   </p>
                 </div>
@@ -562,7 +691,15 @@ export default function PabDisputeQueue() {
 
       {/* Edit dialog */}
       {editDialog && (
-        <Dialog open onOpenChange={() => setEditDialog(null)}>
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setEditDialog(null);
+              setRevokeForgivenessOpen(false);
+            }
+          }}
+        >
           <DialogContent className="max-w-sm">
             <DialogHeader>
               <DialogTitle className="text-sm">Edit dispute decision</DialogTitle>
@@ -571,6 +708,28 @@ export default function PabDisputeQueue() {
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
+              {disputeGrantsPabForgiveness(editDialog) && (
+                <div className="space-y-2 rounded-md border border-amber-200/90 bg-amber-50/80 px-3 py-2.5 dark:border-amber-900/60 dark:bg-amber-950/25">
+                  <p className="text-[11px] leading-snug text-amber-950 dark:text-amber-100/95">
+                    This dispute currently <span className="font-semibold">forgives the PAB short-day</span> for this date
+                    {editDialog.reason === 'orphanage_visit'
+                      ? ' (and may affect the day after per orphanage rules).'
+                      : '.'}{' '}
+                    Revoking removes that forgiveness and marks the dispute <span className="font-medium">denied</span>.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!canApprove || editing}
+                    title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
+                    className="h-8 w-full border-rose-300 text-[11px] text-rose-800 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-200 dark:hover:bg-rose-950/40"
+                    onClick={() => setRevokeForgivenessOpen(true)}
+                  >
+                    Revoke PAB forgiveness
+                  </Button>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label className="text-xs">Status</Label>
                 <div className="flex gap-2">
@@ -594,7 +753,7 @@ export default function PabDisputeQueue() {
                   </Button>
                 </div>
               </div>
-              {editStatus === 'approved' && (() => {
+              {editStatus === 'approved' && editDialog.reason !== 'orphanage_visit' && (() => {
                 const prevHours = editDialog.override_hours ?? 0;
                 const hrs = parseInt(editHrs, 10);
                 const mins = parseInt(editMins, 10);
@@ -685,6 +844,11 @@ export default function PabDisputeQueue() {
                   </div>
                 );
               })()}
+              {editStatus === 'approved' && editDialog.reason === 'orphanage_visit' && (
+                <p className="rounded-md border border-zinc-200 bg-zinc-50/80 px-2.5 py-2 text-[10px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
+                  Orphanage visits do not use hour overrides — PAB uses logged time and orphanage forgiveness rules.
+                </p>
+              )}
               <div className="space-y-1.5">
                 <Label className="text-xs">Decision note</Label>
                 <textarea
@@ -708,6 +872,106 @@ export default function PabDisputeQueue() {
               >
                 {editing && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
                 Save changes
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {revokeForgivenessOpen && editDialog && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setRevokeForgivenessOpen(false);
+          }}
+        >
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-sm">Revoke PAB forgiveness?</DialogTitle>
+              <DialogDescription className="text-xs">
+                {editDialog.work_email} — {editDialog.dispute_date}. The employee’s calendar will no longer treat this day
+                as forgiven; the dispute will be recorded as <span className="font-medium">denied</span>.
+                {editDialog.reason === 'orphanage_visit' && (
+                  <span className="mt-1 block">Orphanage day-after rules also stop applying from this dispute.</span>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Note (optional)</Label>
+              <textarea
+                value={editNote}
+                onChange={e => setEditNote(e.target.value)}
+                rows={2}
+                placeholder="Reason for revoking…"
+                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              />
+            </div>
+            <DialogFooter className="gap-2">
+              <Button variant="outline" size="sm" onClick={() => setRevokeForgivenessOpen(false)} disabled={editing}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="bg-rose-600 hover:bg-rose-700"
+                onClick={() => void handleRevokeForgiveness()}
+                disabled={editing}
+              >
+                {editing && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+                Revoke forgiveness
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {returnToOrphanageRow && (
+        <Dialog
+          open
+          onOpenChange={(o) => {
+            if (!o) {
+              setReturnToOrphanageRow(null);
+              setReturnNote('');
+            }
+          }}
+        >
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-sm">Return to Orphanage queue?</DialogTitle>
+              <DialogDescription className="text-xs">
+                {returnToOrphanageRow.work_email} — {returnToOrphanageRow.dispute_date}. The dispute goes back to
+                Orphanage Manager review (not final denied). Use when documentation needs another pass.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label className="text-xs">Note to Orphanage managers (optional)</Label>
+              <textarea
+                value={returnNote}
+                onChange={(e) => setReturnNote(e.target.value)}
+                rows={3}
+                placeholder="e.g. Need signed roster or confirmation of visit date."
+                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              />
+            </div>
+            <DialogFooter className="gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setReturnToOrphanageRow(null);
+                  setReturnNote('');
+                }}
+                disabled={returning}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="bg-amber-600 hover:bg-amber-700"
+                onClick={() => void handleReturnToOrphanage()}
+                disabled={returning}
+              >
+                {returning && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+                Return to Orphanage
               </Button>
             </DialogFooter>
           </DialogContent>

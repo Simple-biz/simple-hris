@@ -1514,7 +1514,7 @@ export default function PayrollWizard() {
     const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
     const dayAfterEnd = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1);
     const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
-    fetch(`/api/pab-disputes?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
+    fetch(`/api/pab-disputes?status=approved&status=accounting_approved&from=${from}&to=${to}`, { cache: 'no-store' })
       .then(r => r.json())
       .then((json: { rows: { work_email: string; dispute_date: string; reason: string; override_hours: number | null }[] }) => {
         const map = new Map<string, Map<string, number | null>>();

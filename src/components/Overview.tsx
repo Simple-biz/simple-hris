@@ -1044,7 +1044,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/pab-disputes?status=pending&limit=500', { cache: 'no-store' });
+        const res = await fetch('/api/pab-disputes?awaiting_accounting=1&limit=500', { cache: 'no-store' });
         const json = (await res.json()) as {
           rows?: Array<{
             id: string;

@@ -77,7 +77,8 @@ function auditRowKind(action: string): 'danger' | 'warn' | 'info' | 'ok' {
     action === 'rbac.role.granted' ||
     action === 'rbac.role.revoked' ||
     action === 'pab_dispute.submitted' ||
-    action === 'csv.master.upload'
+    action === 'csv.master.upload' ||
+    action === 'pab_dispute.orphanage_returned_to_manager'
   )
     return 'warn';
   if (

@@ -497,21 +497,44 @@ Employees can dispute individual failing PAB days (days where they logged < 7 ho
 
 Per Payroll directive (2026-04-17), **Orphanage visit** is the only valid dispute reason. The list is stored in the `app_settings` key `pab_dispute_reason_codes` and is admin-configurable.
 
-### Approval flow (single-step, RBAC-gated)
+### Status values (`pab_day_disputes.status`)
 
-As of 2026-04-21, dispute decisions are **single-step** and authorised purely by role membership in `employee_roles`:
+| Status | Meaning |
+|---|---|
+| `pending` | Awaiting Accounting (non-orphanage) or legacy open row |
+| `pending_orphanage_manager` | Orphanage visit filed; awaiting Orphanage Manager verify/deny |
+| `orphanage_manager_approved` | Manager verified; **awaiting Accounting** final approve/deny/return |
+| `orphanage_manager_denied` | Manager denied (no Accounting queue) |
+| `approved` / `denied` | Accounting final decision (non-orphanage); `approved` forgives the day |
+| `accounting_approved` / `accounting_denied` | Accounting final decision (**orphanage_visit**); only `accounting_approved` forgives for payroll/calendar |
 
-1. Employee submits a dispute from the PAB calendar for a specific date → `status = pending`.
-2. Any user whose active `employee_roles.role` is in `DISPUTE_ACTOR_ROLES` (`payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, or `admin`) can approve or deny the dispute from the **Disputes tab**. The decision is final in one step.
-3. Status moves to `approved` or `denied`. On approve, the approver can set `override_hours` (hours + minutes); on deny, no hours are written.
+### Flows (RBAC-gated)
 
-**Authorisation:** enforced server-side by `canActOnDisputes(email)` in `src/lib/supabase/pab-day-disputes.ts`, which queries `employee_roles` for active (non-revoked) entries. Client UI in `PabDisputeQueue.tsx` disables the action buttons for non-qualified users as a hint, but the server check is authoritative.
+**Non-orphanage reasons** (if configured):
 
-The previous two-tier flow (Carla + Fran hardcoded as approvers, first-approve → second-finalise) was replaced on 2026-04-18 (single-step) and the hardcoded allow-list was removed on 2026-04-21. Any Accounting role can now act alone.
+1. Employee submits → `pending`.
+2. Any user in `DISPUTE_ACTOR_ROLES` (`payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `admin`) approves or denies from **Accounting → Disputes** (`PabDisputeQueue`).
+3. Terminal: `approved` / `denied`. On approve, Accounting may set `override_hours`.
 
-### PAB eligibility impact
+**Orphanage visit (`reason = orphanage_visit`) — staged:**
 
-Only disputes with `approved` status affect PAB eligibility. `pending` and `denied` disputes have no effect.
+1. Employee submits → `pending_orphanage_manager`.
+2. **Orphanage Manager** (`orphanage_manager` or `admin`) uses the **Orphanage** view: verify or deny → `orphanage_manager_approved` or `orphanage_manager_denied`.
+3. **Accounting** sees manager-approved rows in **Disputes** (queue uses `awaiting_accounting=1`: `pending` ∪ `orphanage_manager_approved`). Actions: **Approve** / **Deny** / **Return** (Return sends the row back to `pending_orphanage_manager` with an optional note).
+4. After Accounting **Approve** / **Deny**: `accounting_approved` / `accounting_denied`. No manual hour override for orphanage at Accounting; PAB uses Hubstaff time plus orphanage forgiveness rules.
+
+**Authorisation:** `canActOnDisputes` for Accounting queue actions; `canActOnOrphanageManagerQueue` for manager verify/deny. Implemented in `src/lib/supabase/pab-day-disputes.ts`. Client disables buttons when roles are missing; server checks are authoritative.
+
+**Accounting navigation:** `payroll_manager` users see **Disputes** in the Accounting sidebar (with Overview and Payment dispatch) so they can open the queue; other accounting roles get the full tab set per `allowedAccountingTabsForRoles` in `src/lib/rbac/accounting-tabs.ts`.
+
+### PAB eligibility impact (forgiveness)
+
+Calendar and Payroll use `disputeGrantsPabForgiveness(row)` in `pab-day-disputes.ts`:
+
+- **Non-orphanage:** only `status === 'approved'` forgives the short day.
+- **Orphanage visit:** `status === 'accounting_approved'` **or** legacy `status === 'approved'` forgives (plus the usual day-after synthesis for `orphanage_visit`).
+
+Statuses that are not yet final (`pending`, `pending_orphanage_manager`, `orphanage_manager_approved`, etc.) and all denied statuses do **not** grant forgiveness.
 
 **`override_hours` contract — tri-state SET semantics** (finalised 2026-04-21):
 
@@ -527,7 +550,11 @@ Client input (`PabDisputeQueue.tsx`): if the hours+minutes inputs are both empty
 
 ### Editing decided disputes
 
-Any Accounting-role user can **edit** an already-decided dispute (approved ↔ denied, change override hours, update note, or clear the override entirely) from the Disputes tab's Edit button. Edits are fully audit-logged. Pending disputes are not edited — they progress via the approve/deny decision or are withdrawn by the employee.
+Any user in `DISPUTE_ACTOR_ROLES` can **edit** an already-decided dispute from **Accounting → Disputes** via the row **Edit** button: switch **Approved** / **Denied**, change `override_hours` (non-orphanage only), update the note, or clear the override. **Pending / in-review rows** are not edited this way — use Approve/Deny, Orphanage Manager actions, or **Return** as appropriate.
+
+**Revoke PAB forgiveness (UI):** When the row currently grants forgiveness (`disputeGrantsPabForgiveness`), the edit dialog shows **Revoke PAB forgiveness**. That opens a confirmation step, then issues `PATCH /api/pab-disputes/[id]` with `action: "edit"`, `status: "denied"`, and `override_hours: null` — same as setting status to Denied and saving, but explicit for operators. For orphanage rows, the stored status becomes `accounting_denied`. The employee calendar stops treating the day as forgiven.
+
+Edits are audit-logged as `pab_dispute.edited` (with previous/next snapshots in `details`).
 
 ### Withdraw
 
@@ -538,9 +565,12 @@ Employees can **withdraw** their own dispute while it is still in `pending` stat
 | Action | Trigger |
 |---|---|
 | `pab_dispute.submitted` | Employee submits a new dispute |
-| `pab_dispute.approved` | Accounting approves a pending dispute |
+| `pab_dispute.approved` | Accounting approves a pending dispute (or orphanage row after manager approval) |
 | `pab_dispute.denied` | Accounting denies a pending dispute |
-| `pab_dispute.edited` | Accounting edits a decided dispute |
+| `pab_dispute.edited` | Accounting edits a decided dispute (including revoking forgiveness via denied) |
+| `pab_dispute.orphanage_manager_approved` | Orphanage Manager verified the visit |
+| `pab_dispute.orphanage_manager_denied` | Orphanage Manager denied the visit |
+| `pab_dispute.orphanage_returned_to_manager` | Accounting returned a manager-approved row to the Orphanage queue |
 | `pab_dispute.withdrawn` | Employee withdraws a pending dispute, OR admin removes an orphanage visit |
 
 The `user_role` field on each audit row is resolved dynamically at write time via `resolveUserRole(email)` — it reflects the actor's actual role (e.g. `payroll_coordinator`) instead of a hardcoded literal.

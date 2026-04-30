@@ -10,7 +10,15 @@ import {
 export { DEFAULT_DISPUTE_REASON_CODES };
 export type { PabDisputeReasonCode };
 
-export type PabDisputeStatus = 'pending' | 'approved' | 'denied';
+export type PabDisputeStatus =
+  | 'pending'
+  | 'pending_orphanage_manager'
+  | 'orphanage_manager_approved'
+  | 'orphanage_manager_denied'
+  | 'approved'
+  | 'denied'
+  | 'accounting_approved'
+  | 'accounting_denied';
 
 export type PabDayDisputeRow = {
   id: string;
@@ -28,10 +36,43 @@ export type PabDayDisputeRow = {
   updated_at: string;
 };
 
+/** Payroll / PAB calendar: only these statuses forgive the day (and orphanage day-after rule). */
+export function disputeGrantsPabForgiveness(
+  row: Pick<PabDayDisputeRow, 'reason' | 'status'>,
+): boolean {
+  if (row.reason === 'orphanage_visit') {
+    return row.status === 'accounting_approved' || row.status === 'approved';
+  }
+  return row.status === 'approved';
+}
+
+/** Amber "in review" states (employee + calendar UI). */
+export function disputeIsAwaitingResolution(row: Pick<PabDayDisputeRow, 'status'>): boolean {
+  return (
+    row.status === 'pending' ||
+    row.status === 'pending_orphanage_manager' ||
+    row.status === 'orphanage_manager_approved'
+  );
+}
+
+export function disputeIsFinallyDenied(row: Pick<PabDayDisputeRow, 'status'>): boolean {
+  return (
+    row.status === 'denied' ||
+    row.status === 'orphanage_manager_denied' ||
+    row.status === 'accounting_denied'
+  );
+}
+
 export const DISPUTE_ACTOR_ROLES: readonly string[] = [
   'payroll_coordinator',
+  'payroll_manager',
   'finance',
   'hr_coordinator',
+  'admin',
+];
+
+export const ORPHANAGE_MANAGER_ROLES: readonly string[] = [
+  'orphanage_manager',
   'admin',
 ];
 
@@ -53,6 +94,14 @@ export async function canActOnDisputes(email: string | null | undefined): Promis
   if (!e) return false;
   const roles = await fetchActiveRoles(e);
   return roles.some((r) => DISPUTE_ACTOR_ROLES.includes(r));
+}
+
+export async function canActOnOrphanageManagerQueue(email: string | null | undefined): Promise<boolean> {
+  if (!email) return false;
+  const e = email.trim().toLowerCase();
+  if (!e) return false;
+  const roles = await fetchActiveRoles(e);
+  return roles.some((r) => ORPHANAGE_MANAGER_ROLES.includes(r));
 }
 
 /**
@@ -99,12 +148,20 @@ export async function listDisputes(opts?: {
   from?: string;
   to?: string;
   status?: PabDisputeStatus;
+  /** When set (non-empty), filters with status IN (...). Takes precedence over `status`. */
+  statuses?: PabDisputeStatus[];
+  reason?: string;
   limit?: number;
+  /** Defaults to created_at desc. */
+  orderBy?: { column: 'created_at' | 'decided_at' | 'updated_at'; ascending?: boolean };
 }): Promise<{ rows: PabDayDisputeRow[]; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
 
-  let query = supabase.from(TABLE).select('*').order('created_at', { ascending: false });
+  const ob = opts?.orderBy;
+  const col = ob?.column ?? 'created_at';
+  const asc = ob?.ascending ?? false;
+  let query = supabase.from(TABLE).select('*').order(col, { ascending: asc });
 
   if (opts?.email) {
     const em = normEmail(opts.email) ?? opts.email.trim().toLowerCase();
@@ -112,7 +169,12 @@ export async function listDisputes(opts?: {
   }
   if (opts?.from) query = query.gte('dispute_date', opts.from);
   if (opts?.to) query = query.lte('dispute_date', opts.to);
-  if (opts?.status) query = query.eq('status', opts.status);
+  if (opts?.statuses && opts.statuses.length > 0) {
+    query = query.in('status', opts.statuses);
+  } else if (opts?.status) {
+    query = query.eq('status', opts.status);
+  }
+  if (opts?.reason) query = query.eq('reason', opts.reason);
   if (opts?.limit) query = query.limit(opts.limit);
 
   const { data, error } = await query;
@@ -146,6 +208,8 @@ export async function createDispute(params: {
   }
 
   const email = normEmail(params.work_email) ?? params.work_email.trim().toLowerCase();
+  const initialStatus: PabDisputeStatus =
+    params.reason === 'orphanage_visit' ? 'pending_orphanage_manager' : 'pending';
 
   const { data, error } = await supabase
     .from(TABLE)
@@ -154,7 +218,7 @@ export async function createDispute(params: {
       dispute_date: params.dispute_date,
       reason: params.reason,
       explanation: params.explanation?.trim() || null,
-      status: 'pending',
+      status: initialStatus,
       created_by: params.created_by?.trim() || null,
     })
     .select('id')
@@ -210,15 +274,31 @@ export async function decideDispute(
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Dispute not found' };
-  if (row.status !== 'pending') return { error: 'Dispute is no longer pending' };
+  if (row.reason === 'orphanage_visit') {
+    if (row.status === 'pending_orphanage_manager') {
+      return { error: 'Orphanage disputes require Orphanage Manager approval before Accounting can decide' };
+    }
+    if (row.status !== 'orphanage_manager_approved') {
+      return { error: 'Dispute is not awaiting Accounting review' };
+    }
+  } else if (row.status !== 'pending') {
+    return { error: 'Dispute is no longer pending' };
+  }
 
   const nowIso = new Date().toISOString();
   // 0 is a valid SET override (zero-out the day). Only null/negative/undefined means "no override".
   const proposedOverride =
     params.override_hours != null && params.override_hours >= 0 ? params.override_hours : null;
 
+  const finalStatus: PabDisputeStatus =
+    row.reason === 'orphanage_visit'
+      ? params.status === 'approved'
+        ? 'accounting_approved'
+        : 'accounting_denied'
+      : params.status;
+
   const { error } = await supabase.from(TABLE).update({
-    status: params.status,
+    status: finalStatus,
     decided_by: approver,
     decided_at: nowIso,
     decision_note: params.decision_note?.trim() || null,
@@ -268,7 +348,13 @@ export async function editDisputeDecision(
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Dispute not found' };
-  if (row.status === 'pending') return { error: 'Use decide for pending disputes' };
+  if (
+    row.status === 'pending' ||
+    row.status === 'pending_orphanage_manager' ||
+    row.status === 'orphanage_manager_approved'
+  ) {
+    return { error: 'Use decide for disputes awaiting review' };
+  }
 
   const nowIso = new Date().toISOString();
   const editor = params.decided_by.trim();
@@ -278,10 +364,17 @@ export async function editDisputeDecision(
       ? params.override_hours
       : null;
 
+  const nextStatus: PabDisputeStatus =
+    row.reason === 'orphanage_visit'
+      ? params.status === 'approved'
+        ? 'accounting_approved'
+        : 'accounting_denied'
+      : params.status;
+
   const { error } = await supabase
     .from(TABLE)
     .update({
-      status: params.status,
+      status: nextStatus,
       decided_by: editor,
       decided_at: nowIso,
       decision_note: params.decision_note?.trim() || null,
@@ -311,11 +404,139 @@ export async function editDisputeDecision(
           decided_by: row.decided_by,
         },
         next: {
-          status: params.status,
+          status: nextStatus,
           override_hours: newOverride,
           decision_note: params.decision_note ?? null,
           decided_by: editor,
         },
+      },
+    });
+  })();
+
+  return { error: null };
+}
+
+export async function decideOrphanageManagerDispute(
+  id: string,
+  params: {
+    status: 'orphanage_manager_approved' | 'orphanage_manager_denied';
+    decided_by: string;
+    decision_note?: string | null;
+  },
+): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+
+  const manager = params.decided_by.trim();
+  const managerLower = manager.toLowerCase();
+  if (!(await canActOnOrphanageManagerQueue(managerLower))) {
+    return { error: 'Not authorized - only Orphanage Managers can verify orphanage disputes' };
+  }
+
+  const { row, error: fetchErr } = await getDisputeById(id);
+  if (fetchErr) return { error: fetchErr };
+  if (!row) return { error: 'Dispute not found' };
+  if (row.reason !== 'orphanage_visit') return { error: 'Not an orphanage dispute' };
+  if (row.status !== 'pending_orphanage_manager') {
+    return { error: 'Dispute is no longer pending Orphanage Manager review' };
+  }
+
+  const nowIso = new Date().toISOString();
+  const { error } = await supabase.from(TABLE).update({
+    status: params.status,
+    decided_by: manager,
+    decided_at: nowIso,
+    decision_note: params.decision_note?.trim() || null,
+    override_hours: null,
+    updated_at: nowIso,
+  }).eq('id', id);
+  if (error) return { error: error.message };
+
+  void (async () => {
+    const role = await resolveUserRole(managerLower, 'Orphanage Manager');
+    await insertAuditLog({
+      user_name: manager,
+      user_role: role,
+      action: params.status === 'orphanage_manager_approved'
+        ? 'pab_dispute.orphanage_manager_approved'
+        : 'pab_dispute.orphanage_manager_denied',
+      resource: TABLE,
+      resource_id: id,
+      details: {
+        employee: row.work_email,
+        dispute_date: row.dispute_date,
+        reason: row.reason,
+        decided_by: manager,
+        decision_note: params.decision_note ?? null,
+      },
+    });
+  })();
+
+  return { error: null };
+}
+
+/**
+ * Accounting sends a manager-verified orphanage dispute back to the Orphanage queue for re-review.
+ */
+export async function returnOrphanageDisputeToManagerQueue(
+  id: string,
+  params: {
+    decided_by: string;
+    return_note?: string | null;
+  },
+): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+
+  const actor = params.decided_by.trim();
+  const actorLower = actor.toLowerCase();
+  if (!(await canActOnDisputes(actorLower))) {
+    return { error: 'Not authorized — only Accounting roles can return orphanage disputes' };
+  }
+
+  const { row, error: fetchErr } = await getDisputeById(id);
+  if (fetchErr) return { error: fetchErr };
+  if (!row) return { error: 'Dispute not found' };
+  if (row.reason !== 'orphanage_visit') return { error: 'Not an orphanage dispute' };
+  if (row.status !== 'orphanage_manager_approved') {
+    return { error: 'Dispute is not awaiting Accounting review' };
+  }
+
+  const nowIso = new Date().toISOString();
+  const note = params.return_note?.trim() || null;
+  const prev = {
+    decided_by: row.decided_by,
+    decided_at: row.decided_at,
+    decision_note: row.decision_note,
+  };
+
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      status: 'pending_orphanage_manager',
+      decided_by: null,
+      decided_at: null,
+      decision_note: note,
+      override_hours: null,
+      updated_at: nowIso,
+    })
+    .eq('id', id);
+  if (error) return { error: error.message };
+
+  void (async () => {
+    const role = await resolveUserRole(actorLower, 'Admin');
+    await insertAuditLog({
+      user_name: actor,
+      user_role: role,
+      action: 'pab_dispute.orphanage_returned_to_manager',
+      resource: TABLE,
+      resource_id: id,
+      details: {
+        employee: row.work_email,
+        dispute_date: row.dispute_date,
+        returned_by: actor,
+        return_note: note,
+        previous_manager_verification: prev,
       },
     });
   })();
@@ -343,7 +564,7 @@ export async function adminCreateOrphanageVisit(params: {
     dispute_date: params.visit_date,
     reason: 'orphanage_visit',
     explanation: note,
-    status: 'approved' as const,
+    status: 'accounting_approved' as const,
     decided_by: admin,
     decided_at: nowIso,
     decision_note: note,
@@ -374,7 +595,7 @@ export async function adminCreateOrphanageVisit(params: {
         employee: email,
         dispute_date: params.visit_date,
         reason: 'orphanage_visit',
-        status: 'approved',
+        status: 'accounting_approved',
         decided_by: admin,
         decision_note: note,
         source: 'admin_orphanage_roster',
@@ -433,7 +654,9 @@ export async function withdrawDispute(
 
   const em = normEmail(params.employee_email) ?? params.employee_email.trim().toLowerCase();
   if (normEmail(row.work_email) !== em) return { error: 'Forbidden' };
-  if (row.status !== 'pending') return { error: 'Only pending disputes can be withdrawn' };
+  if (row.status !== 'pending' && row.status !== 'pending_orphanage_manager') {
+    return { error: 'Only pending disputes can be withdrawn' };
+  }
 
   const { error } = await supabase.from(TABLE).delete().eq('id', id);
   if (error) return { error: error.message };

@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
-import { decideDispute, editDisputeDecision, withdrawDispute } from '@/lib/supabase/pab-day-disputes';
+import {
+  decideDispute,
+  decideOrphanageManagerDispute,
+  editDisputeDecision,
+  returnOrphanageDisputeToManagerQueue,
+  withdrawDispute,
+} from '@/lib/supabase/pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
 import { authorizeEmailAccess, deniedResponse } from '@/lib/auth/authorize-email';
 
@@ -25,14 +31,59 @@ export async function PATCH(
     if (
       body.action !== 'approve' &&
       body.action !== 'deny' &&
-      body.action !== 'edit'
+      body.action !== 'edit' &&
+      body.action !== 'orphanage_manager_approve' &&
+      body.action !== 'orphanage_manager_deny' &&
+      body.action !== 'return_to_orphanage'
     ) {
-      return NextResponse.json({ error: 'action must be approve, deny, or edit' }, { status: 400 });
+      return NextResponse.json({
+        error: 'action must be approve, deny, edit, orphanage_manager_approve, orphanage_manager_deny, or return_to_orphanage',
+      }, { status: 400 });
     }
 
     const decided_by = body.decided_by?.trim();
     if (!decided_by) {
       return NextResponse.json({ error: 'decided_by is required' }, { status: 400 });
+    }
+
+    if (body.action === 'return_to_orphanage') {
+      const { error } = await returnOrphanageDisputeToManagerQueue(id, {
+        decided_by,
+        return_note: body.decision_note,
+      });
+      if (error) {
+        const code = error === 'Dispute not found'
+          ? 404
+          : error.includes('Not authorized')
+            ? 403
+            : error.includes('Not an orphanage') || error.includes('not awaiting')
+              ? 400
+              : 500;
+        return NextResponse.json({ error }, { status: code });
+      }
+      return NextResponse.json({ success: true, error: null });
+    }
+
+    if (body.action === 'orphanage_manager_approve' || body.action === 'orphanage_manager_deny') {
+      const status = body.action === 'orphanage_manager_approve'
+        ? 'orphanage_manager_approved'
+        : 'orphanage_manager_denied';
+      const { error } = await decideOrphanageManagerDispute(id, {
+        status,
+        decided_by,
+        decision_note: body.decision_note,
+      });
+      if (error) {
+        const code = error === 'Dispute not found'
+          ? 404
+          : error.includes('Not authorized')
+            ? 403
+            : error.includes('no longer') || error.includes('Not an orphanage')
+              ? 400
+              : 500;
+        return NextResponse.json({ error }, { status: code });
+      }
+      return NextResponse.json({ success: true, error: null });
     }
 
     if (body.action === 'edit') {

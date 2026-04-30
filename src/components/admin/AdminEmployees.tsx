@@ -39,6 +39,7 @@ const ROLE_LABELS: Record<string, string> = {
   hr_coordinator: 'HR Coordinator',
   payroll_coordinator: 'Payroll Coordinator',
   payroll_manager: 'Payroll Manager',
+  orphanage_manager: 'Orphanage Manager',
   finance: 'Finance',
   admin: 'Admin',
 };

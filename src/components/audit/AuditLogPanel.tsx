@@ -237,6 +237,12 @@ export function formatActionLabel(action: string, details: Record<string, unknow
       return `PAB dispute approved: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
     case 'pab_dispute.denied':
       return `PAB dispute denied: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
+    case 'pab_dispute.orphanage_manager_approved':
+      return `Orphanage dispute verified (awaiting accounting): ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
+    case 'pab_dispute.orphanage_manager_denied':
+      return `Orphanage dispute denied by manager: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.decided_by ?? '?')}`;
+    case 'pab_dispute.orphanage_returned_to_manager':
+      return `Orphanage dispute returned to manager queue: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} — by ${String(details?.returned_by ?? '?')}${details?.return_note ? ` (${String(details.return_note)})` : ''}`;
     case 'pab_dispute.edited':
       return `PAB dispute edited: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
     case 'pab_dispute.withdrawn':
@@ -282,6 +288,9 @@ function actionDot(action: string): string {
   if (action === 'pab_dispute.submitted') return 'bg-amber-500';
   if (action === 'pab_dispute.approved') return 'bg-green-600';
   if (action === 'pab_dispute.denied') return 'bg-rose-600';
+  if (action === 'pab_dispute.orphanage_manager_approved') return 'bg-sky-600';
+  if (action === 'pab_dispute.orphanage_manager_denied') return 'bg-rose-500';
+  if (action === 'pab_dispute.orphanage_returned_to_manager') return 'bg-amber-500';
   if (action === 'pab_dispute.edited') return 'bg-yellow-500';
   if (action === 'pab_dispute.withdrawn') return 'bg-zinc-500';
   if (action === 'payment.dispatched') return 'bg-orange-500';

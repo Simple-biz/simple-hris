@@ -23,12 +23,19 @@ const FULL_ACCOUNTING_ACCESS_ROLES = new Set([
 ]);
 
 export function allowedAccountingTabsForRoles(roles: readonly string[]): AccountingTabId[] {
-  if (roles.some((role) => FULL_ACCOUNTING_ACCESS_ROLES.has(role))) {
-    return [...ACCOUNTING_TAB_IDS];
+  const hasPrivilegedAccountingRole = roles.some((role) =>
+    role === 'admin' ||
+    role === 'finance' ||
+    role === 'hr_coordinator' ||
+    role === 'payroll_coordinator',
+  );
+
+  if (roles.includes('payroll_manager') && !hasPrivilegedAccountingRole) {
+    return ['overview', 'payment-dispatch', 'disputes'];
   }
 
-  if (roles.includes('payroll_manager')) {
-    return ['overview', 'payment-dispatch'];
+  if (roles.some((role) => FULL_ACCOUNTING_ACCESS_ROLES.has(role))) {
+    return [...ACCOUNTING_TAB_IDS];
   }
 
   return [...ACCOUNTING_TAB_IDS];

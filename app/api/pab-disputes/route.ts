@@ -16,7 +16,9 @@ export async function GET(request: Request) {
     const email = searchParams.get('email') ?? undefined;
     const from = searchParams.get('from') ?? undefined;
     const to = searchParams.get('to') ?? undefined;
-    const status = searchParams.get('status') as PabDisputeStatus | undefined;
+    const statusParams = searchParams.getAll('status').filter(Boolean) as PabDisputeStatus[];
+    const awaitingAccounting = searchParams.get('awaiting_accounting') === '1';
+    const reason = searchParams.get('reason') ?? undefined;
     const limitRaw = searchParams.get('limit');
     const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
 
@@ -27,7 +29,26 @@ export async function GET(request: Request) {
     if (!authz.ok) return deniedResponse(authz);
 
     const scopedEmail = email ? authz.effectiveEmail : undefined;
-    const { rows, error } = await listDisputes({ email: scopedEmail, from, to, status, limit });
+
+    let statuses: PabDisputeStatus[] | undefined;
+    let status: PabDisputeStatus | undefined;
+    if (awaitingAccounting) {
+      statuses = ['pending', 'orphanage_manager_approved'];
+    } else if (statusParams.length > 1) {
+      statuses = statusParams;
+    } else if (statusParams.length === 1) {
+      status = statusParams[0];
+    }
+
+    const { rows, error } = await listDisputes({
+      email: scopedEmail,
+      from,
+      to,
+      status,
+      statuses,
+      reason,
+      limit,
+    });
     if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
     return NextResponse.json({ rows, error: null });
   } catch (e) {
