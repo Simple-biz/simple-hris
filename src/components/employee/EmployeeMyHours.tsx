@@ -35,6 +35,10 @@ import {
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
 
+/** Matches PayrollWizard COMMON_BONUSES / EmployeeDashboard. */
+const PERFECT_ATTENDANCE_BONUS_PHP = 5000;
+const TECHNOLOGY_BONUS_PHP = 1850;
+
 const MONTH_NAMES = [
   'January',
   'February',
@@ -156,6 +160,7 @@ type EmployeeMyHoursProps = {
 
 export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }: EmployeeMyHoursProps) {
   const [aliasEmails, setAliasEmails] = useState<string[]>([]);
+  const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
@@ -174,33 +179,64 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
     [employeeEmail],
   );
 
+  /**
+   * Resolve the master_list row for this employee. Reruns when the rates row loads so
+   * we can match by `rate.work_email` / `rate.personal_email` too — handles email drift
+   * between `employee_hourly_rates` and `global_master_list` (BUSINESS_LOGIC.md §
+   * Email-drift). Without this bridge a master row keyed under a different email than
+   * the login (e.g. `john@simple.biz` vs `johnr@simple.biz`) would silently flunk the
+   * Tech Bonus 30-day gate as "no start date".
+   */
   useEffect(() => {
     let cancelled = false;
+    const candidates = new Set<string>([email]);
+    if (rate) {
+      const rw = normEmail(rate.work_email);
+      const rp = normEmail(rate.personal_email);
+      if (rw) candidates.add(rw);
+      if (rp) candidates.add(rp);
+    }
     (async () => {
       try {
-        const res = await fetch(
-          `/api/employees?email=${encodeURIComponent(email)}&_=${Date.now()}`,
-          { cache: 'no-store' },
-        );
-        const json = (await res.json()) as { row?: Record<string, unknown> | null };
+        const res = await fetch(`/api/employees?_=${Date.now()}`, { cache: 'no-store' });
+        const json = (await res.json()) as {
+          employees?: {
+            work_email?: string | null;
+            personal_email?: string | null;
+            start_date?: string | null;
+          }[];
+        };
         if (cancelled) return;
-        const me = json.row ?? null;
-        const aliases = new Set<string>([email]);
+        const me = (json.employees ?? []).find((e) => {
+          const we = normEmail(e.work_email ?? '');
+          const pe = normEmail(e.personal_email ?? '');
+          return (we !== null && candidates.has(we)) || (pe !== null && candidates.has(pe));
+        });
+        const aliases = new Set<string>(candidates);
         if (me) {
-          const we = normEmail(String(me.work_email ?? ''));
-          const pe = normEmail(String(me.personal_email ?? ''));
+          const we = normEmail(me.work_email ?? '');
+          const pe = normEmail(me.personal_email ?? '');
           if (we) aliases.add(we);
           if (pe) aliases.add(pe);
         }
         setAliasEmails([...aliases]);
+        if (!me?.start_date) {
+          setEmployeeStartDate(null);
+          return;
+        }
+        const d = new Date(me.start_date);
+        setEmployeeStartDate(isNaN(d.getTime()) ? null : d);
       } catch {
-        if (!cancelled) setAliasEmails([email]);
+        if (!cancelled) {
+          setAliasEmails([...candidates]);
+          setEmployeeStartDate(null);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [email]);
+  }, [email, rate]);
 
   const fetchMerged = useCallback(async () => {
     if (aliasEmails.length === 0) return;
@@ -424,8 +460,9 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
   }, [monthStart, monthEnd, mergedHoursByDateKey]);
 
   /**
-   * Estimated pay: hours in this month only, grouped by Mon–Sun week; each week’s hours
-   * split at 40h regular (same model as per-upload totals on the overview dashboard).
+   * Pay for this calendar month only: every logged second whose date falls inside
+   * [monthStart, monthEnd] is included. Hours are grouped by Mon–Sun week; each week bucket
+   * contains **only this month’s days**, then the usual 40h regular cap applies per bucket.
    */
   const monthPayEstimate = useMemo(() => {
     const parseRate = (v: string | null | undefined): number | null => {
@@ -450,8 +487,8 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
     let regularSec = 0;
     let otSec = 0;
     for (const sec of weekTotals.values()) {
-      const hrs = roundWorkedHoursForPay(sec / 3600);
-      const split = splitRegularOvertimeSeconds(hrs);
+      if (sec <= 0) continue;
+      const split = splitRegularOvertimeSeconds(roundWorkedHoursForPay(sec / 3600));
       regularSec += split.regularSec;
       otSec += split.otSec;
     }
@@ -488,6 +525,81 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
     return wd.length > 0 && wd.every((d) => d.passes);
   }, [hoursCalendar, viewMonth, viewYear]);
 
+  /** Hourly rates loaded — gates both PAB and Tech bonus visibility. */
+  const hasRates = useMemo(() => {
+    const parseRate = (v: string | null | undefined): number | null => {
+      if (v == null) return null;
+      const n = parseFloat(String(v).replace(/,/g, ''));
+      return Number.isFinite(n) ? n : null;
+    };
+    return !!(
+      rate &&
+      (parseRate(rate.regular_rate) != null || parseRate(rate.ot_rate) != null)
+    );
+  }, [rate]);
+
+  /** PAB Bonus: paid once per calendar month if every weekday in the month logged ≥7h. */
+  const pabBonusAmount = useMemo(() => {
+    if (!hasRates) return 0;
+    if (!isPAEligible) return 0;
+    return PERFECT_ATTENDANCE_BONUS_PHP;
+  }, [hasRates, isPAEligible]);
+
+  /** True once the displayed month has fully concluded (today is past its last day). */
+  const monthHasEnded = useMemo(() => {
+    const now = new Date();
+    const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return todayMid.getTime() > monthEnd.getTime();
+  }, [monthEnd]);
+
+  /**
+   * Tech Bonus pay period for the displayed month. Salary Date = Tuesday in the 3rd
+   * Mon–Sun week of the month (week 1 = the Mon–Sun week containing the 1st);
+   * pay-period Monday = Salary Date − 8 days. Mirrors `PayrollWizard.isTechBonusWeek`
+   * + `hasThirtyDaysByWeek` (BUSINESS_LOGIC.md → Technology Bonus).
+   */
+  const techBonusPayPeriod = useMemo(() => {
+    const first = new Date(viewYear, viewMonth, 1);
+    const dow = first.getDay();
+    const daysBack = dow === 0 ? 6 : dow - 1;
+    const firstMon = new Date(viewYear, viewMonth, 1 - daysBack);
+    const week3Mon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
+    const salaryDate = new Date(week3Mon.getFullYear(), week3Mon.getMonth(), week3Mon.getDate() + 1);
+    const weekStart = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), salaryDate.getDate() - 8);
+    return { salaryDate, weekStart };
+  }, [viewYear, viewMonth]);
+
+  /**
+   * Tech Bonus eligibility (UI estimate — every calendar month gets one Tech Bonus).
+   *  - No rates → suppressed (matches canonical no-rates rule).
+   *  - Viewed month not yet fully past → hidden. The bonus only "appears" once the
+   *    3rd-week paycheck and the rest of the month have actually concluded; current
+   *    and future months stay blank to avoid claiming a bonus that hasn't landed yet.
+   *  - Start date known → 30-day gate enforced against pay-period Monday
+   *    (matches `PayrollWizard.hasThirtyDaysByWeek`).
+   *  - Start date unknown (master-row miss / email drift / admin viewing) → assume
+   *    past 30 days. Dispatch still enforces the gate authoritatively.
+   */
+  const isTechnologyBonusActive = useMemo(() => {
+    if (!hasRates) return false;
+    if (!monthHasEnded) return false;
+    if (!employeeStartDate) return true;
+    const eligibleFrom = new Date(
+      employeeStartDate.getFullYear(),
+      employeeStartDate.getMonth(),
+      employeeStartDate.getDate() + 30,
+    );
+    return techBonusPayPeriod.weekStart.getTime() >= eligibleFrom.getTime();
+  }, [hasRates, employeeStartDate, techBonusPayPeriod, monthHasEnded]);
+
+  const technologyBonusAmount = isTechnologyBonusActive ? TECHNOLOGY_BONUS_PHP : 0;
+
+  /** Take-home estimate including bonuses. Null until rates are on file. */
+  const monthTakeHomePay = useMemo(() => {
+    if (monthPayEstimate.totalPay == null) return null;
+    return Math.round((monthPayEstimate.totalPay + pabBonusAmount + technologyBonusAmount) * 100) / 100;
+  }, [monthPayEstimate.totalPay, pabBonusAmount, technologyBonusAmount]);
+
   const hasAnyInMonthData = useMemo(
     () =>
       (hoursCalendar?.flat() ?? []).some(
@@ -507,7 +619,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
             My Hours
           </h1>
           <p className="text-xs text-zinc-600 dark:text-zinc-500">
-            Merged Hubstaff uploads — full month (Mon–Sun, including weekends). Use the arrows to change month.
+            Merged Hubstaff — calendar days match your uploads; dashed cells are the adjacent month but still show that day&apos;s hours. Pay summary counts only days in the month you&apos;re viewing (e.g. all of March).
           </p>
         </header>
 
@@ -636,30 +748,15 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                         const inMonth =
                           day.date.getMonth() === viewMonth && day.date.getFullYear() === viewYear;
                         const weekend = day.date.getDay() === 0 || day.date.getDay() === 6;
-
-                        if (!inMonth) {
-                          return (
-                            <div
-                              key={di}
-                              className="flex h-10 flex-col items-center justify-center gap-px rounded-md border border-dashed border-zinc-200/90 bg-zinc-50/30 dark:border-zinc-800 dark:bg-zinc-900/15"
-                              title={`${day.dayLabel} ${day.dateStr} — outside this month`}
-                            >
-                              <span className="text-[6px] leading-none text-zinc-300 dark:text-zinc-600 sm:text-[7px]">
-                                {day.dateStr}
-                              </span>
-                              <span className="text-[7px] text-zinc-300 dark:text-zinc-600">—</span>
-                            </div>
-                          );
-                        }
-
                         const hours = day.seconds / 3600;
                         const dayIso = `${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, '0')}-${String(day.date.getDate()).padStart(2, '0')}`;
-                        const dispute = disputesByDate.get(dayIso);
+                        const dispute = inMonth ? disputesByDate.get(dayIso) : undefined;
                         const nowMid = new Date();
                         const todayMid = new Date(nowMid.getFullYear(), nowMid.getMonth(), nowMid.getDate());
                         const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
                         const isFutureOrToday = cellMid.getTime() >= todayMid.getTime();
                         const canDispute =
+                          inMonth &&
                           !weekend &&
                           day.hasData &&
                           !day.passes &&
@@ -676,7 +773,16 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
 
                         let cellBorder: string;
                         if (!inMonth) {
-                          cellBorder = '';
+                          if (hours > 0 && weekend) {
+                            cellBorder =
+                              'border border-dashed border-zinc-300/90 bg-gradient-to-b from-zinc-50/60 to-orange-50/25 opacity-90 dark:border-zinc-600 dark:from-zinc-900/40 dark:to-orange-950/15';
+                          } else if (hours > 0) {
+                            cellBorder =
+                              'border border-dashed border-indigo-200/80 bg-indigo-50/35 opacity-90 dark:border-indigo-900/50 dark:bg-indigo-950/25';
+                          } else {
+                            cellBorder =
+                              'border border-dashed border-zinc-200/90 bg-zinc-50/30 dark:border-zinc-800 dark:bg-zinc-900/15';
+                          }
                         } else if (dispute != null && disputeIsAwaitingResolution(dispute)) {
                           cellBorder =
                             'border-amber-300 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-950/40';
@@ -705,24 +811,45 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                             'border-red-300 bg-red-50 dark:border-red-700/70 dark:bg-red-950/40';
                         }
 
-                        const hourText =
-                          dispute != null && disputeIsAwaitingResolution(dispute)
-                            ? 'text-amber-700 dark:text-amber-400'
-                            : effectivelyPasses && !weekend
-                              ? 'text-emerald-700 dark:text-emerald-400'
-                              : weekend && hours > 0
-                                ? 'text-zinc-700 dark:text-zinc-200'
-                                : isFutureOrToday && !day.hasData
-                                  ? 'text-zinc-400 dark:text-zinc-500'
-                                  : weekend
-                                    ? 'text-zinc-400 dark:text-zinc-500'
-                                    : 'text-red-600 dark:text-red-400';
+                        let hourText: string;
+                        if (!inMonth) {
+                          hourText =
+                            hours > 0
+                              ? 'text-zinc-600 dark:text-zinc-300'
+                              : 'text-zinc-300 dark:text-zinc-600';
+                        } else if (dispute != null && disputeIsAwaitingResolution(dispute)) {
+                          hourText = 'text-amber-700 dark:text-amber-400';
+                        } else if (effectivelyPasses && !weekend) {
+                          hourText = 'text-emerald-700 dark:text-emerald-400';
+                        } else if (weekend && hours > 0) {
+                          hourText = 'text-zinc-700 dark:text-zinc-200';
+                        } else if (isFutureOrToday && !day.hasData) {
+                          hourText = 'text-zinc-400 dark:text-zinc-500';
+                        } else if (weekend) {
+                          hourText = 'text-zinc-400 dark:text-zinc-500';
+                        } else {
+                          hourText = 'text-red-600 dark:text-red-400';
+                        }
+
+                        const titleScope = inMonth ? '' : ' · other month (still your Hubstaff)';
+                        const titleBody = `${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${titleScope}`;
+                        const titleDispute = dispute
+                          ? ` (${dispute.status})`
+                          : inMonth && day.passes
+                            ? ' · OK'
+                            : inMonth && isFutureOrToday
+                              ? ' — not yet'
+                              : inMonth && day.hasData
+                                ? ' · needs 7h weekdays — tap to dispute'
+                                : inMonth
+                                  ? ' — no data'
+                                  : '';
 
                         return (
                           <div
                             key={di}
                             className={`flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-200 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                            title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' · OK' : isFutureOrToday ? ' — not yet' : day.hasData ? ' · needs 7h weekdays — tap to dispute' : ' — no data'}`}
+                            title={`${titleBody}${titleDispute}`}
                             onClick={
                               cellClickable
                                 ? () =>
@@ -755,6 +882,9 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                   <span className="flex items-center gap-1">
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 sm:h-2 sm:w-2" /> Sat / Sun
                   </span>
+                  <span className="flex items-center gap-1 max-sm:basis-full">
+                    <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-sm border border-dashed border-zinc-400 bg-zinc-100 dark:border-zinc-500 dark:bg-zinc-800 sm:h-2 sm:w-2" /> Adj. month
+                  </span>
                   <span className="flex items-center gap-1">
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 sm:h-2 sm:w-2" /> Pending
                   </span>
@@ -777,8 +907,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
               <div className="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center">
                 <CalendarDays className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
                 <p className="text-xs text-zinc-400 dark:text-zinc-500">
-                  Calendar includes Mon–Sun. Faded cells are outside this month.<br />
-                  {!mergedRow ? ' Upload Hubstaff to see your hours.' : null}
+                  No calendar rows for this month, or Hubstaff hasn&apos;t been uploaded yet.
                 </p>
               </div>
             )}
@@ -803,7 +932,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                 {MONTH_NAMES[viewMonth]} {viewYear}
               </span>
               <span className="text-zinc-400"> · </span>
-              Estimated from logged hours (regular / OT). Bonuses follow payroll on Overview.
+              All 7 days count (incl. Sat / Sun). OT applies only to the hours past 40h in a Mon–Sun week.
             </p>
           </CardHeader>
           <CardContent className="flex flex-1 flex-col gap-4 px-4 pb-5 pt-0 sm:px-5">
@@ -824,19 +953,24 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                     Estimated take-home
                   </p>
                   <p className="mt-1 font-mono text-2xl font-bold tabular-nums tracking-tight text-emerald-800 dark:text-emerald-300">
-                    {monthPayEstimate.totalPay != null
-                      ? formatPHP(monthPayEstimate.totalPay)
-                      : '—'}
+                    {monthTakeHomePay != null ? formatPHP(monthTakeHomePay) : '—'}
                   </p>
-                  {monthPayEstimate.totalPay != null && (
+                  {monthTakeHomePay != null && (
                     <p className="mt-1 font-mono text-[11px] tabular-nums text-zinc-600 dark:text-zinc-400">
                       ≈{' '}
-                      {(monthPayEstimate.totalPay / usdToPhpRate).toLocaleString('en-US', {
+                      {(monthTakeHomePay / usdToPhpRate).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}{' '}
                       USD
                       <span className="text-zinc-400"> @ {formatPHP(usdToPhpRate)}/USD</span>
+                    </p>
+                  )}
+                  {monthTakeHomePay != null && (pabBonusAmount > 0 || technologyBonusAmount > 0) && (
+                    <p className="mt-1 text-[10px] text-emerald-700/80 dark:text-emerald-400/80">
+                      Hours pay {formatPHP(monthPayEstimate.totalPay ?? 0)}
+                      {pabBonusAmount > 0 ? ` + PAB ${formatPHP(pabBonusAmount)}` : ''}
+                      {technologyBonusAmount > 0 ? ` + Tech ${formatPHP(technologyBonusAmount)}` : ''}
                     </p>
                   )}
                 </div>
@@ -872,6 +1006,55 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                       )}
                     </span>
                   </div>
+
+                  <div className="my-1 h-px bg-zinc-200/80 dark:bg-zinc-800" />
+
+                  <div className="flex justify-between gap-2">
+                    <span className={pabBonusAmount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-500 dark:text-zinc-400'}>
+                      PAB Bonus
+                    </span>
+                    <span className="font-mono tabular-nums">
+                      {pabBonusAmount > 0 ? (
+                        <span className="font-medium text-indigo-700 dark:text-indigo-300">
+                          +{formatPHP(pabBonusAmount)}
+                        </span>
+                      ) : !hasRates ? (
+                        <span className="text-zinc-400 dark:text-zinc-600">—</span>
+                      ) : !isPAEligible ? (
+                        <span className="text-zinc-500" title="Needs ≥7h on every weekday in the month">
+                          {formatPHP(0)}
+                          <span className="ml-1 text-[10px] text-zinc-400">· not yet</span>
+                        </span>
+                      ) : (
+                        <span className="text-zinc-400">{formatPHP(0)}</span>
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between gap-2">
+                    <span className={technologyBonusAmount > 0 ? 'text-sky-600 dark:text-sky-400' : 'text-zinc-500 dark:text-zinc-400'}>
+                      Tech Bonus
+                    </span>
+                    <span className="font-mono tabular-nums">
+                      {technologyBonusAmount > 0 ? (
+                        <span className="font-medium text-sky-700 dark:text-sky-300">
+                          +{formatPHP(technologyBonusAmount)}
+                        </span>
+                      ) : !hasRates ? (
+                        <span className="text-zinc-400 dark:text-zinc-600">—</span>
+                      ) : !monthHasEnded ? (
+                        <span className="text-zinc-500">
+                          {formatPHP(0)}
+                          <span className="ml-1 text-[10px] text-zinc-400">· month not yet ended</span>
+                        </span>
+                      ) : (
+                        <span className="text-zinc-500">
+                          {formatPHP(0)}
+                          <span className="ml-1 text-[10px] text-zinc-400">· 30d service pending</span>
+                        </span>
+                      )}
+                    </span>
+                  </div>
                 </div>
 
                 {(monthPayEstimate.totalPay == null && monthPayEstimate.hasHours) ? (
@@ -882,8 +1065,18 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                 ) : null}
 
                 <p className="mt-auto text-[10px] leading-relaxed text-zinc-400 dark:text-zinc-600">
-                  OT uses a 40h cap per calendar week; only days in this month count toward each week&apos;s bucket here.
-                  Final pay may differ after payroll approval.
+                  Only days in{' '}
+                  <span className="font-medium">
+                    {MONTH_NAMES[viewMonth]} {viewYear}
+                  </span>{' '}
+                  are included — <em>every weekday and weekend</em> with logged hours counts toward the
+                  weekly total. Hours are grouped by Mon–Sun calendar week; only the portion of a week&apos;s
+                  total that exceeds <span className="font-medium">40h</span> is paid at the OT rate.
+                  <span className="font-medium text-indigo-600/80 dark:text-indigo-400/80"> PAB</span> pays{' '}
+                  {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')} when every weekday hits ≥7h;
+                  <span className="font-medium text-sky-600/80 dark:text-sky-400/80"> Tech Bonus</span> pays{' '}
+                  {formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')} once per month after 30 days of
+                  service. Final pay may differ after payroll.
                 </p>
               </>
             )}

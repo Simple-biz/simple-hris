@@ -350,8 +350,8 @@ export function buildPabCalendarWeeks(
 
 /**
  * Calendar month grid Mon–Sun (7 columns), one row per week. Includes leading/trailing
- * days from adjacent months in the first/last row; those cells use 0h unless Hubstaff
- * has data (My Hours only — PAB views keep {@link buildPabCalendarWeeks}).
+ * days from adjacent months; those cells still show {@link hoursByDateKey} when present
+ * so split weeks display real Hubstaff totals on every day (My Hours only).
  */
 export function buildCalendarMonthWeeksIncludingWeekends(
   monthStart: Date,
@@ -389,9 +389,9 @@ export function buildCalendarMonthWeeksIncludingWeekends(
     const dow = cur.getDay();
     const weekend = dow === 0 || dow === 6;
     const key = pabDateKey(cur);
-    const seconds = inMonth ? (hoursByDateKey.get(key) ?? 0) : 0;
-    const hasData = inMonth && hoursByDateKey.has(key);
-    /* Weekends / out-of-month don't count toward the PAB-style "all passes" strip. */
+    const seconds = hoursByDateKey.get(key) ?? 0;
+    const hasData = hoursByDateKey.has(key);
+    /* PAB-style strip: only in-month weekdays track the 7h rule. */
     const passes = !inMonth || weekend || seconds >= 7 * 3600;
     currentWeek.push({
       date: new Date(cur),
