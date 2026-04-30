@@ -28,7 +28,7 @@ import { toast } from 'sonner';
 
 const ROLE_ORDER = [
   { key: 'admin', label: 'admin', blurb: 'Full system access', color: '#a1a1aa' },
-  { key: 'payroll_manager', label: 'payroll_mgr', blurb: 'Edit rates · dispatch payroll', color: '#fb923c' },
+  { key: 'payroll_manager', label: 'payroll_mgr', blurb: 'Payment dispatch only', color: '#fb923c' },
   { key: 'finance', label: 'finance', blurb: 'Accounting dashboard', color: '#60a5fa' },
   { key: 'payroll_coordinator', label: 'payroll_coord', blurb: 'CSV upload · pre-flight', color: '#c084fc' },
   { key: 'hr_coordinator', label: 'hr_coord', blurb: 'Edit employee profiles', color: '#34d399' },

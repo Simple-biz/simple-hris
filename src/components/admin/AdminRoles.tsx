@@ -28,7 +28,7 @@ const ROLES = [
   { key: 'viewer', label: 'Viewer', blurb: 'Read-only dashboard access.' },
   { key: 'hr_coordinator', label: 'HR Coordinator', blurb: 'Edit employee profiles.' },
   { key: 'payroll_coordinator', label: 'Payroll Coordinator', blurb: 'Upload CSVs, pre-flight payroll.' },
-  { key: 'payroll_manager', label: 'Payroll Manager', blurb: 'Edit rates, dispatch payroll.' },
+  { key: 'payroll_manager', label: 'Payroll Manager', blurb: 'Payment dispatch only.' },
   { key: 'finance', label: 'Finance / Accounting', blurb: 'Access the Accounting Dashboard.' },
   { key: 'manager', label: 'Manager', blurb: 'Approve time adjustments, manage own team.' },
   { key: 'admin', label: 'Admin', blurb: 'Full system access.' },

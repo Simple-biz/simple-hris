@@ -30,7 +30,6 @@ export type PabDayDisputeRow = {
 
 export const DISPUTE_ACTOR_ROLES: readonly string[] = [
   'payroll_coordinator',
-  'payroll_manager',
   'finance',
   'hr_coordinator',
   'admin',
@@ -70,7 +69,7 @@ export async function resolveUserRole(
   if (!e) return fallback;
   const roles = await fetchActiveRoles(e);
   if (roles.length === 0) return fallback;
-  const priority = ['admin', 'finance', 'payroll_manager', 'payroll_coordinator', 'hr_coordinator'];
+  const priority = ['admin', 'finance', 'payroll_coordinator', 'hr_coordinator', 'payroll_manager'];
   for (const p of priority) {
     if (roles.includes(p)) return p;
   }

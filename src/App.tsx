@@ -17,6 +17,7 @@ import OrphanageVisits from './components/payroll/OrphanageVisits';
 import PayrollDispatch from './components/payroll-clerk/PayrollDispatch';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { allowedAccountingTabsForRoles, canAccessAccountingTab } from '@/lib/rbac/accounting-tabs';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -26,6 +27,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [focusRatesEmail, setFocusRatesEmail] = useState<string | null>(null);
+  const [roles, setRoles] = useState<string[]>([]);
+  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const searchParams = useSearchParams();
@@ -38,15 +41,45 @@ export default function App() {
       if (q && isPlausibleEmail(q)) {
         const normalized = normEmail(q) ?? q.toLowerCase();
         sessionStorage.setItem(SESSION_EMAIL_KEY, normalized);
+        setSessionEmail(normalized);
+        return;
       }
+      setSessionEmail(sessionStorage.getItem(SESSION_EMAIL_KEY));
     } catch {
       /* ignore */
     }
   }, [emailFromQuery]);
 
+  useEffect(() => {
+    const e = (sessionEmail || '').trim();
+    if (!e) {
+      setRoles([]);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/employee-roles?email=${encodeURIComponent(e)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { rows?: { role: string }[] }) => {
+        if (cancelled) return;
+        setRoles((j.rows ?? []).map((row) => row.role));
+      })
+      .catch(() => {
+        if (!cancelled) setRoles([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionEmail]);
+
   const isDark = mounted ? resolvedTheme === 'dark' : false;
+  const allowedTabs = allowedAccountingTabsForRoles(roles);
 
   const navigate = (tab: string) => {
+    if (!canAccessAccountingTab(tab, roles)) {
+      setActiveTab(allowedTabs[0] ?? 'payment-dispatch');
+      setMobileNavOpen(false);
+      return;
+    }
     setActiveTab(tab);
     setMobileNavOpen(false);
   };
@@ -64,6 +97,12 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [mobileNavOpen]);
+
+  useEffect(() => {
+    if (!canAccessAccountingTab(activeTab, roles)) {
+      setActiveTab(allowedTabs[0] ?? 'payment-dispatch');
+    }
+  }, [activeTab, allowedTabs, roles]);
 
   const renderContent = () => {
     switch (activeTab) {
@@ -141,4 +180,3 @@ export default function App() {
     </div>
   );
 }
-

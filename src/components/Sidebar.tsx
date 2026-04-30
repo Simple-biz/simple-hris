@@ -26,6 +26,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { normEmail } from '@/lib/email/norm-email';
+import { allowedAccountingTabsForRoles } from '@/lib/rbac/accounting-tabs';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -86,6 +87,12 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
     return () => { cancelled = true; };
   }, [email]);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
+  const allowedTabs = React.useMemo(() => allowedAccountingTabsForRoles(roles), [roles]);
+  const allowedTabSet = React.useMemo(() => new Set<string>(allowedTabs), [allowedTabs]);
+  const visibleNavItems = React.useMemo(
+    () => navItems.filter((item) => allowedTabSet.has(item.id)),
+    [allowedTabSet],
+  );
 
   return (
     <div
@@ -119,7 +126,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
 
         <ScrollArea className="-mx-2 flex-1">
           <nav className="space-y-1 px-2">
-            {navItems.map((item) => (
+            {visibleNavItems.map((item) => (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
