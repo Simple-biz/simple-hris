@@ -114,9 +114,9 @@ The weekly Hubstaff export. Replaced entirely on each upload. Configured via `NE
 
 ---
 
-### 4. `employee_ids` (optional)
+### 4. `employee_ids`
 
-An explicit `employee_id → email` mapping table for cases where the auto-generated YYMM-NNNN ID needs to be overridden.
+Employee-entered identity and payout table. This is the Supabase table used by the employee portal to save personal email plus bank / processor details.
 
 **Columns:**
 
@@ -126,10 +126,31 @@ An explicit `employee_id → email` mapping table for cases where the auto-gener
 | `name` | text |
 | `work_email` | text |
 | `personal_email` | text |
+| `preferred_processor` | text |
+| `preferred_bank_slot` | text |
+| `hurupay_email` | text |
+| `wepay_email` | text |
+| `higlobe_email` | text |
+| `higlobe_account_name` | text |
+| `wise_email` | text |
+| `wise_tag` | text |
+| `phone_number` | text |
+| `bank_name` | text |
+| `account_holder_name` | text |
+| `account_number` | text |
+| `routing_number` | text |
+| `swift_code` | text |
+| `full_address` | text |
+| `alt_bank_name` | text |
+| `alt_account_holder_name` | text |
+| `alt_account_number` | text |
+| `alt_routing_number` | text |
 
 **Who reads it:**
 - `GET /api/employee-ids` → `src/lib/supabase/employee-ids.ts: getEmployeeIds()`
 - `buildEmployeeIdMap()` creates a `Map<normalizedEmail, employee_id>` used in the Rates view to display IDs.
+- `EmployeeSettings.tsx` loads and saves `personal_email` through `/api/update-employee-ids`.
+- `EmployeeProfile.tsx` loads and saves employee payout / bank fields through `/api/update-employee-ids`.
 
 ---
 

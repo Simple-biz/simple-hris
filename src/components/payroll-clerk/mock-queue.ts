@@ -93,6 +93,10 @@ function pickFirst(...values: Array<string | null | undefined>): string | undefi
   return undefined;
 }
 
+function preferredBankSlot(row: EmployeeIdRow | undefined): 'primary' | 'alternative' {
+  return row?.preferred_bank_slot === 'alternative' ? 'alternative' : 'primary';
+}
+
 /** Map the free-text "Bank Preferred" cell to one of our processor tabs. */
 export function processorIdFromBankPreferred(raw: string | null | undefined): ProcessorId | null {
   if (!raw) return null;
@@ -151,6 +155,20 @@ export function buildQueueFromRates(
         .replace(/\b\w/g, (c) => c.toUpperCase()) ||
       email;
     const pay = payByEmail[email.toLowerCase()];
+    const bankSlot = preferredBankSlot(idsRow);
+    const preferredBankName = bankSlot === 'alternative'
+      ? pickFirst(idsRow?.alt_bank_name, idsRow?.bank_name)
+      : pickFirst(idsRow?.bank_name, idsRow?.alt_bank_name);
+    const preferredAccountHolder = bankSlot === 'alternative'
+      ? pickFirst(idsRow?.alt_account_holder_name, idsRow?.account_holder_name)
+      : pickFirst(idsRow?.account_holder_name, idsRow?.alt_account_holder_name);
+    const preferredAccountNumber = bankSlot === 'alternative'
+      ? pickFirst(idsRow?.alt_account_number, idsRow?.account_number)
+      : pickFirst(idsRow?.account_number, idsRow?.alt_account_number);
+    const preferredSwiftCode = bankSlot === 'alternative'
+      ? pickFirst(idsRow?.alt_routing_number, idsRow?.swift_code, idsRow?.routing_number)
+      : pickFirst(idsRow?.swift_code, idsRow?.routing_number, idsRow?.alt_routing_number);
+
     out.push({
       id: email.toLowerCase(),
       processor,
@@ -175,10 +193,10 @@ export function buildQueueFromRates(
         city: pickFirst(r.city),
         province_state: pickFirst(r.province_state),
         // Wire-only fields live solely on employee_ids (employee-provided).
-        bank_name: pickFirst(idsRow?.bank_name),
-        account_holder_name: pickFirst(idsRow?.account_holder_name),
-        account_number: pickFirst(idsRow?.account_number),
-        swift_code: pickFirst(idsRow?.swift_code, idsRow?.routing_number),
+        bank_name: preferredBankName,
+        account_holder_name: preferredAccountHolder,
+        account_number: preferredAccountNumber,
+        swift_code: preferredSwiftCode,
       },
     });
   }

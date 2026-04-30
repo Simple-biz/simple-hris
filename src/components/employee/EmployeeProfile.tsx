@@ -16,12 +16,12 @@ import {
   MapPin,
   Landmark,
   Pencil,
-  ArrowRight,
-  CreditCard,
-  ShieldCheck,
+  Lock,
+  Save,
+  CheckCircle,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import EmployeeAvatar from './EmployeeAvatar';
@@ -34,12 +34,21 @@ import { compressProfilePhotoForUpload } from '@/lib/images/compress-profile-pho
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
+import { PROCESSOR_OPTIONS, type ProcessorId } from '@/lib/employee-payment-processors';
+import {
+  PreferredPaymentMethodRadios,
+  PayoutDetailsFields,
+  emptyPayout,
+  payoutDraftFromIdsRow,
+  type PayoutFields,
+} from '@/components/employee/employee-payout-fields';
 
 interface EmployeeProfileProps {
   employeeEmail: string;
   profilePhotoUrl: string | null;
   onProfilePhotoUpdated: (url: string) => void;
-  onNavigateToSettings?: () => void;
+  /** When accounting starts payroll processing, bank / payout editing is disabled. */
+  payrollLocked?: boolean;
 }
 
 function formatPHP(n: number): string {
@@ -64,13 +73,6 @@ function pickRow(row: Record<string, unknown>, aliases: string[]): string | null
     }
   }
   return null;
-}
-
-function maskAccountNumber(num: string | null): string | null {
-  if (!num?.trim()) return null;
-  const s = num.trim();
-  if (s.length <= 4) return s;
-  return '••••' + s.slice(-4);
 }
 
 function formatStartDate(raw: string | null): string | null {
@@ -196,7 +198,7 @@ export default function EmployeeProfile({
   employeeEmail,
   profilePhotoUrl,
   onProfilePhotoUpdated,
-  onNavigateToSettings,
+  payrollLocked = false,
 }: EmployeeProfileProps) {
   const norm = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -214,6 +216,38 @@ export default function EmployeeProfile({
     organization: string | null;
   } | null>(null);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
+
+  const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | ''>('');
+  const [payout, setPayout] = useState<PayoutFields>(() => ({ ...emptyPayout }));
+  const [payoutSaving, setPayoutSaving] = useState(false);
+  const [payoutSavedAt, setPayoutSavedAt] = useState<string | null>(null);
+  const [payoutEditing, setPayoutEditing] = useState(false);
+
+  useEffect(() => {
+    if (!bankInfo) {
+      setPreferredProcessor('');
+      setPayout({ ...emptyPayout });
+      setPayoutEditing(true);
+      return;
+    }
+    const d = payoutDraftFromIdsRow(bankInfo as unknown as Record<string, unknown>);
+    setPreferredProcessor(d.preferredProcessor);
+    setPayout(d.payout);
+    setPayoutEditing(false);
+  }, [bankInfo]);
+
+  const resetPayoutDraft = React.useCallback(() => {
+    if (!bankInfo) {
+      setPreferredProcessor('');
+      setPayout({ ...emptyPayout });
+      setPayoutEditing(true);
+      return;
+    }
+    const d = payoutDraftFromIdsRow(bankInfo as unknown as Record<string, unknown>);
+    setPreferredProcessor(d.preferredProcessor);
+    setPayout(d.payout);
+    setPayoutEditing(false);
+  }, [bankInfo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -273,6 +307,9 @@ export default function EmployeeProfile({
         }
 
         const idRows = idsJson.rows ?? [];
+        if (idsJson.error && !empJson.error && !rateJson.error) {
+          setError(idsJson.error);
+        }
         const myId = idRows.find((r) => {
           const we = normEmail(r.work_email ?? '');
           const pe = normEmail(r.personal_email ?? '');
@@ -305,6 +342,7 @@ export default function EmployeeProfile({
 
   const displayProfilePhotoUrl =
     profilePhotoUrl?.trim() || master?.profile_photo_url?.trim() || null;
+  const payoutReadOnly = payrollLocked || !payoutEditing;
 
   const onAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -339,6 +377,66 @@ export default function EmployeeProfile({
     }
     return employeeEmail.slice(0, 2).toUpperCase();
   }, [displayName, employeeEmail]);
+
+  const savePaymentDetails = async () => {
+    if (payrollLocked) {
+      toast.error('Payroll processing is in progress', {
+        description: 'Bank and payout details cannot be edited until accounting finishes.',
+      });
+      return;
+    }
+    setPayoutSaving(true);
+    try {
+      const bootstrapName =
+        displayName && displayName !== "—" ? displayName.trim() : "";
+
+      const res = await fetch('/api/update-employee-ids', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_email: norm,
+          bootstrap_display_name: bootstrapName || undefined,
+          preferred_processor: preferredProcessor || null,
+          preferred_bank_slot: payout.preferredBankSlot || null,
+          hurupay_email: payout.hurupayEmail,
+          wepay_email: payout.wepayEmail,
+          higlobe_email: payout.higlobeEmail,
+          higlobe_account_name: payout.higlobeAccountName,
+          wise_email: payout.wiseEmail,
+          wise_tag: payout.wiseTag,
+          phone_number: payout.phoneNumber,
+          full_address: payout.fullAddress,
+          bank_name: payout.bankName,
+          account_holder_name: payout.accountHolderName,
+          account_number: payout.accountNumber,
+          swift_code: payout.swiftCode,
+          alt_bank_name: payout.altBankName,
+          alt_account_holder_name: payout.altAccountHolderName,
+          alt_account_number: payout.altAccountNumber,
+          alt_routing_number: payout.altSwiftCode,
+        }),
+      });
+      const json = (await res.json()) as { error?: string | null; success?: boolean };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+
+      const idsRes = await fetch('/api/employee-ids', { cache: 'no-store' });
+      const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[] };
+      const idRows = idsJson.rows ?? [];
+      const myId = idRows.find((r) => {
+        const we = normEmail(r.work_email ?? '');
+        const pe = normEmail(r.personal_email ?? '');
+        return we === norm || pe === norm;
+      });
+      setBankInfo(myId ?? null);
+      setPayoutSavedAt(new Date().toLocaleTimeString());
+      setPayoutEditing(false);
+      toast.success('Payment details saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save payment details');
+    } finally {
+      setPayoutSaving(false);
+    }
+  };
 
   if (loading) return <ProfileSkeleton />;
 
@@ -464,8 +562,18 @@ export default function EmployeeProfile({
 
           {/* Contact */}
           <ProfilePanel title="Contact" icon={Mail}>
-            <FieldRow icon={Mail} label="Work Email" value={master?.work_email?.trim() || rate?.work_email?.trim() || null} mono />
-            <FieldRow icon={Mail} label="Personal Email" value={master?.personal_email?.trim() || rate?.personal_email?.trim() || null} mono />
+            <FieldRow
+              icon={Mail}
+              label="Work Email"
+              value={master?.work_email?.trim() || rate?.work_email?.trim() || bankInfo?.work_email?.trim() || null}
+              mono
+            />
+            <FieldRow
+              icon={Mail}
+              label="Personal Email"
+              value={bankInfo?.personal_email?.trim() || master?.personal_email?.trim() || rate?.personal_email?.trim() || null}
+              mono
+            />
           </ProfilePanel>
 
           {/* Employment */}
@@ -496,123 +604,103 @@ export default function EmployeeProfile({
             )}
           </ProfilePanel>
 
-          {/* Bank Information */}
+          {/* Bank / payout — preferred method + details (edited here; personal email stays in Settings) */}
           <div className="col-span-1 sm:col-span-2">
             <div className="flex min-h-0 flex-col rounded-xl border border-zinc-200/90 bg-white/90 shadow-sm transition-shadow hover:shadow-md dark:border-zinc-700/80 dark:bg-zinc-900/50">
-              <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 sm:py-2.5 dark:border-zinc-800">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 px-4 py-3 sm:py-2.5 dark:border-zinc-800">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <Landmark className="h-4 w-4 shrink-0 text-orange-500 dark:text-orange-400" />
-                  <span className="text-sm font-semibold tracking-tight text-zinc-900 sm:text-xs dark:text-white">Bank Information</span>
+                  <span className="text-sm font-semibold tracking-tight text-zinc-900 sm:text-xs dark:text-white">
+                    Bank Information
+                  </span>
+                  {preferredProcessor && (
+                    <Badge
+                      variant="outline"
+                      className="border-orange-500/20 bg-orange-500/10 text-[10px] text-orange-700 dark:border-orange-500/30 dark:text-orange-400"
+                    >
+                      {PROCESSOR_OPTIONS.find((p) => p.id === preferredProcessor)?.label}
+                    </Badge>
+                  )}
                 </div>
-                {onNavigateToSettings && (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {payoutSavedAt && (
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 sm:text-xs">
+                      <CheckCircle className="h-3 w-3 shrink-0" />
+                      Saved {payoutSavedAt}
+                    </span>
+                  )}
+                  {!payrollLocked && bankInfo && !payoutEditing && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 text-[11px]"
+                      onClick={() => setPayoutEditing(true)}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Edit
+                    </Button>
+                  )}
+                  {!payrollLocked && payoutEditing && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 text-[11px]"
+                      disabled={payoutSaving}
+                      onClick={resetPayoutDraft}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Cancel
+                    </Button>
+                  )}
                   <Button
                     type="button"
-                    variant="outline"
                     size="sm"
-                    className="h-7 gap-1.5 text-[10px]"
-                    onClick={onNavigateToSettings}
+                    disabled={payoutSaving || payrollLocked || !payoutEditing}
+                    className="h-8 gap-1.5 bg-orange-500 text-[11px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-600 dark:hover:bg-orange-500"
+                    onClick={savePaymentDetails}
                   >
-                    <Pencil className="h-3 w-3" />
-                    Edit
-                    <ArrowRight className="h-3 w-3" />
+                    {payoutSaving ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Save className="h-3.5 w-3.5" />
+                    )}
+                    Save payment details
                   </Button>
-                )}
+                </div>
               </div>
               <div className="px-4 py-3">
-                {bankInfo && (bankInfo.bank_name || bankInfo.account_number || bankInfo.alt_bank_name) ? (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    {/* Primary Account */}
-                    <div className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-4 sm:p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-                      <div className="mb-2.5 flex items-center gap-1.5 sm:mb-2">
-                        <CreditCard className="h-4 w-4 text-zinc-500 sm:h-3.5 sm:w-3.5" />
-                        <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:text-[10px] dark:text-zinc-400">Primary Account</span>
-                      </div>
-                      <div className="space-y-2 sm:space-y-1.5">
-                        {bankInfo.bank_name && (
-                          <div>
-                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Bank</div>
-                            <div className="text-sm font-medium text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.bank_name}</div>
-                          </div>
-                        )}
-                        {bankInfo.account_holder_name && (
-                          <div>
-                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Account Holder</div>
-                            <div className="text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.account_holder_name}</div>
-                          </div>
-                        )}
-                        {bankInfo.account_number && (
-                          <div>
-                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Account Number</div>
-                            <div className="font-mono text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{maskAccountNumber(bankInfo.account_number)}</div>
-                          </div>
-                        )}
-                        {bankInfo.routing_number && (
-                          <div>
-                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Routing Number</div>
-                            <div className="font-mono text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.routing_number}</div>
-                          </div>
-                        )}
-                        {!bankInfo.bank_name && !bankInfo.account_number && (
-                          <p className="text-[11px] text-zinc-400 sm:text-[10px]">Not set</p>
-                        )}
-                      </div>
-                    </div>
-                    {/* Alternative Account */}
-                    <div className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-4 sm:p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-                      <div className="mb-2.5 flex items-center gap-1.5 sm:mb-2">
-                        <ShieldCheck className="h-4 w-4 text-zinc-500 sm:h-3.5 sm:w-3.5" />
-                        <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:text-[10px] dark:text-zinc-400">Alternative Account</span>
-                      </div>
-                      <div className="space-y-2 sm:space-y-1.5">
-                        {bankInfo.alt_bank_name && (
-                          <div>
-                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Bank</div>
-                            <div className="text-sm font-medium text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.alt_bank_name}</div>
-                          </div>
-                        )}
-                        {bankInfo.alt_account_holder_name && (
-                          <div>
-                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Account Holder</div>
-                            <div className="text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.alt_account_holder_name}</div>
-                          </div>
-                        )}
-                        {bankInfo.alt_account_number && (
-                          <div>
-                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Account Number</div>
-                            <div className="font-mono text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{maskAccountNumber(bankInfo.alt_account_number)}</div>
-                          </div>
-                        )}
-                        {bankInfo.alt_routing_number && (
-                          <div>
-                            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[9px]">Routing Number</div>
-                            <div className="font-mono text-sm text-zinc-900 sm:text-xs dark:text-zinc-100">{bankInfo.alt_routing_number}</div>
-                          </div>
-                        )}
-                        {!bankInfo.alt_bank_name && !bankInfo.alt_account_number && (
-                          <p className="text-[11px] text-zinc-400 sm:text-[10px]">Not set</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-2 py-4 text-center">
-                    <Landmark className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">No bank information on file</p>
-                    {onNavigateToSettings && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="mt-1 h-8 gap-1.5 text-[11px]"
-                        onClick={onNavigateToSettings}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                        Add Bank Details in Settings
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
+                {payrollLocked && (
+                  <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200/90 bg-rose-50/90 px-3 py-2.5 dark:border-rose-900/50 dark:bg-rose-950/35">
+                    <Lock className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                    <p className="text-[11px] leading-snug text-rose-950 dark:text-rose-100">
+                      Payroll processing is in progress. Preferred payment method and bank details are read-only until
+                      accounting finishes.
+                    </p>
                   </div>
                 )}
+                {!bankInfo && !payrollLocked && (
+                  <p className="mb-3 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                    Choose how you get paid and fill in the details below, then save. If you don&apos;t have a payroll row
+                    yet, your first save creates one linked to your work email. HR may replace the temporary ID later.
+                  </p>
+                )}
+                <div className="space-y-4">
+                  <PreferredPaymentMethodRadios
+                    value={preferredProcessor}
+                    onChange={setPreferredProcessor}
+                    disabled={payoutReadOnly}
+                  />
+                  {preferredProcessor ? (
+                    <PayoutDetailsFields
+                      processor={preferredProcessor}
+                      payout={payout}
+                      setPayout={setPayout}
+                      disabled={payoutReadOnly}
+                    />
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>

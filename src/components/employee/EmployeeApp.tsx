@@ -198,7 +198,7 @@ export default function EmployeeApp() {
             employeeEmail={employeeEmail}
             profilePhotoUrl={profilePhotoUrl}
             onProfilePhotoUpdated={(url) => setProfilePhotoUrl(url)}
-            onNavigateToSettings={() => navigate('settings')}
+            payrollLocked={lockState.locked}
           />
         );
       case 'hours':

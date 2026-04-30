@@ -355,12 +355,30 @@ Updates bank information and other employee ID fields.
 | `alt_account_holder_name` | string | No |
 | `alt_account_number` | string | No |
 | `alt_routing_number` | string | No |
+| `preferred_processor` | string | No |
+| `hurupay_email` | string | No |
+| `wepay_email` | string | No |
+| `higlobe_email` | string | No |
+| `higlobe_account_name` | string | No |
+| `wise_email` | string | No |
+| `wise_tag` | string | No |
+| `phone_number` | string | No |
+| `swift_code` | string | No |
+| `full_address` | string | No |
+| `preferred_bank_slot` | string | No |
+| `bootstrap_display_name` | string | No |
 
 **Allowed update fields**: Only the fields listed above are accepted. All others are silently ignored. Empty strings are converted to `null`.
 
+**Behavior notes**:
+- Writes to Supabase table `employee_ids`.
+- If no existing row matches and `work_email` is present, the route bootstraps a new `employee_ids` row with a temporary `SELF-...` employee ID, then saves the submitted fields.
+- `preferred_processor` must be one of: `hurupay`, `wepay`, `higlobe`, `wise`, `jeeves`, `wires`.
+- `preferred_bank_slot` must be one of: `primary`, `alternative`.
+
 **Response** `200`:
 ```json
-{ "success": true }
+{ "success": true, "created": false }
 ```
 
 **Error Response** `400`:

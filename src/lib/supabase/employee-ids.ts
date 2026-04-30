@@ -6,6 +6,7 @@ export type EmployeeIdRow = {
   name: string;
   work_email: string | null;
   personal_email: string | null;
+  preferred_bank_slot: string | null;
   bank_name: string | null;
   account_holder_name: string | null;
   account_number: string | null;
@@ -34,6 +35,34 @@ export type EmployeeIdRow = {
   full_address: string | null;
 };
 
+function explainEmployeeIdsReadError(message: string): string {
+  const msg = message.trim();
+  const lower = msg.toLowerCase();
+
+  if (
+    lower.includes("preferred_processor") ||
+    lower.includes("hurupay_email") ||
+    lower.includes("wepay_email") ||
+    lower.includes("higlobe_email") ||
+    lower.includes("higlobe_account_name") ||
+    lower.includes("wise_email") ||
+    lower.includes("wise_tag") ||
+    lower.includes("phone_number") ||
+    lower.includes("swift_code") ||
+    lower.includes("full_address") ||
+    lower.includes("preferred_bank_slot") ||
+    lower.includes("schema cache")
+  ) {
+    return [
+      "Supabase employee_ids schema is missing one or more payout columns.",
+      "Run references/add_preferred_processor.sql, references/add_processor_fields_to_employee_ids.sql, and references/add_preferred_bank_slot_to_employee_ids.sql in Supabase.",
+      `Supabase said: ${msg}`,
+    ].join(" ");
+  }
+
+  return msg;
+}
+
 export async function getEmployeeIds(): Promise<{
   rows: EmployeeIdRow[];
   error: string | null;
@@ -45,10 +74,10 @@ export async function getEmployeeIds(): Promise<{
 
   const { data, error } = await supabase
     .from("employee_ids")
-    .select("employee_id, name, work_email, personal_email, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, preferred_processor, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address")
+    .select("employee_id, name, work_email, personal_email, preferred_bank_slot, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, preferred_processor, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address")
     .order("employee_id");
 
-  if (error) return { rows: [], error: error.message };
+  if (error) return { rows: [], error: explainEmployeeIdsReadError(error.message) };
 
   const rows = ((data ?? []) as EmployeeIdRow[]).filter(
     (r) => r.employee_id && r.name,
