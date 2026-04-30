@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -143,14 +143,18 @@ export default function PayrollDispatch() {
   // and a Hubstaff cycle is loaded. The "ready" mental model from the meeting
   // maps cleanly onto: cycle exists AND processing started.
   const cycleReady = Boolean(period.cycleId);
-  // True once we've mirrored the first server snapshot into local `pending`.
-  // Prevents a one-frame flash where `loading=false` but the local list is
-  // still its empty initial state (would briefly show "Queue clear").
+  // True only after `fetched` is copied into `pending` for the current load.
+  // Reset while loading so we never paint the table with stale `pending` after
+  // `loading` flips false (browser painted before `pending` caught up).
   const [hydrated, setHydrated] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (loading) {
+      setHydrated(false);
+      return;
+    }
     setPending(fetched);
-    if (!loading) setHydrated(true);
+    setHydrated(true);
   }, [fetched, loading]);
 
   const counts = useMemo(() => {
@@ -258,8 +262,8 @@ export default function PayrollDispatch() {
     // Show the skeleton while the network is still in flight OR while we
     // haven't mirrored the first server snapshot into local state yet.
     if (activeTab === 'reports') return <DispatchReports />;
-    if (loading || !hydrated) return <QueueSkeleton />;
     if (error) return <ErrorState message={error} />;
+    if (loading || !hydrated) return <QueueSkeleton />;
     if (!cycleReady) return <NoCycleState />;
     if (activeTab === 'history') return <SentPaymentsHistory records={paid} />;
     return (

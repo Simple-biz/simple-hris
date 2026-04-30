@@ -142,6 +142,7 @@ export function useDispatchQueue(): DispatchQueueState {
   });
 
   const load = useCallback(async (signal?: AbortSignal) => {
+    setState((s) => ({ ...s, loading: true }));
     try {
       const result = await loadAll(signal);
       if (signal?.aborted) return;

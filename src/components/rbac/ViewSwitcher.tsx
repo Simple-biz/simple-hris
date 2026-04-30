@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, Sparkles } from 'lucide-react';
+import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, Sparkles, UserCog } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
@@ -22,6 +22,7 @@ const VIEW_ICONS: Record<AppView, React.ComponentType<{ className?: string }>> =
   employee: LayoutDashboard,
   admin: ShieldCheck,
   accounting: Briefcase,
+  manager: UserCog,
 };
 
 export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) {

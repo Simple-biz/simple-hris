@@ -30,6 +30,7 @@ const ROLES = [
   { key: 'payroll_coordinator', label: 'Payroll Coordinator', blurb: 'Upload CSVs, pre-flight payroll.' },
   { key: 'payroll_manager', label: 'Payroll Manager', blurb: 'Edit rates, dispatch payroll.' },
   { key: 'finance', label: 'Finance / Accounting', blurb: 'Access the Accounting Dashboard.' },
+  { key: 'manager', label: 'Manager', blurb: 'Approve time adjustments, manage own team.' },
   { key: 'admin', label: 'Admin', blurb: 'Full system access.' },
 ] as const;
 
@@ -41,6 +42,7 @@ const ROLE_GROUPS: { title: string; caption: string; keys: RoleKey[] }[] = [
   { title: 'Baseline', caption: 'Who can see what', keys: ['viewer'] },
   { title: 'Coordinators', caption: 'HR & payroll inputs', keys: ['hr_coordinator', 'payroll_coordinator'] },
   { title: 'Management', caption: 'Rates, dispatch & books', keys: ['payroll_manager', 'finance'] },
+  { title: 'Team Lead', caption: 'Team-scoped approvals', keys: ['manager'] },
   { title: 'System', caption: 'Full control', keys: ['admin'] },
 ];
 
@@ -56,6 +58,8 @@ function rolePillClasses(role: RoleKey): string {
       'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200/95 dark:border-amber-600/45',
     finance:
       'border-sky-500/35 bg-sky-500/10 text-sky-900 dark:text-sky-200/95 dark:border-sky-600/40',
+    manager:
+      'border-indigo-500/35 bg-indigo-500/10 text-indigo-800 dark:text-indigo-300/95 dark:border-indigo-600/40',
     admin:
       'border-rose-500/40 bg-rose-500/10 text-rose-900 dark:text-rose-200/95 dark:border-rose-600/45',
   };
@@ -69,6 +73,7 @@ function roleRowAccent(role: RoleKey): string {
     payroll_coordinator: 'border-l-violet-500',
     payroll_manager: 'border-l-amber-500',
     finance: 'border-l-sky-500',
+    manager: 'border-l-indigo-500',
     admin: 'border-l-rose-500',
   };
   return map[role];

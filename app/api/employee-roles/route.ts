@@ -17,6 +17,7 @@ const VALID_ROLES = [
   'payroll_manager',
   'finance',
   'admin',
+  'manager',
 ] as const;
 type Role = (typeof VALID_ROLES)[number];
 

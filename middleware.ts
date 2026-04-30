@@ -8,7 +8,7 @@
  * Public paths (always let through):
  *  - /login                       — the sign-in page itself
  *  - /api/auth/*                  — NextAuth's own routes
- *  - /icon.svg, /favicon.png,
+ *  - /icon.svg, /favicon2.png,
  *    /simple-logo.png             — static assets referenced from <head> / login page
  *
  * The `matcher` below excludes Next.js internal paths (_next, static) and common public file
@@ -64,5 +64,5 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   // Skip static assets, _next internals, and any file that looks like a static resource.
-  matcher: ['/((?!_next/static|_next/image|favicon\\.ico|icon\\.svg|favicon\\.png|simple-logo\\.png|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|css|js|woff2?|ttf)$).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon\\.ico|icon\\.svg|favicon\\.png|favicon2\\.png|simple-logo\\.png|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico|css|js|woff2?|ttf)$).*)'],
 };

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Menu } from 'lucide-react';
 import { useTheme } from 'next-themes';
@@ -12,6 +12,7 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
 import PayrollClerkSidebar from './PayrollClerkSidebar';
 import ProcessorQueue from './ProcessorQueue';
+import QueueSkeleton from './QueueSkeleton';
 import SentPaymentsHistory from './SentPaymentsHistory';
 import DispatchReports from './DispatchReports';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
@@ -35,14 +36,20 @@ export default function PayrollClerkApp() {
   const { rows: fetched, paid, period, loading, error, refresh } = useDispatchQueue();
   const [pending, setPending] = useState<QueueRow[]>([]);
   const [markPaidRow, setMarkPaidRow] = useState<QueueRow | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
   // Carla's gate: list only appears once a cycle is marked "ready".
   // For now this is a UI toggle so we can demo both states.
   const [cycleReady, setCycleReady] = useState(true);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (loading) {
+      setHydrated(false);
+      return;
+    }
     setPending(fetched);
-  }, [fetched]);
+    setHydrated(true);
+  }, [fetched, loading]);
 
   useEffect(() => {
     setMounted(true);
@@ -170,13 +177,6 @@ export default function PayrollClerkApp() {
       );
     }
 
-    if (loading) {
-      return (
-        <div className="flex h-full items-center justify-center text-zinc-500 dark:text-zinc-400">
-          Loading dispatch queue…
-        </div>
-      );
-    }
     if (error) {
       return (
         <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
@@ -184,6 +184,9 @@ export default function PayrollClerkApp() {
           <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">{error}</p>
         </div>
       );
+    }
+    if (loading || !hydrated) {
+      return <QueueSkeleton />;
     }
     if (activeTab === 'history') {
       return <SentPaymentsHistory records={paid} />;
