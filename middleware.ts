@@ -41,18 +41,30 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Prevent non-elevated users from loading another employee's dashboard by hand-editing
-  // the `?email=` query param. Elevated users (admin / payroll / finance / HR / viewer)
-  // legitimately need to view others, so they're allowed through.
+  // Prevent users from loading another employee's dashboard by hand-editing the `?email=`
+  // query param.
   //
-  // Scope: only page routes — `/api/*` already enforces this server-side, and sending a
-  // redirect there would break legitimate elevated-to-other fetches made from the browser.
+  // Personal dashboards (/manager, /employee) are always scoped to the session owner —
+  // even elevated users (admin / payroll / finance / HR) are redirected back to their own
+  // copy. Those roles have dedicated elevated dashboards for cross-employee visibility.
+  //
+  // On other page routes elevated users are allowed through so they can legitimately view
+  // other employees' data (e.g. payroll-clerk, accounting, orphanage review queues).
+  //
+  // Scope: only page routes — `/api/*` already enforces ownership server-side.
   if (!pathname.startsWith('/api/')) {
     const rawEmailParam = req.nextUrl.searchParams.get('email');
     const sessionEmail = (token.email ?? '').toString().trim().toLowerCase();
     const requested = (rawEmailParam ?? '').trim().toLowerCase();
     const elevated = Boolean((token as { elevated?: boolean }).elevated);
-    if (sessionEmail && requested && requested !== sessionEmail && !elevated) {
+
+    // /manager and /employee are strictly personal — no cross-email access regardless of role.
+    const PERSONAL_ROUTES = ['/manager', '/employee'];
+    const isPersonalRoute = PERSONAL_ROUTES.some(
+      (r) => pathname === r || pathname.startsWith(`${r}/`),
+    );
+
+    if (sessionEmail && requested && requested !== sessionEmail && (!elevated || isPersonalRoute)) {
       const scoped = req.nextUrl.clone();
       scoped.searchParams.set('email', sessionEmail);
       return NextResponse.redirect(scoped);
