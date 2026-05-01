@@ -785,15 +785,16 @@ Employee-facing: submit a new dispute against a failing day.
 {
   "work_email": "jane@simple.biz",
   "dispute_date": "2026-04-14",
-  "reason": "orphanage_visit",
-  "explanation": "Visited the orphanage — home at 3pm",
+  "reason": "medical",
+  "explanation": "Doctor appointment 2–4pm",
   "created_by": "jane@simple.biz"
 }
 ```
 
 - `work_email`, `dispute_date` (`YYYY-MM-DD`), `reason` are required.
 - `reason` is validated against the current `pab_dispute_reason_codes` list in `app_settings` when any codes are configured.
-- Initial `status`: `pending_orphanage_manager` when `reason === 'orphanage_visit'`, otherwise `pending`.
+- **`orphanage_visit` and `ceo_visitation` are blocked** with a 403 — those reasons are manager-submitted only. Use `POST /api/pab-disputes/orphanage-manager-submit` instead.
+- Initial `status`: `pending`.
 
 **Response** `200`:
 ```json
@@ -802,6 +803,7 @@ Employee-facing: submit a new dispute against a failing day.
 
 **Error Response**:
 - `400` — missing / malformed fields
+- `403` — reason is orphanage-style (manager-submitted only)
 - `409` — a dispute already exists for that `(work_email, dispute_date)` pair
 - `500` — server error
 
@@ -809,6 +811,93 @@ Audit log: `pab_dispute.submitted` (user_role resolved from `employee_roles`, fa
 
 **Tables**: `pab_day_disputes`, `audit_log`, `app_settings` (read `pab_dispute_reason_codes`)
 **Service Role**: Required
+
+---
+
+### `POST /api/pab-disputes/orphanage-manager-submit`
+
+Bulk-create orphanage-style disputes on behalf of a list of employees. Used by Alyson's Orphanage view and Carla's Accounting Orphanage Visits queue, both via the shared **Create disputes** dialog.
+
+**Auth**: requires elevated session via `requireElevatedSession`. Server-side role check is `orphanage_manager` OR any role in `DISPUTE_ACTOR_ROLES` — the role determines the audit-log tag.
+
+**Body**:
+```json
+{
+  "reason": "ceo_visitation",
+  "dispute_date": "2026-04-14",
+  "employee_emails": ["kane@simple.biz", "alyson@simple.biz"],
+  "explanation": "Travelled with Bob Apr 13–14, dinner with leadership Apr 14"
+}
+```
+
+- `reason` must be `'orphanage_visit'` or `'ceo_visitation'` (validated via `isOrphanageStyleReason`).
+- `dispute_date` (`YYYY-MM-DD`) — applied to every email in the batch.
+- `employee_emails` — non-empty array of normalized work emails.
+- `explanation` — optional; copied into both `explanation` and `decision_note` for receipt.
+
+Each row is inserted at `status = 'orphanage_manager_approved'` with `override_hours = null`, skipping the `pending_orphanage_manager` stage. Carla then gives final accounting approval.
+
+**Response** `200`:
+```json
+{
+  "created": [{ "id": "uuid", "work_email": "kane@simple.biz" }],
+  "skipped": [{ "work_email": "alyson@simple.biz", "reason": "already on file for this date" }],
+  "errors": [],
+  "error": null
+}
+```
+
+The `skipped` list catches duplicate `(work_email, dispute_date)` rows (Postgres `23505`). The `errors` list catches per-row insert failures (other emails still go through).
+
+**Error Response**:
+- `400` — invalid `reason`, malformed `dispute_date`, empty `employee_emails`
+- `401` — not signed in
+- `403` — actor lacks `orphanage_manager` AND accounting roles
+- `500` — server error (rare; per-row errors are returned in `errors[]`)
+
+Audit log: one entry per created row — `pab_dispute.orphanage_manager_created` if the actor's primary role is `orphanage_manager`, otherwise `pab_dispute.accounting_created`. `details` includes `employee, dispute_date, reason, explanation, submitted_by, actor_role`.
+
+**Tables**: `pab_day_disputes`, `audit_log`
+**Service Role**: Required
+
+---
+
+### `GET /api/pab-disputes/orphanage-overlap`
+
+Returns existing orphanage-style disputes (any status) so the Create disputes dialog can render the active person's calendar with the **real** forgiveness state of each day — green for already-forgiven, amber for in-flight, red+disabled for denied. Pre-fetched on parent mount (`OrphanageApp.tsx`, `OrphanageVisits.tsx`) so dialog open is instant.
+
+**Auth**: `orphanage_manager` OR any accounting role from `DISPUTE_ACTOR_ROLES`. Returns 403 otherwise. Intentionally NOT routed through `authorizeEmailAccess` because `orphanage_manager` is not in `ELEVATED_ROLES` and would otherwise be blocked.
+
+**Query params**: `from`, `to` (optional ISO `YYYY-MM-DD` bounds), `email` (optional — single-employee scope), `limit` (default 2000).
+
+**Response** `200`:
+```json
+{
+  "rows": [
+    {
+      "id": "uuid",
+      "work_email": "cobb@simple.biz",
+      "dispute_date": "2026-04-06",
+      "reason": "orphanage_visit",
+      "status": "accounting_approved",
+      "override_hours": null,
+      "decided_by": "carla@simple.biz",
+      "decided_at": "2026-05-01T00:45:11Z",
+      "decision_note": "...",
+      "explanation": "...",
+      "created_by": "alyson@simple.biz",
+      "created_at": "2026-05-01T00:44:50Z",
+      "updated_at": "2026-05-01T00:45:11Z"
+    }
+  ],
+  "error": null
+}
+```
+
+Filters server-side to `reason IN ('orphanage_visit', 'ceo_visitation')`. The dialog reshapes the array into `Map<email → Map<dispute_date → row>>` via `fetchOrphanageOverlap`.
+
+**Tables**: `pab_day_disputes`
+**Service Role**: Required (read-only)
 
 ---
 

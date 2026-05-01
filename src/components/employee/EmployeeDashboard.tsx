@@ -56,6 +56,7 @@ import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import {
   disputeGrantsPabForgiveness,
   disputeIsAwaitingResolution,
+  isOrphanageStyleReason,
 } from '@/lib/supabase/pab-day-disputes';
 
 /* ------------------------------------------------------------------ */
@@ -847,20 +848,6 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
   const disputesByDate = useMemo(() => {
     const map = new Map<string, import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow>();
     for (const d of myDisputes) map.set(d.dispute_date, d);
-    // Orphanage visits extend the 4h floor-drop to the following day. We synthesise
-    // an approved entry for dispute_date+1 so the per-cell forgiveness check picks it up
-    // uniformly. A real dispute already recorded on that date wins.
-    for (const d of myDisputes) {
-      if (d.reason !== 'orphanage_visit' || !disputeGrantsPabForgiveness(d)) continue;
-      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d.dispute_date);
-      if (!m) continue;
-      const dt = new Date(Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10)));
-      if (isNaN(dt.getTime())) continue;
-      dt.setUTCDate(dt.getUTCDate() + 1);
-      const nextKey = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
-      if (map.has(nextKey)) continue;
-      map.set(nextKey, { ...d, dispute_date: nextKey, override_hours: null });
-    }
     return map;
   }, [myDisputes]);
 
@@ -1983,7 +1970,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                               !!dispute &&
                               disputeGrantsPabForgiveness(dispute) &&
                               !day.passes &&
-                              day.seconds >= 4 * 3600;
+                              (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
                             const effectivelyPasses = day.passes || forgiven;
 
                             // Future / today with no data → neutral; pending dispute → amber;

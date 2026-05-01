@@ -6,6 +6,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { CalendarDays, ChevronLeft, ChevronRight, Loader2, RefreshCw, Wallet } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { normEmail } from '@/lib/email/norm-email';
@@ -32,6 +33,7 @@ import {
 import {
   disputeGrantsPabForgiveness,
   disputeIsAwaitingResolution,
+  isOrphanageStyleReason,
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
 
@@ -173,6 +175,8 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
   const initPab = getCurrentPabMonth();
   const [viewYear, setViewYear] = useState(initPab.year);
   const [viewMonth, setViewMonth] = useState(initPab.month);
+  /** +1 when navigating to next month, -1 for previous; drives slide direction. */
+  const [navDirection, setNavDirection] = useState<1 | -1>(1);
 
   const email = useMemo(
     () => normEmail(employeeEmail) ?? employeeEmail.toLowerCase(),
@@ -362,6 +366,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
   }, [fetchMerged, fetchDisputes, fetchRatesAndFx]);
 
   const goPrevMonth = useCallback(() => {
+    setNavDirection(-1);
     setViewMonth((m) => {
       if (m <= 0) {
         setViewYear((y) => y - 1);
@@ -372,6 +377,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
   }, []);
 
   const goNextMonth = useCallback(() => {
+    setNavDirection(1);
     setViewMonth((m) => {
       if (m >= 11) {
         setViewYear((y) => y + 1);
@@ -384,16 +390,6 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
   const disputesByDate = useMemo(() => {
     const map = new Map<string, PabDayDisputeRow>();
     for (const d of disputes) map.set(d.dispute_date, d);
-    for (const d of disputes) {
-      if (!disputeGrantsPabForgiveness(d)) continue;
-      const [y, m, day] = d.dispute_date.split('-').map(Number);
-      if (!y || !m || !day) continue;
-      const next = new Date(y, m - 1, day + 1);
-      const nextIso = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
-      if (!map.has(nextIso)) {
-        map.set(nextIso, { ...d, dispute_date: nextIso, override_hours: null });
-      }
-    }
     return map;
   }, [disputes]);
 
@@ -659,9 +655,20 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
-                <span className="min-w-[10rem] border-x border-zinc-200 px-3 text-center text-xs font-semibold text-zinc-800 dark:border-zinc-700 dark:text-zinc-200 sm:min-w-[12rem] sm:text-sm">
-                  {MONTH_NAMES[viewMonth]}{' '}
-                  <span className="font-mono tabular-nums">{viewYear}</span>
+                <span className="relative inline-flex min-w-[10rem] items-center justify-center overflow-hidden border-x border-zinc-200 px-3 py-1.5 text-center text-xs font-semibold text-zinc-800 dark:border-zinc-700 dark:text-zinc-200 sm:min-w-[12rem] sm:text-sm">
+                  <AnimatePresence mode="wait" initial={false} custom={navDirection}>
+                    <motion.span
+                      key={`${viewYear}-${viewMonth}-label`}
+                      initial={{ opacity: 0, y: navDirection * 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: navDirection * -6 }}
+                      transition={{ duration: 0.15, ease: 'easeOut' }}
+                      className="inline-flex items-center gap-1"
+                    >
+                      {MONTH_NAMES[viewMonth]}{' '}
+                      <span className="font-mono tabular-nums">{viewYear}</span>
+                    </motion.span>
+                  </AnimatePresence>
                 </span>
                 <button
                   type="button"
@@ -686,7 +693,17 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
             </p>
           </CardHeader>
 
-          <CardContent className="flex min-h-0 flex-1 flex-col px-4 pb-4 pt-0 sm:px-6 sm:pb-6">
+          <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-4 pt-0 sm:px-6 sm:pb-6">
+            <AnimatePresence mode="wait" initial={false} custom={navDirection}>
+              <motion.div
+                key={loading ? 'loading' : `${viewYear}-${viewMonth}`}
+                custom={navDirection}
+                initial={loading ? false : { opacity: 0, x: navDirection * 18 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: navDirection * -18 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="flex min-h-0 flex-1 flex-col"
+              >
             {loading ? (
               <div className="flex flex-1 flex-col gap-0">
                 <div className="mb-1 grid grid-cols-[1.25rem_repeat(7,minmax(0,1fr))] gap-0.5 sm:grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] sm:gap-1">
@@ -768,7 +785,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                           !!dispute &&
                           disputeGrantsPabForgiveness(dispute) &&
                           !day.passes &&
-                          day.seconds >= 4 * 3600;
+                          (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
                         const effectivelyPasses = day.passes || forgiven;
 
                         let cellBorder: string;
@@ -911,6 +928,8 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                 </p>
               </div>
             )}
+              </motion.div>
+            </AnimatePresence>
           </CardContent>
         </Card>
 
@@ -935,7 +954,17 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
               All 7 days count (incl. Sat / Sun). OT applies only to the hours past 40h in a Mon–Sun week.
             </p>
           </CardHeader>
-          <CardContent className="flex flex-1 flex-col gap-4 px-4 pb-5 pt-0 sm:px-5">
+          <CardContent className="flex flex-1 flex-col gap-4 overflow-hidden px-4 pb-5 pt-0 sm:px-5">
+            <AnimatePresence mode="wait" initial={false} custom={navDirection}>
+              <motion.div
+                key={loading || ratesLoading ? 'loading' : `${viewYear}-${viewMonth}`}
+                custom={navDirection}
+                initial={loading || ratesLoading ? false : { opacity: 0, x: navDirection * 18 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: navDirection * -18 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="flex flex-1 flex-col gap-4"
+              >
             {loading || ratesLoading ? (
               <div className="space-y-3 py-2">
                 <div className="h-10 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
@@ -1080,6 +1109,8 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                 </p>
               </>
             )}
+              </motion.div>
+            </AnimatePresence>
           </CardContent>
         </Card>
         </div>

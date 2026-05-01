@@ -4,10 +4,11 @@ import { getAppSetting } from './app-settings';
 import { normEmail } from '@/lib/email/norm-email';
 import {
   DEFAULT_DISPUTE_REASON_CODES,
+  isOrphanageStyleReason,
   type PabDisputeReasonCode,
 } from './pab-dispute-reasons';
 
-export { DEFAULT_DISPUTE_REASON_CODES };
+export { DEFAULT_DISPUTE_REASON_CODES, isOrphanageStyleReason };
 export type { PabDisputeReasonCode };
 
 export type PabDisputeStatus =
@@ -36,11 +37,11 @@ export type PabDayDisputeRow = {
   updated_at: string;
 };
 
-/** Payroll / PAB calendar: only these statuses forgive the day (and orphanage day-after rule). */
+/** Payroll / PAB calendar: only these statuses forgive the day. */
 export function disputeGrantsPabForgiveness(
   row: Pick<PabDayDisputeRow, 'reason' | 'status'>,
 ): boolean {
-  if (row.reason === 'orphanage_visit') {
+  if (isOrphanageStyleReason(row.reason)) {
     return row.status === 'accounting_approved' || row.status === 'approved';
   }
   return row.status === 'approved';
@@ -209,7 +210,7 @@ export async function createDispute(params: {
 
   const email = normEmail(params.work_email) ?? params.work_email.trim().toLowerCase();
   const initialStatus: PabDisputeStatus =
-    params.reason === 'orphanage_visit' ? 'pending_orphanage_manager' : 'pending';
+    isOrphanageStyleReason(params.reason) ? 'pending_orphanage_manager' : 'pending';
 
   const { data, error } = await supabase
     .from(TABLE)
@@ -274,9 +275,9 @@ export async function decideDispute(
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Dispute not found' };
-  if (row.reason === 'orphanage_visit') {
+  if (isOrphanageStyleReason(row.reason)) {
     if (row.status === 'pending_orphanage_manager') {
-      return { error: 'Orphanage disputes require Orphanage Manager approval before Accounting can decide' };
+      return { error: 'This dispute requires Orphanage Manager approval before Accounting can decide' };
     }
     if (row.status !== 'orphanage_manager_approved') {
       return { error: 'Dispute is not awaiting Accounting review' };
@@ -291,7 +292,7 @@ export async function decideDispute(
     params.override_hours != null && params.override_hours >= 0 ? params.override_hours : null;
 
   const finalStatus: PabDisputeStatus =
-    row.reason === 'orphanage_visit'
+    isOrphanageStyleReason(row.reason)
       ? params.status === 'approved'
         ? 'accounting_approved'
         : 'accounting_denied'
@@ -365,7 +366,7 @@ export async function editDisputeDecision(
       : null;
 
   const nextStatus: PabDisputeStatus =
-    row.reason === 'orphanage_visit'
+    isOrphanageStyleReason(row.reason)
       ? params.status === 'approved'
         ? 'accounting_approved'
         : 'accounting_denied'
@@ -436,7 +437,7 @@ export async function decideOrphanageManagerDispute(
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Dispute not found' };
-  if (row.reason !== 'orphanage_visit') return { error: 'Not an orphanage dispute' };
+  if (!isOrphanageStyleReason(row.reason)) return { error: 'Not an orphanage-style dispute' };
   if (row.status !== 'pending_orphanage_manager') {
     return { error: 'Dispute is no longer pending Orphanage Manager review' };
   }
@@ -497,7 +498,7 @@ export async function returnOrphanageDisputeToManagerQueue(
   const { row, error: fetchErr } = await getDisputeById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Dispute not found' };
-  if (row.reason !== 'orphanage_visit') return { error: 'Not an orphanage dispute' };
+  if (!isOrphanageStyleReason(row.reason)) return { error: 'Not an orphanage-style dispute' };
   if (row.status !== 'orphanage_manager_approved') {
     return { error: 'Dispute is not awaiting Accounting review' };
   }
@@ -542,6 +543,121 @@ export async function returnOrphanageDisputeToManagerQueue(
   })();
 
   return { error: null };
+}
+
+/**
+ * Manager-submitted orphanage-style disputes (Alyson) and Accounting-submitted ones (Carla).
+ * Skips the `pending_orphanage_manager` stage — rows land at `orphanage_manager_approved` so
+ * Carla can give the final Accounting decision in one step.
+ *
+ * Writes one audit-log entry per row, tagged `pab_dispute.orphanage_manager_created` for an
+ * Orphanage Manager actor or `pab_dispute.accounting_created` for an Accounting actor.
+ */
+export async function createOrphanageManagerSubmittedDispute(params: {
+  reason: 'orphanage_visit' | 'ceo_visitation';
+  dispute_date: string;
+  employee_emails: string[];
+  explanation?: string | null;
+  submitted_by: string;
+}): Promise<{
+  created: { id: string; work_email: string }[];
+  skipped: { work_email: string; reason: string }[];
+  errors: { work_email: string; error: string }[];
+  forbidden?: boolean;
+  errorMessage?: string;
+}> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) {
+    return { created: [], skipped: [], errors: [], errorMessage: 'Supabase not configured' };
+  }
+  if (!isOrphanageStyleReason(params.reason)) {
+    return { created: [], skipped: [], errors: [], errorMessage: 'reason must be an orphanage-style code' };
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(params.dispute_date)) {
+    return { created: [], skipped: [], errors: [], errorMessage: 'dispute_date must be YYYY-MM-DD' };
+  }
+  const submitter = params.submitted_by.trim();
+  if (!submitter) {
+    return { created: [], skipped: [], errors: [], errorMessage: 'submitted_by is required' };
+  }
+
+  const submitterLower = submitter.toLowerCase();
+  const isOrphanageManager = await canActOnOrphanageManagerQueue(submitterLower);
+  const isAccounting = await canActOnDisputes(submitterLower);
+  if (!isOrphanageManager && !isAccounting) {
+    return { created: [], skipped: [], errors: [], forbidden: true, errorMessage: 'Not authorized — Orphanage Manager or Accounting role required' };
+  }
+
+  const note = params.explanation?.trim() || null;
+  const role = await resolveUserRole(
+    submitterLower,
+    isOrphanageManager ? 'Orphanage Manager' : 'Accounting',
+  );
+  // Tag the audit-log action by *which* role originated the row, so the trail
+  // distinguishes Alyson's bulk submissions from Carla's one-offs.
+  const auditAction = isOrphanageManager
+    ? 'pab_dispute.orphanage_manager_created'
+    : 'pab_dispute.accounting_created';
+
+  const created: { id: string; work_email: string }[] = [];
+  const skipped: { work_email: string; reason: string }[] = [];
+  const errors: { work_email: string; error: string }[] = [];
+
+  for (const raw of params.employee_emails) {
+    const email = (normEmail(raw) ?? raw.trim().toLowerCase()) || '';
+    if (!email) {
+      errors.push({ work_email: raw, error: 'invalid email' });
+      continue;
+    }
+
+    const { data, error } = await supabase
+      .from(TABLE)
+      .insert({
+        work_email: email,
+        dispute_date: params.dispute_date,
+        reason: params.reason,
+        explanation: note,
+        status: 'orphanage_manager_approved' as const,
+        decided_by: submitter,
+        decided_at: new Date().toISOString(),
+        decision_note: note,
+        override_hours: null,
+        created_by: submitter,
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      if (error.code === '23505') {
+        skipped.push({ work_email: email, reason: 'already on file for this date' });
+        continue;
+      }
+      errors.push({ work_email: email, error: error.message });
+      continue;
+    }
+
+    const id = (data as { id: string } | null)?.id ?? null;
+    if (id) {
+      created.push({ id, work_email: email });
+      void insertAuditLog({
+        user_name: submitter,
+        user_role: role,
+        action: auditAction,
+        resource: TABLE,
+        resource_id: id,
+        details: {
+          employee: email,
+          dispute_date: params.dispute_date,
+          reason: params.reason,
+          explanation: note,
+          submitted_by: submitter,
+          actor_role: isOrphanageManager ? 'orphanage_manager' : 'accounting',
+        },
+      });
+    }
+  }
+
+  return { created, skipped, errors };
 }
 
 export async function adminCreateOrphanageVisit(params: {

@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   DEFAULT_DISPUTE_REASON_CODES,
+  isOrphanageStyleReason,
   type PabDisputeReasonCode,
 } from '@/lib/supabase/pab-dispute-reasons';
 import {
@@ -100,6 +101,13 @@ export default function MyDisputes({
   payrollLocked = false,
 }: MyDisputesProps) {
   const [reasonCodes, setReasonCodes] = useState<PabDisputeReasonCode[]>(DEFAULT_DISPUTE_REASON_CODES);
+  // Orphanage-style reasons (Orphanage Visit, CEO Visitation) are manager-submitted only —
+  // filter them out of the employee-facing dropdown. They still render correctly when an
+  // employee browses their own list of disputes (managers create disputes that employees see).
+  const employeeFilingReasonCodes = useMemo(
+    () => reasonCodes.filter((r) => !isOrphanageStyleReason(r.code)),
+    [reasonCodes],
+  );
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -110,7 +118,7 @@ export default function MyDisputes({
   const dispatchLocked = payrollLocked;
 
   const [disputeDate, setDisputeDate] = useState<string>(() => todayIso());
-  const [reason, setReason] = useState<string>('orphanage_visit');
+  const [reason, setReason] = useState<string>('medical');
   const [explanation, setExplanation] = useState('');
   const [submitting, setSubmitting] = useState(false);
   /** Bump to force the embedded PAB calendar to re-fetch its disputes after a successful submit. */
@@ -174,7 +182,7 @@ export default function MyDisputes({
   useEffect(() => {
     if (!prefill) return;
     setDisputeDate(prefill.date);
-    setReason((prev) => prev || 'orphanage_visit');
+    setReason((prev) => prev || 'medical');
     setPrefilledHours(prefill.seconds ?? null);
     requestAnimationFrame(() => {
       formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -188,7 +196,7 @@ export default function MyDisputes({
       setDisputeDate(payload.date);
       setPrefilledHours(payload.seconds);
       if (!payload.dispute) {
-        setReason((prev) => prev || 'orphanage_visit');
+        setReason((prev) => prev || 'medical');
       }
       requestAnimationFrame(() => {
         formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -430,15 +438,15 @@ export default function MyDisputes({
                 onChange={(e) => setReason(e.target.value)}
                 className="h-9 w-full rounded-md border border-zinc-200 bg-white px-2 pr-8 text-xs text-zinc-700 transition-colors focus:border-emerald-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:focus:border-emerald-400"
               >
-                {reasonCodes.map((rc) => (
+                {employeeFilingReasonCodes.map((rc) => (
                   <option key={rc.code} value={rc.code}>
                     {rc.label}
                   </option>
                 ))}
               </select>
               <p className="text-[10px] leading-snug text-zinc-400 dark:text-zinc-500">
-                Default is <span className="font-medium text-zinc-600 dark:text-zinc-400">Orphanage Visit</span>.
                 Pick the closest match — health issues, power outage, intermittent internet, etc.
+                <span className="block mt-0.5">Orphanage visits and CEO visitation are submitted on your behalf by your manager.</span>
               </p>
             </div>
 

@@ -36,6 +36,17 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import type { PabDayDisputeRow } from '@/lib/supabase/pab-day-disputes';
+import CreateOrphanageStyleDisputeDialog, {
+  type EmployeeOption as RosterEmployeeOption,
+} from '@/components/orphanage/CreateOrphanageStyleDisputeDialog';
+import {
+  fetchHoursByEmployee,
+  type HubstaffHoursByEmployee,
+} from '@/lib/hubstaff/fetch-hours-by-employee';
+import {
+  fetchOrphanageOverlap,
+  type DisputesByEmployee,
+} from '@/lib/pab-disputes/fetch-orphanage-overlap';
 
 const PAGE_SIZE = 15;
 const ADMIN_NAME = 'Fran M';
@@ -75,6 +86,64 @@ export default function OrphanageVisits() {
 
   const [deleteDialog, setDeleteDialog] = useState<PabDayDisputeRow | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [bulkCreateOpen, setBulkCreateOpen] = useState(false);
+  /** Roster used by the bulk-create dialog. Pre-fetched on mount via the same
+   *  `/api/employee-rate-profiles/summary` endpoint the Rates tab uses, so opening
+   *  the dialog is instant rather than waiting on the merge query. */
+  const [rosterEmployees, setRosterEmployees] = useState<RosterEmployeeOption[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(true);
+  /** Hubstaff hours per employee for the dialog's PAB-style red-day calendar. Pre-fetched + parsed
+   *  here so the dialog doesn't have to wait on the multi-file walk when it opens. */
+  const [hoursByEmployee, setHoursByEmployee] = useState<HubstaffHoursByEmployee>(new Map());
+  const [hoursLoading, setHoursLoading] = useState(true);
+  /** Existing orphanage-style disputes per employee — drives the dialog's "already forgiven /
+   *  pending review" cell colors so users can't accidentally re-pick a day that's already on file. */
+  const [disputesByEmployee, setDisputesByEmployee] = useState<DisputesByEmployee>(new Map());
+  const [disputesByEmployeeLoading, setDisputesByEmployeeLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/employee-rate-profiles/summary', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((json: { profiles?: RosterEmployeeOption[] }) => {
+        if (cancelled) return;
+        const active = (json.profiles ?? []).filter((p) => !p.suspended);
+        setRosterEmployees(active);
+      })
+      .catch(() => {
+        if (!cancelled) setRosterEmployees([]);
+      })
+      .finally(() => {
+        if (!cancelled) setRosterLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    fetchHoursByEmployee({ signal: ac.signal })
+      .then((map) => {
+        if (!ac.signal.aborted) setHoursByEmployee(map);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setHoursLoading(false);
+      });
+    return () => ac.abort();
+  }, []);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    fetchOrphanageOverlap({ signal: ac.signal })
+      .then((map) => {
+        if (!ac.signal.aborted) setDisputesByEmployee(map);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setDisputesByEmployeeLoading(false);
+      });
+    return () => ac.abort();
+  }, []);
 
   const fetchVisits = useCallback(async () => {
     setLoading(true);
@@ -223,21 +292,43 @@ export default function OrphanageVisits() {
               Orphanage Visits
             </h2>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-              Proactive roster for known visits. PAB forgives the visit day and day after (4h floor) automatically — no dispute needed.
+              Manager-submitted disputes (Orphanage Visit, CEO Visitation) awaiting Accounting approval. Each forgiven day is exactly the dates the manager listed — no automatic day-after extension.
             </p>
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={fetchVisits}
-          disabled={loading}
-          className="shrink-0 border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/30"
-        >
-          <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />
-          Refresh
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => setBulkCreateOpen(true)}
+            className="bg-rose-600 text-white hover:bg-rose-700"
+          >
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            Create disputes
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchVisits}
+            disabled={loading}
+            className="border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/30"
+          >
+            <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />
+            Refresh
+          </Button>
+        </div>
       </div>
+
+      <CreateOrphanageStyleDisputeDialog
+        open={bulkCreateOpen}
+        onOpenChange={setBulkCreateOpen}
+        onSubmitSuccess={() => void fetchVisits()}
+        employees={rosterEmployees}
+        employeesLoading={rosterLoading}
+        hoursByEmployee={hoursByEmployee}
+        hoursLoading={hoursLoading}
+        disputesByEmployee={disputesByEmployee}
+        disputesLoading={disputesByEmployeeLoading}
+      />
 
       {/* Add-visit form */}
       <Card className="shrink-0 border-rose-200/70 bg-rose-50/40 dark:border-rose-900/40 dark:bg-rose-950/10">
@@ -429,7 +520,7 @@ export default function OrphanageVisits() {
               <DialogTitle className="text-sm">Remove orphanage visit</DialogTitle>
               <DialogDescription className="text-xs">
                 {displayNameFor(deleteDialog.work_email)} — {deleteDialog.dispute_date}.
-                This reverts PAB forgiveness for the visit day and the following day.
+                This reverts PAB forgiveness for that visit day.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2">

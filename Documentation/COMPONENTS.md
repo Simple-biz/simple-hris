@@ -22,13 +22,72 @@ Placeholder `<div>` cards are rendered for `hogan-suite` and `settings` — they
 
 **Accounting → Disputes.** Lists `pab_day_disputes` via `GET /api/pab-disputes` with `awaiting_accounting=1` when the status filter is **Pending** (so Accounting sees both plain `pending` and `orphanage_manager_approved` rows). Search, pagination, and filters for Approved / Denied / All.
 
+**Manager-submitted note display.** For orphanage-style rows (`orphanage_visit` + `ceo_visitation`, tested via `isOrphanageStyleReason`), the **Explanation** column widens to 240–320px, drops truncation, and renders a small "Manager note" badge before the text — Carla reads Alyson's submission context before deciding without expanding any row.
+
 **Actions (gated by `DISPUTE_ACTOR_ROLES` from `/api/employee-roles`):**
 
-- **Approve / Deny** — for rows awaiting Accounting (`pending` or `orphanage_manager_approved`). Orphanage visits do not collect hour overrides at approval; others can set override hours in the dialog.
-- **Return** — only for `orphanage_visit` with `orphanage_manager_approved`; calls `PATCH` with `return_to_orphanage` and optional note.
-- **Edit** — for terminal rows. Toggle Approved/Denied, adjust hours (non-orphanage), notes. When the row currently grants PAB forgiveness (`disputeGrantsPabForgiveness`), shows **Revoke PAB forgiveness** → confirm dialog → `PATCH` `edit` with `status: denied` and `override_hours: null`.
+- **Approve / Deny** — for rows awaiting Accounting (`pending` or `orphanage_manager_approved`). Orphanage-style rows do not collect hour overrides at approval (manager-submitted disputes always have `override_hours = null` and the field is hidden); other reasons can set override hours in the dialog.
+- **Return** — only for orphanage-style with `orphanage_manager_approved`; calls `PATCH` with `return_to_orphanage` and optional note.
+- **Edit** — for terminal rows. Toggle Approved/Denied, adjust hours (non-orphanage-style), notes. When the row currently grants PAB forgiveness (`disputeGrantsPabForgiveness`), shows **Revoke PAB forgiveness** → confirm dialog → `PATCH` `edit` with `status: denied` and `override_hours: null`.
+
+All reason-specific gating uses `isOrphanageStyleReason(reason)` rather than the literal `reason === 'orphanage_visit'` check — so `ceo_visitation` follows the same hour-override / two-stage approval / day-after-removed semantics as orphanage_visit.
 
 See [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#pab-day-dispute-system) and [API_REFERENCE.md](./API_REFERENCE.md#patch-apipab-disputesid).
+
+---
+
+## `src/components/orphanage/CreateOrphanageStyleDisputeDialog.tsx`
+
+**Shared bulk-create dialog** for orphanage-style disputes (`orphanage_visit`, `ceo_visitation`). Used by both:
+
+- **Alyson's Orphanage view** (`OrphanageApp.tsx`) — the "+ Create disputes" button in the header.
+- **Carla's Accounting Orphanage Visits queue** (`payroll/OrphanageVisits.tsx`) — same button, separate from the legacy single-row admin form.
+
+**Layout**: two-column, `max-w-[1200px] w-[95vw]`. Left column: reason dropdown, multi-employee picker (chips + search across `name / work_email / personal_email / department`), optional note textarea. Right column: PAB-style calendar grid (Mon–Fri, week numbers, 5-column).
+
+**Per-person dates.** State holds `selectedEmployees: string[]` and `perPersonDates: Map<email, Set<dispute_date>>`. Clicking a person chip activates them; the calendar swaps to that person's hours. Each chip shows a count badge (`Kane [3]`) of dates picked. Different people can have completely different forgiveness dates.
+
+**Calendar awareness.** Pre-fetches three datasets in parallel from the parent on mount:
+1. **Roster** via `/api/employee-rate-profiles/summary` (same as Rates).
+2. **Hubstaff hours** via `fetchHoursByEmployee` (`src/lib/hubstaff/fetch-hours-by-employee.ts`).
+3. **Existing orphanage-style disputes** via `fetchOrphanageOverlap` (`src/lib/pab-disputes/fetch-orphanage-overlap.ts`).
+
+Each cell renders one of six states based on the active person's data:
+
+| State | Color | Clickable? |
+|---|---|---|
+| Picked this session | Pink ring + shadow | ✅ click to un-pick |
+| Existing `accounting_approved` | Emerald + ring | ❌ "already forgiven" |
+| Existing pending stage | Amber + ring | ❌ "pending review" |
+| Existing denied | Rose | ❌ "previously denied" |
+| Hubstaff ≥ 7h, no dispute | Emerald (no ring) | ❌ "already passes" |
+| Hubstaff < 7h, no dispute | Red | ✅ "click to forgive" |
+
+The click guard (`isClickable = !noActive && !existing && (isBelow7h || isPicked)`) prevents the user from re-picking a day that already has a dispute on file — the "already on file" 23505 path on the server is now a defence-in-depth fallback, not a UX path.
+
+**Submit pivot.** `handleSubmit` groups per-person dates by date (`peopleByDate: Map<dispute_date, email[]>`) and sends one `POST /api/pab-disputes/orphanage-manager-submit` per date with the matching subset of people. Counts aggregated into a single toast: `"3 disputes sent to Accounting · 1 skipped (already on file)"`.
+
+---
+
+## `src/components/orphanage/OrphanageApp.tsx`
+
+**Orphanage Manager view** (Alyson). Sidebar with view-switcher, dispute queue table for `pending_orphanage_manager` rows, and a "verified for Accounting" receipt log of `orphanage_manager_approved` rows.
+
+**"+ Create disputes" button** in the header opens `CreateOrphanageStyleDisputeDialog`. Parent pre-fetches roster + Hubstaff hours + existing orphanage disputes on mount and passes them to the dialog as props — opening the dialog is instant.
+
+The legacy "verify or deny pending orphanage_visit submitted by employee" flow continues to work for any in-flight `pending_orphanage_manager` rows; new dispute creation is exclusively via the dialog.
+
+---
+
+## `src/components/payroll/OrphanageVisits.tsx`
+
+**Accounting → Orphanage Visits** queue. Lists `accounting_approved` orphanage-style visits.
+
+**Two creation paths coexist:**
+- **Single-row admin form** (legacy) — directly inserts at `accounting_approved` via `adminCreateOrphanageVisit`. Used for one-off admin shortcuts that bypass the manager step.
+- **"+ Create disputes" dialog** (`CreateOrphanageStyleDisputeDialog`) — manager-submitted, two-stage. Pre-fetches roster, hours, existing-disputes overlap on mount.
+
+UI copy was updated 2026-05-01 to drop the "and the following day" language (D+1 auto-forgiveness rule was removed).
 
 ---
 
@@ -417,6 +476,31 @@ Updates via POST to `/api/update-employee-ids`.
 ### `EmployeeAvatar.tsx` — Avatar Component
 
 Displays employee photo with fallback chain: uploaded photo (Supabase Storage) → Gravatar → initials (orange-to-blue gradient circle).
+
+### `EmployeeMyHours.tsx` — My Hours
+
+Calendar-month view of merged Hubstaff hours with a Pay Summary side panel. Mon–Sun grid that includes weekends + dashed cells for adjacent-month days (informational only).
+
+**Pay Summary** (right column):
+- **Estimated take-home** = `regular pay + OT pay + PAB bonus + Tech bonus`. The breakdown line below shows the components separately.
+- **Total hours (month)** — every day from `monthStart` to `monthEnd`, weekends included.
+- **Regular / Overtime split** — Mon–Sun weeks within the month; only the portion of each week's total that exceeds **40h** routes to OT (no assumption that Mon–Fri hits 40h on its own).
+- **PAB Bonus row** — ₱5,000 when every weekday in the displayed month logged ≥7h.
+- **Tech Bonus row** — ₱1,850 once the displayed month has fully concluded (`monthHasEnded` gate, so future / current months show `· month not yet ended`). Mirrors `PayrollWizard.hasThirtyDaysByWeek` for the 30-day service check (gates against the **pay-period Monday** = salary Tuesday − 8d, not the salary Tuesday itself). When `employeeStartDate` is unknown (master-row miss / email drift), defaults optimistic — assume past 30 days.
+
+**Smooth transitions** (motion/react `AnimatePresence`):
+- Month label in the picker fades + slides vertically (150ms) keyed on `${viewYear}-${viewMonth}-label`.
+- Calendar grid body slides horizontally in the navigation direction (180ms) keyed on month.
+- Pay Summary body uses the same direction-aware fade-slide.
+- Initial mount skips the entrance animation (`initial={false}`); only month *changes* animate.
+
+### `MyDisputes.tsx` — My Disputes
+
+Employee-facing dispute filing UI. Reason dropdown is filtered to **non-orphanage-style reasons only** — `orphanage_visit` and `ceo_visitation` are excluded (manager-submitted only). Default reason is `medical`.
+
+The form refuses orphanage-style at the API layer too (`POST /api/pab-disputes` returns 403 if a non-elevated employee picks one), so even a hand-crafted request can't bypass the dropdown filter.
+
+Embedded `EmployeePabCalendar` shows the employee's PAB month with red / green / amber / pink-ring (forgiven via `accounting_approved` orphanage-style) cells. Clicking a sub-7h day pre-fills the form.
 
 ---
 

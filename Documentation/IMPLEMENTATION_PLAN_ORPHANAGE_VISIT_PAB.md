@@ -1,11 +1,29 @@
 # Implementation Plan — PAB Day-Dispute System (Orphanage Visit + General Exceptions)
 
+> ⚠️ **Historical document — partially superseded 2026-05-01.**
+>
+> The original plan (employee-files-orphanage-visit → Orphanage Manager verifies → Accounting approves, with a synthetic D+1 day-after rule) has been replaced for `orphanage_visit` and the new `ceo_visitation` reason by a **manager-submitted** flow:
+>
+> 1. Orphanage leader sends a list of employees + dates to Alyson off-system (email / chat).
+> 2. Alyson opens **Create disputes** dialog (`CreateOrphanageStyleDisputeDialog.tsx`) and bulk-submits — rows land at `orphanage_manager_approved` directly, skipping `pending_orphanage_manager`.
+> 3. Carla approves each row in the Accounting → Disputes queue → `accounting_approved` → calendar flips green.
+>
+> The D+1 implicit forgiveness rule was **removed** the same day. Manager picks every forgiven date explicitly. The 4h floor is **bypassed** for orphanage-style reasons (`orphanage_visit` + `ceo_visitation`) so 0h days flip green when accounting-approved.
+>
+> Sections 1–6 below describe the original employee-filed flow and remain accurate for the **non-orphanage-style** reasons (`medical`, `power_outage`, `internet_issue`, `family_emergency`, `other`) which are still employee-filed.
+>
+> **For the current orphanage-style flow**, see:
+> - [BUSINESS_LOGIC.md → PAB Day-Dispute System](./BUSINESS_LOGIC.md#pab-day-dispute-system) — current rules
+> - [API_REFERENCE.md](./API_REFERENCE.md#post-apipab-disputesorphanage-manager-submit) — `/api/pab-disputes/orphanage-manager-submit` and `/api/pab-disputes/orphanage-overlap`
+> - [COMPONENTS.md](./COMPONENTS.md#srccomponentsorphanagecreateorphanagestyledisputedialogtsx) — `CreateOrphanageStyleDisputeDialog` reference
+> - `references/backfill_orphanage_day_after_disputes.sql` — one-time D+1 backfill (run after deploy)
+
 | | |
 |---|---|
 | **Owner** | Kane Reroma (sole assignee — requires existing PAB Calculator familiarity) |
 | **Deadline** | 2026-05-01 |
-| **Status** | Implemented (2026-04-16) |
-| **Related** | `Documentation/problem.md` (PAB spec), `src/components/PayrollWizard.tsx:1246` (PAB eligibility), `src/components/employee/EmployeeDashboard.tsx:1731` (PAB calendar), `src/components/audit/AuditLogPanel.tsx`, `src/lib/pab-period-settings.ts` |
+| **Status** | Implemented (2026-04-16); orphanage-style reasons re-architected to manager-submitted (2026-05-01) |
+| **Related** | `Documentation/problem.md` (PAB spec), `src/components/PayrollWizard.tsx` (PAB eligibility), `src/components/employee/EmployeeDashboard.tsx` (PAB calendar), `src/components/orphanage/CreateOrphanageStyleDisputeDialog.tsx` (new manager-submit dialog), `src/components/audit/AuditLogPanel.tsx`, `src/lib/pab-period-settings.ts` |
 
 ---
 

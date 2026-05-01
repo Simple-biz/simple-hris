@@ -606,21 +606,6 @@ function isoDateFromColumnGroup(group: string[]): string | null {
 }
 
 /**
- * Advances an ISO date string ("YYYY-MM-DD") by exactly one calendar day.
- * Uses string-based parse + `Date.UTC` to avoid TZ drift: the same input always
- * returns the same output regardless of where the code runs.
- */
-function addOneIsoDay(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
-  if (!m) return null;
-  const d = new Date(Date.UTC(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10)));
-  if (isNaN(d.getTime())) return null;
-  d.setUTCDate(d.getUTCDate() + 1);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-}
-
-/**
  * Lead Gen appointment-based bonus:
  *   1–9  appointments → ₱250 per appointment
  *   10+  appointments → ₱500 per appointment
@@ -1523,19 +1508,6 @@ export default function PayrollWizard() {
           if (!em) continue;
           if (!map.has(em)) map.set(em, new Map());
           map.get(em)!.set(row.dispute_date, row.override_hours);
-        }
-        // Orphanage visits extend the 4h floor-drop to the following day as well.
-        // Only the primary date carries override_hours; the +1 entry is a floor-drop marker
-        // (null value) and never clobbers a pre-existing SET override on that date.
-        for (const row of json.rows ?? []) {
-          if (row.reason !== 'orphanage_visit') continue;
-          const em = (row.work_email ?? '').trim().toLowerCase();
-          if (!em) continue;
-          const nextKey = addOneIsoDay(row.dispute_date);
-          if (!nextKey) continue;
-          const byDate = map.get(em);
-          if (!byDate) continue;
-          if (!byDate.has(nextKey)) byDate.set(nextKey, null);
         }
         setApprovedDisputeDates(map);
       })

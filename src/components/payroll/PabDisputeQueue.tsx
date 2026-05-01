@@ -41,7 +41,11 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { PabDayDisputeRow, PabDisputeReasonCode } from '@/lib/supabase/pab-day-disputes';
-import { DISPUTE_ACTOR_ROLES, disputeGrantsPabForgiveness } from '@/lib/supabase/pab-day-disputes';
+import {
+  DISPUTE_ACTOR_ROLES,
+  disputeGrantsPabForgiveness,
+  isOrphanageStyleReason,
+} from '@/lib/supabase/pab-day-disputes';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 
 const PAGE_SIZE = 15;
@@ -226,7 +230,7 @@ export default function PabDisputeQueue() {
       const totalHours = safeHrs + safeMins / 60;
       // Empty inputs → no override (fall back to Hubstaff). Explicit 0 → zero-out the day.
       const hasInput = editHrs.trim() !== '' || editMins.trim() !== '';
-      const isOrphan = editDialog.reason === 'orphanage_visit';
+      const isOrphan = isOrphanageStyleReason(editDialog.reason);
       const overrideToSend =
         isOrphan
           ? null
@@ -295,7 +299,7 @@ export default function PabDisputeQueue() {
       const totalHours = safeHrs + safeMins / 60;
       // Empty inputs → no override (fall back to Hubstaff). Explicit 0 → zero-out the day.
       const hasInput = overrideHrs.trim() !== '' || overrideMins.trim() !== '';
-      const isOrphan = decideDialog.dispute.reason === 'orphanage_visit';
+      const isOrphan = isOrphanageStyleReason(decideDialog.dispute.reason);
       const overrideToSend =
         isOrphan
           ? null
@@ -508,8 +512,28 @@ export default function PabDisputeQueue() {
                     <TableCell>
                       <Badge variant="outline" className="text-[10px]">{reasonLabel(d.reason)}</Badge>
                     </TableCell>
-                    <TableCell className="max-w-[200px] truncate text-xs text-zinc-600 dark:text-zinc-400" title={d.explanation ?? ''}>
-                      {d.explanation || '—'}
+                    <TableCell
+                      className={cn(
+                        'text-xs text-zinc-600 dark:text-zinc-400',
+                        isOrphanageStyleReason(d.reason)
+                          ? 'min-w-[240px] max-w-[320px] whitespace-pre-line align-top'
+                          : 'max-w-[200px] truncate',
+                      )}
+                      title={d.explanation ?? ''}
+                    >
+                      {isOrphanageStyleReason(d.reason) && d.explanation ? (
+                        <div className="space-y-1">
+                          <Badge
+                            variant="outline"
+                            className="border-pink-200 bg-pink-50 text-[9px] text-pink-700 dark:border-pink-800/60 dark:bg-pink-950/40 dark:text-pink-300"
+                          >
+                            Manager note
+                          </Badge>
+                          <p className="leading-snug">{d.explanation}</p>
+                        </div>
+                      ) : (
+                        d.explanation || '—'
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-0.5">
@@ -519,7 +543,7 @@ export default function PabDisputeQueue() {
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
-                      {d.reason === 'orphanage_visit' ? (
+                      {isOrphanageStyleReason(d.reason) ? (
                         <span className="text-[10px] text-zinc-400" title="Uses logged Hubstaff time">
                           Hubstaff
                         </span>
@@ -567,7 +591,7 @@ export default function PabDisputeQueue() {
                           >
                             Deny
                           </Button>
-                          {d.reason === 'orphanage_visit' && d.status === 'orphanage_manager_approved' && (
+                          {isOrphanageStyleReason(d.reason) && d.status === 'orphanage_manager_approved' && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -616,15 +640,15 @@ export default function PabDisputeQueue() {
               </DialogTitle>
               <DialogDescription className="text-xs">
                 {decideDialog.dispute.work_email} — {decideDialog.dispute.dispute_date} — {reasonLabel(decideDialog.dispute.reason)}
-                {decideDialog.dispute.reason === 'orphanage_visit' && decideDialog.action === 'approve' && (
+                {isOrphanageStyleReason(decideDialog.dispute.reason) && decideDialog.action === 'approve' && (
                   <span className="mt-1 block text-[10px] text-zinc-500">
-                    Orphanage visits keep Hubstaff hours — no manual hour entry. Final calendar forgiveness applies after Accounting approves.
+                    Manager-submitted disputes keep Hubstaff hours — no manual hour entry. Final calendar forgiveness applies after Accounting approves.
                   </span>
                 )}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
-              {decideDialog.action === 'approve' && decideDialog.dispute.reason !== 'orphanage_visit' && (
+              {decideDialog.action === 'approve' && !isOrphanageStyleReason(decideDialog.dispute.reason) && (
                 <div className="space-y-1.5">
                   <Label className="text-xs">Set total hours for this day</Label>
                   <div className="flex items-center gap-2">
@@ -711,10 +735,7 @@ export default function PabDisputeQueue() {
               {disputeGrantsPabForgiveness(editDialog) && (
                 <div className="space-y-2 rounded-md border border-amber-200/90 bg-amber-50/80 px-3 py-2.5 dark:border-amber-900/60 dark:bg-amber-950/25">
                   <p className="text-[11px] leading-snug text-amber-950 dark:text-amber-100/95">
-                    This dispute currently <span className="font-semibold">forgives the PAB short-day</span> for this date
-                    {editDialog.reason === 'orphanage_visit'
-                      ? ' (and may affect the day after per orphanage rules).'
-                      : '.'}{' '}
+                    This dispute currently <span className="font-semibold">forgives the PAB short-day</span> for this date.
                     Revoking removes that forgiveness and marks the dispute <span className="font-medium">denied</span>.
                   </p>
                   <Button
@@ -753,7 +774,7 @@ export default function PabDisputeQueue() {
                   </Button>
                 </div>
               </div>
-              {editStatus === 'approved' && editDialog.reason !== 'orphanage_visit' && (() => {
+              {editStatus === 'approved' && !isOrphanageStyleReason(editDialog.reason) && (() => {
                 const prevHours = editDialog.override_hours ?? 0;
                 const hrs = parseInt(editHrs, 10);
                 const mins = parseInt(editMins, 10);
@@ -844,9 +865,9 @@ export default function PabDisputeQueue() {
                   </div>
                 );
               })()}
-              {editStatus === 'approved' && editDialog.reason === 'orphanage_visit' && (
+              {editStatus === 'approved' && isOrphanageStyleReason(editDialog.reason) && (
                 <p className="rounded-md border border-zinc-200 bg-zinc-50/80 px-2.5 py-2 text-[10px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
-                  Orphanage visits do not use hour overrides — PAB uses logged time and orphanage forgiveness rules.
+                  Manager-submitted disputes ({reasonLabel(editDialog.reason)}) do not use hour overrides — PAB uses logged Hubstaff time, the day flips green on Accounting approval.
                 </p>
               )}
               <div className="space-y-1.5">
@@ -891,9 +912,6 @@ export default function PabDisputeQueue() {
               <DialogDescription className="text-xs">
                 {editDialog.work_email} — {editDialog.dispute_date}. The employee’s calendar will no longer treat this day
                 as forgiven; the dispute will be recorded as <span className="font-medium">denied</span>.
-                {editDialog.reason === 'orphanage_visit' && (
-                  <span className="mt-1 block">Orphanage day-after rules also stop applying from this dispute.</span>
-                )}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-1.5">

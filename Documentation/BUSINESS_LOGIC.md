@@ -245,8 +245,9 @@ This runs on mount and is independent of the CSV selector used for the stat card
 
 | Surface | File | Notes |
 |---|---|---|
-| PayrollWizard dispatch payload | `src/components/PayrollWizard.tsx` (`dispatchData` useMemo) | `salaryDate = weekStart + 8d`; `isTechBonusWeek` checks that `salaryDate` falls in the 3rd Mon–Sun week of `salaryDate`'s month; `hasThirtyDaysByWeek(workEmail)` checks service from `masterEmployees[].start_date`. The salary date is also written to `pay_period.salary_date` (ISO `YYYY-MM-DD`) on every dispatched employee row so the n8n webhook + paystub template can render it. |
+| PayrollWizard dispatch payload | `src/components/PayrollWizard.tsx` (`dispatchData` useMemo) | `salaryDate = weekStart + 8d`; `isTechBonusWeek` checks that `salaryDate` falls in the 3rd Mon–Sun week of `salaryDate`'s month; `hasThirtyDaysByWeek(workEmail)` is the **canonical 30-day gate** — checks `weekStartDate >= start_date + 30d` (the pay-period Monday, not the salary Tuesday). Salary date is also written to `pay_period.salary_date` on every dispatched employee row. |
 | Employee Dashboard indicator + stat card + pay summary | `src/components/employee/EmployeeDashboard.tsx` | `isTechnologyBonusActive` mirrors the wizard: derives the **most recently dispatched pay period** (refMonday = `lastTuesday − 8`) for the all-time view, or the selected file's week start for the weekly view; computes salaryDate; checks 3rd-week-of-month. `employeeStartDate` is fetched from `/api/employees` on mount. `techServiceStatus` yields `'eligible' \| 'pending' \| 'unknown'` and drives the amber "Not eligible yet — you'll become eligible on <date> (N days to go)" warning in the indicator row. |
+| **Employee My Hours pay summary** | `src/components/employee/EmployeeMyHours.tsx` | Calendar-month view (March 1 – March 31). `isTechnologyBonusActive` here is gated on `monthHasEnded` — Tech Bonus only "appears" in the row once the displayed month has fully concluded. Within-month view shows `· month not yet ended`. The 30-day service gate uses the salary Tuesday's weekStart (matches `hasThirtyDaysByWeek` byte-for-byte); when `employeeStartDate` is unknown, defaults optimistic. PAB Bonus row similarly: ₱5,000 if every weekday in the month logged ≥7h. |
 | Admin Overview card | `src/components/Overview.tsx` (`techBonusEligibility` useMemo) | Counts employees by eligibility: `{ eligible, pending, unknown }` + progress bar showing `% eligible of total`. |
 
 ### Manual toggle override
@@ -491,39 +492,80 @@ Toggled in Step 1. Marks the upload as the Mon–Sun cycle used by the Hogan Smi
 
 ## PAB Day-Dispute System
 
-Employees can dispute individual failing PAB days (days where they logged < 7 hours) via the PAB calendar on the Employee Dashboard. A dispute requests that the day be re-evaluated under a reduced threshold instead of being counted as a miss.
+Two distinct dispute paths now coexist:
+
+1. **Employee-filed disputes** (legacy reasons: medical, power_outage, internet_issue, family_emergency, other). Employee opens the PAB calendar, picks a sub-7h weekday, types a reason + explanation, and Accounting decides.
+2. **Manager-submitted "orphanage-style" disputes** (reasons: `orphanage_visit`, `ceo_visitation`). Employees never touch these — the Orphanage Manager (Alyson) submits batches on their behalf using the **Create disputes** dialog, and Accounting (Carla) gives the final approval. See the "Orphanage-style flow" section below.
 
 ### Reason codes
 
-Per Payroll directive (2026-04-17), **Orphanage visit** is the only valid dispute reason. The list is stored in the `app_settings` key `pab_dispute_reason_codes` and is admin-configurable.
+Stored in `app_settings.pab_dispute_reason_codes` (admin-configurable). Default set in `src/lib/supabase/pab-dispute-reasons.ts`:
+
+| Code | Label | Filed by |
+|---|---|---|
+| `orphanage_visit` | Orphanage Visit | Manager-submitted only |
+| `ceo_visitation` | CEO Visitation & Accommodation | Manager-submitted only |
+| `medical` | Health Issues | Employee |
+| `power_outage` | Power Outage | Employee |
+| `internet_issue` | Intermittent Internet | Employee |
+| `family_emergency` | Family Emergency | Employee |
+| `other` | Other | Employee |
+
+The two manager-submitted reasons are **filtered out of the employee filing dropdown** (`MyDisputes.tsx`) and **rejected with 403** at the `/api/pab-disputes` POST handler if an employee tries to file them via API. Use `isOrphanageStyleReason(code)` from `pab-dispute-reasons.ts` to test for them programmatically.
 
 ### Status values (`pab_day_disputes.status`)
 
 | Status | Meaning |
 |---|---|
-| `pending` | Awaiting Accounting (non-orphanage) or legacy open row |
-| `pending_orphanage_manager` | Orphanage visit filed; awaiting Orphanage Manager verify/deny |
-| `orphanage_manager_approved` | Manager verified; **awaiting Accounting** final approve/deny/return |
-| `orphanage_manager_denied` | Manager denied (no Accounting queue) |
-| `approved` / `denied` | Accounting final decision (non-orphanage); `approved` forgives the day |
-| `accounting_approved` / `accounting_denied` | Accounting final decision (**orphanage_visit**); only `accounting_approved` forgives for payroll/calendar |
+| `pending` | Employee-filed; awaiting Accounting decision |
+| `pending_orphanage_manager` | Legacy state for employee-filed orphanage visits — no longer reachable via the dialog flow but still handled for in-flight rows |
+| `orphanage_manager_approved` | Orphanage-style dispute waiting on Accounting (manager-submitted rows land here directly; legacy employee-filed rows transition into this) |
+| `orphanage_manager_denied` | Manager denied (terminal) |
+| `approved` / `denied` | Accounting final decision (non-orphanage-style); `approved` forgives the day |
+| `accounting_approved` / `accounting_denied` | Accounting final decision (orphanage-style); only `accounting_approved` forgives |
 
-### Flows (RBAC-gated)
+### Flow A — Employee-filed (non-orphanage-style)
 
-**Non-orphanage reasons** (if configured):
+1. Employee submits via `MyDisputes.tsx` → `pending`.
+2. Any user in `DISPUTE_ACTOR_ROLES` (`payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `admin`) approves or denies from **Accounting → Disputes** (`PabDisputeQueue.tsx`).
+3. Terminal: `approved` / `denied`. On approve, Accounting may set `override_hours` (tri-state SET semantics, see below).
 
-1. Employee submits → `pending`.
-2. Any user in `DISPUTE_ACTOR_ROLES` (`payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `admin`) approves or denies from **Accounting → Disputes** (`PabDisputeQueue`).
-3. Terminal: `approved` / `denied`. On approve, Accounting may set `override_hours`.
+### Flow B — Manager-submitted (orphanage_visit + ceo_visitation)
 
-**Orphanage visit (`reason = orphanage_visit`) — staged:**
+The new path replaces the old "employee files orphanage visit → Orphanage Manager verifies → Accounting approves" three-step. Today:
 
-1. Employee submits → `pending_orphanage_manager`.
-2. **Orphanage Manager** (`orphanage_manager` or `admin`) uses the **Orphanage** view: verify or deny → `orphanage_manager_approved` or `orphanage_manager_denied`.
-3. **Accounting** sees manager-approved rows in **Disputes** (queue uses `awaiting_accounting=1`: `pending` ∪ `orphanage_manager_approved`). Actions: **Approve** / **Deny** / **Return** (Return sends the row back to `pending_orphanage_manager` with an optional note).
-4. After Accounting **Approve** / **Deny**: `accounting_approved` / `accounting_denied`. No manual hour override for orphanage at Accounting; PAB uses Hubstaff time plus orphanage forgiveness rules.
+1. **Off-system trigger**: Orphanage leader emails Alyson a list of employees + visit dates, OR Carla notes a known CEO trip.
+2. **Alyson** (or **Carla** for CEO trips) opens the **Create disputes** dialog (`CreateOrphanageStyleDisputeDialog.tsx`) from the Orphanage view or the Accounting Orphanage Visits queue. She picks the reason, the date(s), and the people involved (multi-select chips with name/email/department search), optionally types a note, and submits.
+3. The submission hits `POST /api/pab-disputes/orphanage-manager-submit`, which inserts each row directly at `status = 'orphanage_manager_approved'` (skipping `pending_orphanage_manager` — Alyson IS the manager, so the manager step is implicit). The note is stored on `explanation` and copied into `decision_note` for receipt; `override_hours = null`.
+4. **Carla** sees the rows in **Accounting → Disputes** (`PabDisputeQueue.tsx`, gated to `awaiting_accounting=1`). She clicks **Approve** or **Deny** per row → `accounting_approved` / `accounting_denied`.
+5. **Calendar feedback**: the employee's PAB calendar flips green only after `accounting_approved`. Pending stages render amber.
 
-**Authorisation:** `canActOnDisputes` for Accounting queue actions; `canActOnOrphanageManagerQueue` for manager verify/deny. Implemented in `src/lib/supabase/pab-day-disputes.ts`. Client disables buttons when roles are missing; server checks are authoritative.
+**Why no D+1 rule any more:** the previous synthetic D+1 forgiveness was removed (2026-05-01). Alyson + Carla now explicitly choose every forgiven date — the dialog calendar shows a Mon–Fri grid (PAB-style) with red cells for sub-7h days, and the manager picks each one explicitly. See "Removed: Day-after forgiveness rule" below.
+
+### Calendar awareness in the dialog
+
+The Create disputes dialog pre-fetches:
+
+- **Roster** via `/api/employee-rate-profiles/summary` (the same endpoint Rates uses).
+- **Hubstaff hours per employee** via `fetchHoursByEmployee` (`src/lib/hubstaff/fetch-hours-by-employee.ts`) — walks every source file and builds `Map<email → Map<dayKey → seconds>>`.
+- **Existing orphanage-style disputes** via `fetchOrphanageOverlap` (`src/lib/pab-disputes/fetch-orphanage-overlap.ts`) — hits `/api/pab-disputes/orphanage-overlap` (gated to `orphanage_manager` OR accounting roles, since `orphanage_manager` is **not** in `ELEVATED_ROLES`).
+
+Pre-fetching happens on parent mount (`OrphanageApp.tsx`, `OrphanageVisits.tsx`); the dialog opens instantly. With all three datasets in hand, each calendar cell of the active person's grid renders as one of:
+
+| State | Visual | Clickable? |
+|---|---|---|
+| Picked this session | Pink ring + shadow | ✅ click to un-pick |
+| Existing `accounting_approved` | Emerald + ring | ❌ "already forgiven" |
+| Existing `*_pending` / manager-approved | Amber + ring | ❌ "pending review" |
+| Existing `*_denied` | Rose | ❌ "previously denied — cannot re-pick" |
+| Hubstaff ≥ 7h, no dispute | Emerald (no ring) | ❌ "already passes" |
+| Hubstaff < 7h, no dispute | Red | ✅ "click to forgive" |
+
+The click guard means the user can never submit a duplicate; the "already on file" 23505 path on the server is a defence-in-depth fallback, not a UX-facing error.
+
+**Per-person dates:** `perPersonDates` is `Map<email, Set<dispute_date>>` — each selected employee carries their own forgiveness dates. Clicking a person chip switches the active calendar to their hours; their pinks are preserved across switches. The submit groups by date and sends one POST per date with the matching subset of people, so an N×M (people × dates) matrix becomes M API calls.
+
+**Authorisation:** `canActOnDisputes` for Accounting queue actions; `canActOnOrphanageManagerQueue` for manager verify/deny; either role can submit via the dialog (the server function tags the audit log entry by which role originated the row — `pab_dispute.orphanage_manager_created` vs `pab_dispute.accounting_created`). Implemented in `src/lib/supabase/pab-day-disputes.ts`. Client disables buttons when roles are missing; server checks are authoritative.
 
 **Accounting navigation:** `payroll_manager` users see **Disputes** in the Accounting sidebar (with Overview and Payment dispatch) so they can open the queue; other accounting roles get the full tab set per `allowedAccountingTabsForRoles` in `src/lib/rbac/accounting-tabs.ts`.
 
@@ -531,22 +573,44 @@ Per Payroll directive (2026-04-17), **Orphanage visit** is the only valid disput
 
 Calendar and Payroll use `disputeGrantsPabForgiveness(row)` in `pab-day-disputes.ts`:
 
-- **Non-orphanage:** only `status === 'approved'` forgives the short day.
-- **Orphanage visit:** `status === 'accounting_approved'` **or** legacy `status === 'approved'` forgives (plus the usual day-after synthesis for `orphanage_visit`).
+- **Non-orphanage-style:** only `status === 'approved'` forgives the short day.
+- **Orphanage-style** (`orphanage_visit` or `ceo_visitation`, tested via `isOrphanageStyleReason`): `status === 'accounting_approved'` **or** legacy `status === 'approved'` forgives.
 
-Statuses that are not yet final (`pending`, `pending_orphanage_manager`, `orphanage_manager_approved`, etc.) and all denied statuses do **not** grant forgiveness.
+Statuses that are not yet final (`pending`, `pending_orphanage_manager`, `orphanage_manager_approved`) and all denied statuses do **not** grant forgiveness.
+
+**4h-floor bypass for orphanage-style reasons (2026-05-01):** historically, even an approved dispute only forgave a day if the employee logged ≥ 4h of Hubstaff time. That 4h floor was a sanity-check against employee-filed forgiveness on no-show days. Manager-submitted orphanage_visit + ceo_visitation rows now bypass the 4h floor — a 0h day is the *exact* case the dispute is for (employee was at the orphanage / on a CEO trip, no Hubstaff time logged). The check in the calendar cells (`EmployeeMyHours.tsx`, `EmployeeDashboard.tsx`, `EmployeePabCalendar.tsx`) is:
+
+```ts
+const forgiven =
+  !!dispute &&
+  disputeGrantsPabForgiveness(dispute) &&
+  !day.passes &&
+  (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
+```
+
+Other reasons still observe the 4h floor (employee-filed disputes pass through the same review without the bypass).
 
 **`override_hours` contract — tri-state SET semantics** (finalised 2026-04-21):
 
 | Stored value | Meaning on `dispute_date` |
 |---|---|
-| `NULL` | Floor-drop only — Hubstaff hours are used as-is; the 7h threshold is replaced by a 4h floor for that day. |
+| `NULL` | Floor-drop only — Hubstaff hours are used as-is; the 7h threshold is replaced by a 4h floor (or bypassed entirely for orphanage-style reasons). |
 | `0` | Intentional zero-out — the day counts as 0h total (fails PAB; used for e.g. unpaid leave). |
 | `> 0` | SET — replaces Hubstaff hours for that day. Example: Hubstaff logged 3h, approver sets 7h → day reads 7h, passes PAB. |
 
-The override applies to the **exact** `dispute_date` only. The floor-drop threshold extends to `dispute_date + 1` **only for `reason = 'orphanage_visit'`** disputes (see Orphanage Visits below). For all other reasons, forgiveness is single-date.
+The override applies to the **exact** `dispute_date` only. **Manager-submitted orphanage-style rows always store `override_hours = null`** — the manager-submit endpoint never accepts a value. Employee-filed disputes can still receive an override at Accounting decision time.
 
 Client input (`PabDisputeQueue.tsx`): if the hours+minutes inputs are both empty strings, the UI sends `null`; otherwise it sends the computed total (including `0`). This preserves the author's intent end-to-end.
+
+### Removed: Day-after forgiveness rule (2026-05-01)
+
+The previous synthetic D+1 forgiveness rule has been removed. Background:
+
+> An approved `orphanage_visit` dispute on day D used to also forgive day D+1 — the calendar's `disputesByDate` map and `PayrollWizard.approvedDisputeDates` synthesised a phantom entry for D+1 with `override_hours = null`, so the same forgiveness logic applied to the day after the visit.
+
+Why removed: the new manager-submitted dialog lets Alyson + Carla explicitly select every forgiven date. The implicit D+1 was a workaround for the old "employee files one row" flow — no longer needed and made it hard to audit which dates were *actually* on file.
+
+**Migration:** `references/backfill_orphanage_day_after_disputes.sql` is a one-time idempotent backfill that materialises every implicit D+1 entry as a real row at `status = 'accounting_approved'` with `created_by = 'system_backfill'`. **Run this after deploying the code change** so PAB months that previously relied on D+1 forgiveness don't silently regress. Tracked in `pending_sql.md` as item #21.
 
 ### Editing decided disputes
 
@@ -564,12 +628,14 @@ Employees can **withdraw** their own dispute while it is still in `pending` stat
 
 | Action | Trigger |
 |---|---|
-| `pab_dispute.submitted` | Employee submits a new dispute |
-| `pab_dispute.approved` | Accounting approves a pending dispute (or orphanage row after manager approval) |
+| `pab_dispute.submitted` | Employee submits a new dispute (employee-filed, non-orphanage-style only) |
+| `pab_dispute.orphanage_manager_created` | Orphanage Manager bulk-submits via the Create disputes dialog (per row) |
+| `pab_dispute.accounting_created` | Accounting bulk-submits via the Create disputes dialog (per row) |
+| `pab_dispute.approved` | Accounting approves a pending dispute (or orphanage-style row after manager approval) |
 | `pab_dispute.denied` | Accounting denies a pending dispute |
 | `pab_dispute.edited` | Accounting edits a decided dispute (including revoking forgiveness via denied) |
-| `pab_dispute.orphanage_manager_approved` | Orphanage Manager verified the visit |
-| `pab_dispute.orphanage_manager_denied` | Orphanage Manager denied the visit |
+| `pab_dispute.orphanage_manager_approved` | Orphanage Manager verified the visit (legacy employee-filed flow) |
+| `pab_dispute.orphanage_manager_denied` | Orphanage Manager denied the visit (legacy employee-filed flow) |
 | `pab_dispute.orphanage_returned_to_manager` | Accounting returned a manager-approved row to the Orphanage queue |
 | `pab_dispute.withdrawn` | Employee withdraws a pending dispute, OR admin removes an orphanage visit |
 
@@ -579,16 +645,18 @@ The `user_role` field on each audit row is resolved dynamically at write time vi
 
 Disputes are stored in the `pab_day_disputes` table with a unique constraint on `(work_email, dispute_date)` — one dispute per employee per calendar day. The `first_approved_*` columns from the deprecated two-tier design were dropped on 2026-04-21.
 
-### Orphanage Visits roster (admin-entered alternative)
+### Orphanage Visits roster — legacy admin shortcut
 
-Admins can proactively record employee orphanage visits via the **Orphanage Visits** sidebar tab. Rows are inserted into `pab_day_disputes` with `status='approved'`, `reason='orphanage_visit'` via `adminCreateOrphanageVisit`, which performs an atomic `.upsert({ onConflict: 'work_email,dispute_date' })` — two admins recording the same visit concurrently will not race.
+Admins can still proactively record single visits via the **Orphanage Visits** sidebar tab's "Add visit" form. Rows are inserted via `adminCreateOrphanageVisit`, which writes a row at `status='accounting_approved'` (skipping both manager and accounting steps), `reason='orphanage_visit'`, with an atomic `.upsert({ onConflict: 'work_email,dispute_date' })`.
 
-The roster records date only — no `override_hours` are written. Forgiveness semantics for `orphanage_visit` reason:
+This path coexists with the new manager-submitted flow and is **separate from the Create disputes dialog**. Use the dialog for batch submissions (manager-submitted, two-stage); use this single-row form for one-off admin shortcuts that need to land at fully-approved without Carla's signoff.
 
-- **Visit date**: PAB floor drops from 7h to 4h. Any Hubstaff-logged hours are kept as-is.
-- **Visit date + 1**: the forgiveness-map builders in `PayrollWizard.tsx` (`approvedDisputeDates`) and `EmployeeDashboard.tsx` (`disputesByDate`) synthesise a second map entry with `override_hours = null` so the 4h floor also applies on the day after. A real dispute already recorded on `visit_date + 1` wins (the synthetic entry is skipped).
+Forgiveness semantics for orphanage-style reasons:
 
-Employees see their own visits in a read-only panel (`My Orphanage Visits` in the employee sidebar). Admins can remove a visit via the trash button; removal reverts forgiveness for both the visit day and the day after.
+- **Visit date**: 7h threshold is dropped — orphanage-style approvals bypass the 4h floor (see the bypass note above). Any Hubstaff-logged hours are kept as-is. `override_hours` is null.
+- **Visit date + 1**: ~~The forgiveness-map builders synthesise a second entry~~ — **removed 2026-05-01.** Forgiveness applies only to the exact dates listed.
+
+Employees see their own visits in a read-only panel (`My Orphanage Visits` in the employee sidebar). Admins can remove a visit via the trash button; removal reverts forgiveness for that visit day only.
 
 ---
 

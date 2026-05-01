@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
-import { listDisputes, createDispute, type PabDisputeStatus } from '@/lib/supabase/pab-day-disputes';
+import {
+  listDisputes,
+  createDispute,
+  isOrphanageStyleReason,
+  type PabDisputeStatus,
+} from '@/lib/supabase/pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
 import {
   authorizeEmailAccess,
@@ -84,6 +89,19 @@ export async function POST(request: Request) {
     const reason = body.reason?.trim();
     if (!reason) {
       return NextResponse.json({ error: 'reason is required' }, { status: 400 });
+    }
+
+    // Orphanage-style reasons are manager-submitted only — block direct employee filings
+    // even when the request would otherwise pass `authorizeEmailAccess` (e.g. employee
+    // filing for themselves). Use the dedicated `/orphanage-manager-submit` endpoint instead.
+    if (isOrphanageStyleReason(reason)) {
+      return NextResponse.json(
+        {
+          error:
+            'Orphanage Visit and CEO Visitation disputes are submitted by your manager — please ask them to add it on your behalf.',
+        },
+        { status: 403 },
+      );
     }
 
     const { id, error } = await createDispute({

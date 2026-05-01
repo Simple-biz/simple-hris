@@ -32,6 +32,7 @@ import {
 import {
   disputeGrantsPabForgiveness,
   disputeIsAwaitingResolution,
+  isOrphanageStyleReason,
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
 
@@ -287,18 +288,6 @@ export default function EmployeePabCalendar({
   const disputesByDate = useMemo(() => {
     const map = new Map<string, PabDayDisputeRow>();
     for (const d of disputes) map.set(d.dispute_date, d);
-    // Day-after forgiveness: an approved orphanage_visit on D also forgives D+1
-    // unless a real dispute already exists on D+1.
-    for (const d of disputes) {
-      if (!disputeGrantsPabForgiveness(d)) continue;
-      const [y, m, day] = d.dispute_date.split('-').map(Number);
-      if (!y || !m || !day) continue;
-      const next = new Date(y, m - 1, day + 1);
-      const nextIso = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
-      if (!map.has(nextIso)) {
-        map.set(nextIso, { ...d, dispute_date: nextIso, override_hours: null });
-      }
-    }
     return map;
   }, [disputes]);
 
@@ -478,7 +467,7 @@ export default function EmployeePabCalendar({
                       !!dispute &&
                       disputeGrantsPabForgiveness(dispute) &&
                       !day.passes &&
-                      day.seconds >= 4 * 3600;
+                      (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
                     const effectivelyPasses = day.passes || forgiven;
 
                     let cellBorder: string;
