@@ -13,6 +13,8 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
     devs: 'devs',
     'ai/api team': 'devs',
     'ai api team': 'devs',
+    'ai and api team': 'devs',
+    'ai & api team': 'devs',
     'lead gen': 'lead_gen',
     'lead generation': 'lead_gen',
     'us - manager bonus': 'us_manager_bonus',

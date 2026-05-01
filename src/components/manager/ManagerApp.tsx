@@ -17,10 +17,28 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Toaster } from '@/components/ui/sonner';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
 import ManagerSidebar, { type ManagerTab } from './ManagerSidebar';
+import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
+import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
+
+/** How `/api/manager/department-members` scoped the roster for this session (server-driven). */
+type ManagerTeamGate =
+  | { kind: 'loading' }
+  | { kind: 'elevated' }
+  | { kind: 'department'; departments: string[] }
+  | { kind: 'error'; message: string };
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -91,9 +109,72 @@ export default function ManagerApp() {
     return () => window.removeEventListener('keydown', onKey);
   }, [mobileNavOpen]);
 
-  // Stub state — wire to real /api/time-adjustments when that table lands.
+  // Stub — wire to real /api/time-adjustments when that table lands.
   const pendingApprovals = 0;
-  const teamCount = 0;
+
+  const [teamMembers, setTeamMembers] = useState<EmployeeRow[]>([]);
+  const [teamGate, setTeamGate] = useState<ManagerTeamGate>({ kind: 'loading' });
+
+  useEffect(() => {
+    if (!authChecked) return;
+    let cancelled = false;
+    (async () => {
+      setTeamGate({ kind: 'loading' });
+      try {
+        const res = await fetch('/api/manager/department-members', { cache: 'no-store' });
+        const json = (await res.json()) as {
+          rows?: EmployeeRow[];
+          scope?: 'elevated' | 'department';
+          departments?: string[];
+          error?: string | null;
+        };
+        if (!res.ok) throw new Error(json.error || 'Failed to load team roster');
+        if (cancelled) return;
+        setTeamMembers(json.rows ?? []);
+        if (json.scope === 'elevated') {
+          setTeamGate({ kind: 'elevated' });
+          return;
+        }
+        setTeamGate({
+          kind: 'department',
+          departments: json.departments ?? [],
+        });
+      } catch (e) {
+        if (!cancelled) {
+          setTeamMembers([]);
+          setTeamGate({
+            kind: 'error',
+            message: e instanceof Error ? e.message : 'Failed to load team roster',
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authChecked]);
+
+  // Live count of pending leave requests across all departments. We re-fetch on tab
+  // switch so the badge reflects approvals decided in the panel without a manual reload.
+  const [pendingLeaves, setPendingLeaves] = useState(0);
+  useEffect(() => {
+    if (!authChecked) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/leave-requests?scope=all', { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: LeaveRequestRow[] };
+        if (cancelled) return;
+        const pending = (json.rows ?? []).filter((r) => r.status === 'pending').length;
+        setPendingLeaves(pending);
+      } catch {
+        if (!cancelled) setPendingLeaves(0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authChecked, activeTab]);
 
   const handleNavigate = (tab: ManagerTab) => {
     setActiveTab(tab);
@@ -127,6 +208,7 @@ export default function ManagerApp() {
         mobileOpen={mobileNavOpen}
         viewerEmail={viewerEmail}
         pendingApprovals={pendingApprovals}
+        pendingLeaves={pendingLeaves}
       />
 
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -166,13 +248,17 @@ export default function ManagerApp() {
                 <Overview
                   viewerEmail={viewerEmail}
                   pendingApprovals={pendingApprovals}
-                  teamCount={teamCount}
+                  teamCount={teamGate.kind === 'loading' ? null : teamMembers.length}
+                  teamGate={teamGate}
                   onJumpToApprovals={() => handleNavigate('time-adjustments')}
                   onJumpToTeam={() => handleNavigate('team')}
                 />
               )}
               {activeTab === 'time-adjustments' && <TimeAdjustments />}
-              {activeTab === 'team' && <Team />}
+              {activeTab === 'leaves' && <LeaveRequestsPanel />}
+              {activeTab === 'team' && (
+                <TeamPanel members={teamMembers} teamGate={teamGate} />
+              )}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -188,7 +274,8 @@ export default function ManagerApp() {
 interface OverviewProps {
   viewerEmail: string | null;
   pendingApprovals: number;
-  teamCount: number;
+  teamCount: number | null;
+  teamGate: ManagerTeamGate;
   onJumpToApprovals: () => void;
   onJumpToTeam: () => void;
 }
@@ -197,6 +284,7 @@ function Overview({
   viewerEmail,
   pendingApprovals,
   teamCount,
+  teamGate,
   onJumpToApprovals,
   onJumpToTeam,
 }: OverviewProps) {
@@ -236,8 +324,20 @@ function Overview({
         />
         <StatTile
           label="My team"
-          value={teamCount}
-          hint={teamCount === 0 ? 'Team selection coming soon' : 'Direct reports'}
+          value={teamCount === null ? '—' : teamCount}
+          hint={
+            teamGate.kind === 'loading'
+              ? 'Loading roster…'
+              : teamGate.kind === 'error'
+                ? 'Could not load roster'
+                : teamGate.kind === 'department' && teamGate.departments.length === 0
+                  ? 'No departments assigned yet — ask an admin'
+                  : teamGate.kind === 'department'
+                    ? `Departments: ${teamGate.departments.join(', ')}`
+                    : teamCount === 0
+                      ? 'No matching employees in roster'
+                      : 'Active roster (org-wide visibility)'
+          }
           icon={Users}
           accent="blue-deep"
           onClick={onJumpToTeam}
@@ -331,7 +431,54 @@ function TimeAdjustments() {
 
 // ─── Team tab ───────────────────────────────────────────────────────────────
 
-function Team() {
+interface TeamPanelProps {
+  members: EmployeeRow[];
+  teamGate: ManagerTeamGate;
+}
+
+function TeamPanel({ members, teamGate }: TeamPanelProps) {
+  const unassigned = teamGate.kind === 'department' && teamGate.departments.length === 0;
+  const scoped = teamGate.kind === 'department' && teamGate.departments.length > 0;
+
+  if (teamGate.kind === 'loading') {
+    return (
+      <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        <header className="flex flex-col gap-1">
+          <h2 className="bg-gradient-to-r from-blue-700 via-zinc-900 to-zinc-900 bg-clip-text text-xl font-bold tracking-tight text-transparent dark:from-blue-400 dark:via-white dark:to-white">
+            My team
+          </h2>
+        </header>
+        <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15 dark:ring-blue-400/10">
+          <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading roster…</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (teamGate.kind === 'error') {
+    return (
+      <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        <header className="flex flex-col gap-1">
+          <h2 className="bg-gradient-to-r from-blue-700 via-zinc-900 to-zinc-900 bg-clip-text text-xl font-bold tracking-tight text-transparent dark:from-blue-400 dark:via-white dark:to-white">
+            My team
+          </h2>
+        </header>
+        <Card className="border-rose-100/80 bg-gradient-to-br from-white to-rose-50/40 ring-1 ring-rose-500/10 dark:border-rose-950/50 dark:from-zinc-950 dark:to-rose-950/15">
+          <CardContent className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-rose-500 to-rose-700 text-white shadow-md">
+              <AlertTriangle className="h-6 w-6" />
+            </div>
+            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">Could not load roster</p>
+            <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">{teamGate.message}</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <header className="flex flex-col gap-1">
@@ -339,24 +486,86 @@ function Team() {
           My team
         </h2>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Pick your direct reports by simple.biz email so the system knows whose adjustments you can approve.
+          {unassigned ? (
+            <>
+              You do not have any departments assigned in Roles & permissions yet. Until an admin adds
+              you under{' '}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">department managers</span>,
+              your team list and leave queue stay empty.
+            </>
+          ) : scoped ? (
+            <>
+              Showing active roster members in{' '}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                {teamGate.departments.join(', ')}
+              </span>{' '}
+              (matched from HR master list, case-insensitive).
+            </>
+          ) : (
+            <>
+              Showing the full active roster — your login has org-wide HR/payroll visibility, so every
+              department appears here on the manager view.
+            </>
+          )}
         </p>
       </header>
 
       <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15 dark:ring-blue-400/10">
-        <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/25">
-            <Users className="h-6 w-6" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-              Team selection isn't wired up yet.
-            </p>
-            <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-400">
-              Once the manager_team_members table is ready, this view will show your reports
-              with email-based add/remove, transfers, and notes.
-            </p>
-          </div>
+        <CardContent className="p-0 sm:p-0">
+          {unassigned ? (
+            <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-amber-500 to-orange-700 text-white shadow-md">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">No department assignments</p>
+              <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">
+                Ask an administrator to assign you to one or more departments in System Settings → Roles &amp;
+                permissions (Department managers).
+              </p>
+            </div>
+          ) : members.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/25">
+                <Users className="h-6 w-6" />
+              </div>
+              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">No employees in scope</p>
+              <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">
+                No rows in the active master list matched{' '}
+                {scoped ? 'your departments' : 'the roster query'} (department names must line up with HR).
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-[220px]">Name</TableHead>
+                    <TableHead>Department</TableHead>
+                    <TableHead className="min-w-[200px]">Work email</TableHead>
+                    <TableHead className="min-w-[200px]">Personal email</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {members.map((m, idx) => (
+                    <TableRow key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}>
+                      <TableCell className="font-medium text-zinc-900 dark:text-zinc-100">
+                        {m.name ?? '—'}
+                      </TableCell>
+                      <TableCell className="text-zinc-600 dark:text-zinc-400">
+                        {m.department ?? '—'}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                        {m.work_email ?? '—'}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                        {m.personal_email ?? '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

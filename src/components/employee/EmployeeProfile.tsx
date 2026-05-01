@@ -13,7 +13,6 @@ import {
   Building2,
   Calendar,
   Hash,
-  MapPin,
   Landmark,
   Pencil,
   Lock,
@@ -61,20 +60,6 @@ function parseRate(v: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function pickRow(row: Record<string, unknown>, aliases: string[]): string | null {
-  const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
-  const entries = Object.entries(row);
-  for (const a of aliases) {
-    const want = norm(a);
-    for (const [k, v] of entries) {
-      if (norm(k) === want && v != null && String(v).trim() !== '') {
-        return String(v).trim();
-      }
-    }
-  }
-  return null;
-}
-
 function formatStartDate(raw: string | null): string | null {
   if (!raw?.trim()) return null;
   const s = raw.trim();
@@ -89,17 +74,6 @@ function matchesEmployeeEmail(emp: EmployeeRow, n: string): boolean {
   const we = normEmail(emp.work_email ?? '');
   const pe = normEmail(emp.personal_email ?? '');
   return we === n || pe === n;
-}
-
-function hubstaffRowMatchesEmail(row: Record<string, unknown>, n: string): boolean {
-  const emails: string[] = [];
-  for (const k of ['Email', 'email', 'Work Email', 'work_email', 'user_email']) {
-    if (Object.prototype.hasOwnProperty.call(row, k)) {
-      const v = row[k];
-      if (v != null && String(v).trim()) emails.push(String(v));
-    }
-  }
-  return emails.some((e) => normEmail(e) === n);
 }
 
 /* ---------- Skeleton ---------- */
@@ -151,19 +125,29 @@ function FieldRow({
   label,
   value,
   mono,
+  /** When `value` is empty, show this text (muted) so the row is still visible. */
+  emptyDisplay,
 }: {
   icon?: React.ComponentType<{ className?: string }>;
   label: string;
   value: string | null;
   mono?: boolean;
+  emptyDisplay?: string;
 }) {
-  if (!value) return null;
+  const trimmed = value?.trim() ?? '';
+  const text = trimmed || emptyDisplay?.trim();
+  if (!text) return null;
+  const isPlaceholder = !trimmed && !!emptyDisplay;
   return (
     <div className="flex items-start gap-2.5 py-2 sm:py-1.5">
       {Icon && <Icon className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400 sm:h-3.5 sm:w-3.5 dark:text-zinc-500" />}
       <div className="min-w-0 flex-1">
         <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 sm:text-[10px] dark:text-zinc-500">{label}</div>
-        <div className={`mt-0.5 text-sm text-zinc-900 sm:text-xs dark:text-zinc-100 ${mono ? 'break-all font-mono text-xs sm:text-[11px]' : ''}`}>{value}</div>
+        <div
+          className={`mt-0.5 text-sm sm:text-xs dark:text-zinc-100 ${mono ? 'break-all font-mono text-xs sm:text-[11px]' : ''} ${isPlaceholder ? 'text-zinc-500 italic dark:text-zinc-400' : 'text-zinc-900'}`}
+        >
+          {text}
+        </div>
       </div>
     </div>
   );
@@ -209,12 +193,6 @@ export default function EmployeeProfile({
   const [master, setMaster] = useState<EmployeeRow | null>(null);
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
   const [bankInfo, setBankInfo] = useState<EmployeeIdRow | null>(null);
-  const [hubMeta, setHubMeta] = useState<{
-    memberName: string | null;
-    jobType: string | null;
-    jobTitle: string | null;
-    organization: string | null;
-  } | null>(null);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
 
   const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | ''>('');
@@ -255,20 +233,15 @@ export default function EmployeeProfile({
       setError(null);
       setLoading(true);
       try {
-        const [empRes, rateRes, hubRes, idsRes, fxRes] = await Promise.all([
+        const [empRes, rateRes, idsRes, fxRes] = await Promise.all([
           fetch('/api/employees', { cache: 'no-store' }),
           fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
-          fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' }),
           fetch('/api/employee-ids', { cache: 'no-store' }),
           fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
         ]);
 
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[]; error?: string | null };
         const rateJson = (await rateRes.json()) as { rows?: EmployeeHourlyRateRow[]; error?: string | null };
-        const hubJson = (await hubRes.json()) as {
-          rows?: Record<string, unknown>[] | null;
-          error?: string | null;
-        };
         const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[]; error?: string | null };
         const fxJson = (await fxRes.json()) as { value: string | null };
 
@@ -293,19 +266,6 @@ export default function EmployeeProfile({
         });
         setRate(myRate ?? null);
 
-        const hubRows = hubJson.rows ?? [];
-        const hubRow = hubRows.find((r) => hubstaffRowMatchesEmail(r, norm));
-        if (hubRow) {
-          setHubMeta({
-            memberName: pickRow(hubRow, ['Member', 'member', 'Name', 'name']),
-            jobType: pickRow(hubRow, ['Job type', 'Job Type', 'job_type', 'job type']),
-            jobTitle: pickRow(hubRow, ['Job title', 'Job Title', 'job_title', 'job title']),
-            organization: pickRow(hubRow, ['Organization', 'organization', 'org']),
-          });
-        } else {
-          setHubMeta(null);
-        }
-
         const idRows = idsJson.rows ?? [];
         if (idsJson.error && !empJson.error && !rateJson.error) {
           setError(idsJson.error);
@@ -328,12 +288,10 @@ export default function EmployeeProfile({
   }, [norm]);
 
   const displayName =
-    master?.name?.trim() ||
-    hubMeta?.memberName?.trim() ||
-    employeeEmail.split('@')[0]?.replace(/\./g, ' ') ||
-    '—';
+    master?.name?.trim() || employeeEmail.split('@')[0]?.replace(/\./g, ' ') || '—';
 
-  const department = rate?.department?.trim() || master?.department?.trim() || null;
+  /** Employment panel + department badge: always from `active_employees` / global master list (never rates or Hubstaff). */
+  const employmentDepartment = master?.department?.trim() || null;
   const reg = parseRate(rate?.regular_rate ?? null);
   const ot = parseRate(rate?.ot_rate ?? null);
 
@@ -488,16 +446,10 @@ export default function EmployeeProfile({
             </h2>
             <p className="truncate font-mono text-xs text-zinc-500 sm:text-xs dark:text-zinc-400">{employeeEmail}</p>
             <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:gap-2">
-              {department && (
+              {employmentDepartment && (
                 <Badge variant="outline" className="gap-1 border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[10px] text-orange-700 sm:px-2 sm:text-xs dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-400">
                   <Building2 className="h-3 w-3" />
-                  {department}
-                </Badge>
-              )}
-              {hubMeta?.jobTitle && (
-                <Badge variant="outline" className="gap-1 border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700 sm:px-2 sm:text-xs dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-400">
-                  <Briefcase className="h-3 w-3" />
-                  {hubMeta.jobTitle}
+                  {employmentDepartment}
                 </Badge>
               )}
               {master?.employee_id && (
@@ -539,10 +491,11 @@ export default function EmployeeProfile({
           <div className="mb-3 flex shrink-0 items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50/90 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/50">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
             <p className="text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">
-              {rate || hubMeta ? (
+              {rate ? (
                 <>
                   No <span className="font-mono">global_master_list</span> row for{' '}
-                  <span className="font-mono font-medium">{employeeEmail}</span> — Hubstaff / rates only.
+                  <span className="font-mono font-medium">{employeeEmail}</span> — rates only; employment details will
+                  appear once HR adds you to the roster.
                 </>
               ) : (
                 <>
@@ -576,13 +529,32 @@ export default function EmployeeProfile({
             />
           </ProfilePanel>
 
-          {/* Employment */}
+          {/* Employment — global_master_list via /api/employees (active_employees) */}
           <ProfilePanel title="Employment" icon={Briefcase}>
-            <FieldRow icon={Building2} label="Department" value={department} />
-            <FieldRow icon={Briefcase} label="Job Type" value={hubMeta?.jobType} />
-            <FieldRow icon={Briefcase} label="Job Title" value={hubMeta?.jobTitle} />
-            <FieldRow icon={MapPin} label="Organization" value={hubMeta?.organization} />
-            <FieldRow icon={Calendar} label="Start Date" value={formatStartDate(master?.start_date ?? null)} />
+            <FieldRow
+              icon={Building2}
+              label="Department"
+              value={employmentDepartment}
+              emptyDisplay={
+                master
+                  ? 'Not set on your roster row — ask HR to fill Department in the master list.'
+                  : 'No active roster row for your work or personal email. HR must add you to the global master list.'
+              }
+            />
+            <FieldRow
+              icon={Calendar}
+              label="Start Date"
+              value={formatStartDate(master?.start_date ?? null)}
+              emptyDisplay={
+                master
+                  ? 'Not set — ask HR to add Start Date in the master list.'
+                  : '—'
+              }
+            />
+            <p className="pt-1 text-[11px] leading-relaxed text-zinc-500 sm:text-[10px] dark:text-zinc-400">
+              Pulled only from HR&apos;s roster (same source as Payroll). Payroll rate department can differ{' '}
+              — that does not appear here by design.
+            </p>
           </ProfilePanel>
 
           {/* Compensation */}
@@ -713,20 +685,27 @@ export default function EmployeeProfile({
                 <span className="text-sm font-semibold text-zinc-900 sm:text-xs dark:text-white">Data Sources</span>
               </div>
               <p className="mb-3 text-[11px] leading-relaxed text-zinc-600 sm:text-[11px] dark:text-zinc-400">
-                Profile data is assembled from three Supabase tables. Contact HR to update official records.
+                Profile merges the HR master roster with payroll rates and your saved payout info. Employment (department
+                and start date) always follows the master list.
               </p>
               <div className="grid grid-cols-1 gap-2.5 text-[11px] sm:grid-cols-3 sm:gap-3 sm:text-[11px]">
                 <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2.5 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
                   <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">global_master_list</span>
-                  <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">Name, emails, start date, employee ID</p>
+                  <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">
+                    Name, emails, department, start date, employee ID, photo URL
+                  </p>
                 </div>
                 <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2.5 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
                   <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">employee_hourly_rates</span>
-                  <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">Department, regular &amp; OT rates</p>
+                  <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">
+                    Regular &amp; OT rates (and payroll routing fields)
+                  </p>
                 </div>
                 <div className="rounded-lg border border-white/60 bg-white/60 px-3 py-2.5 sm:py-2 dark:border-zinc-700 dark:bg-zinc-900/40">
-                  <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">hubstaff_hours</span>
-                  <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">Job type, title, organization</p>
+                  <span className="font-mono font-medium text-zinc-800 dark:text-zinc-200">employee_ids</span>
+                  <p className="mt-0.5 leading-snug text-zinc-500 dark:text-zinc-400">
+                    Preferred processor, bank / payout details you edit here
+                  </p>
                 </div>
               </div>
             </div>

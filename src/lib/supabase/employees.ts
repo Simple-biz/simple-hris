@@ -1,4 +1,4 @@
-import { createSupabaseServerClient } from "./server";
+import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "./server";
 
 /**
  * View in Supabase that filters `global_master_list` down to rows whose
@@ -178,19 +178,9 @@ function isRowEmptyOrWhitespace(row: EmployeeRow): boolean {
   return parts.every((p) => p === "");
 }
 
-export async function getEmployees(): Promise<{
-  employees: EmployeeRow[];
-  error: string | null;
-}> {
-  const supabase = createSupabaseServerClient();
-  if (!supabase) {
-    return {
-      employees: [],
-      error:
-        "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env file.",
-    };
-  }
-
+async function fetchActiveEmployees(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServerClient>>,
+): Promise<{ employees: EmployeeRow[]; error: string | null }> {
   const { data, error } = await supabase
     .from(ACTIVE_EMPLOYEES_VIEW)
     .select(GLOBAL_MASTER_SELECT)
@@ -214,8 +204,42 @@ export async function getEmployees(): Promise<{
     return an.localeCompare(bn, undefined, { sensitivity: "base" });
   });
 
-  // Assign YYMM-SSS IDs after sorting so the display order is stable
   generateEmployeeIds(employees);
-
   return { employees, error: null };
+}
+
+export async function getEmployees(): Promise<{
+  employees: EmployeeRow[];
+  error: string | null;
+}> {
+  const supabase = createSupabaseServerClient();
+  if (!supabase) {
+    return {
+      employees: [],
+      error:
+        "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env file.",
+    };
+  }
+  return fetchActiveEmployees(supabase);
+}
+
+/**
+ * Reads `active_employees` with the service role when configured so API routes used by
+ * managers see the full roster even when RLS blocks the anon key. Falls back to the anon
+ * client (same as {@link getEmployees}) if the service key is missing.
+ */
+export async function getEmployeesForAuthorizedServerRoute(): Promise<{
+  employees: EmployeeRow[];
+  error: string | null;
+}> {
+  const sr = createSupabaseServiceRoleClient();
+  const supabase = sr ?? createSupabaseServerClient();
+  if (!supabase) {
+    return {
+      employees: [],
+      error:
+        "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env file.",
+    };
+  }
+  return fetchActiveEmployees(supabase);
 }

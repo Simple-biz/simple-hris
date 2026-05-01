@@ -4,7 +4,9 @@ import {
   insertLeaveRequest,
   listAllLeaveRequests,
   listLeaveRequestsByEmployee,
-  resolveManagerEmail,
+  listManagersForDepartment,
+  lookupEmployeeNameAndDepartment,
+  resolveManagerEmailsFromJson,
 } from '@/lib/supabase/leave-requests';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { normEmail } from '@/lib/email/norm-email';
@@ -13,6 +15,10 @@ import {
   deniedResponse,
   requireElevatedSession,
 } from '@/lib/auth/authorize-email';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth/auth-options';
+import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
+import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -31,10 +37,47 @@ export async function GET(request: Request) {
     const scope = searchParams.get('scope');
     if (scope === 'all') {
       const authz = await requireElevatedSession();
-      if (!authz.ok) return deniedResponse(authz);
-      const { rows, error } = await listAllLeaveRequests(300);
+      const session = await getServerSession(authOptions);
+      const roles =
+        ((session?.user as { roles?: string[] } | undefined)?.roles ?? []) as string[];
+      const sessionEmail = (session?.user?.email ?? '').trim().toLowerCase();
+
+      if (!authz.ok && !roles.includes('manager')) {
+        return deniedResponse(authz);
+      }
+
+      const { rows: deptRows, error: dmErr } = await listDepartmentsForManager(
+        sessionEmail || undefined,
+      );
+      if (dmErr) return NextResponse.json({ rows: [], error: dmErr }, { status: 500 });
+      const departmentStrings = deptRows.map((r) => r.department.trim()).filter(Boolean);
+
+      const { rows: allRows, error } = await listAllLeaveRequests(500);
       if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-      return NextResponse.json({ rows, error: null });
+
+      /** People with dept assignments always see leaves only for those depts — matches My Team scope. */
+      const applyDeptFilter = departmentStrings.length > 0;
+
+      if (!authz.ok) {
+        if (!sessionEmail) {
+          return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+        }
+        const filtered = applyDeptFilter
+          ? allRows.filter((r) =>
+              departmentMatchesManagedAssignments(r.department, departmentStrings),
+            )
+          : [];
+        return NextResponse.json({ rows: filtered.slice(0, 300), error: null });
+      }
+
+      if (!applyDeptFilter) {
+        return NextResponse.json({ rows: allRows.slice(0, 300), error: null });
+      }
+
+      const filtered = allRows.filter((r) =>
+        departmentMatchesManagedAssignments(r.department, departmentStrings),
+      );
+      return NextResponse.json({ rows: filtered.slice(0, 300), error: null });
     }
     const raw = searchParams.get('employee_email');
     const em = normEmail(raw ?? '') ?? raw?.trim().toLowerCase();
@@ -89,12 +132,32 @@ export async function POST(request: Request) {
 
     const managersJson = await getAppSetting('leave_department_managers_json');
     const accountingNotify = await getAppSetting('leave_accounting_notify_emails');
-    const dept = body.department?.trim() || null;
-    const manager_email = resolveManagerEmail(dept, managersJson);
+
+    // Server-side fallback for name + department: if the client didn't resolve them
+    // (master-list race or email-drift) we look the employee up in `active_employees`
+    // before insert so the manager view never shows a bare email.
+    const clientName = body.employee_name?.trim() || null;
+    const clientDept = body.department?.trim() || null;
+    let resolvedName = clientName;
+    let dept = clientDept;
+    if (!resolvedName || !dept) {
+      const lookup = await lookupEmployeeNameAndDepartment(authz.effectiveEmail);
+      resolvedName = resolvedName ?? lookup.name;
+      dept = dept ?? lookup.department;
+    }
+
+    // Department managers = employees with role=manager AND matching department.
+    // Falls back to legacy `leave_department_managers_json` when none are found.
+    const roleManagers = await listManagersForDepartment(dept);
+    const jsonManagers = roleManagers.length
+      ? []
+      : resolveManagerEmailsFromJson(dept, managersJson);
+    const managerList = roleManagers.length ? roleManagers : jsonManagers;
+    const manager_email = managerList.length ? managerList.join(', ') : null;
 
     const { id, error } = await insertLeaveRequest({
       employee_email: authz.effectiveEmail,
-      employee_name: body.employee_name?.trim() || null,
+      employee_name: resolvedName,
       department: dept,
       start_date: start_date.slice(0, 10),
       end_date: end_date.slice(0, 10),
@@ -124,7 +187,13 @@ export async function POST(request: Request) {
       ip_address: clientIp(request),
     });
 
-    return NextResponse.json({ success: true, id, manager_email, error: null });
+    return NextResponse.json({
+      success: true,
+      id,
+      manager_email,
+      manager_emails: managerList,
+      error: null,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

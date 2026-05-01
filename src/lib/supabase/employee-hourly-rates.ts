@@ -6,9 +6,7 @@ export type EmployeeHourlyRateRow = {
   personal_email: string | null;
   regular_rate: string | null;
   ot_rate: string | null;
-  /** Primary department source — populated from the "Department" column in
-   *  employee_hourly_rates. When present this overrides the global_master_list
-   *  department lookup entirely. */
+  /** From "Department" on the rates row — used for payroll / routing; not used for employee Profile employment. */
   department: string | null;
   /** Payment-dispatch fields, seeded from the All Dept payroll CSV. */
   bank_preferred: string | null;

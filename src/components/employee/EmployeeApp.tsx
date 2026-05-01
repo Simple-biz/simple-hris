@@ -9,7 +9,7 @@ import EmployeeSidebar from './EmployeeSidebar';
 import EmployeeDashboard from './EmployeeDashboard';
 import EmployeeProfile from './EmployeeProfile';
 import EmployeeLeaves from './EmployeeLeaves';
-import EmployeeOrphanageVisits from './EmployeeOrphanageVisits';
+import EmployeePolicies from './EmployeePolicies';
 import EmployeeSettings from './EmployeeSettings';
 import EmployeeMyHours from './EmployeeMyHours';
 import MyDisputes from './MyDisputes';
@@ -230,8 +230,8 @@ export default function EmployeeApp() {
             payrollLocked={lockState.locked}
           />
         );
-      case 'orphanage-visits':
-        return <EmployeeOrphanageVisits employeeEmail={employeeEmail} />;
+      case 'policies':
+        return <EmployeePolicies department={employeeDepartment} />;
       case 'settings':
         return <EmployeeSettings employeeEmail={employeeEmail} />;
       default:

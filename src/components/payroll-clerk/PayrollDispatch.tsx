@@ -428,7 +428,6 @@ export default function PayrollDispatch() {
           >
             <motion.div variants={itemPop}>
               <ProcessorCard
-                id="all"
                 label="All pending"
                 subtitle={ALL_VISUAL.blurb}
                 count={totalPending}
@@ -445,7 +444,6 @@ export default function PayrollDispatch() {
               return (
                 <motion.div key={p.id} variants={itemPop}>
                   <ProcessorCard
-                    id={p.id}
                     label={p.label}
                     subtitle={v.blurb}
                     count={counts[p.id] ?? 0}
@@ -460,7 +458,6 @@ export default function PayrollDispatch() {
             })}
             <motion.div variants={itemPop}>
               <ProcessorCard
-                id="history"
                 label="History"
                 subtitle={HISTORY_VISUAL.blurb}
                 count={totalSent}
@@ -474,7 +471,6 @@ export default function PayrollDispatch() {
             </motion.div>
             <motion.div variants={itemPop}>
               <ProcessorCard
-                id="reports"
                 label="Reports"
                 subtitle={REPORTS_VISUAL.blurb}
                 Icon={REPORTS_VISUAL.Icon}

@@ -7,8 +7,17 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CalendarDays, ChevronLeft, ChevronRight, Loader2, RefreshCw, Wallet } from 'lucide-react';
+import { CalendarDays, CalendarHeart, ChevronLeft, ChevronRight, Loader2, RefreshCw, Wallet } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import {
@@ -147,6 +156,13 @@ function formatPHP(n: number): string {
 }
 
 /** Local calendar Monday for the week containing `d` (Mon–Sun weeks). */
+function addDaysIso(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, (m ?? 1) - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
 function mondayOfWeekContaining(d: Date): Date {
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const dow = x.getDay();
@@ -166,6 +182,8 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
+  const [orphanageVisits, setOrphanageVisits] = useState<PabDayDisputeRow[]>([]);
+  const [orphanageLoading, setOrphanageLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
@@ -356,14 +374,37 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
     void fetchDisputes();
   }, [fetchDisputes]);
 
+  const fetchOrphanageVisits = useCallback(async () => {
+    setOrphanageLoading(true);
+    try {
+      const res = await fetch('/api/pab-disputes/orphanage-visits', { cache: 'no-store' });
+      const json = await res.json();
+      const rows = (json.rows ?? []) as PabDayDisputeRow[];
+      const empSet = new Set(aliasEmails.length ? aliasEmails : [email]);
+      const mine = rows.filter((r) => {
+        const we = normEmail(r.work_email ?? '') ?? (r.work_email ?? '').toLowerCase();
+        return empSet.has(we);
+      });
+      setOrphanageVisits(mine);
+    } catch {
+      setOrphanageVisits([]);
+    } finally {
+      setOrphanageLoading(false);
+    }
+  }, [aliasEmails, email]);
+
+  useEffect(() => {
+    void fetchOrphanageVisits();
+  }, [fetchOrphanageVisits]);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([fetchMerged(), fetchDisputes(), fetchRatesAndFx()]);
+      await Promise.all([fetchMerged(), fetchDisputes(), fetchRatesAndFx(), fetchOrphanageVisits()]);
     } finally {
       setRefreshing(false);
     }
-  }, [fetchMerged, fetchDisputes, fetchRatesAndFx]);
+  }, [fetchMerged, fetchDisputes, fetchRatesAndFx, fetchOrphanageVisits]);
 
   const goPrevMonth = useCallback(() => {
     setNavDirection(-1);
@@ -930,6 +971,70 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
             )}
               </motion.div>
             </AnimatePresence>
+
+            <details className="group mt-3 shrink-0 rounded-lg border border-rose-100 bg-rose-50/40 dark:border-rose-950/50 dark:bg-rose-950/20">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-50/80 dark:text-rose-300 dark:hover:bg-rose-950/30">
+                <CalendarHeart className="h-3.5 w-3.5" aria-hidden />
+                <span>My Orphanage Visits</span>
+                <span className="rounded-full bg-rose-100 px-1.5 py-px font-mono text-[9px] tabular-nums text-rose-700 dark:bg-rose-950/60 dark:text-rose-300">
+                  {orphanageLoading ? '…' : orphanageVisits.length}
+                </span>
+                <span className="ml-auto text-[9px] font-normal text-rose-600/80 transition-transform group-open:rotate-180 dark:text-rose-400/80">▾</span>
+              </summary>
+              <div className="border-t border-rose-100 px-3 py-2 dark:border-rose-950/50">
+                <p className="mb-2 text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">
+                  Visit dates recorded by HR. The PAB 7-hour floor drops to 4 hours on the visit day and the day after.
+                </p>
+                {orphanageLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-4 text-[11px] text-zinc-500">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Loading visits…
+                  </div>
+                ) : orphanageVisits.length === 0 ? (
+                  <p className="py-3 text-center text-[11px] text-zinc-500">
+                    No orphanage visits recorded yet.
+                  </p>
+                ) : (
+                  <div className="max-h-48 overflow-auto rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40">
+                    <Table>
+                      <TableHeader className="sticky top-0 z-10 bg-gradient-to-r from-rose-50/95 to-orange-50/60 backdrop-blur-sm dark:from-rose-950/40 dark:to-blue-950/40">
+                        <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
+                          <TableHead className="h-7 px-2 text-[10px] text-zinc-600 dark:text-zinc-400">Visit</TableHead>
+                          <TableHead className="h-7 px-2 text-[10px] text-zinc-600 dark:text-zinc-400">Forgiven on</TableHead>
+                          <TableHead className="h-7 px-2 text-[10px] text-zinc-600 dark:text-zinc-400">Note</TableHead>
+                          <TableHead className="h-7 px-2 text-[10px] text-zinc-600 dark:text-zinc-400">By</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {orphanageVisits.map((v) => (
+                          <TableRow
+                            key={v.id}
+                            className={cn(
+                              'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/40',
+                            )}
+                          >
+                            <TableCell className="whitespace-nowrap px-2 py-1.5 text-[11px] font-medium text-zinc-800 dark:text-zinc-200">
+                              {v.dispute_date}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap px-2 py-1.5 text-[10px] text-zinc-600 dark:text-zinc-400">
+                              {v.dispute_date} &amp; {addDaysIso(v.dispute_date, 1)}
+                            </TableCell>
+                            <TableCell
+                              className="max-w-[180px] truncate px-2 py-1.5 text-[10px] text-zinc-600 dark:text-zinc-400"
+                              title={v.decision_note ?? ''}
+                            >
+                              {v.decision_note || '—'}
+                            </TableCell>
+                            <TableCell className="px-2 py-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                              {v.decided_by ?? '—'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            </details>
           </CardContent>
         </Card>
 
@@ -1114,6 +1219,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
           </CardContent>
         </Card>
         </div>
+
       </div>
     </div>
   );

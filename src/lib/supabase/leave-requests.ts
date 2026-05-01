@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient } from './server';
+import { listManagersByDepartment } from './department-managers';
 
 export type LeaveRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
@@ -69,7 +70,9 @@ export async function listLeaveRequestsByEmployee(
     .ilike('employee_email', emailNorm)
     .order('created_at', { ascending: false });
 
-  return { rows: (data ?? []) as LeaveRequestRow[], error: error?.message ?? null };
+  const rows = (data ?? []) as LeaveRequestRow[];
+  await enrichRowsWithMissingNames(rows);
+  return { rows, error: error?.message ?? null };
 }
 
 export async function listAllLeaveRequests(limit = 200): Promise<{
@@ -85,7 +88,43 @@ export async function listAllLeaveRequests(limit = 200): Promise<{
     .order('created_at', { ascending: false })
     .limit(limit);
 
-  return { rows: (data ?? []) as LeaveRequestRow[], error: error?.message ?? null };
+  const rows = (data ?? []) as LeaveRequestRow[];
+  await enrichRowsWithMissingNames(rows);
+  return { rows, error: error?.message ?? null };
+}
+
+/**
+ * Backfills `employee_name` (and `department` when missing) from `active_employees`
+ * for any rows the client didn't resolve at submit time. Mutates `rows` in place;
+ * single bulk lookup so a long pending queue doesn't fan out N round-trips.
+ */
+async function enrichRowsWithMissingNames(rows: LeaveRequestRow[]): Promise<void> {
+  const missing = rows.filter((r) => !r.employee_name?.trim() || !r.department?.trim());
+  if (missing.length === 0) return;
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return;
+  const { data, error } = await supabase
+    .from('active_employees')
+    .select('"Name","Work Email","Personal Email","Department"')
+    .range(0, 9999);
+  if (error) return;
+  const byEmail = new Map<string, { name: string | null; department: string | null }>();
+  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+    const we = String(row['Work Email'] ?? '').trim().toLowerCase();
+    const pe = String(row['Personal Email'] ?? '').trim().toLowerCase();
+    const entry = {
+      name: String(row['Name'] ?? '').trim() || null,
+      department: String(row['Department'] ?? '').trim() || null,
+    };
+    if (we) byEmail.set(we, entry);
+    if (pe && !byEmail.has(pe)) byEmail.set(pe, entry);
+  }
+  for (const r of missing) {
+    const hit = byEmail.get(r.employee_email.trim().toLowerCase());
+    if (!hit) continue;
+    if (!r.employee_name?.trim() && hit.name) r.employee_name = hit.name;
+    if (!r.department?.trim() && hit.department) r.department = hit.department;
+  }
 }
 
 export async function updateLeaveRequestStatus(params: {
@@ -143,28 +182,142 @@ export async function getLeaveRequestById(id: string): Promise<{
 }
 
 /**
- * `leave_department_managers_json` in app_settings: `{"Accounting":"mgr@co.com","Edit":"..."}`.
- * Matches department string case-insensitively; falls back to substring match.
+ * Legacy fallback: `leave_department_managers_json` in app_settings, e.g.
+ * `{"Accounting":"mgr@co.com"}` or `{"Accounting":["a@co.com","b@co.com"]}`.
+ * Returns every email that maps to a department whose key matches (case-insensitively or
+ * via substring); de-duplicated.
  */
+export function resolveManagerEmailsFromJson(
+  department: string | null | undefined,
+  managersJson: string | null | undefined,
+): string[] {
+  if (!department?.trim() || !managersJson?.trim()) return [];
+  try {
+    const map = JSON.parse(managersJson) as Record<string, string | string[]>;
+    if (!map || typeof map !== 'object') return [];
+    const d = department.trim().toLowerCase();
+    const exact: string[] = [];
+    const fuzzy: string[] = [];
+    for (const [k, v] of Object.entries(map)) {
+      const key = k.trim().toLowerCase();
+      const list = Array.isArray(v) ? v : [v];
+      const emails = list
+        .map((s) => String(s ?? '').trim())
+        .filter((s) => s.length > 0);
+      if (!emails.length) continue;
+      if (key === d) exact.push(...emails);
+      else if (d.includes(key) || key.includes(d)) fuzzy.push(...emails);
+    }
+    const out = exact.length ? exact : fuzzy;
+    return Array.from(new Set(out.map((s) => s.toLowerCase())));
+  } catch {
+    return [];
+  }
+}
+
+/** Back-compat single-email helper. Returns the first match. */
 export function resolveManagerEmail(
   department: string | null | undefined,
   managersJson: string | null | undefined,
 ): string | null {
-  if (!department?.trim() || !managersJson?.trim()) return null;
-  try {
-    const map = JSON.parse(managersJson) as Record<string, string>;
-    if (!map || typeof map !== 'object') return null;
-    const d = department.trim().toLowerCase();
-    let best: string | null = null;
-    for (const [k, v] of Object.entries(map)) {
-      const key = k.trim().toLowerCase();
-      const email = String(v ?? '').trim();
-      if (!email) continue;
-      if (key === d) return email;
-      if (d.includes(key) || key.includes(d)) best = email;
-    }
-    return best;
-  } catch {
-    return null;
+  return resolveManagerEmailsFromJson(department, managersJson)[0] ?? null;
+}
+
+/**
+ * Returns every email authorized to approve leave for `department`.
+ *
+ * Resolution order:
+ *  1. Explicit assignments in `department_managers` — admins pick managers per department
+ *     in the Roles & permissions tab. Honours multiple managers per dept.
+ *  2. Fallback: employees with the `manager` role whose own department in
+ *     `active_employees` matches. Keeps things working before any explicit assignment.
+ */
+export async function listManagersForDepartment(
+  department: string | null | undefined,
+): Promise<string[]> {
+  const dept = department?.trim().toLowerCase();
+  if (!dept) return [];
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return [];
+
+  // Active manager-role emails — used as a gate for both explicit and fallback paths so
+  // a revoked role can't keep approval power via a stale department assignment.
+  const rolesRes = await supabase
+    .from('employee_roles')
+    .select('work_email')
+    .eq('role', 'manager')
+    .is('revoked_at', null);
+  const activeManagerEmails = new Set(
+    (rolesRes.data ?? [])
+      .map((r) => String((r as { work_email?: string }).work_email ?? '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  const explicit = await listManagersByDepartment(department);
+  const explicitGated = explicit.filter((e) => activeManagerEmails.has(e));
+  if (explicitGated.length > 0) return explicitGated;
+
+  const empsRes = await supabase
+    .from('active_employees')
+    .select('"Work Email","Personal Email","Department"')
+    .range(0, 9999);
+  if (rolesRes.error || empsRes.error) return [];
+
+  const out = new Set<string>();
+  for (const row of (empsRes.data ?? []) as Array<Record<string, unknown>>) {
+    const rowDept = String(row['Department'] ?? '').trim().toLowerCase();
+    if (!rowDept || rowDept !== dept) continue;
+    const we = String(row['Work Email'] ?? '').trim().toLowerCase();
+    const pe = String(row['Personal Email'] ?? '').trim().toLowerCase();
+    if (we && activeManagerEmails.has(we)) out.add(we);
+    if (pe && activeManagerEmails.has(pe)) out.add(pe);
   }
+  return Array.from(out);
+}
+
+/**
+ * Looks up an employee's display name + department in `active_employees` by either
+ * Work Email or Personal Email (case-insensitive). Returns nulls when nothing matches.
+ * Used by the leave-request route to backfill `employee_name` when the client didn't
+ * resolve it (e.g. master-list lookup raced submit, or email-drift between login and
+ * the master list).
+ */
+export async function lookupEmployeeNameAndDepartment(
+  email: string | null | undefined,
+): Promise<{ name: string | null; department: string | null }> {
+  const target = email?.trim().toLowerCase();
+  if (!target) return { name: null, department: null };
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { name: null, department: null };
+
+  const { data, error } = await supabase
+    .from('active_employees')
+    .select('"Name","Work Email","Personal Email","Department"')
+    .range(0, 9999);
+  if (error) return { name: null, department: null };
+
+  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+    const we = String(row['Work Email'] ?? '').trim().toLowerCase();
+    const pe = String(row['Personal Email'] ?? '').trim().toLowerCase();
+    if (we === target || pe === target) {
+      const name = String(row['Name'] ?? '').trim() || null;
+      const department = String(row['Department'] ?? '').trim() || null;
+      return { name, department };
+    }
+  }
+  return { name: null, department: null };
+}
+
+/** Splits a comma-/semicolon-separated list of emails to a normalized lowercase array. */
+export function splitManagerEmails(value: string | null | undefined): string[] {
+  if (!value) return [];
+  return Array.from(
+    new Set(
+      value
+        .split(/[,;\n]+/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  );
 }

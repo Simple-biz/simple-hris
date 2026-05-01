@@ -11,7 +11,6 @@ import {
   FileText,
   Clock,
   CalendarDays,
-  CalendarHeart,
   Moon,
   Sun,
   LogOut,
@@ -20,6 +19,7 @@ import {
   UserCircle,
   Settings,
   Lock,
+  ScrollText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -49,7 +49,7 @@ const navItems = [
   { id: 'hours', label: 'My Hours', icon: Clock },
   { id: 'leaves', label: 'Leave', icon: CalendarDays },
   { id: 'disputes', label: 'My Disputes', icon: FileText },
-  { id: 'orphanage-visits', label: 'Orphanage Visits', icon: CalendarHeart },
+  { id: 'policies', label: 'Policies', icon: ScrollText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 

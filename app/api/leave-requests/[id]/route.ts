@@ -3,6 +3,9 @@ import { getAppSetting } from '@/lib/supabase/app-settings';
 import {
   cancelLeaveRequestIfOwned,
   getLeaveRequestById,
+  listManagersForDepartment,
+  resolveManagerEmailsFromJson,
+  splitManagerEmails,
   updateLeaveRequestStatus,
   type LeaveRequestStatus,
 } from '@/lib/supabase/leave-requests';
@@ -81,39 +84,50 @@ export async function PATCH(
       return NextResponse.json({ error: 'Request is no longer pending' }, { status: 400 });
     }
 
+    if (!approver) {
+      return NextResponse.json({ error: 'approver_email is required' }, { status: 400 });
+    }
+
     const managersJson = await getAppSetting('leave_department_managers_json');
     const accountingNotify = await getAppSetting('leave_accounting_notify_emails');
     const approverAllow = await getAppSetting('leave_approver_emails');
     const dept = row.department?.trim() || null;
+    const a = normEmail(approver) ?? approver.toLowerCase();
+
+    // Authorize approval if the approver is one of:
+    //   1. A department manager listed on the request (comma-joined `manager_email`).
+    //   2. A current department manager (role=manager + dept match) — re-resolved live so
+    //      newly granted managers can clear backlog.
+    //   3. Listed in the legacy json map for this department.
+    //   4. In the global allow list / accounting notify list.
     let allowed = false;
-    if (approver) {
-      const a = normEmail(approver) ?? approver.toLowerCase();
-      if (row.manager_email && normEmail(row.manager_email) === a) allowed = true;
-      try {
-        const map = JSON.parse(managersJson ?? '') as Record<string, string>;
-        for (const v of Object.values(map)) {
-          if (normEmail(String(v)) === a) allowed = true;
-        }
-      } catch {
-        /* ignore */
-      }
+    const storedManagers = splitManagerEmails(row.manager_email);
+    if (storedManagers.includes(a)) allowed = true;
+    if (!allowed) {
+      const liveManagers = await listManagersForDepartment(dept);
+      if (liveManagers.includes(a)) allowed = true;
+    }
+    if (!allowed) {
+      const jsonManagers = resolveManagerEmailsFromJson(dept, managersJson);
+      if (jsonManagers.includes(a)) allowed = true;
+    }
+    if (!allowed) {
       const extra = accountingNotify
         ?.split(',')
         .map((s) => s.trim().toLowerCase())
         .filter(Boolean);
       if (extra?.some((e) => e === a)) allowed = true;
+    }
+    if (!allowed) {
       const globalAllow = approverAllow
         ?.split(',')
         .map((s) => normEmail(s.trim()))
         .filter((x): x is string => Boolean(x));
       if (globalAllow?.some((e) => e === a)) allowed = true;
     }
-    if (!approver) {
-      return NextResponse.json({ error: 'approver_email is required' }, { status: 400 });
-    }
     if (!allowed) {
       return NextResponse.json(
-        { error: 'Approver is not a configured manager or accounting notify' },
+        { error: 'Only a department manager (or configured approver) can action this request.' },
         { status: 403 },
       );
     }

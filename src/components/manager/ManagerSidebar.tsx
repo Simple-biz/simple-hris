@@ -6,6 +6,7 @@ import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   CalendarClock,
+  CalendarDays,
   ClipboardCheck,
   LayoutDashboard,
   LogOut,
@@ -20,7 +21,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 
-export type ManagerTab = 'overview' | 'time-adjustments' | 'team';
+export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team';
 
 interface ManagerSidebarProps {
   activeTab: ManagerTab;
@@ -28,6 +29,7 @@ interface ManagerSidebarProps {
   mobileOpen: boolean;
   viewerEmail: string | null;
   pendingApprovals: number;
+  pendingLeaves?: number;
 }
 
 export default function ManagerSidebar({
@@ -36,6 +38,7 @@ export default function ManagerSidebar({
   mobileOpen,
   viewerEmail,
   pendingApprovals,
+  pendingLeaves = 0,
 }: ManagerSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
@@ -137,6 +140,12 @@ export default function ManagerSidebar({
               'Time adjustments',
               ClipboardCheck,
               countBadge(pendingApprovals, activeTab === 'time-adjustments'),
+            )}
+            {navBtn(
+              'leaves',
+              'Leaves',
+              CalendarDays,
+              countBadge(pendingLeaves, activeTab === 'leaves'),
             )}
             {navBtn('team', 'My team', Users)}
           </nav>

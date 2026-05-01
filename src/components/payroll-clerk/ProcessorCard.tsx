@@ -7,7 +7,6 @@ import AnimatedNumber from './AnimatedNumber';
 import ProcessorLogo from './ProcessorLogo';
 
 export interface ProcessorCardProps {
-  id: string;
   label: string;
   /** When omitted, the count badge is hidden — useful for nav-only cards. */
   count?: number;
@@ -21,14 +20,13 @@ export interface ProcessorCardProps {
   active: boolean;
   onClick: () => void;
   /**
-   * If true, prefer rendering an icon (not a monogram) when no brand logo
-   * asset is found. Useful for non-brand cards like "All pending" / "History".
+   * If true, render the passed Icon instead of a letter monogram.
+   * Useful for nav cards like "All pending" / "History".
    */
   iconOnlyFallback?: boolean;
 }
 
 export default function ProcessorCard({
-  id,
   label,
   count,
   subtitle,
@@ -80,7 +78,6 @@ export default function ProcessorCard({
 
       <div className="relative z-10 flex w-full items-center justify-between gap-1.5">
         <ProcessorLogo
-          id={id}
           monogram={monogram}
           gradient={accent}
           FallbackIcon={Icon}

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Briefcase,
+  Building2,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -112,6 +113,15 @@ interface RoleRow {
   assigned_at: string;
 }
 
+interface DepartmentManagerRow {
+  id: string;
+  manager_email: string;
+  department: string;
+  assigned_by: string | null;
+  assigned_at: string;
+  revoked_at: string | null;
+}
+
 const PAGE_SIZE = 10;
 
 export default function AdminRoles() {
@@ -124,15 +134,20 @@ export default function AdminRoles() {
   const [rolesLoading, setRolesLoading] = useState(false);
   const [mutating, setMutating] = useState<RoleKey | null>(null);
   const [page, setPage] = useState(1);
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [deptAssignments, setDeptAssignments] = useState<DepartmentManagerRow[]>([]);
+  const [deptMutating, setDeptMutating] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const [empRes, ratesRes, hubRes, rolesRes] = await Promise.all([
+        const [empRes, ratesRes, hubRes, rolesRes, deptRes, mgrDeptRes] = await Promise.all([
           fetch('/api/employees', { cache: 'no-store' }),
           fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
           fetch('/api/hubstaff-hours', { cache: 'no-store' }),
           fetch('/api/employee-roles', { cache: 'no-store' }),
+          fetch('/api/departments', { cache: 'no-store' }),
+          fetch('/api/department-managers', { cache: 'no-store' }),
         ]);
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[] };
         const ratesJson = (await ratesRes.json()) as {
@@ -148,6 +163,10 @@ export default function AdminRoles() {
           columns?: string[];
         };
         const rolesJson = (await rolesRes.json()) as { rows?: RoleRow[] };
+        const deptJson = (await deptRes.json()) as { departments?: string[] };
+        const mgrDeptJson = (await mgrDeptRes.json()) as { rows?: DepartmentManagerRow[] };
+        setDepartments(deptJson.departments ?? []);
+        setDeptAssignments(mgrDeptJson.rows ?? []);
 
         const merged = new Map<string, EmployeeRow>();
         const keyFor = (we: string | null | undefined, pe: string | null | undefined, nm?: string | null) =>
@@ -278,6 +297,63 @@ export default function AdminRoles() {
   }, [uniqueEmployees.length, allAssignments]);
 
   const hasRole = (role: RoleKey) => roles.some((r) => r.role === role);
+
+  const selectedDeptAssignments = useMemo(() => {
+    const target = identity.toLowerCase();
+    if (!target) return [] as DepartmentManagerRow[];
+    return deptAssignments.filter((d) => d.manager_email.toLowerCase() === target);
+  }, [deptAssignments, identity]);
+
+  const selectedDeptSet = useMemo(
+    () => new Set(selectedDeptAssignments.map((d) => d.department.trim().toLowerCase())),
+    [selectedDeptAssignments],
+  );
+
+  async function refreshDeptAssignments() {
+    try {
+      const res = await fetch('/api/department-managers', { cache: 'no-store' });
+      const json = (await res.json()) as { rows?: DepartmentManagerRow[] };
+      setDeptAssignments(json.rows ?? []);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function toggleDepartment(department: string) {
+    if (!identity) {
+      toast.error('Add an email first.');
+      return;
+    }
+    const isOn = selectedDeptSet.has(department.trim().toLowerCase());
+    setDeptMutating(department);
+    try {
+      const res = await fetch(
+        isOn
+          ? `/api/department-managers?email=${encodeURIComponent(identity)}&department=${encodeURIComponent(department)}`
+          : '/api/department-managers',
+        {
+          method: isOn ? 'DELETE' : 'POST',
+          headers: isOn ? undefined : { 'content-type': 'application/json' },
+          body: isOn
+            ? undefined
+            : JSON.stringify({ manager_email: identity, department }),
+        },
+      );
+      const json = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || !json.success) {
+        toast.error(json.error || 'Failed to update department');
+        return;
+      }
+      toast.success(
+        isOn ? `Removed from ${department}` : `Now manages ${department}`,
+      );
+      await refreshDeptAssignments();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setDeptMutating(null);
+    }
+  }
 
   async function refreshAll() {
     const res = await fetch('/api/employee-roles', { cache: 'no-store' });
@@ -563,6 +639,61 @@ export default function AdminRoles() {
               </div>
             ) : (
               <div className="space-y-6">
+                {hasRole('manager') && (
+                  <section className="space-y-2">
+                    <div className="flex items-baseline justify-between gap-2 border-b border-zinc-100 pb-1 dark:border-zinc-800/80">
+                      <div>
+                        <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-zinc-800 dark:text-zinc-200">
+                          <Building2 className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" aria-hidden />
+                          Departments managed
+                        </h3>
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                          Pick the departments this manager approves leave for. Any single
+                          assigned manager can clear a request — no quorum.
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
+                        {selectedDeptAssignments.length} active
+                      </Badge>
+                    </div>
+                    {departments.length === 0 ? (
+                      <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-4 text-center text-[11px] text-zinc-500 dark:border-zinc-800">
+                        No departments found in the master list yet.
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {departments.map((dept) => {
+                          const on = selectedDeptSet.has(dept.trim().toLowerCase());
+                          const busy = deptMutating === dept;
+                          return (
+                            <button
+                              key={dept}
+                              type="button"
+                              onClick={() => toggleDepartment(dept)}
+                              disabled={busy}
+                              className={cn(
+                                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60',
+                                on
+                                  ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-800 hover:bg-indigo-500/20 dark:border-indigo-500/50 dark:bg-indigo-950/50 dark:text-indigo-200'
+                                  : 'border-zinc-200 bg-white text-zinc-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400 dark:hover:border-indigo-700/60 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-200',
+                              )}
+                            >
+                              {busy ? (
+                                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                              ) : on ? (
+                                <Check className="h-3 w-3" aria-hidden />
+                              ) : (
+                                <Plus className="h-3 w-3" aria-hidden />
+                              )}
+                              {dept}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+                )}
+
                 {ROLE_GROUPS.map((group) => (
                   <section key={group.title} className="space-y-2">
                     <div className="flex items-baseline justify-between gap-2 border-b border-zinc-100 pb-1 dark:border-zinc-800/80">
