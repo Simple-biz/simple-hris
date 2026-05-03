@@ -185,9 +185,14 @@ export default function App() {
             <motion.div
               key={activeTab}
               custom={tabDirRef.current}
-              initial={(dir: number) => ({ opacity: 0, y: dir * 28 })}
-              animate={{ opacity: 1, y: 0 }}
-              exit={(dir: number) => ({ opacity: 0, y: dir * -20 })}
+              variants={{
+                enter: (dir: number) => ({ opacity: 0, y: dir * 28 }),
+                center: { opacity: 1, y: 0 },
+                exit: (dir: number) => ({ opacity: 0, y: dir * -20 }),
+              }}
+              initial="enter"
+              animate="center"
+              exit="exit"
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
             >

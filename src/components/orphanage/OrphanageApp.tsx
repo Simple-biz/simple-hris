@@ -309,7 +309,6 @@ export default function OrphanageApp() {
     const row = confirm.row;
     const action = confirm.action;
     const noteTrimmed = decisionNote.trim() || null;
-    setActingId(row.id);
     setConfirm(null);
     setDecisionNote('');
     try {
@@ -334,8 +333,6 @@ export default function OrphanageApp() {
       await fetchRows();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not update dispute');
-    } finally {
-      setActingId(null);
     }
   }, [confirm, viewerEmail, decisionNote, fetchRows]);
 
@@ -665,9 +662,14 @@ export default function OrphanageApp() {
                   <motion.div
                     key={verifiedPage}
                     custom={pageDir}
-                    initial={(dir: number) => ({ opacity: 0, x: dir * 32 })}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={(dir: number) => ({ opacity: 0, x: dir * -32 })}
+                    variants={{
+                      enter: (dir: number) => ({ opacity: 0, x: dir * 32 }),
+                      center: { opacity: 1, x: 0 },
+                      exit: (dir: number) => ({ opacity: 0, x: dir * -32 }),
+                    }}
+                    initial="enter"
+                    animate="center"
+                    exit="exit"
                     transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                     className="grid gap-3 sm:grid-cols-2 md:hidden"
                   >
@@ -719,9 +721,14 @@ export default function OrphanageApp() {
                   <motion.div
                     key={verifiedPage}
                     custom={pageDir}
-                    initial={(dir: number) => ({ opacity: 0, x: dir * 32 })}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={(dir: number) => ({ opacity: 0, x: dir * -32 })}
+                    variants={{
+                      enter: (dir: number) => ({ opacity: 0, x: dir * 32 }),
+                      center: { opacity: 1, x: 0 },
+                      exit: (dir: number) => ({ opacity: 0, x: dir * -32 }),
+                    }}
+                    initial="enter"
+                    animate="center"
+                    exit="exit"
                     transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                     className="hidden md:block overflow-x-auto rounded-xl border border-pink-100/90 ring-1 ring-pink-500/10 dark:border-pink-900/60 dark:ring-pink-400/10"
                   >
