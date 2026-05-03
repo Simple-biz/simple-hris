@@ -39,6 +39,8 @@ interface EmployeeSidebarProps {
   employeeEmail?: string | null;
   /** Supabase profile photo URL when set. */
   profilePhotoUrl?: string | null;
+  /** Google SSO profile picture URL — used as a fallback when no Supabase upload exists. */
+  googlePhotoUrl?: string | null;
   /** True while payroll dispatch is locked (read-only / limited actions). */
   payrollLocked?: boolean;
 }
@@ -48,7 +50,7 @@ const navItems = [
   { id: 'profile', label: 'Profile', icon: UserCircle },
   { id: 'hours', label: 'My Hours', icon: Clock },
   { id: 'leaves', label: 'Leave', icon: CalendarDays },
-  { id: 'disputes', label: 'My Disputes', icon: FileText },
+  // { id: 'disputes', label: 'My Disputes', icon: FileText }, // hidden — disputes now go through Orphanage Manager → Accounting flow (no employee submission)
   { id: 'policies', label: 'Policies', icon: ScrollText },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
@@ -62,6 +64,7 @@ export default function EmployeeSidebar({
   employeeId,
   employeeEmail = null,
   profilePhotoUrl = null,
+  googlePhotoUrl = null,
   payrollLocked = false,
 }: EmployeeSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
@@ -198,6 +201,7 @@ export default function EmployeeSidebar({
         <div className="mb-4 flex items-center gap-3 px-3 py-2">
           <EmployeeAvatar
             photoUrl={profilePhotoUrl}
+            googlePhotoUrl={googlePhotoUrl}
             email={employeeEmail}
             initials={initials}
             className="h-9 w-9 text-xs"

@@ -36,6 +36,8 @@ export type EmployeeRateProfileSummary = {
   otRate: string | null;
   suspended: boolean;
   profilePhotoUrl: string | null;
+  /** Google Workspace photo URL — populated by NextAuth jwt callback on sign-in. */
+  googlePhotoUrl: string | null;
   hasRatesRow: boolean;
 };
 
@@ -999,6 +1001,8 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
       suspended: getField(mergedRates, ["suspended", "Suspended"]) === true,
       profilePhotoUrl:
         toStr(getField(master ?? {}, ["Profile Photo URL", "profile_photo_url", "Profile_Photo_URL"])) || null,
+      googlePhotoUrl:
+        toStr(getField(master ?? {}, ["google_photo_url", "Google Photo URL", "google_picture"])) || null,
       hasRatesRow: Object.keys(mergedRates).length > 0,
     });
   }
@@ -1098,6 +1102,8 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
       suspended: getField(mergedRates, ["suspended", "Suspended"]) === true,
       profilePhotoUrl:
         toStr(getField(masterRow, ["Profile Photo URL", "profile_photo_url", "Profile_Photo_URL"])) || null,
+      googlePhotoUrl:
+        toStr(getField(masterRow, ["google_photo_url", "Google Photo URL", "google_picture"])) || null,
       hasRatesRow: Object.keys(mergedRates).length > 0,
     });
   }

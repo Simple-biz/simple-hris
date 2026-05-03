@@ -16,6 +16,7 @@
     "@fontsource-variable/geist": "^5.2.8",
     "@google/genai": "^1.29.0",
     "@supabase/supabase-js": "^2.101.1",
+    "@xyflow/react": "^12.10.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "csv-parse": "^6.2.1",

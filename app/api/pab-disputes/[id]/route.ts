@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth/auth-options';
 import {
+  DISPUTE_DELETE_ROLES,
+  adminDeleteDispute,
   decideDispute,
   decideOrphanageManagerDispute,
   editDisputeDecision,
@@ -132,6 +136,14 @@ export async function PATCH(
   }
 }
 
+/**
+ * Two modes:
+ *  1. `?mode=admin` — accounting hard-delete. Requires the caller to hold one of
+ *     `DISPUTE_DELETE_ROLES` (admin or payroll_manager). Wipes the dispute regardless
+ *     of status; logs `pab_dispute.admin_deleted` to the audit log.
+ *  2. `?employee_email=…` (default) — employee withdraw. Caller must own the dispute
+ *     AND it must still be pending. Logs `pab_dispute.withdrawn`.
+ */
 export async function DELETE(
   request: Request,
   context: { params: Promise<{ id: string }> },
@@ -141,6 +153,38 @@ export async function DELETE(
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
     const { searchParams } = new URL(request.url);
+    const mode = searchParams.get('mode');
+
+    // Admin / payroll-manager hard delete path.
+    if (mode === 'admin') {
+      const session = await getServerSession(authOptions);
+      const user = session?.user as
+        | { email?: string | null; roles?: string[] }
+        | undefined;
+      const sessionEmail = (user?.email ?? '').toString().trim().toLowerCase();
+      const roles = user?.roles ?? [];
+      if (!sessionEmail) {
+        return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+      }
+      const allowedRole = roles.find((r) => DISPUTE_DELETE_ROLES.includes(r));
+      if (!allowedRole) {
+        return NextResponse.json(
+          { error: 'Requires admin or payroll_manager' },
+          { status: 403 },
+        );
+      }
+      const { error } = await adminDeleteDispute(id, {
+        actor_email: sessionEmail,
+        actor_role: allowedRole,
+      });
+      if (error) {
+        const code = error === 'Dispute not found' ? 404 : 500;
+        return NextResponse.json({ error }, { status: code });
+      }
+      return NextResponse.json({ success: true, mode: 'admin', error: null });
+    }
+
+    // Employee withdraw path (legacy / default).
     const rawEmail = searchParams.get('employee_email');
     const email = normEmail(rawEmail ?? '') ?? rawEmail?.trim().toLowerCase();
     if (!email) {

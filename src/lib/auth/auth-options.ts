@@ -44,6 +44,30 @@ async function fetchRolesForEmail(email: string): Promise<string[]> {
   }
 }
 
+/**
+ * Persist the user's Google profile photo URL onto their `global_master_list` row so
+ * roster surfaces (Rates & Profiles, payroll dispatch, etc.) can show their avatar
+ * even when the viewer isn't them. Fire-and-forget — sign-in must not fail because
+ * of a DB hiccup. Updates only when the URL has changed (cheap WHERE filter).
+ *
+ * Requires `references/seed_global_master_list_google_photo.sql` to have been run
+ * (adds the `google_photo_url TEXT` column). When the column doesn't exist this
+ * silently no-ops via the catch.
+ */
+async function persistGooglePhoto(workEmail: string, photoUrl: string): Promise<void> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return;
+  try {
+    await supabase
+      .from('global_master_list')
+      .update({ google_photo_url: photoUrl })
+      .ilike('"Work Email"', workEmail)
+      .neq('google_photo_url', photoUrl);
+  } catch {
+    /* swallow — sign-in path must not fail if the column/migration is missing */
+  }
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
@@ -87,6 +111,13 @@ export const authOptions: NextAuthOptions = {
         const roles = emailLower ? await fetchRolesForEmail(emailLower) : [];
         (token as { roles?: string[] }).roles = roles;
         (token as { elevated?: boolean }).elevated = hasElevatedRole(roles);
+
+        // Persist the Google profile photo URL so the rest of the org can see this
+        // user's avatar in roster lists. Fire-and-forget — never block sign-in.
+        const picture = (profile as { picture?: string | null }).picture;
+        if (emailLower && picture) {
+          void persistGooglePhoto(emailLower, picture);
+        }
       }
       return token;
     },

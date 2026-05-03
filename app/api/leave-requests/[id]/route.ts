@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth/auth-options';
 import { getAppSetting } from '@/lib/supabase/app-settings';
 import {
+  LEAVE_DELETE_ROLES,
+  LEAVE_DELETE_UNRESTRICTED_ROLES,
+  adminDeleteLeaveRequest,
   cancelLeaveRequestIfOwned,
   getLeaveRequestById,
+  isAuthorizedLeaveApprover,
   listManagersForDepartment,
   resolveManagerEmailsFromJson,
   splitManagerEmails,
@@ -151,6 +157,108 @@ export async function PATCH(
         note,
         department: dept,
       },
+      ip_address: clientIp(request),
+    });
+
+    return NextResponse.json({ success: true, error: null });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+/**
+ * DELETE — hard delete. Authorization tiers:
+ *   • admin / payroll_manager → unrestricted; can delete any request in any department.
+ *   • manager                → scoped; only requests for departments they actively manage
+ *                              (verified via isAuthorizedLeaveApprover, same chain used
+ *                              for approve/reject).
+ *
+ * Logs `leave.admin_deleted` to the audit log with a snapshot of the deleted row, including
+ * which role tier the actor used so unrestricted vs. scoped deletions are distinguishable.
+ * Cancellation (employee-initiated) goes through PATCH { action: 'cancel' }.
+ */
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await context.params;
+    if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+
+    const session = await getServerSession(authOptions);
+    const user = session?.user as
+      | { email?: string | null; roles?: string[] }
+      | undefined;
+    const sessionEmail = (user?.email ?? '').toString().trim().toLowerCase();
+    const roles = user?.roles ?? [];
+    if (!sessionEmail) {
+      return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+    }
+    const allowedRole = roles.find((r) => LEAVE_DELETE_ROLES.includes(r));
+    if (!allowedRole) {
+      return NextResponse.json(
+        { error: 'Requires admin, payroll_manager, or manager' },
+        { status: 403 },
+      );
+    }
+    const isUnrestricted = LEAVE_DELETE_UNRESTRICTED_ROLES.includes(allowedRole);
+
+    // For non-unrestricted roles (manager), we need to load the row first so we can
+    // verify the actor manages this row's department.
+    if (!isUnrestricted) {
+      const { row: target, error: fetchErr } = await getLeaveRequestById(id);
+      if (fetchErr) return NextResponse.json({ error: fetchErr }, { status: 500 });
+      if (!target) return NextResponse.json({ error: 'Leave request not found' }, { status: 404 });
+
+      const managersJson = await getAppSetting('leave_department_managers_json');
+      const accountingNotify = await getAppSetting('leave_accounting_notify_emails');
+      const approverAllow = await getAppSetting('leave_approver_emails');
+
+      const allowed = await isAuthorizedLeaveApprover({
+        actorEmail: sessionEmail,
+        row: target,
+        managersJson,
+        accountingNotify,
+        approverAllow,
+      });
+      if (!allowed) {
+        return NextResponse.json(
+          {
+            error:
+              'Managers can only delete leave requests for departments they actively manage.',
+          },
+          { status: 403 },
+        );
+      }
+    }
+
+    const { row, error } = await adminDeleteLeaveRequest(id);
+    if (error) {
+      const code = error === 'Leave request not found' ? 404 : 500;
+      return NextResponse.json({ error }, { status: code });
+    }
+
+    void insertAuditLog({
+      user_name: sessionEmail,
+      user_role: allowedRole,
+      action: 'leave.admin_deleted',
+      resource: 'leave_requests',
+      resource_id: id,
+      details: row
+        ? {
+            scope: isUnrestricted ? 'unrestricted' : 'department',
+            employee_email: row.employee_email,
+            employee_name: row.employee_name,
+            department: row.department,
+            leave_type: row.leave_type,
+            start_date: row.start_date,
+            end_date: row.end_date,
+            prior_status: row.status,
+            prior_approver: row.approver_email,
+            prior_approver_note: row.approver_note,
+          }
+        : {},
       ip_address: clientIp(request),
     });
 

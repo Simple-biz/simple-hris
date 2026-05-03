@@ -8,6 +8,7 @@ import AdminRoles from '@/components/admin/AdminRoles';
 import AdminEmployees from '@/components/admin/AdminEmployees';
 import AdminWebhooks from '@/components/admin/AdminWebhooks';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
+import SystemDiagnostics from '@/components/SystemDiagnostics';
 import { Construction, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { normEmail } from '@/lib/email/norm-email';
@@ -132,6 +133,12 @@ function AdminPageInner() {
         return (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <AuditLogPanel className="min-h-0 flex-1" />
+          </div>
+        );
+      case 'diagnostics':
+        return (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <SystemDiagnostics />
           </div>
         );
       case 'api-tokens':

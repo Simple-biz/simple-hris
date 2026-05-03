@@ -4,8 +4,14 @@ import React, { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 type EmployeeAvatarProps = {
-  /** Supabase Storage URL when set — shown first. */
+  /** Supabase Storage URL when set — used as a fallback after Google SSO. */
   photoUrl?: string | null | undefined;
+  /**
+   * Google SSO profile picture URL (`session.user.image`). Shown FIRST when present.
+   * Only meaningful for the currently logged-in user — callers must verify the
+   * session email matches the avatar subject before passing.
+   */
+  googlePhotoUrl?: string | null | undefined;
   /** Work or personal email — used for Gravatar (MD5). */
   email: string | null | undefined;
   /** Shown when email missing or image fails to load. */
@@ -17,27 +23,34 @@ type EmployeeAvatarProps = {
 };
 
 /**
- * Order: uploaded photo → Gravatar → initials.
+ * Order: Google SSO photo → uploaded photo → Gravatar → initials.
+ * Each layer falls through to the next if the image fails to load.
  */
 export default function EmployeeAvatar({
   photoUrl,
+  googlePhotoUrl,
   email,
   initials,
   className = 'h-8 w-8',
   pixelSize = 64,
 }: EmployeeAvatarProps) {
+  const [failedGoogle, setFailedGoogle] = useState(false);
   const [failedUploaded, setFailedUploaded] = useState(false);
   const [failedGravatar, setFailedGravatar] = useState(false);
   const trimmed = email?.trim();
   const uploaded = photoUrl?.trim();
+  const google = googlePhotoUrl?.trim();
 
   useEffect(() => {
+    setFailedGoogle(false);
     setFailedUploaded(false);
     setFailedGravatar(false);
-  }, [uploaded, trimmed]);
+  }, [google, uploaded, trimmed]);
 
   const showInitials =
-    (!uploaded || failedUploaded) && (!trimmed || failedGravatar);
+    (!google || failedGoogle) &&
+    (!uploaded || failedUploaded) &&
+    (!trimmed || failedGravatar);
 
   if (showInitials) {
     return (
@@ -50,6 +63,19 @@ export default function EmployeeAvatar({
       >
         {initials.slice(0, 2).toUpperCase()}
       </div>
+    );
+  }
+
+  if (google && !failedGoogle) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- googleusercontent.com (no Next image config needed for one-off avatar)
+      <img
+        src={google}
+        alt=""
+        referrerPolicy="no-referrer"
+        className={cn('shrink-0 rounded-full object-cover', className)}
+        onError={() => setFailedGoogle(true)}
+      />
     );
   }
 

@@ -12,6 +12,7 @@ import {
   LogOut,
   Moon,
   MoreHorizontal,
+  Radar,
   Settings,
   ShieldCheck,
   Sun,
@@ -59,6 +60,7 @@ const systemNav: Array<{
 
 const securityNav: Array<{ id: string; label: string; icon: typeof ShieldCheck }> = [
   { id: 'audit', label: 'Audit log', icon: ShieldCheck },
+  { id: 'diagnostics', label: 'Diagnostics', icon: Radar },
   { id: 'api-tokens', label: 'API tokens', icon: KeyRound },
   { id: 'backups', label: 'Backups', icon: Database },
 ];

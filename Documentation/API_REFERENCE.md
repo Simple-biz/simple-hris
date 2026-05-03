@@ -20,6 +20,8 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 10. [PAB Day Disputes](#10-pab-day-disputes)
 11. [Payment Dispatches](#11-payment-dispatches)
 12. [Disbursement Reports](#12-disbursement-reports)
+12.5. [Leave Requests](#125-leave-requests)
+12.7. [Admin Diagnostics](#127-admin-diagnostics)
 13. [Planned Endpoints (Payroll Automation)](#13-planned-endpoints-payroll-automation)
 
 ---
@@ -1000,22 +1002,45 @@ Orphanage Manager queue + recent verified log. Requires NextAuth session and `ca
 
 ### `DELETE /api/pab-disputes/[id]`
 
-Employee withdraws their own pending dispute.
+Two modes, selected by query string:
+
+#### Mode A — Employee withdraw (default)
+
+Employee withdraws their own pending dispute. Used by the `My Disputes` view (currently hidden — see `docs/orphanage-dispute-flow.md`).
 
 **Query Parameters**:
 - `employee_email` (required): must match the dispute's `work_email` (normalised); otherwise `403 Forbidden`.
 
-**Response** `200`:
+**Constraints**:
+- Only `pending` and `pending_orphanage_manager` statuses can be withdrawn.
+
+Audit log: `pab_dispute.withdrawn`.
+
+#### Mode B — Admin hard delete *(added 2026-05-02)*
+
+Accounting permanently deletes a dispute regardless of status. Used by the trash button in the `PabDisputeQueue`.
+
+**Query Parameters**:
+- `mode=admin` (required to enter this branch).
+
+**Authorization**: NextAuth session must include a role in `DISPUTE_DELETE_ROLES` (`'admin'`, `'payroll_manager'`). Tighter than `DISPUTE_ACTOR_ROLES` (which controls approve/deny) because deletion wipes the row entirely. Other accounting roles (`payroll_coordinator`, `finance`, `hr_coordinator`) cannot delete.
+
+**Constraints**: works on any status; no email match required.
+
+Audit log: `pab_dispute.admin_deleted` with snapshot of `prior_status`, `prior_decided_by`, `prior_decision_note` so deletions remain traceable after the row is gone.
+
+#### Common response
+
+`200`:
 ```json
 { "success": true, "error": null }
 ```
 
 **Error Response**:
-- `400` — only pending disputes can be withdrawn
-- `403` — email does not match the dispute owner
+- `400` — (Mode A) only pending disputes can be withdrawn
+- `401` — (Mode B) not signed in
+- `403` — (Mode A) email does not match the dispute owner; (Mode B) session lacks a `DISPUTE_DELETE_ROLES` role
 - `404` — dispute not found
-
-Audit log: `pab_dispute.withdrawn`.
 
 **Tables**: `pab_day_disputes`, `audit_log`
 **Service Role**: Required
@@ -1296,6 +1321,169 @@ Returns a single report's full detail. `cycleId` accepts:
 - `500` — DB error
 
 **Tables**: `disbursement_records`, `payment_dispatches`, `hubstaff_uploads`, `employee_hourly_rates`
+
+---
+
+## 12.5 Leave Requests
+
+### `GET /api/leave-requests`
+
+Lists leave requests scoped by query string.
+
+**Query Parameters**:
+- `scope=mine` — only the caller's own requests (employee view).
+- `scope=all` — full list (manager + accounting view).
+
+**Tables**: `leave_requests`
+
+---
+
+### `POST /api/leave-requests`
+
+Creates a new leave request. Used by the Employee Leaves panel.
+
+**Body**:
+```json
+{
+  "employee_email": "jane@simple.biz",
+  "employee_name": "Jane Doe",
+  "department": "Client VA",
+  "start_date": "2026-06-01",
+  "end_date": "2026-06-05",
+  "leave_type": "vacation",
+  "reason": "Family trip",
+  "manager_email": "manager@simple.biz"
+}
+```
+
+Audit log: `leave.created`.
+
+---
+
+### `PATCH /api/leave-requests/[id]`
+
+Approve, reject, or cancel a leave request.
+
+**Body** (one of):
+```json
+{ "action": "approve", "approver_email": "manager@simple.biz", "approver_note": "Approved" }
+{ "action": "reject",  "approver_email": "manager@simple.biz", "approver_note": "Conflicts with..." }
+{ "action": "cancel",  "employee_email": "jane@simple.biz" }
+```
+
+**Approve / reject authorization** — the approver must satisfy at least one of:
+1. Listed in the request's stored `manager_email` (comma-joined).
+2. Currently active manager for the request's department (via `department_managers`).
+3. Listed in the legacy `leave_department_managers_json` map for the department.
+4. Listed in `leave_accounting_notify_emails` or `leave_approver_emails` settings.
+
+**Cancel authorization** — `employee_email` must match the request's owner; only `pending` requests can be cancelled.
+
+Audit log: `leave.approved` / `leave.rejected` / `leave.cancelled`.
+
+---
+
+### `DELETE /api/leave-requests/[id]` *(added 2026-05-02)*
+
+Hard-delete a leave request. Used by the trash button in `LeaveRequestsPanel` (shared by accounting + manager dashboards).
+
+**Authorization** — NextAuth session must include a role in `LEAVE_DELETE_ROLES`:
+
+| Role | Scope |
+|---|---|
+| `admin`, `payroll_manager` | **Unrestricted** — any request, any department |
+| `manager` | **Scoped** — only requests for departments they actively manage (verified via the same chain as approve/reject) |
+
+Other accounting roles (`payroll_coordinator`, `finance`, `hr_coordinator`) cannot delete.
+
+**Constraints**: works on any status. Cancellation (employee-initiated) goes through `PATCH { action: 'cancel' }`.
+
+**Response** `200`:
+```json
+{ "success": true, "error": null }
+```
+
+**Error Response**:
+- `401` — not signed in
+- `403` — session lacks any `LEAVE_DELETE_ROLES` role, OR (manager) actor does not manage this request's department
+- `404` — leave request not found
+
+Audit log: `leave.admin_deleted` with `details.scope = 'unrestricted' | 'department'` so admin sweeps and in-scope manager deletions are distinguishable. Snapshot includes `prior_status`, `prior_approver`, `prior_approver_note`.
+
+**Tables**: `leave_requests`, `audit_log`, `app_settings` (for manager-scope checks), `department_managers`
+**Service Role**: Required
+
+---
+
+## 12.7 Admin Diagnostics
+
+### `GET /api/admin/diagnostics` *(added 2026-05-02)*
+
+Live health probe powering the Admin → Diagnostics tab. Runs server-side probes against Supabase, the pg pool (when `DATABASE_URL` is set), the audit log, and the data tables that the Service Map cares about. Returns a `DiagnosticsHealthResponse` the client renders directly — same shape as the local mock so the UI is unchanged whether it's live or fallback.
+
+**Authorization**: NextAuth session must hold the `'admin'` role. Returns 401 if not signed in, 403 if role check fails. Belt-and-suspenders alongside the client-side `'diagnostics'` tab gate so non-admin sessions can never read probe results.
+
+**Response** `200`:
+```json
+{
+  "overallStatus": "warning",
+  "source": "live",
+  "generatedAt": "2026-05-02T14:32:01.234Z",
+  "nodes": [
+    {
+      "id": "supabase-client",
+      "label": "Supabase Client",
+      "category": "infra",
+      "status": "healthy",
+      "summary": "Round-trip 187ms.",
+      "details": ["Anon-key read succeeded against app_settings."],
+      "suggestedChecks": ["Periodically verify service-role usage list."],
+      "lastChecked": "2026-05-02T14:32:01.234Z"
+    }
+    // … 11 more nodes
+  ],
+  "alerts": [
+    {
+      "id": "alert-hubstaff-csv",
+      "severity": "warning",
+      "title": "Latest upload 12d ago.",
+      "description": "Hubstaff cycle imports may have stalled.",
+      "nodeId": "hubstaff-csv",
+      "timestamp": "2026-05-02T14:32:01.234Z"
+    }
+  ]
+}
+```
+
+**Probes** (run in parallel via `Promise.all`, each capped at 4s via `withProbeTimeout`):
+
+| Probe helper | What it does | Status mapping |
+|---|---|---|
+| `probeSupabase` | `select head` on `app_settings`, latency | <500ms healthy, 500–2000ms warning, errors/timeouts critical |
+| `probePgPool` | `SELECT 1` over a `pg.Pool` if `DATABASE_URL` set | unknown when env missing, healthy <1.5s, critical on connection error |
+| `probeHubstaffCsv` | Latest `hubstaff_uploads` row + age | <7d healthy, 7–14d warning, >14d warning |
+| `probeMasterList` | `count(*)` from `active_employees` view | 0 critical, <50 warning, else healthy |
+| `probeAuditLog` | Latest `audit_log` row, age | <7d healthy, >7d warning, empty warning |
+| `probeDisbursementRecords` | `count(*)` from `disbursement_records` | healthy if reads, warning on error |
+| `probeAuth` | Recent login events from `audit_log` (24h window) | always warning until admin gate is enforced server-side |
+| `probeDailyReport` | Latest `daily_reports.*` audit entry, age | <48h healthy, >48h warning, never warning |
+| `probeRates` | `count(*)` from `employee_hourly_rates` | 0 warning, else healthy |
+
+**Composite statuses**: `payroll-wizard` is derived from `hubstaff-csv` + `master-list` + `disbursement-records` worst-case, with a warning floor (CSV mismatches stay subtle even when probes look green). `admin-shell` is always healthy (you can read this response, the shell rendered). `supabase-client` and `supabase-postgres` share one probe.
+
+**Security**: probe outputs never include raw stack traces, SQL text, secrets, or employee PII. Errors are trimmed via `trimError()` (one-line, capped at 120 chars). PostgREST error codes pass through (useful for diagnosis, not sensitive).
+
+**Error Response**:
+- `401` — not signed in
+- `403` — session lacks the `'admin'` role
+- `500` — unexpected server error (probes have their own timeout fallback so this is rare)
+
+`Cache-Control: no-store, max-age=0` on the response to prevent any CDN caching.
+
+**Tables**: `app_settings`, `hubstaff_uploads`, `active_employees` (view), `audit_log`, `disbursement_records`, `employee_hourly_rates`
+**Service Role**: Required (for read-through past RLS on operational tables)
+
+See [docs/system-diagnostics.md](../docs/system-diagnostics.md) for the architecture, edge animation system, and how to extend with new probes.
 
 ---
 

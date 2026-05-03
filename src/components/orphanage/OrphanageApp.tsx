@@ -3,20 +3,23 @@
 import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { signOut } from 'next-auth/react';
-import { motion } from 'motion/react';
+import { useTheme } from 'next-themes';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   CheckCircle2,
   ClipboardList,
   HeartHandshake,
-  Inbox,
   Loader2,
   LogOut,
+  Menu,
+  Moon,
   Plus,
   RefreshCw,
   Search,
   Sparkles,
-  XCircle,
+  Sun,
 } from 'lucide-react';
+import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { toast, Toaster } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -107,18 +110,76 @@ function orphanReceiptStatusMeta(status: PabDisputeStatus): {
   }
 }
 
+const WELCOME_MESSAGES: { heading: (name: string) => string; body: string }[] = [
+  {
+    heading: (name) => `Welcome, ${name} — every visit you verify makes a difference. ♥`,
+    body: "Behind each entry is a child who had a visitor that day. Your approval ensures the team is recognized for showing up — thank you for being part of their story.",
+  },
+  {
+    heading: (name) => `Hi ${name} — small acts of care leave the biggest marks. ♥`,
+    body: "Every time your team walks through those doors, a child feels seen. Your work here makes sure those moments count — keep going.",
+  },
+  {
+    heading: (name) => `Good to see you, ${name} — you're helping write better childhoods. ♥`,
+    body: "The hours logged here represent real presence, real warmth, and real hope. Thank you for being the bridge between effort and recognition.",
+  },
+  {
+    heading: (name) => `Welcome back, ${name} — compassion in action, one visit at a time. ♥`,
+    body: "Each verified visit is a promise kept to a child who deserves to feel remembered. Your role here is more meaningful than you know.",
+  },
+  {
+    heading: (name) => `Hey ${name} — the kids are lucky to have a team like yours. ♥`,
+    body: "Behind every dispute record is a story of someone who showed up. Your verification keeps that story alive — and makes sure it's honored.",
+  },
+];
+
+const WELCOME_SESSION_KEY = 'orphanage_welcome_idx';
+
 export default function OrphanageApp() {
   const searchParams = useSearchParams();
   const emailFromQuery = searchParams.get('email');
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  const isDark = mounted ? resolvedTheme === 'dark' : false;
+
+  const [welcomeIdx, setWelcomeIdx] = useState(0);
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem(WELCOME_SESSION_KEY);
+      if (stored !== null) {
+        setWelcomeIdx(Number(stored));
+      } else {
+        const idx = Math.floor(Math.random() * WELCOME_MESSAGES.length);
+        sessionStorage.setItem(WELCOME_SESSION_KEY, String(idx));
+        setWelcomeIdx(idx);
+      }
+    } catch { /* ignore */ }
+  }, []);
+  const welcomeMsg = WELCOME_MESSAGES[welcomeIdx]!;
+
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMobileNavOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobileNavOpen]);
+  useEffect(() => {
+    document.body.style.overflow = mobileNavOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [mobileNavOpen]);
+
   const [rows, setRows] = useState<PabDayDisputeRow[]>([]);
   const [verifiedRows, setVerifiedRows] = useState<PabDayDisputeRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
   const [verifiedSearch, setVerifiedSearch] = useState('');
-  const [actingId, setActingId] = useState<string | null>(null);
+  const [verifiedPage, setVerifiedPage] = useState(0);
+  const PAGE_SIZE = 5;
   const [confirm, setConfirm] = useState<{ row: PabDayDisputeRow; action: 'approve' | 'deny' } | null>(null);
   const [decisionNote, setDecisionNote] = useState('');
+  const [pageDir, setPageDir] = useState<1 | -1>(1);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [employeeOptions, setEmployeeOptions] = useState<EmployeeOption[]>([]);
   const [employeesLoading, setEmployeesLoading] = useState(true);
@@ -219,17 +280,6 @@ export default function OrphanageApp() {
     void fetchRows();
   }, [fetchRows]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) =>
-      [row.work_email, row.dispute_date, row.explanation ?? '', row.created_by ?? '', row.decision_note ?? '']
-        .join(' ')
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [rows, search]);
-
   const filteredVerified = useMemo(() => {
     const q = verifiedSearch.trim().toLowerCase();
     if (!q) return verifiedRows;
@@ -298,37 +348,107 @@ export default function OrphanageApp() {
       ? reviewerFirst.charAt(0).toUpperCase() + reviewerFirst.slice(1).toLowerCase()
       : 'there';
 
+  const displayName = viewerEmail?.includes('@')
+    ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ')
+    : viewerEmail || 'Manager';
+  const titleName = displayName
+    .split(' ')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+
   return (
     <div className="flex h-dvh max-h-dvh overflow-hidden bg-white text-zinc-900 dark:bg-[#0d1117] dark:text-zinc-100">
-      <aside className="flex w-64 shrink-0 flex-col border-r border-pink-100 bg-gradient-to-b from-white to-pink-50/50 p-5 dark:border-pink-950/50 dark:from-[#0d1117] dark:to-pink-950/10">
-        <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-pink-500 text-white">
-            <HeartHandshake className="h-5 w-5" />
+      {/* Mobile overlay backdrop */}
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px] md:hidden"
+          aria-label="Close navigation menu"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+
+      <aside className={cn(
+        'flex w-[220px] max-w-[min(100vw,220px)] shrink-0 flex-col border-r border-pink-100/70 bg-gradient-to-b from-white via-pink-50/20 to-white dark:border-pink-950/40 dark:from-black dark:via-pink-950/15 dark:to-black',
+        'fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-out md:static md:z-auto md:max-w-none md:translate-x-0',
+        mobileNavOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+      )}
+        id="orphanage-sidebar-nav"
+        role="navigation"
+        aria-label="Orphanage navigation"
+      >
+        <div className="flex flex-1 flex-col px-4 pb-4 pt-6">
+          {/* Brand */}
+          <div className="mb-7 flex items-center gap-2.5 px-1">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-gradient-to-br from-pink-600 to-rose-900 text-sm font-bold tracking-[-0.02em] text-white shadow-sm shadow-pink-600/30">
+              s
+            </div>
+            <div className="flex min-w-0 flex-col leading-tight">
+              <span className="bg-gradient-to-r from-pink-700 to-zinc-900 bg-clip-text text-[13.5px] font-semibold tracking-[-0.01em] text-transparent dark:from-pink-300 dark:to-white">
+                simple·hris
+              </span>
+              <span className="mt-0.5 text-[10.5px] tracking-[0.02em] text-pink-600/70 dark:text-pink-400/70">
+                Orphanage
+              </span>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-pink-600 dark:text-pink-400">
-              Orphanage
+
+          {/* Nav */}
+          <div className="flex-1">
+            <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-zinc-400 dark:text-zinc-500">
+              Workspace
             </p>
-            <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Manager review</p>
+            <nav className="flex flex-col gap-px">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2.5 rounded-md bg-gradient-to-r from-pink-600 to-rose-700 px-2.5 py-[7px] text-[13.5px] font-medium text-white shadow-sm shadow-pink-600/25"
+                onClick={() => setMobileNavOpen(false)}
+              >
+                <HeartHandshake className="h-[15px] w-[15px] shrink-0 text-white/85" />
+                <span className="truncate text-left">Dispute queue</span>
+              </button>
+            </nav>
+          </div>
+
+          {/* Bottom controls */}
+          <div className="mt-auto border-t border-pink-100/60 pt-4 dark:border-pink-950/40">
+            <ViewSwitcher email={viewerEmail} currentView="orphanage" />
+
+            {/* Dark mode toggle */}
+            <button
+              type="button"
+              onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
+              className="mb-2 mt-3 flex w-full items-center justify-between rounded-md border border-pink-100/70 bg-gradient-to-br from-white to-pink-50/60 px-3 py-2 text-left transition-colors hover:from-pink-50 hover:to-pink-100/60 dark:border-pink-950/40 dark:from-zinc-950 dark:to-pink-950/20 dark:hover:from-pink-950/30 dark:hover:to-pink-950/40"
+              aria-label="Toggle dark mode"
+            >
+              <div className="flex items-center gap-2 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+                {isDark ? 'Dark' : 'Light'}
+              </div>
+              <span className="text-zinc-400">{isDark ? '☀' : '☾'}</span>
+            </button>
           </div>
         </div>
 
-        <nav className="space-y-1">
-          <button className="flex w-full items-center gap-3 rounded-md bg-pink-100 px-3 py-2 text-sm font-medium text-pink-900 dark:bg-pink-950/40 dark:text-pink-100">
-            <HeartHandshake className="h-4 w-4" />
-            Dispute queue
-          </button>
-        </nav>
-
-        <div className="mt-auto border-t border-pink-100 pt-4 dark:border-pink-950/50">
-          <ViewSwitcher email={viewerEmail} currentView="orphanage" />
-          <div className="mb-3 rounded-md border border-pink-100 bg-white/70 px-3 py-2 dark:border-pink-950/50 dark:bg-pink-950/10">
-            <p className="truncate text-xs font-medium text-zinc-900 dark:text-zinc-100">{viewerEmail ?? 'Not signed in'}</p>
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Orphanage Manager</p>
+        {/* User card + sign out */}
+        <div className="border-t border-pink-100/60 p-4 dark:border-pink-950/40">
+          <div className="flex items-center gap-2.5 rounded-md border border-pink-100/70 bg-gradient-to-br from-white to-pink-50/60 px-2.5 py-2 dark:border-pink-950/40 dark:from-zinc-950 dark:to-pink-950/20">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-pink-600 to-rose-900 text-[11px] font-semibold text-white shadow-sm shadow-pink-600/25">
+              {(viewerEmail ?? '?').slice(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13px] font-medium leading-tight text-zinc-900 dark:text-zinc-100">
+                {titleName}
+              </div>
+              <div className="mt-px text-[11px] leading-tight text-pink-600/70 dark:text-pink-400/70">
+                Orphanage Manager
+              </div>
+            </div>
           </div>
           <Button
             variant="ghost"
-            className="w-full justify-start gap-2 text-zinc-600 hover:bg-rose-500/10 hover:text-rose-600 dark:text-zinc-400"
+            size="sm"
+            className="mt-2 w-full justify-start gap-2.5 text-[13px] text-zinc-500 hover:bg-rose-500/10 hover:text-rose-600 dark:text-zinc-400 dark:hover:text-rose-400"
             onClick={() => {
               try { sessionStorage.removeItem(SESSION_EMAIL_KEY); } catch { /* ignore */ }
               void signOut({ callbackUrl: '/login' });
@@ -340,7 +460,26 @@ export default function OrphanageApp() {
         </div>
       </aside>
 
-      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-gradient-to-br from-white via-pink-50/40 to-rose-50/25 text-zinc-900 dark:from-black dark:via-pink-950/25 dark:to-black dark:text-zinc-100">
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-gradient-to-br from-white via-pink-50/30 to-white text-zinc-900 dark:from-[#0d1117] dark:via-pink-950/20 dark:to-[#0d1117] dark:text-zinc-100">
+        {/* Mobile header */}
+        <header className="flex shrink-0 items-center gap-3 border-b border-pink-100/70 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-pink-950/40 dark:bg-zinc-950/95 md:hidden">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="shrink-0 border-pink-100/70 bg-white dark:border-pink-950/50 dark:bg-zinc-900"
+            onClick={() => setMobileNavOpen(true)}
+            aria-expanded={mobileNavOpen}
+            aria-controls="orphanage-sidebar-nav"
+            aria-label="Open navigation menu"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+          <span className="min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            Orphanage
+          </span>
+        </header>
+
         <CreateOrphanageStyleDisputeDialog
           open={createDialogOpen}
           onOpenChange={setCreateDialogOpen}
@@ -361,6 +500,43 @@ export default function OrphanageApp() {
         >
           <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
             <header className="relative overflow-hidden rounded-2xl border border-pink-100/90 bg-gradient-to-br from-pink-600 via-rose-600 to-zinc-900 px-5 py-7 text-white shadow-lg shadow-pink-600/20 dark:border-pink-900/50 dark:from-pink-700 dark:via-rose-900 dark:to-black sm:px-7">
+              <style>{`
+                @keyframes floatHeart {
+                  0%   { transform: translateY(0)     scale(1);    opacity: 0; }
+                  12%  {                                            opacity: 0.55; }
+                  80%  { transform: translateY(-110px) scale(0.7); opacity: 0.25; }
+                  100% { transform: translateY(-130px) scale(0.5); opacity: 0; }
+                }
+              `}</style>
+              {([
+                { left: '6%',  delay: '0s',    dur: '4.2s', size: '22px' },
+                { left: '14%', delay: '1.1s',  dur: '3.8s', size: '18px' },
+                { left: '24%', delay: '2.3s',  dur: '4.6s', size: '26px' },
+                { left: '38%', delay: '0.5s',  dur: '3.5s', size: '20px' },
+                { left: '52%', delay: '1.8s',  dur: '4.0s', size: '16px' },
+                { left: '64%', delay: '0.9s',  dur: '4.4s', size: '24px' },
+                { left: '75%', delay: '2.7s',  dur: '3.7s', size: '19px' },
+                { left: '85%', delay: '1.4s',  dur: '4.1s', size: '21px' },
+                { left: '92%', delay: '3.1s',  dur: '3.9s', size: '17px' },
+              ] as const).map((h, i) => (
+                <span
+                  key={i}
+                  aria-hidden
+                  style={{
+                    position: 'absolute',
+                    bottom: '6px',
+                    left: h.left,
+                    fontSize: h.size,
+                    color: 'rgba(255,255,255,0.75)',
+                    animation: `floatHeart ${h.dur} ${h.delay} infinite ease-in`,
+                    pointerEvents: 'none',
+                    userSelect: 'none',
+                    lineHeight: 1,
+                  }}
+                >
+                  ♥
+                </span>
+              ))}
               <div
                 className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/15 blur-3xl"
                 aria-hidden
@@ -376,11 +552,10 @@ export default function OrphanageApp() {
                     Orphanage manager
                   </div>
                   <h1 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
-                    Hi {greeting}, your dispute queue at a glance.
+                    {welcomeMsg.heading(greeting)}
                   </h1>
                   <p className="max-w-2xl text-sm leading-relaxed text-pink-100/85">
-                    Verify visits with one click — Hub hours stay as logged; optional notes land in the receipt log.
-                    Accounting still gives final payroll forgiveness.
+                    {welcomeMsg.body}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -408,17 +583,11 @@ export default function OrphanageApp() {
               </div>
             </header>
 
-            <section className="grid gap-3 sm:grid-cols-3">
+            <section className="grid gap-3 sm:grid-cols-3" aria-label="Summary stats">
               <OrphanStatTile
                 label="Awaiting review"
                 value={rows.length}
-                hint={
-                  rows.length === 0
-                    ? 'Queue is clear'
-                    : filtered.length !== rows.length
-                      ? `${filtered.length} match your search`
-                      : 'Needs your verify or deny'
-                }
+                hint={rows.length === 0 ? 'Queue is clear' : 'Needs your verify or deny'}
                 icon={HeartHandshake}
                 accent="pink"
               />
@@ -444,138 +613,19 @@ export default function OrphanageApp() {
               />
             </section>
 
-            <Card className="border-pink-100/80 bg-gradient-to-br from-white to-pink-50/55 shadow-md shadow-pink-500/5 ring-1 ring-pink-500/10 dark:border-pink-950/55 dark:from-zinc-950 dark:to-pink-950/25 dark:ring-pink-400/10">
-              <CardHeader className="flex flex-col gap-1 border-b border-pink-100/60 pb-4 dark:border-pink-900/40">
-                <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
-                  <CardTitle className="text-base font-semibold">Awaiting your review</CardTitle>
-                  {!loading && rows.length > 0 ? (
-                    <span className="text-xs font-medium text-pink-600/90 dark:text-pink-400/90">
-                      {filtered.length === rows.length
-                        ? `Showing all ${rows.length}`
-                        : `Showing ${filtered.length} of ${rows.length}`}
-                    </span>
-                  ) : null}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Approve to route to Accounting or deny with optional context.
-                </p>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4 pt-4">
-                <div className="relative max-w-md">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                  <Input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search email, date, or note..."
-                    className="border-pink-100/70 bg-white/90 pl-9 dark:border-pink-900/50 dark:bg-zinc-900/70"
-                  />
-                </div>
-
-                {loading ? (
-                  <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-pink-200/80 bg-pink-50/40 py-16 text-center dark:border-pink-900/50 dark:bg-pink-950/20">
-                    <Loader2 className="h-8 w-8 animate-spin text-pink-500" aria-hidden />
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400">Loading queue…</p>
-                  </div>
-                ) : filtered.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-pink-200/80 bg-gradient-to-b from-white to-pink-50/30 py-14 text-center dark:border-pink-900/55 dark:from-zinc-950 dark:to-pink-950/15">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-rose-600 text-white shadow-md shadow-pink-500/30">
-                      <Inbox className="h-6 w-6" />
-                    </div>
-                    <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                      {rows.length === 0
-                        ? 'No orphanage disputes awaiting manager review.'
-                        : 'No rows match your search.'}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto rounded-xl border border-pink-100/90 ring-1 ring-pink-500/10 dark:border-pink-900/60 dark:ring-pink-400/10">
-                    <table className="w-full min-w-[720px] text-left text-sm">
-                      <thead className="sticky top-0 z-[1] bg-gradient-to-r from-pink-50 via-white to-pink-50/80 text-xs text-zinc-600 dark:from-pink-950/50 dark:via-zinc-950 dark:to-pink-950/40 dark:text-zinc-400">
-                        <tr>
-                          <th className="px-4 py-3 font-semibold">Employee</th>
-                          <th className="px-4 py-3 font-semibold">Date</th>
-                          <th className="px-4 py-3 font-semibold">Explanation</th>
-                          <th className="px-4 py-3 font-semibold">Status</th>
-                          <th className="px-4 py-3 text-right font-semibold">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-pink-100/70 bg-white/80 dark:divide-pink-900/35 dark:bg-zinc-950/40">
-                        {filtered.map((row) => (
-                          <tr
-                            key={row.id}
-                            className="align-top transition-colors hover:bg-pink-50/35 dark:hover:bg-pink-950/25"
-                          >
-                            <td className="whitespace-normal break-all px-4 py-3 font-mono text-xs">
-                              {row.work_email}
-                            </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-zinc-800 dark:text-zinc-200">
-                              {row.dispute_date}
-                            </td>
-                            <td className="max-w-md px-4 py-3 text-xs text-zinc-600 dark:text-zinc-400">
-                              <p>{row.explanation || 'No explanation provided'}</p>
-                              {row.decision_note ? (
-                                <p className="mt-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-2.5 py-1.5 text-[11px] text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/35 dark:text-amber-200">
-                                  <span className="font-semibold text-amber-800 dark:text-amber-300">
-                                    Accounting:{' '}
-                                  </span>
-                                  {row.decision_note}
-                                </p>
-                              ) : null}
-                            </td>
-                            <td className="px-4 py-3">
-                              <Badge
-                                variant="outline"
-                                className="border-amber-300 bg-amber-50 text-[10px] text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
-                              >
-                                Manager review
-                              </Badge>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex flex-wrap justify-end gap-2">
-                                <Button
-                                  size="sm"
-                                  className="h-8 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
-                                  disabled={actingId === row.id}
-                                  onClick={() => {
-                                    setDecisionNote('');
-                                    setConfirm({ row, action: 'approve' });
-                                  }}
-                                >
-                                  <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
-                                  Approve
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 border-rose-300 text-xs text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
-                                  disabled={actingId === row.id}
-                                  onClick={() => {
-                                    setDecisionNote('');
-                                    setConfirm({ row, action: 'deny' });
-                                  }}
-                                >
-                                  <XCircle className="mr-1 h-3.5 w-3.5" />
-                                  Deny
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
             <Card className="border-pink-100/80 bg-gradient-to-br from-white via-pink-50/30 to-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:from-zinc-950 dark:via-pink-950/12 dark:to-zinc-950 dark:ring-pink-400/10">
               <CardHeader className="flex flex-col gap-1 border-b border-pink-100/60 pb-4 dark:border-pink-900/40">
                 <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <CardTitle className="text-base font-semibold">
-                      Receipt log — manager & Accounting outcomes
-                    </CardTitle>
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-rose-700 to-zinc-900 text-white shadow-sm shadow-rose-700/25">
+                        <ClipboardList className="h-4 w-4" />
+                      </div>
+                      <CardTitle className="text-base font-semibold">
+                        Receipt log — manager &amp; Accounting outcomes
+                      </CardTitle>
+                    </div>
+                    <p className="mt-1.5 text-xs text-muted-foreground">
                       Every dispute after manager review stays here — with Accounting pending, Accounting approved, or Accounting denied —
                       newest activity first ({awaitingAccountingCount} still with Accounting).
                     </p>
@@ -594,7 +644,7 @@ export default function OrphanageApp() {
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
                   <Input
                     value={verifiedSearch}
-                    onChange={(e) => setVerifiedSearch(e.target.value)}
+                    onChange={(e) => { setVerifiedSearch(e.target.value); setVerifiedPage(0); }}
                     placeholder="Search by email, note, status, or date..."
                     className="border-pink-100/70 bg-white/90 pl-9 disabled:opacity-60 dark:border-pink-900/50 dark:bg-zinc-900/70"
                     disabled={loading}
@@ -609,7 +659,72 @@ export default function OrphanageApp() {
                     </p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto rounded-xl border border-pink-100/90 ring-1 ring-pink-500/10 dark:border-pink-900/60 dark:ring-pink-400/10">
+                  <>
+                  {/* Mobile: cards */}
+                  <AnimatePresence mode="wait" initial={false} custom={pageDir}>
+                  <motion.div
+                    key={verifiedPage}
+                    custom={pageDir}
+                    initial={(dir: number) => ({ opacity: 0, x: dir * 32 })}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={(dir: number) => ({ opacity: 0, x: dir * -32 })}
+                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                    className="grid gap-3 sm:grid-cols-2 md:hidden"
+                  >
+                    {filteredVerified.slice(verifiedPage * PAGE_SIZE, (verifiedPage + 1) * PAGE_SIZE).map((row) => {
+                      const st = orphanReceiptStatusMeta(row.status);
+                      return (
+                        <div
+                          key={row.id}
+                          className="flex flex-col gap-3 rounded-xl border border-pink-100/90 bg-white/85 p-4 ring-1 ring-pink-500/8 transition-shadow hover:shadow-md hover:shadow-pink-500/10 dark:border-pink-900/55 dark:bg-zinc-950/55 dark:ring-pink-400/10"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="min-w-0 break-all font-mono text-xs font-medium text-zinc-800 dark:text-zinc-200">
+                              {row.work_email}
+                            </p>
+                            <Badge
+                              variant="outline"
+                              className={cn('shrink-0 text-[10px] font-medium', st.badgeClass)}
+                            >
+                              {st.label}
+                            </Badge>
+                          </div>
+                          <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Visit date</span>
+                              <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">{row.dispute_date}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Action by</span>
+                              <span className="text-xs text-zinc-700 dark:text-zinc-300">{row.decided_by ?? '—'}</span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Action at</span>
+                              <span className="text-xs text-zinc-500 dark:text-zinc-400">{formatVerifiedAt(row.decided_at)}</span>
+                            </div>
+                          </div>
+                          {row.decision_note ? (
+                            <p className="rounded-lg border border-pink-100/70 bg-pink-50/60 px-3 py-2 text-xs leading-relaxed text-zinc-600 dark:border-pink-900/40 dark:bg-pink-950/20 dark:text-zinc-400">
+                              {row.decision_note}
+                            </p>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </motion.div>
+                  </AnimatePresence>
+
+                  {/* Desktop: table */}
+                  <AnimatePresence mode="wait" initial={false} custom={pageDir}>
+                  <motion.div
+                    key={verifiedPage}
+                    custom={pageDir}
+                    initial={(dir: number) => ({ opacity: 0, x: dir * 32 })}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={(dir: number) => ({ opacity: 0, x: dir * -32 })}
+                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                    className="hidden md:block overflow-x-auto rounded-xl border border-pink-100/90 ring-1 ring-pink-500/10 dark:border-pink-900/60 dark:ring-pink-400/10"
+                  >
                     <table className="w-full min-w-[720px] text-left text-sm">
                       <thead className="sticky top-0 z-[1] bg-gradient-to-r from-pink-50 via-white to-pink-50/80 text-xs text-zinc-600 dark:from-pink-950/50 dark:via-zinc-950 dark:to-pink-950/40 dark:text-zinc-400">
                         <tr>
@@ -622,7 +737,7 @@ export default function OrphanageApp() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-pink-100/70 bg-white/80 dark:divide-pink-900/35 dark:bg-zinc-950/40">
-                        {filteredVerified.map((row) => {
+                        {filteredVerified.slice(verifiedPage * PAGE_SIZE, (verifiedPage + 1) * PAGE_SIZE).map((row) => {
                           const st = orphanReceiptStatusMeta(row.status);
                           return (
                             <tr
@@ -655,7 +770,37 @@ export default function OrphanageApp() {
                         })}
                       </tbody>
                     </table>
-                  </div>
+                  </motion.div>
+                  </AnimatePresence>
+                  {filteredVerified.length > PAGE_SIZE && (
+                    <div className="flex items-center justify-between border-t border-pink-100/60 px-4 py-3 dark:border-pink-900/40">
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                        Page {verifiedPage + 1} of {Math.ceil(filteredVerified.length / PAGE_SIZE)}
+                        {' · '}{filteredVerified.length} total
+                      </span>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-3 text-xs border-pink-100/70 dark:border-pink-900/50"
+                          disabled={verifiedPage === 0}
+                          onClick={() => { setPageDir(-1); setVerifiedPage((p) => p - 1); }}
+                        >
+                          ← Prev
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-3 text-xs border-pink-100/70 dark:border-pink-900/50"
+                          disabled={(verifiedPage + 1) * PAGE_SIZE >= filteredVerified.length}
+                          onClick={() => { setPageDir(1); setVerifiedPage((p) => p + 1); }}
+                        >
+                          Next →
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  </>
                 )}
               </CardContent>
             </Card>

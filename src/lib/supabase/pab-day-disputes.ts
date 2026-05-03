@@ -72,6 +72,17 @@ export const DISPUTE_ACTOR_ROLES: readonly string[] = [
   'admin',
 ];
 
+/**
+ * Roles allowed to PERMANENTLY DELETE a dispute (any status, regardless of who filed it).
+ * Tighter than DISPUTE_ACTOR_ROLES because deletion is destructive — denying keeps the
+ * audit trail intact, deleting wipes the record entirely. Restricted to senior accounting
+ * leadership + admin.
+ */
+export const DISPUTE_DELETE_ROLES: readonly string[] = [
+  'payroll_manager',
+  'admin',
+];
+
 export const ORPHANAGE_MANAGER_ROLES: readonly string[] = [
   'orphanage_manager',
   'admin',
@@ -789,6 +800,50 @@ export async function withdrawDispute(
         employee: row.work_email,
         dispute_date: row.dispute_date,
         reason: row.reason,
+      },
+    });
+  })();
+
+  return { error: null };
+}
+
+/**
+ * Admin/payroll-manager-only hard delete. Unlike `withdrawDispute`:
+ *  - works on disputes in any status (pending, approved, denied, accounting_*, …)
+ *  - does NOT require the caller's email to match the dispute's `work_email`
+ *  - logs a distinct audit-log action so deletions are traceable separately from withdrawals
+ *
+ * Caller is responsible for verifying the session holds a role in DISPUTE_DELETE_ROLES
+ * before invoking — this function does NOT re-check authorization.
+ */
+export async function adminDeleteDispute(
+  id: string,
+  params: { actor_email: string; actor_role: string },
+): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+
+  const { row, error: fetchErr } = await getDisputeById(id);
+  if (fetchErr) return { error: fetchErr };
+  if (!row) return { error: 'Dispute not found' };
+
+  const { error } = await supabase.from(TABLE).delete().eq('id', id);
+  if (error) return { error: error.message };
+
+  void (async () => {
+    await insertAuditLog({
+      user_name: params.actor_email,
+      user_role: params.actor_role,
+      action: 'pab_dispute.admin_deleted',
+      resource: TABLE,
+      resource_id: id,
+      details: {
+        employee: row.work_email,
+        dispute_date: row.dispute_date,
+        reason: row.reason,
+        prior_status: row.status,
+        prior_decided_by: row.decided_by,
+        prior_decision_note: row.decision_note,
       },
     });
   })();

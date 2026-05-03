@@ -10,10 +10,13 @@ import {
   DollarSign,
   Edit2,
   Eye,
+  Download,
   IdCard,
+  LayoutGrid,
   Loader2,
   Mail,
   Plus,
+  Rows3,
   Search,
   Trash2,
   UserCheck,
@@ -28,14 +31,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -52,6 +47,14 @@ import {
   effectiveUsdToPhpRateFromStored,
 } from "@/lib/fx/usd-php";
 import EmployeeAvatar from "@/components/employee/EmployeeAvatar";
+import type { EmployeeRow } from "@/lib/supabase/employees";
+import type { EmployeeIdRow } from "@/lib/supabase/employee-ids";
+import {
+  buildExportRows,
+  downloadCsv,
+  rowsToCsv,
+  todayFilenameSuffix,
+} from "@/lib/rates/export-csv";
 
 type EmployeeRateProfile = {
   id: string;
@@ -77,6 +80,8 @@ type EmployeeRateProfileSummary = {
   otRate: string | null;
   suspended: boolean;
   profilePhotoUrl: string | null;
+  /** Google Workspace photo URL — populated by NextAuth jwt callback on sign-in. */
+  googlePhotoUrl: string | null;
   hasRatesRow: boolean;
 };
 
@@ -314,10 +319,12 @@ const HIDDEN_FIELD_KEYS = new Set([
 
 function getAvatarInfoFromProfile(
   p: EmployeeRateProfile,
-): { photoUrl: string | null; email: string | null; initials: string } {
+): { photoUrl: string | null; googlePhotoUrl: string | null; email: string | null; initials: string } {
   const m = buildNormFieldMap(p.fields);
   const photoUrl =
     pickFromMap(m, ["Profile Photo Url", "profile_photo_url", "photo_url", "avatar_url"]);
+  const googlePhotoUrl =
+    pickFromMap(m, ["Google Photo Url", "google_photo_url", "google_picture"]);
   const email =
     pickFromMap(m, ["Work Email", "work_email", "Work_Email", "Email", "email"]);
   const name = p.displayName?.trim() || "";
@@ -327,6 +334,7 @@ function getAvatarInfoFromProfile(
   else if (parts.length === 1 && parts[0].length >= 2) initials = parts[0].slice(0, 2).toUpperCase();
   return {
     photoUrl: photoUrl !== "—" ? photoUrl : null,
+    googlePhotoUrl: googlePhotoUrl !== "—" ? googlePhotoUrl : null,
     email: email !== "—" ? email : null,
     initials,
   };
@@ -348,7 +356,7 @@ function tableRowFromSummary(p: EmployeeRateProfileSummary) {
 
 function getAvatarInfoFromSummary(
   p: EmployeeRateProfileSummary,
-): { photoUrl: string | null; email: string | null; initials: string } {
+): { photoUrl: string | null; googlePhotoUrl: string | null; email: string | null; initials: string } {
   const name = p.displayName?.trim() || "";
   const parts = name.split(/\s+/).filter(Boolean);
   let initials = "??";
@@ -356,6 +364,7 @@ function getAvatarInfoFromSummary(
   else if (parts.length === 1 && parts[0].length >= 2) initials = parts[0].slice(0, 2).toUpperCase();
   return {
     photoUrl: p.profilePhotoUrl,
+    googlePhotoUrl: p.googlePhotoUrl,
     email: p.workEmail ?? p.personalEmail ?? p.subtitle,
     initials,
   };
@@ -377,6 +386,7 @@ function profileStubFromSummary(p: EmployeeRateProfileSummary): EmployeeRateProf
       { key: "OT Rate", value: p.otRate },
       { key: "Suspended", value: p.suspended },
       { key: "Profile Photo URL", value: p.profilePhotoUrl },
+      { key: "Google Photo URL", value: p.googlePhotoUrl },
     ],
   };
 }
@@ -401,6 +411,18 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   const [searchQuery, setSearchQuery] = useState("");
   const [rateFilter, setRateFilter] = useState<"all" | "missing_any" | "missing_regular" | "missing_ot" | "missing_both">("all");
   const [page, setPage] = useState(1);
+  // Persist view-mode preference per browser. On mobile we always render cards
+  // (table doesn't fit), so the toggle only appears on md+.
+  const [viewMode, setViewMode] = useState<"cards" | "table">(() => {
+    if (typeof window === "undefined") return "cards";
+    const stored = window.localStorage.getItem("rates-view-mode");
+    return stored === "table" ? "table" : "cards";
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("rates-view-mode", viewMode);
+    }
+  }, [viewMode]);
   const [profileOpen, setProfileOpen] = useState(false);
   const [activeProfile, setActiveProfile] = useState<EmployeeRateProfile | null>(null);
   const [activeProfileSummary, setActiveProfileSummary] = useState<EmployeeRateProfileSummary | null>(null);
@@ -493,6 +515,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<EmployeeRateProfileSummary | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Suspend state — stores the profile.id currently being toggled, or null
   const [isSuspending, setIsSuspending] = useState<string | null>(null);
@@ -940,6 +963,40 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     }
   }
 
+  /**
+   * CSV export — pulls master-list rows and employee_ids in parallel, joins them
+   * with the currently filtered summaries by email, and downloads a flat per-row
+   * CSV with 36 columns grouped by section (identity → comp → address → contact
+   * → payment → media). See src/lib/rates/export-csv.ts for column order.
+   */
+  async function handleExportCsv() {
+    if (filtered.length === 0) {
+      toast.info("Nothing to export — adjust your filter or search.");
+      return;
+    }
+    setIsExporting(true);
+    try {
+      const [empRes, idsRes] = await Promise.all([
+        fetch("/api/employees", { cache: "no-store" }),
+        fetch("/api/employee-ids", { cache: "no-store" }),
+      ]);
+      const empJson = (await empRes.json()) as { employees?: EmployeeRow[] };
+      const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[] };
+      const masterRows = empJson.employees ?? [];
+      const idRows = idsJson.rows ?? [];
+
+      const exportRows = buildExportRows(filtered, masterRows, idRows);
+      const csv = rowsToCsv(exportRows);
+      const filename = `rates_and_profiles_${todayFilenameSuffix()}.csv`;
+      downloadCsv(filename, csv);
+      toast.success(`Exported ${exportRows.length} employee${exportRows.length === 1 ? "" : "s"} → ${filename}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 sm:px-4 sm:py-3 md:px-5 lg:gap-4 lg:py-3 dark:bg-none dark:bg-[#0d1117]">
       {/* Editorial header */}
@@ -966,6 +1023,33 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={isExporting || loading || !!error || filtered.length === 0}
+            onClick={() => void handleExportCsv()}
+            title={
+              filtered.length === 0
+                ? "No rows to export — adjust filter or search"
+                : `Export ${filtered.length} ${filtered.length === 1 ? "row" : "rows"} as CSV`
+            }
+            className="gap-1.5 border-zinc-200 text-zinc-700 hover:bg-zinc-50 hover:text-zinc-900 disabled:opacity-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+          >
+            {isExporting ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            <span className="hidden sm:inline">
+              Export CSV
+              {!isExporting && filtered.length > 0 && (
+                <span className="ml-1 font-mono text-[10px] text-zinc-500 dark:text-zinc-500">
+                  ({filtered.length})
+                </span>
+              )}
+            </span>
+            <span className="sm:hidden">CSV</span>
+          </Button>
           <Button
             type="button"
             onClick={() => {
@@ -1065,6 +1149,50 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
             <option value="missing_ot">Missing OT Rate</option>
             <option value="missing_both">Missing both rates</option>
           </select>
+
+          {/* View mode toggle — sliding pill (cards | table). Hidden on mobile (table doesn't fit). */}
+          <div
+            role="tablist"
+            aria-label="View mode"
+            className="relative hidden h-9 shrink-0 items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/80 md:inline-flex"
+          >
+            {(["cards", "table"] as const).map((mode) => {
+              const isActive = viewMode === mode;
+              const Icon = mode === "cards" ? LayoutGrid : Rows3;
+              const label = mode === "cards" ? "Cards" : "Table";
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-label={`${label} view`}
+                  onClick={() => setViewMode(mode)}
+                  disabled={loading || !!error}
+                  className={cn(
+                    "relative z-10 flex items-center gap-1.5 rounded px-2.5 text-xs font-medium transition-colors duration-200 disabled:opacity-50",
+                    isActive
+                      ? "text-white dark:text-zinc-900"
+                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
+                    "h-7"
+                  )}
+                >
+                  {isActive && (
+                    <motion.span
+                      layoutId="rates-viewmode-pill"
+                      aria-hidden
+                      className="absolute inset-0 rounded bg-zinc-900 dark:bg-zinc-100"
+                      transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center gap-1.5">
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
           {loading ? (
@@ -1078,28 +1206,35 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   <div className="h-8 w-8 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                 </div>
               </div>
-              {/* Table skeleton */}
-              <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800">
-                <div className="flex items-center gap-4 border-b border-zinc-200 bg-gradient-to-r from-orange-50/95 to-blue-50/60 px-3 py-2 dark:border-zinc-800 dark:from-blue-950/90 dark:to-blue-950/70">
-                  {['w-16', 'w-24', 'w-20', 'w-24', 'w-28', 'ml-auto w-16', 'w-16', 'w-16', 'w-20'].map((w, i) => (
-                    <div key={i} className={cn('h-3 animate-pulse rounded bg-zinc-300/80 dark:bg-zinc-700/80', w)} />
-                  ))}
-                </div>
-                <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+              {/* Card grid skeleton */}
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {Array.from({ length: PAGE_SIZE }, (_, i) => (
-                    <div key={i} className="flex items-center gap-4 px-3 py-3">
-                      <div className="h-5 w-16 shrink-0 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" style={{ animationDelay: `${i * 40}ms` }} />
-                      <div className="flex min-w-[11rem] flex-1 items-center gap-2.5">
-                        <div className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-                        <div className="h-3.5 flex-1 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" style={{ animationDelay: `${i * 40 + 20}ms` }} />
+                    <div key={i} className="flex flex-col gap-3 rounded-xl border border-zinc-200/90 bg-white/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40" style={{ animationDelay: `${i * 35}ms` }}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+                          <div className="space-y-1.5">
+                            <div className="h-3.5 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                            <div className="h-2.5 w-16 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+                          </div>
+                        </div>
+                        <div className="h-4 w-14 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
                       </div>
-                      <div className="h-5 w-24 shrink-0 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
-                      <div className="h-5 w-24 shrink-0 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
-                      <div className="h-3 w-40 shrink-0 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
-                      <div className="ml-auto h-3 w-12 shrink-0 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                      <div className="h-3 w-12 shrink-0 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                      <div className="h-5 w-20 shrink-0 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
-                      <div className="h-7 w-20 shrink-0 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+                      <div className="flex gap-1.5">
+                        <div className="h-5 w-16 animate-pulse rounded-md bg-zinc-200/70 dark:bg-zinc-800/70" />
+                        <div className="h-5 w-20 animate-pulse rounded-md bg-zinc-200/70 dark:bg-zinc-800/70" />
+                      </div>
+                      <div className="h-3 w-full animate-pulse rounded bg-zinc-200/50 dark:bg-zinc-800/50" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="h-12 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800/60" />
+                        <div className="h-12 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800/60" />
+                      </div>
+                      <div className="flex gap-1.5 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                        <div className="h-8 flex-1 animate-pulse rounded-md bg-zinc-200/70 dark:bg-zinc-800/70" />
+                        <div className="h-8 w-8 animate-pulse rounded-md bg-zinc-200/70 dark:bg-zinc-800/70" />
+                        <div className="h-8 w-8 animate-pulse rounded-md bg-zinc-200/70 dark:bg-zinc-800/70" />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1154,197 +1289,335 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   </Button>
                 </div>
               </div>
-              <div className="min-h-0 flex-1 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
-                <Table>
-                  <TableHeader className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50/95 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/90">
-                    <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
-                      <TableHead className="w-[7rem] shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                        Employee ID
-                      </TableHead>
-                      <TableHead className="min-w-[11rem] whitespace-normal text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                        Name
-                      </TableHead>
-                      <TableHead className="min-w-[9rem] whitespace-normal text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                        Department
-                      </TableHead>
-                      <TableHead className="min-w-[9rem] whitespace-normal text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                        Organization
-                      </TableHead>
-                      <TableHead className="min-w-[10rem] whitespace-normal text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                        Work Email
-                      </TableHead>
-                      <TableHead className="text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                        Regular Rate
-                      </TableHead>
-                      <TableHead className="text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                        OT Rate
-                      </TableHead>
-                      <TableHead className="min-w-[8rem] text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                        Status
-                      </TableHead>
-                      <TableHead className="w-[160px] text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-500">
-                        Action
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pageRows.map((p) => {
-                      const row = tableRowFromSummary(p);
-                      return (
-                        <TableRow
-                          key={p.id}
-                          className={cn(
-                            "border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/40",
-                            row.suspended && "bg-amber-50/60 opacity-60 dark:bg-amber-950/10",
-                          )}
-                        >
-                          <TableCell className="align-top">
-                            {row.employeeId ? (
-                              <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 font-mono text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
-                                {row.employeeId}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="min-w-[11rem] whitespace-normal break-words align-top font-medium leading-snug text-zinc-900 dark:text-zinc-100">
-                            {(() => {
-                              const av = getAvatarInfoFromSummary(p);
-                              return (
-                                <div className="flex items-center gap-2.5">
-                                  <EmployeeAvatar
-                                    photoUrl={av.photoUrl}
-                                    email={av.email}
-                                    initials={av.initials}
-                                    className="h-7 w-7 text-[10px]"
-                                    pixelSize={56}
-                                  />
-                                  <div className="flex flex-col gap-0.5">
-                                    <span>{row.name}</span>
-                                    {row.suspended && (
-                                      <span className="inline-flex w-fit items-center gap-0.5 rounded border border-amber-300 bg-amber-100 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-400">
-                                        <UserX className="h-2.5 w-2.5" />
-                                        Suspended
-                                      </span>
-                                    )}
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {/* TABLE VIEW — desktop only (md+) when viewMode === 'table' */}
+                {viewMode === "table" && (
+                  <div className="hidden md:block">
+                    <div className="overflow-x-auto rounded-md border border-zinc-200/80 dark:border-zinc-800/80">
+                      <table className="w-full border-collapse text-[13px]">
+                        <thead className="sticky top-0 z-10 bg-gradient-to-r from-orange-50/95 to-blue-50/60 backdrop-blur-sm dark:from-blue-950/90 dark:to-blue-950/70">
+                          <tr className="border-b border-zinc-200 dark:border-zinc-800">
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+                              Employee
+                            </th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+                              ID
+                            </th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+                              Department
+                            </th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+                              Email
+                            </th>
+                            <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+                              Regular
+                            </th>
+                            <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+                              OT
+                            </th>
+                            <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+                              Status
+                            </th>
+                            <th className="w-[120px] px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+                              Actions
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pageRows.map((p) => {
+                            const row = tableRowFromSummary(p);
+                            const av = getAvatarInfoFromSummary(p);
+                            const isMasterOnly = !row.hasRatesRow;
+                            const ratesBlank = !isMasterOnly && (row.regularRate === "—" || row.otRate === "—");
+                            const isComplete = !isMasterOnly && !ratesBlank;
+                            return (
+                              <tr
+                                key={p.id}
+                                className={cn(
+                                  "border-b border-zinc-100 last:border-b-0 transition-colors hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40",
+                                  row.suspended && "bg-amber-50/30 opacity-75 dark:bg-amber-950/10",
+                                )}
+                              >
+                                <td className="px-3 py-2.5">
+                                  <div className="flex items-center gap-2.5">
+                                    <EmployeeAvatar
+                                      photoUrl={av.photoUrl}
+                                      googlePhotoUrl={av.googlePhotoUrl}
+                                      email={av.email}
+                                      initials={av.initials}
+                                      className="h-7 w-7 shrink-0 text-[10px]"
+                                      pixelSize={56}
+                                    />
+                                    <div className="min-w-0">
+                                      <p className="truncate text-[13px] font-medium leading-tight text-zinc-900 dark:text-zinc-100">
+                                        {row.name}
+                                      </p>
+                                      {row.organization && row.organization !== "—" && (
+                                        <p className="mt-0.5 truncate text-[10.5px] text-zinc-500 dark:text-zinc-400">
+                                          {row.organization}
+                                        </p>
+                                      )}
+                                    </div>
                                   </div>
-                                </div>
-                              );
-                            })()}
-                          </TableCell>
-                          <TableCell className="min-w-[9rem] whitespace-normal break-words align-top text-sm leading-snug text-zinc-700 dark:text-zinc-300">
-                            {row.department ? (
-                              <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
-                                {row.department}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="min-w-[9rem] whitespace-normal break-words align-top text-sm leading-snug text-zinc-700 dark:text-zinc-300">
-                            {row.organization && row.organization !== "—" ? (
-                              <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-400">
-                                {row.organization}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="min-w-[10rem] max-w-[280px] whitespace-normal break-all font-mono text-xs leading-snug text-zinc-600 dark:text-zinc-400">
-                            {row.workEmail}
-                          </TableCell>
-                          <TableCell className="text-right font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {row.regularRate}
-                          </TableCell>
-                          <TableCell className="text-right font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {row.otRate}
-                          </TableCell>
-                          <TableCell className="align-top">
-                            {(() => {
-                              const isMasterOnly = !row.hasRatesRow;
-                              const ratesBlank =
-                                !isMasterOnly &&
-                                (row.regularRate === "—" || row.otRate === "—");
-                              if (!isMasterOnly && !ratesBlank) {
-                                return (
-                                  <span className="inline-flex w-fit items-center rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
-                                    Complete
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  {row.employeeId ? (
+                                    <span className="inline-flex items-center rounded border border-orange-200 bg-orange-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                                      {row.employeeId}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-zinc-400 dark:text-zinc-600">—</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  {row.department ? (
+                                    <span className="inline-flex items-center rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
+                                      {row.department}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-zinc-400 dark:text-zinc-600">—</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <span className="block max-w-[220px] truncate font-mono text-[11.5px] text-zinc-600 dark:text-zinc-400">
+                                    {row.workEmail}
                                   </span>
-                                );
-                              }
-                              return (
-                                <div className="flex flex-col gap-0.5">
-                                  {isMasterOnly && (
-                                    <span
-                                      title="No row in employee_hourly_rates — profile built from global_master_list only."
-                                      className="inline-flex w-fit items-center rounded border border-rose-300 bg-rose-100 px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide text-rose-700 dark:border-rose-700/60 dark:bg-rose-950/50 dark:text-rose-400"
-                                    >
+                                </td>
+                                <td className="px-3 py-2.5 text-right">
+                                  <span className={cn(
+                                    "font-mono text-[12.5px] font-semibold tabular-nums",
+                                    row.regularRate === "—" ? "text-zinc-400 dark:text-zinc-600" : "text-zinc-800 dark:text-zinc-200",
+                                  )}>
+                                    {row.regularRate}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2.5 text-right">
+                                  <span className={cn(
+                                    "font-mono text-[12.5px] font-semibold tabular-nums",
+                                    row.otRate === "—" ? "text-zinc-400 dark:text-zinc-600" : "text-zinc-800 dark:text-zinc-200",
+                                  )}>
+                                    {row.otRate}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2.5 text-center">
+                                  {row.suspended ? (
+                                    <span className="inline-flex items-center gap-0.5 rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-400">
+                                      <UserX className="h-2.5 w-2.5" />
+                                      Suspended
+                                    </span>
+                                  ) : isComplete ? (
+                                    <span className="inline-flex items-center rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                      Complete
+                                    </span>
+                                  ) : isMasterOnly ? (
+                                    <span title="No row in employee_hourly_rates" className="inline-flex items-center rounded border border-rose-300 bg-rose-100 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-rose-700 dark:border-rose-700/60 dark:bg-rose-950/50 dark:text-rose-400">
                                       Master only
                                     </span>
-                                  )}
-                                  {ratesBlank && (
-                                    <span
-                                      title="Rates row exists but Regular Rate and/or OT Rate are blank."
-                                      className="inline-flex w-fit items-center rounded border border-yellow-300 bg-yellow-100 px-1.5 py-0 text-[9px] font-bold uppercase tracking-wide text-yellow-800 dark:border-yellow-700/60 dark:bg-yellow-950/50 dark:text-yellow-300"
-                                    >
+                                  ) : (
+                                    <span title="Rates row exists but blank" className="inline-flex items-center rounded border border-yellow-300 bg-yellow-100 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-yellow-800 dark:border-yellow-700/60 dark:bg-yellow-950/50 dark:text-yellow-300">
                                       Rates blank
                                     </span>
                                   )}
-                                </div>
-                              );
-                            })()}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-8 gap-1.5 border-zinc-200 text-zinc-800 dark:border-zinc-700 dark:text-zinc-200"
-                                onClick={() => openProfile(p)}
-                              >
-                                <Eye className="size-3.5" />
-                                View
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={isSuspending === p.id}
-                                onClick={() => handleToggleSuspend(p, !row.suspended)}
-                                title={row.suspended ? `Unsuspend ${p.displayName}` : `Suspend ${p.displayName}`}
-                                className={cn(
-                                  "h-8 w-8 p-0",
-                                  row.suspended
-                                    ? "border-emerald-200 text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50 dark:border-emerald-800/60 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
-                                    : "border-amber-200 text-amber-500 hover:border-amber-300 hover:bg-amber-50 dark:border-amber-800/60 dark:text-amber-400 dark:hover:bg-amber-950/40",
-                                )}
-                              >
-                                {isSuspending === p.id ? (
-                                  <Loader2 className="size-3.5 animate-spin" />
-                                ) : row.suspended ? (
-                                  <UserCheck className="size-3.5" />
-                                ) : (
-                                  <UserX className="size-3.5" />
-                                )}
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-8 w-8 border-zinc-200 p-0 text-red-500 hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-zinc-700 dark:text-red-400 dark:hover:border-red-800 dark:hover:bg-red-950/40 dark:hover:text-red-400"
-                                onClick={() => setDeleteTarget(p)}
-                                title={`Delete ${p.displayName}`}
-                              >
-                                <Trash2 className="size-3.5" />
-                              </Button>
+                                </td>
+                                <td className="px-3 py-2.5 text-right">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 w-7 p-0 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                                      onClick={() => openProfile(p)}
+                                      title={`View ${p.displayName}`}
+                                    >
+                                      <Eye className="size-3.5" />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      disabled={isSuspending === p.id}
+                                      onClick={() => handleToggleSuspend(p, !row.suspended)}
+                                      title={row.suspended ? `Unsuspend ${p.displayName}` : `Suspend ${p.displayName}`}
+                                      className={cn(
+                                        "h-7 w-7 p-0",
+                                        row.suspended
+                                          ? "text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                                          : "text-amber-500 hover:bg-amber-50 hover:text-amber-600 dark:text-amber-400 dark:hover:bg-amber-950/40",
+                                      )}
+                                    >
+                                      {isSuspending === p.id ? (
+                                        <Loader2 className="size-3.5 animate-spin" />
+                                      ) : row.suspended ? (
+                                        <UserCheck className="size-3.5" />
+                                      ) : (
+                                        <UserX className="size-3.5" />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 w-7 p-0 text-red-500 hover:bg-red-50 hover:text-red-600 dark:text-red-400 dark:hover:bg-red-950/40"
+                                      onClick={() => setDeleteTarget(p)}
+                                      title={`Delete ${p.displayName}`}
+                                    >
+                                      <Trash2 className="size-3.5" />
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* CARD VIEW — always shown on mobile; shown on md+ when viewMode === 'cards' */}
+                <div className={cn(
+                  "grid gap-3 sm:grid-cols-2 xl:grid-cols-3",
+                  viewMode === "table" ? "md:hidden" : "",
+                )}>
+                  {pageRows.map((p) => {
+                    const row = tableRowFromSummary(p);
+                    const av = getAvatarInfoFromSummary(p);
+                    const isMasterOnly = !row.hasRatesRow;
+                    const ratesBlank = !isMasterOnly && (row.regularRate === "—" || row.otRate === "—");
+                    const isComplete = !isMasterOnly && !ratesBlank;
+                    return (
+                      <div
+                        key={p.id}
+                        className={cn(
+                          "flex flex-col gap-3 rounded-xl border p-4 transition-shadow hover:shadow-md",
+                          row.suspended
+                            ? "border-amber-200/80 bg-amber-50/40 opacity-70 dark:border-amber-900/40 dark:bg-amber-950/10"
+                            : "border-zinc-200/90 bg-white/80 hover:shadow-zinc-200/60 dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:shadow-black/20",
+                        )}
+                      >
+                        {/* Avatar + name + status badge */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <EmployeeAvatar
+                              photoUrl={av.photoUrl}
+                              googlePhotoUrl={av.googlePhotoUrl}
+                              email={av.email}
+                              initials={av.initials}
+                              className="h-9 w-9 shrink-0 text-[11px]"
+                              pixelSize={72}
+                            />
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
+                                {row.name}
+                              </p>
+                              {row.suspended && (
+                                <span className="mt-0.5 inline-flex items-center gap-0.5 rounded border border-amber-300 bg-amber-100 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-400">
+                                  <UserX className="h-2.5 w-2.5" />
+                                  Suspended
+                                </span>
+                              )}
                             </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                          </div>
+                          {isComplete ? (
+                            <span className="shrink-0 inline-flex items-center rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
+                              Complete
+                            </span>
+                          ) : isMasterOnly ? (
+                            <span title="No row in employee_hourly_rates — profile built from global_master_list only." className="shrink-0 inline-flex items-center rounded border border-rose-300 bg-rose-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-rose-700 dark:border-rose-700/60 dark:bg-rose-950/50 dark:text-rose-400">
+                              Master only
+                            </span>
+                          ) : (
+                            <span title="Rates row exists but Regular Rate and/or OT Rate are blank." className="shrink-0 inline-flex items-center rounded border border-yellow-300 bg-yellow-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-yellow-800 dark:border-yellow-700/60 dark:bg-yellow-950/50 dark:text-yellow-300">
+                              Rates blank
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Chips: employee ID + department + org */}
+                        <div className="flex flex-wrap gap-1.5">
+                          {row.employeeId && (
+                            <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 font-mono text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                              {row.employeeId}
+                            </span>
+                          )}
+                          {row.department && (
+                            <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
+                              {row.department}
+                            </span>
+                          )}
+                          {row.organization && row.organization !== "—" && (
+                            <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-400">
+                              {row.organization}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Work email */}
+                        <p className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                          {row.workEmail}
+                        </p>
+
+                        {/* Rate tiles */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="flex flex-col gap-0.5 rounded-lg border border-zinc-200/80 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+                            <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Regular</span>
+                            <span className="font-mono text-sm font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">{row.regularRate}</span>
+                          </div>
+                          <div className="flex flex-col gap-0.5 rounded-lg border border-zinc-200/80 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+                            <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">OT</span>
+                            <span className="font-mono text-sm font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">{row.otRate}</span>
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-1.5 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 flex-1 gap-1.5 border-zinc-200 text-zinc-800 dark:border-zinc-700 dark:text-zinc-200"
+                            onClick={() => openProfile(p)}
+                          >
+                            <Eye className="size-3.5" />
+                            View
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isSuspending === p.id}
+                            onClick={() => handleToggleSuspend(p, !row.suspended)}
+                            title={row.suspended ? `Unsuspend ${p.displayName}` : `Suspend ${p.displayName}`}
+                            className={cn(
+                              "h-8 w-8 p-0",
+                              row.suspended
+                                ? "border-emerald-200 text-emerald-600 hover:border-emerald-300 hover:bg-emerald-50 dark:border-emerald-800/60 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                                : "border-amber-200 text-amber-500 hover:border-amber-300 hover:bg-amber-50 dark:border-amber-800/60 dark:text-amber-400 dark:hover:bg-amber-950/40",
+                            )}
+                          >
+                            {isSuspending === p.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : row.suspended ? (
+                              <UserCheck className="size-3.5" />
+                            ) : (
+                              <UserX className="size-3.5" />
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 w-8 border-zinc-200 p-0 text-red-500 hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-zinc-700 dark:text-red-400 dark:hover:border-red-800 dark:hover:bg-red-950/40"
+                            onClick={() => setDeleteTarget(p)}
+                            title={`Delete ${p.displayName}`}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
@@ -1716,6 +1989,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                       <div className="shrink-0 rounded-full ring-2 ring-zinc-100 dark:ring-zinc-800">
                         <EmployeeAvatar
                           photoUrl={av.photoUrl}
+                          googlePhotoUrl={av.googlePhotoUrl}
                           email={av.email}
                           initials={av.initials}
                           className="h-12 w-12 text-base"

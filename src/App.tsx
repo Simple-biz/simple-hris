@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
+import { AnimatePresence, motion } from 'motion/react';
 import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Sidebar from './components/Sidebar';
@@ -17,7 +18,7 @@ import OrphanageVisits from './components/payroll/OrphanageVisits';
 import PayrollDispatch from './components/payroll-clerk/PayrollDispatch';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
-import { allowedAccountingTabsForRoles, canAccessAccountingTab } from '@/lib/rbac/accounting-tabs';
+import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForRoles, canAccessAccountingTab } from '@/lib/rbac/accounting-tabs';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -74,12 +75,17 @@ export default function App() {
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   const allowedTabs = allowedAccountingTabsForRoles(roles);
 
+  const tabDirRef = useRef<1 | -1>(1);
+
   const navigate = (tab: string) => {
     if (!canAccessAccountingTab(tab, roles)) {
       setActiveTab(allowedTabs[0] ?? 'payment-dispatch');
       setMobileNavOpen(false);
       return;
     }
+    const currentIdx = ACCOUNTING_TAB_IDS.indexOf(activeTab as typeof ACCOUNTING_TAB_IDS[number]);
+    const nextIdx = ACCOUNTING_TAB_IDS.indexOf(tab as typeof ACCOUNTING_TAB_IDS[number]);
+    tabDirRef.current = nextIdx >= currentIdx ? 1 : -1;
     setActiveTab(tab);
     setMobileNavOpen(false);
   };
@@ -174,7 +180,21 @@ export default function App() {
             Accounting HRIS
           </span>
         </header>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{renderContent()}</div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <AnimatePresence mode="wait" initial={false} custom={tabDirRef.current}>
+            <motion.div
+              key={activeTab}
+              custom={tabDirRef.current}
+              initial={(dir: number) => ({ opacity: 0, y: dir * 28 })}
+              animate={{ opacity: 1, y: 0 }}
+              exit={(dir: number) => ({ opacity: 0, y: dir * -20 })}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            >
+              {renderContent()}
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>

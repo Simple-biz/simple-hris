@@ -5,6 +5,7 @@ import {
   Clock,
   AlertCircle,
   CalendarDays,
+  ChevronDown,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -1303,35 +1304,54 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
 
   if (loading) {
     return (
-      <div className="box-border flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-3 sm:px-4 sm:py-4 md:px-5 dark:bg-none dark:bg-[#0d1117]">
-        {/* Header skeleton */}
-        <div className="flex shrink-0 flex-col gap-2">
-          <div className="h-7 w-40 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
-          <div className="hidden h-4 w-72 animate-pulse rounded bg-zinc-200/70 lg:block dark:bg-zinc-800/70" />
-          <div className="hidden h-3.5 w-48 animate-pulse rounded bg-zinc-200/50 lg:block dark:bg-zinc-800/50" />
-        </div>
-        {/* Bonus indicators skeleton — desktop only (mobile is charts-first) */}
-        <div className="hidden shrink-0 rounded-xl border border-zinc-200/80 bg-white/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/30 lg:block">
-          <div className="mb-3 h-4 w-44 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-          <div className="space-y-2.5">
-            <div className="flex items-center gap-3 rounded-lg border border-zinc-200/60 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-              <div className="flex-1 space-y-1.5">
-                <div className="h-3.5 w-52 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                <div className="h-3 w-80 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
-              </div>
-              <div className="h-6 w-16 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.3, ease: 'easeOut' }}
+        className="box-border flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-3 sm:px-4 sm:py-4 md:px-5 dark:bg-none dark:bg-[#0d1117]"
+      >
+        {/* Branded header */}
+        <div className="flex shrink-0 items-center gap-4 border-b border-zinc-200/70 pb-3 dark:border-zinc-800/70">
+          <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-[13px] bg-gradient-to-br from-orange-500 via-amber-500 to-orange-600 text-xl font-bold text-white shadow-lg shadow-orange-400/25">
+            s
+            <div className="absolute inset-0 rounded-[13px] ring-[3px] ring-orange-400/20 ring-offset-2 ring-offset-white dark:ring-offset-[#0d1117]" />
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              {[0, 1, 2].map((i) => (
+                <motion.div
+                  key={i}
+                  className="h-1.5 w-1.5 rounded-full bg-orange-400 dark:bg-orange-500"
+                  animate={{ opacity: [0.25, 1, 0.25], scale: [0.75, 1, 0.75] }}
+                  transition={{ duration: 1.2, delay: i * 0.2, repeat: Infinity, ease: 'easeInOut' }}
+                />
+              ))}
+              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">Loading dashboard…</span>
             </div>
-            <div className="flex items-center gap-3 rounded-lg border border-zinc-200/60 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
-              <div className="flex-1 space-y-1.5">
-                <div className="h-3.5 w-40 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                <div className="h-3 w-64 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
-              </div>
-              <div className="h-6 w-24 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+            <div className="flex gap-2">
+              <div className="h-3 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+              <div className="h-3 w-16 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
             </div>
           </div>
         </div>
+
+        {/* Bonus indicators skeleton — desktop only */}
+        <div className="hidden shrink-0 rounded-xl border border-zinc-200/80 bg-white/60 p-4 dark:border-zinc-800 dark:bg-zinc-900/30 lg:block">
+          <div className="mb-3 h-4 w-44 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          <div className="space-y-2.5">
+            {[52, 40].map((w, i) => (
+              <div key={i} className="flex items-center gap-3 rounded-lg border border-zinc-200/60 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+                <div className="flex-1 space-y-1.5">
+                  <div className={`h-3.5 w-${w} animate-pulse rounded bg-zinc-200 dark:bg-zinc-800`} />
+                  <div className="h-3 w-80 animate-pulse rounded bg-zinc-200/60 dark:bg-zinc-800/60" />
+                </div>
+                <div className="h-6 w-16 shrink-0 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Stats cards skeleton */}
         <div className="grid shrink-0 grid-cols-2 gap-2 md:grid-cols-5 md:gap-3">
           {Array.from({ length: 5 }, (_, i) => (
@@ -1345,6 +1365,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
             </div>
           ))}
         </div>
+
         {/* Chart + Calendar + Summary skeleton */}
         <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:gap-4">
           <div className="flex min-h-[10rem] flex-1 flex-col rounded-xl border border-zinc-200/60 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/30 lg:min-h-0">
@@ -1379,7 +1400,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
             </div>
           </div>
         </div>
-      </div>
+      </motion.div>
     );
   }
 
@@ -1440,25 +1461,28 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
           {sourceFiles.length > 0 && (
             <div className="mt-3 flex max-w-xl items-center gap-2">
               <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-              <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
                 Source
               </span>
-              <select
-                value={selectedFile ?? ''}
-                onChange={(e) => {
-                  setSelectedFile(e.target.value || null);
-                  setManualFileSelect(true);
-                }}
-                className="h-7 min-w-0 flex-1 rounded-md border border-zinc-200 bg-white/90 px-2 pr-6 font-mono text-[11px] text-zinc-700 transition-colors hover:border-zinc-300 focus:border-emerald-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:border-zinc-700 dark:focus:border-emerald-400"
-              >
-                <option value="__all__">All Time · combined</option>
-                {sourceFiles.map((file, i) => (
-                  <option key={file} value={file}>
-                    {file}{i === 0 ? ' (latest)' : ''}
-                  </option>
-                ))}
-              </select>
-              {fileLoading && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-emerald-500" />}
+              <div className="relative min-w-0 flex-1">
+                <select
+                  value={selectedFile ?? ''}
+                  onChange={(e) => {
+                    setSelectedFile(e.target.value || null);
+                    setManualFileSelect(true);
+                  }}
+                  className="h-7 w-full appearance-none rounded-md border border-zinc-200/90 bg-white pl-2.5 pr-7 font-mono text-[11px] text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:focus:border-orange-500/60"
+                >
+                  <option value="__all__">All Time · combined</option>
+                  {sourceFiles.map((file, i) => (
+                    <option key={file} value={file}>
+                      {file}{i === 0 ? ' (latest)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
+              </div>
+              {fileLoading && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-orange-500" />}
             </div>
           )}
         </div>
@@ -1505,7 +1529,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
         </Card>
       )}
 
-      {!row && !dataError ? (
+      {!row && !dataError && !fileLoading ? (
         <Card className="min-h-0 flex-1 overflow-y-auto border-amber-200 bg-amber-50/50 dark:border-amber-500/20 dark:bg-amber-950/20">
           <CardContent className="flex items-center gap-3 py-4 sm:py-6">
             <AlertCircle className="h-5 w-5 text-amber-500" />

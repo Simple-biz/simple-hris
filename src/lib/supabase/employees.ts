@@ -25,15 +25,18 @@ export type EmployeeRow = {
     bankName: string | null;
     routingNumber: string | null;
   } | null;
-  address?: {
-    street: string | null;
-    city: string | null;
-    state: string | null;
-    zip: string | null;
-    country: string | null;
-  } | null;
+  /** Flat address fields added 2026-05-02 — sourced from global_master_list columns
+   *  street / city / province / postal_code / full_address (backfilled from payroll sheet). */
+  street?: string | null;
+  city?: string | null;
+  province?: string | null;
+  postal_code?: string | null;
+  full_address?: string | null;
   /** Public URL from Supabase Storage when set (see references/supabase_employee_profile_photos.sql). */
   profile_photo_url?: string | null;
+  /** Google Workspace profile picture URL — populated by NextAuth jwt callback on sign-in
+   *  (see src/lib/auth/auth-options.ts). Used as the FIRST avatar source. */
+  google_photo_url?: string | null;
 };
 
 type RawRow = Record<string, unknown>;
@@ -140,6 +143,12 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
     "Profile_Photo_URL",
     "profile photo url",
   ]);
+  const street = pick(row, ["street", "Street"]);
+  const city = pick(row, ["city", "City"]);
+  const province = pick(row, ["province", "Province"]);
+  const postal_code = pick(row, ["postal_code", "Postal Code", "PostalCode", "postal"]);
+  const full_address = pick(row, ["full_address", "Full Address", "FullAddress"]);
+  const google_photo_url = pick(row, ["google_photo_url", "Google Photo URL", "google_picture"]);
 
   return {
     employee_id: null, // populated later by generateEmployeeIds
@@ -150,9 +159,15 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
     start_date: start_date != null ? String(start_date) : null,
     hourlyRate: null,
     bankInfo: null,
-    address: null,
+    street: street != null ? String(street).trim() || null : null,
+    city: city != null ? String(city).trim() || null : null,
+    province: province != null ? String(province).trim() || null : null,
+    postal_code: postal_code != null ? String(postal_code).trim() || null : null,
+    full_address: full_address != null ? String(full_address).trim() || null : null,
     profile_photo_url:
       profile_photo_url != null ? String(profile_photo_url).trim() || null : null,
+    google_photo_url:
+      google_photo_url != null ? String(google_photo_url).trim() || null : null,
   };
 }
 
@@ -167,8 +182,19 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
  * Extended fields (Hourly Rate, bank info, address) live in separate tables
  * and are NOT selected here to avoid PostgREST "column does not exist" errors.
  */
-const GLOBAL_MASTER_SELECT =
+/** Base columns that have always been on global_master_list. Safe to query whether or
+ *  not the address-columns migration has run + the active_employees view recreated. */
+const GLOBAL_MASTER_SELECT_BASE =
   'Department,Name,"Personal Email","Work Email","Start Date","Profile Photo URL"';
+
+/** Includes the home-address columns added 2026-05-02 and the Google SSO photo
+ *  column added 2026-05-02. The active_employees view must be refreshed
+ *  (see references/seed_global_master_list_addresses.sql and
+ *  references/seed_global_master_list_google_photo.sql) before this select
+ *  shape resolves successfully against the view. */
+const GLOBAL_MASTER_SELECT =
+  GLOBAL_MASTER_SELECT_BASE +
+  ',street,city,province,postal_code,full_address,google_photo_url';
 
 /** True when every field is null, empty, or whitespace-only. */
 function isRowEmptyOrWhitespace(row: EmployeeRow): boolean {
@@ -181,16 +207,24 @@ function isRowEmptyOrWhitespace(row: EmployeeRow): boolean {
 async function fetchActiveEmployees(
   supabase: NonNullable<ReturnType<typeof createSupabaseServerClient>>,
 ): Promise<{ employees: EmployeeRow[]; error: string | null }> {
-  const { data, error } = await supabase
-    .from(ACTIVE_EMPLOYEES_VIEW)
-    .select(GLOBAL_MASTER_SELECT)
-    .range(0, 9999);
+  // Try the full select first (includes address columns added 2026-05-02). If the
+  // active_employees view hasn't been refreshed since the ALTER TABLE, PostgREST
+  // returns "column does not exist" — fall back to the base select so the dashboard
+  // keeps working. Address fields are still served via /api/employee-master-record,
+  // which queries global_master_list directly.
+  const queryView = async (sel: string) =>
+    supabase.from(ACTIVE_EMPLOYEES_VIEW).select(sel).range(0, 9999);
 
-  if (error) {
-    return { employees: [], error: error.message };
+  let res = await queryView(GLOBAL_MASTER_SELECT);
+  if (res.error && /does not exist/i.test(res.error.message ?? "")) {
+    res = await queryView(GLOBAL_MASTER_SELECT_BASE);
   }
 
-  const raw = (data ?? []) as RawRow[];
+  if (res.error) {
+    return { employees: [], error: res.error.message };
+  }
+
+  const raw = (res.data ?? []) as unknown as RawRow[];
   const employees = raw
     .map(mapEmployeeRow)
     .filter((row) => !isRowEmptyOrWhitespace(row));
@@ -206,6 +240,69 @@ async function fetchActiveEmployees(
 
   generateEmployeeIds(employees);
   return { employees, error: null };
+}
+
+/**
+ * Looks up a single record from `global_master_list` by Work Email or Personal Email,
+ * regardless of whether the row is in the current upload (i.e. visible in `active_employees`).
+ *
+ * Used as a fallback for the employee Profile page so identity (name, department, start
+ * date, employee_id) still renders for people who fell off the latest master-list upload —
+ * e.g. internal staff like devs who aren't part of the regular CSV reconciliation.
+ *
+ * Returns the most recent row (by `last_seen_upload_id` desc when multiple). The
+ * employee_id is generated locally via the same yymm-NNNN scheme used by `getEmployees`,
+ * but only against this single row — IDs aren't authoritative without the full roster context.
+ */
+export async function getEmployeeMasterRecord(
+  email: string | null | undefined,
+): Promise<{ employee: EmployeeRow | null; error: string | null }> {
+  const target = email?.trim().toLowerCase();
+  if (!target) return { employee: null, error: null };
+
+  const supabase = createSupabaseServerClient();
+  if (!supabase) {
+    return {
+      employee: null,
+      error:
+        "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env file.",
+    };
+  }
+
+  // Query the underlying table (not the active view) so people who fell off the latest
+  // upload still resolve. Try Work Email first, then Personal Email. Falls back to the
+  // base select (no address columns) if the address migration hasn't been applied yet.
+  const fullSelect = `${GLOBAL_MASTER_SELECT},last_seen_upload_id`;
+  const baseSelect = `${GLOBAL_MASTER_SELECT_BASE},last_seen_upload_id`;
+  const queryFor = async (column: string, sel: string) =>
+    supabase
+      .from('global_master_list')
+      .select(sel)
+      .ilike(column, target)
+      .order('last_seen_upload_id', { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+
+  const tryWith = async (sel: string) => {
+    let r = await queryFor('"Work Email"', sel);
+    if (!r.data && !r.error) {
+      r = await queryFor('"Personal Email"', sel);
+    }
+    return r;
+  };
+
+  let res = await tryWith(fullSelect);
+  if (res.error && /does not exist/i.test(res.error.message ?? "")) {
+    res = await tryWith(baseSelect);
+  }
+  if (res.error) return { employee: null, error: res.error.message };
+  if (!res.data) return { employee: null, error: null };
+
+  const row = mapEmployeeRow(res.data as unknown as RawRow);
+  if (isRowEmptyOrWhitespace(row)) return { employee: null, error: null };
+  // Generate a single-row employee_id placeholder so the Profile can show "2511-0001" style.
+  generateEmployeeIds([row]);
+  return { employee: row, error: null };
 }
 
 export async function getEmployees(): Promise<{

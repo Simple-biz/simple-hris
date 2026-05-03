@@ -52,7 +52,10 @@
       "Bash(mkdir -p \"C:/Users/Itachi/Desktop/simple-hris/src/components/payroll-clerk\")",
       "Read(//tmp/**)",
       "Bash(awk -F, '{ *)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(python -c \"import sys, csv; r = csv.reader\\(sys.stdin\\); print\\(next\\(r\\)\\)\")",
+      "Bash(python *)",
+      "Bash(findstr /v \"node_modules\")"
     ]
   }
 }

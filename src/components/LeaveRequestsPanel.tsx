@@ -9,8 +9,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Loader2,
   RefreshCw,
   Search,
+  Trash2,
   X,
   XCircle,
 } from 'lucide-react';
@@ -38,6 +40,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
+import { LEAVE_DELETE_ROLES } from '@/lib/supabase/leave-requests';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 
 const PAGE_SIZE = 15;
@@ -98,6 +101,7 @@ function formatDateRange(start: string, end: string): string {
 
 export default function LeaveRequestsPanel() {
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [canDelete, setCanDelete] = useState(false);
   useEffect(() => {
     try {
       const e = sessionStorage.getItem(SESSION_EMAIL_KEY);
@@ -106,6 +110,28 @@ export default function LeaveRequestsPanel() {
       /* ignore */
     }
   }, []);
+
+  // Resolve admin/payroll_manager privilege so the trash button only appears for those roles.
+  useEffect(() => {
+    if (!currentUser) {
+      setCanDelete(false);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/employee-roles?email=${encodeURIComponent(currentUser)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { rows?: { role: string }[] }) => {
+        if (cancelled) return;
+        const roles = (j.rows ?? []).map((r) => r.role);
+        setCanDelete(roles.some((r) => LEAVE_DELETE_ROLES.includes(r)));
+      })
+      .catch(() => {
+        if (!cancelled) setCanDelete(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
 
   const [rows, setRows] = useState<LeaveRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,6 +145,9 @@ export default function LeaveRequestsPanel() {
   const [approverEmail, setApproverEmail] = useState('');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<LeaveRequestRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -207,6 +236,25 @@ export default function LeaveRequestsPanel() {
       toast.error(e instanceof Error ? e.message : 'Failed');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget?.id) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/leave-requests/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || 'Delete failed');
+      toast.success('Leave request deleted');
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete');
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -470,40 +518,68 @@ export default function LeaveRequestsPanel() {
                         </Badge>
                       </TableCell>
                       <TableCell className="align-top text-right">
-                        {r.status === 'pending' ? (
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-400"
-                              onClick={() => openDialog(r, 'approve')}
-                            >
-                              <Check className="mr-1 h-3 w-3" />
-                              Approve
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-400"
-                              onClick={() => openDialog(r, 'reject')}
-                            >
-                              <X className="mr-1 h-3 w-3" />
-                              Reject
-                            </Button>
-                          </div>
-                        ) : r.approver_email ? (
-                          <div
-                            className="flex flex-col items-end gap-0.5 text-[10px] text-zinc-500 dark:text-zinc-400"
-                            title={r.approver_note ?? undefined}
-                          >
-                            <span className="font-mono">{r.approver_email}</span>
-                            {r.approver_note && (
-                              <span className="max-w-[160px] truncate italic">{r.approver_note}</span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-[10px] text-zinc-400">—</span>
-                        )}
+                        <div className="flex flex-col items-end gap-1.5">
+                          {r.status === 'pending' ? (
+                            <div className="flex justify-end gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-400"
+                                onClick={() => openDialog(r, 'approve')}
+                              >
+                                <Check className="mr-1 h-3 w-3" />
+                                Approve
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-400"
+                                onClick={() => openDialog(r, 'reject')}
+                              >
+                                <X className="mr-1 h-3 w-3" />
+                                Reject
+                              </Button>
+                              {canDelete && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  title="Permanently delete this request"
+                                  className="h-7 w-7 border-zinc-200 p-0 text-rose-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 dark:border-zinc-700 dark:text-rose-400 dark:hover:border-rose-800 dark:hover:bg-rose-950/40"
+                                  onClick={() => setDeleteTarget(r)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex items-end justify-end gap-1.5">
+                              {r.approver_email ? (
+                                <div
+                                  className="flex flex-col items-end gap-0.5 text-[10px] text-zinc-500 dark:text-zinc-400"
+                                  title={r.approver_note ?? undefined}
+                                >
+                                  <span className="font-mono">{r.approver_email}</span>
+                                  {r.approver_note && (
+                                    <span className="max-w-[160px] truncate italic">{r.approver_note}</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-zinc-400">—</span>
+                              )}
+                              {canDelete && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  title="Permanently delete this request"
+                                  className="h-7 w-7 shrink-0 border-zinc-200 p-0 text-rose-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 dark:border-zinc-700 dark:text-rose-400 dark:hover:border-rose-800 dark:hover:bg-rose-950/40"
+                                  onClick={() => setDeleteTarget(r)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -588,6 +664,95 @@ export default function LeaveRequestsPanel() {
             >
               {saving && <RefreshCw className="mr-1.5 h-3 w-3 animate-spin" />}
               {action === 'approve' ? 'Approve' : 'Reject'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Admin delete confirmation */}
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-950/60">
+                <Trash2 className="size-4 text-rose-600 dark:text-rose-400" />
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="text-sm">Delete leave request</DialogTitle>
+                <DialogDescription className="mt-0.5 text-xs">
+                  This permanently removes the record. Cannot be undone.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          {deleteTarget && (
+            <div className="space-y-1.5 text-[12.5px] text-zinc-700 dark:text-zinc-300">
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Employee</span>{' '}
+                <span className="font-medium">
+                  {deleteTarget.employee_name ?? deleteTarget.employee_email}
+                </span>
+              </p>
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Type</span>{' '}
+                <span className="font-medium">{deleteTarget.leave_type}</span>
+              </p>
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Dates</span>{' '}
+                <span className="font-medium">
+                  {formatDateRange(deleteTarget.start_date, deleteTarget.end_date)}
+                </span>{' '}
+                <span className="text-[11px] text-zinc-500">
+                  ({daysBetween(deleteTarget.start_date, deleteTarget.end_date)}d)
+                </span>
+              </p>
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Status</span>{' '}
+                <span className="font-medium">
+                  {STATUS_BADGE[deleteTarget.status]?.label ?? deleteTarget.status}
+                </span>
+              </p>
+              {deleteTarget.approver_email && (
+                <p className="mt-2 rounded-md border border-amber-200/60 bg-amber-50/70 px-2.5 py-1.5 text-[11.5px] leading-snug text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                  Already actioned by{' '}
+                  <span className="font-medium">{deleteTarget.approver_email}</span>. Deleting wipes the
+                  row; the deletion is recorded as <code className="font-mono">leave.admin_deleted</code> in the
+                  audit log.
+                </p>
+              )}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={deleting}
+              onClick={() => setDeleteTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={deleting}
+              onClick={() => void confirmDelete()}
+              className="gap-1.5 bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-700 dark:hover:bg-rose-600"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Deleting…
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-3 w-3" />
+                  Delete
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

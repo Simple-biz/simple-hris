@@ -14,6 +14,7 @@ import {
   Pencil,
   RefreshCw,
   Search,
+  Trash2,
   Undo2,
   XCircle,
 } from 'lucide-react';
@@ -43,6 +44,7 @@ import { cn } from '@/lib/utils';
 import type { PabDayDisputeRow, PabDisputeReasonCode } from '@/lib/supabase/pab-day-disputes';
 import {
   DISPUTE_ACTOR_ROLES,
+  DISPUTE_DELETE_ROLES,
   disputeGrantsPabForgiveness,
   isOrphanageStyleReason,
 } from '@/lib/supabase/pab-day-disputes';
@@ -74,6 +76,7 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
 export default function PabDisputeQueue() {
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [canApprove, setCanApprove] = useState(false);
+  const [canDelete, setCanDelete] = useState(false);
   const searchParams = useSearchParams();
   const emailFromQuery = searchParams.get('email');
   useEffect(() => {
@@ -90,7 +93,7 @@ export default function PabDisputeQueue() {
     } catch { /* ignore */ }
   }, [emailFromQuery]);
   useEffect(() => {
-    if (!currentUser) { setCanApprove(false); return; }
+    if (!currentUser) { setCanApprove(false); setCanDelete(false); return; }
     let cancelled = false;
     fetch(`/api/employee-roles?email=${encodeURIComponent(currentUser)}`, { cache: 'no-store' })
       .then(r => r.json())
@@ -98,8 +101,9 @@ export default function PabDisputeQueue() {
         if (cancelled) return;
         const roles = (j.rows ?? []).map(r => r.role);
         setCanApprove(roles.some(r => DISPUTE_ACTOR_ROLES.includes(r)));
+        setCanDelete(roles.some(r => DISPUTE_DELETE_ROLES.includes(r)));
       })
-      .catch(() => { if (!cancelled) setCanApprove(false); });
+      .catch(() => { if (!cancelled) { setCanApprove(false); setCanDelete(false); } });
     return () => { cancelled = true; };
   }, [currentUser]);
 
@@ -127,6 +131,9 @@ export default function PabDisputeQueue() {
   const [returnToOrphanageRow, setReturnToOrphanageRow] = useState<PabDayDisputeRow | null>(null);
   const [returnNote, setReturnNote] = useState('');
   const [returning, setReturning] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<PabDayDisputeRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const openEdit = useCallback((row: PabDayDisputeRow) => {
     setEditDialog(row);
@@ -357,6 +364,25 @@ export default function PabDisputeQueue() {
     }
   }, [returnToOrphanageRow, returnNote, currentUser, fetchDisputes]);
 
+  const handleAdminDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/pab-disputes/${deleteTarget.id}?mode=admin`, {
+        method: 'DELETE',
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed');
+      toast.success('Dispute deleted');
+      setDeleteTarget(null);
+      fetchDisputes();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete dispute');
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteTarget, fetchDisputes]);
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-br from-white via-indigo-50/40 to-violet-50/20 p-4 sm:p-5 dark:bg-none dark:bg-[#0d1117]">
       <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -564,63 +590,77 @@ export default function PabDisputeQueue() {
                       ) : '—'}
                     </TableCell>
                     <TableCell className="min-w-[220px] text-right align-top">
-                      {d.status === 'pending' || d.status === 'orphanage_manager_approved' ? (
-                        <div className="flex flex-wrap justify-end gap-1">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={!canApprove}
-                            title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
-                            className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
-                            onClick={() => {
-                              setDecideDialog({ dispute: d, action: 'approve' });
-                              setDecisionNote('');
-                              setOverrideHrs('');
-                              setOverrideMins('');
-                            }}
-                          >
-                            Approve
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={!canApprove}
-                            title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
-                            className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
-                            onClick={() => { setDecideDialog({ dispute: d, action: 'deny' }); setDecisionNote(''); setOverrideHrs(''); setOverrideMins(''); }}
-                          >
-                            Deny
-                          </Button>
-                          {isOrphanageStyleReason(d.reason) && d.status === 'orphanage_manager_approved' && (
+                      <div className="flex flex-wrap justify-end gap-1">
+                        {d.status === 'pending' || d.status === 'orphanage_manager_approved' ? (
+                          <>
                             <Button
                               size="sm"
                               variant="outline"
                               disabled={!canApprove}
-                              title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : 'Send back to Orphanage managers'}
-                              className="h-7 border-amber-300 px-2 text-[11px] text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-700 dark:text-amber-300"
+                              title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
+                              className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
                               onClick={() => {
-                                setReturnToOrphanageRow(d);
-                                setReturnNote('');
+                                setDecideDialog({ dispute: d, action: 'approve' });
+                                setDecisionNote('');
+                                setOverrideHrs('');
+                                setOverrideMins('');
                               }}
                             >
-                              <Undo2 className="mr-1 h-3 w-3" />
-                              Return
+                              Approve
                             </Button>
-                          )}
-                        </div>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={!canApprove}
-                          title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
-                          className="h-7 border-zinc-300 px-2 text-[11px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300"
-                          onClick={() => openEdit(d)}
-                        >
-                          <Pencil className="mr-1 h-3 w-3" />
-                          Edit
-                        </Button>
-                      )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={!canApprove}
+                              title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
+                              className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
+                              onClick={() => { setDecideDialog({ dispute: d, action: 'deny' }); setDecisionNote(''); setOverrideHrs(''); setOverrideMins(''); }}
+                            >
+                              Deny
+                            </Button>
+                            {isOrphanageStyleReason(d.reason) && d.status === 'orphanage_manager_approved' && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={!canApprove}
+                                title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : 'Send back to Orphanage managers'}
+                                className="h-7 border-amber-300 px-2 text-[11px] text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-700 dark:text-amber-300"
+                                onClick={() => {
+                                  setReturnToOrphanageRow(d);
+                                  setReturnNote('');
+                                }}
+                              >
+                                <Undo2 className="mr-1 h-3 w-3" />
+                                Return
+                              </Button>
+                            )}
+                          </>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!canApprove}
+                            title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
+                            className="h-7 border-zinc-300 px-2 text-[11px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300"
+                            onClick={() => openEdit(d)}
+                          >
+                            <Pencil className="mr-1 h-3 w-3" />
+                            Edit
+                          </Button>
+                        )}
+
+                        {canDelete && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            title="Permanently delete this dispute (admin / payroll_manager only)"
+                            className="h-7 w-7 border-zinc-200 p-0 text-rose-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 dark:border-zinc-700 dark:text-rose-400 dark:hover:border-rose-800 dark:hover:bg-rose-950/40"
+                            onClick={() => setDeleteTarget(d)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -990,6 +1030,82 @@ export default function PabDisputeQueue() {
               >
                 {returning && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
                 Return to Orphanage
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Admin delete confirmation */}
+      {deleteTarget && (
+        <Dialog open onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <div className="flex items-center gap-3">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-950/60">
+                  <Trash2 className="size-4 text-rose-600 dark:text-rose-400" />
+                </div>
+                <div className="min-w-0">
+                  <DialogTitle className="text-sm">Delete dispute</DialogTitle>
+                  <DialogDescription className="mt-0.5 text-xs">
+                    This permanently removes the record. Cannot be undone.
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+            <div className="space-y-2 text-[12.5px] text-zinc-700 dark:text-zinc-300">
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Employee</span>{' '}
+                <span className="font-medium">{deleteTarget.work_email}</span>
+              </p>
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Date</span>{' '}
+                <span className="font-medium">{deleteTarget.dispute_date}</span>
+              </p>
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Reason</span>{' '}
+                <span className="font-medium">{reasonLabel(deleteTarget.reason)}</span>
+              </p>
+              <p>
+                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Status</span>{' '}
+                <span className="font-medium">
+                  {STATUS_BADGE[deleteTarget.status]?.label ?? deleteTarget.status}
+                </span>
+              </p>
+              {deleteTarget.decided_by && (
+                <p className="rounded-md border border-amber-200/60 bg-amber-50/70 px-2.5 py-1.5 text-[11.5px] leading-snug text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                  This dispute was already decided by{' '}
+                  <span className="font-medium">{deleteTarget.decided_by}</span>. Deleting it removes the audit trail
+                  on the row itself; the deletion is logged separately as <code className="font-mono">pab_dispute.admin_deleted</code>.
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={deleting}
+                onClick={handleAdminDelete}
+                className="gap-1.5 bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-700 dark:hover:bg-rose-600"
+              >
+                {deleting ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Deleting…
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3 w-3" />
+                    Delete
+                  </>
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>

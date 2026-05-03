@@ -26,6 +26,7 @@ import {
   LayoutGrid,
   Rows3,
   Activity,
+  MapPin,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -341,7 +342,7 @@ function SimpleView({
               <span>Initial pay · bonuses applied at payroll</span>
             </p>
           </div>
-          <div className="flex min-w-[280px] flex-col items-end gap-3">
+          <div className="flex w-full flex-col items-start gap-3 lg:w-auto lg:min-w-[280px] lg:items-end">
             {activePeriod && (
               <div className="text-[12.5px] font-medium text-zinc-500 dark:text-zinc-400">
                 <strong className="font-semibold text-zinc-900 dark:text-white">{activePeriod.label}</strong>
@@ -605,8 +606,85 @@ function SimpleView({
               </div>
             </div>
 
-            {/* Table */}
-            <div className="overflow-x-auto">
+            {/* Mobile cards — md:hidden */}
+            <div className="grid gap-3 p-3 sm:grid-cols-2 md:hidden">
+              {loading ? (
+                <div className="col-span-full flex items-center justify-center gap-2 py-8 text-sm text-zinc-500 dark:text-zinc-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                </div>
+              ) : pageRows.length === 0 ? (
+                <div className="col-span-full py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                  No workers match your search.
+                </div>
+              ) : (
+                pageRows.map((row) => {
+                  const email = row.work_email ?? row.personal_email ?? '';
+                  const emailKey = normEmail(email) ?? '';
+                  const pay = emailKey ? employeePayByEmail[emailKey] : undefined;
+                  const isHubstaff = row.recordSource === 'hubstaff';
+                  return (
+                    <div
+                      key={`${row.recordSource}-${email}-${row.name ?? ''}`}
+                      className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/40"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-[11px] font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                          {initialsFromName(row.name)}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium leading-tight text-zinc-900 dark:text-white">{row.name ?? '—'}</div>
+                          <div className="truncate font-mono text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">{email || '—'}</div>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[11.5px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                          {row.department ?? '—'}
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 text-[10.5px] font-medium text-zinc-500 dark:text-zinc-400">
+                          <span className={cn('inline-block h-1.5 w-1.5 rounded-full', isHubstaff ? 'bg-blue-700 dark:bg-blue-500' : 'bg-emerald-700 dark:bg-emerald-500')} />
+                          {isHubstaff ? 'Hubstaff' : 'Master'}
+                        </span>
+                        {row.start_date && (
+                          <span className="text-[11px] text-zinc-400 dark:text-zinc-600">{formatStartDate(row.start_date)}</span>
+                        )}
+                      </div>
+                      {(() => {
+                        const loc = [row.city, row.province].filter(Boolean).join(', ');
+                        return loc ? (
+                          <div className="flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                            <MapPin className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{loc}</span>
+                          </div>
+                        ) : null;
+                      })()}
+                      <div className="flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                        <div className="flex gap-4">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-600">Hours</div>
+                            <div className="font-mono text-sm font-medium text-zinc-900 dark:text-white">{pay ? `${pay.hours.toFixed(2)}h` : '—'}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-600">Pay</div>
+                            <div className={cn('font-mono text-sm font-medium', pay?.pay == null ? 'text-zinc-400 dark:text-zinc-600' : 'text-zinc-900 dark:text-white')}>{pay ? formatPhp(pay.pay, 2) : '—'}</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={!email || !onViewRates}
+                          onClick={() => email && onViewRates?.(email)}
+                          className="inline-flex h-8 items-center gap-1 rounded-lg border border-orange-200 bg-orange-50 px-2.5 text-[11px] font-medium text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-30 dark:border-orange-800/50 dark:bg-orange-900/20 dark:text-orange-400"
+                        >
+                          View <ChevronRight className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Desktop table — hidden on mobile */}
+            <div className="hidden overflow-x-auto md:block">
               <table className="w-full border-collapse text-[13px]">
                 <thead>
                   <tr>
@@ -667,6 +745,15 @@ function SimpleView({
                                 <div className="mt-0.5 font-mono text-[11.5px] leading-tight text-zinc-500 dark:text-zinc-400">
                                   {email || '—'}
                                 </div>
+                                {(() => {
+                                  const loc = [row.city, row.province].filter(Boolean).join(', ');
+                                  return loc ? (
+                                    <div className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+                                      <MapPin className="h-3 w-3" />
+                                      {loc}
+                                    </div>
+                                  ) : null;
+                                })()}
                               </div>
                             </div>
                           </td>
@@ -1635,12 +1722,12 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         ? 'bg-[#fafaf8] dark:bg-none'
         : 'bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none',
     )}>
-      <div className="flex shrink-0 items-center justify-between gap-3">
+      <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">System Overview</h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-500">Real-time HRIS and Payroll analytics</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* View mode toggle — with sliding active pill */}
           <div
             role="tablist"
@@ -1681,20 +1768,22 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
               );
             })}
           </div>
-          <FileText className="h-4 w-4 shrink-0 text-orange-500" />
-          <select
-            value={selectedSourceFile ?? ''}
-            onChange={(e) => setSelectedSourceFile(e.target.value || null)}
-            className="h-8 max-w-[min(100%,340px)] truncate rounded-md border border-zinc-200 bg-white px-2 pr-7 font-mono text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-          >
-            <option value="__all__">All Time (all uploads combined)</option>
-            {sourceFiles.map((file, i) => (
-              <option key={file} value={file}>
-                {file}{i === 0 ? ' (latest)' : ''}
-              </option>
-            ))}
-          </select>
-          {payoutLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />}
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:flex-initial">
+            <FileText className="h-4 w-4 shrink-0 text-orange-500" />
+            <select
+              value={selectedSourceFile ?? ''}
+              onChange={(e) => setSelectedSourceFile(e.target.value || null)}
+              className="h-8 w-full min-w-0 truncate rounded-md border border-zinc-200 bg-white px-2 pr-7 font-mono text-xs text-zinc-700 sm:w-auto sm:max-w-[340px] dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+            >
+              <option value="__all__">All Time (all uploads combined)</option>
+              {sourceFiles.map((file, i) => (
+                <option key={file} value={file}>
+                  {file}{i === 0 ? ' (latest)' : ''}
+                </option>
+              ))}
+            </select>
+            {payoutLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />}
+          </div>
         </div>
       </div>
 
@@ -1742,7 +1831,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         ) : (
           <motion.div
             key="expanded"
-            className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-px"
+            className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-px lg:overflow-hidden"
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
@@ -1809,8 +1898,8 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         />
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-hidden lg:grid-cols-3 2xl:grid-cols-4">
-        <Card size="sm" className="flex min-h-0 flex-col overflow-hidden bg-gradient-to-br from-white to-blue-50/20 shadow-sm ring-1 ring-orange-200/90 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-900/70 lg:col-span-2 2xl:col-span-3">
+      <div className="grid grid-cols-1 gap-3 lg:min-h-0 lg:flex-1 lg:overflow-hidden lg:grid-cols-3 2xl:grid-cols-4">
+        <Card size="sm" className="flex min-h-0 flex-col overflow-hidden bg-gradient-to-br from-white to-blue-50/20 shadow-sm ring-1 ring-orange-200/90 max-h-[70vh] lg:max-h-none dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-900/70 lg:col-span-2 2xl:col-span-3">
           <CardHeader className="shrink-0 flex flex-row items-center justify-between gap-4 pb-1.5">
             <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Employees</CardTitle>
             <Badge variant="outline" className="border-blue-500/20 bg-blue-500/10 font-mono text-[10px] text-blue-700 dark:border-blue-500/30 dark:text-blue-400">
@@ -1889,8 +1978,77 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                   </div>
                 </div>
 
-                {/* Table */}
-                <div className="min-h-0 flex-1 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                {/* Mobile cards — md:hidden */}
+                <div className="grid min-h-0 flex-1 auto-rows-max gap-3 overflow-y-auto sm:grid-cols-2 md:hidden">
+                  {pageRows.length === 0 ? (
+                    <p className="col-span-full py-6 text-center text-sm text-zinc-500 dark:text-zinc-500">
+                      No employees match your search or filter.
+                    </p>
+                  ) : (
+                    pageRows.map((row, i) => {
+                      const email = row.work_email ?? row.personal_email ?? '';
+                      const disabled = !email || !onViewRates;
+                      return (
+                        <div
+                          key={`${row.recordSource}-${row.personal_email ?? ''}-${row.name ?? ''}-${(safePage - 1) * PAGE_SIZE + i}`}
+                          className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/40"
+                        >
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {row.employee_id && (
+                              <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 font-mono text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                                {row.employee_id}
+                              </span>
+                            )}
+                            {row.recordSource === 'hubstaff' ? (
+                              <Badge variant="outline" className="border-sky-300 bg-sky-50 font-mono text-[10px] text-sky-800 dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-300">
+                                Hubstaff
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="border-emerald-300 bg-emerald-50 font-mono text-[10px] text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                                Master
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate font-medium text-zinc-900 dark:text-white">{row.name ?? '—'}</div>
+                            <div className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{row.personal_email ?? row.work_email ?? '—'}</div>
+                            {row.department && (
+                              <div className="mt-1 text-[11.5px] text-zinc-600 dark:text-zinc-400">{row.department}</div>
+                            )}
+                            {row.start_date && (
+                              <div className="text-[11px] text-zinc-400 dark:text-zinc-600">{formatStartDate(row.start_date)}</div>
+                            )}
+                            {(() => {
+                              const loc = [row.city, row.province].filter(Boolean).join(', ');
+                              return loc ? (
+                                <div className="mt-1 flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  <MapPin className="h-3 w-3 shrink-0" />
+                                  <span className="truncate">{loc}</span>
+                                </div>
+                              ) : null;
+                            })()}
+                          </div>
+                          <div className="flex justify-end border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={disabled}
+                              onClick={() => email && onViewRates?.(email)}
+                              className="h-7 border-orange-300 px-2 text-[11px] text-orange-700 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-orange-700 dark:text-orange-400"
+                            >
+                              <Eye className="mr-1 h-3 w-3" />
+                              View
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Desktop table — hidden on mobile */}
+                <div className="hidden min-h-0 flex-1 overflow-auto rounded-md border border-zinc-200 md:block dark:border-zinc-800">
                   <Table>
                     <TableHeader className="sticky top-0 z-10 bg-gradient-to-r from-orange-50/95 to-blue-50/60 backdrop-blur-sm dark:from-blue-950/90 dark:to-blue-950/70">
                       <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
@@ -1945,7 +2103,16 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                             <TableCell className="text-zinc-800 dark:text-zinc-200">{row.department ?? '—'}</TableCell>
                             <TableCell className="font-medium text-zinc-800 dark:text-zinc-200">{row.name ?? '—'}</TableCell>
                             <TableCell className="font-mono text-xs text-zinc-600 dark:text-zinc-400">
-                              {row.personal_email ?? row.work_email ?? '—'}
+                              <div>{row.personal_email ?? row.work_email ?? '—'}</div>
+                              {(() => {
+                                const loc = [row.city, row.province].filter(Boolean).join(', ');
+                                return loc ? (
+                                  <div className="mt-0.5 flex items-center gap-1 font-sans text-[11px] text-zinc-400 dark:text-zinc-500">
+                                    <MapPin className="h-3 w-3" />
+                                    {loc}
+                                  </div>
+                                ) : null;
+                              })()}
                             </TableCell>
                             <TableCell className="text-right text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
                               {formatStartDate(row.start_date)}
@@ -2087,7 +2254,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         </Card>
 
         {/* Side stack: bonuses · department mix · pending activity */}
-        <div className="flex min-h-0 flex-col gap-3 overflow-y-auto">
+        <div className="flex flex-col gap-3 lg:min-h-0 lg:overflow-y-auto">
           {/* Bonuses compact */}
           <Card size="sm" className="shrink-0 overflow-hidden bg-gradient-to-br from-white to-orange-50/20 shadow-sm ring-1 ring-orange-200/90 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-900/70">
             <CardHeader className="shrink-0 pb-1.5">

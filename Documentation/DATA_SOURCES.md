@@ -21,7 +21,21 @@ The canonical employee directory. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEES
 | `Personal Email` | text | Primary identity key for payroll matching |
 | `Work Email` | text | Secondary identity key |
 | `Start Date` | text/date | Used to derive `YYMM` group for employee ID generation |
-| `Profile Photo URL` | text | Optional; public avatar URL |
+| `Profile Photo URL` | text | Optional; uploaded photo (Supabase Storage public URL) |
+| `street` *(2026-05-02)* | text | Home address — backfilled from payroll dashboard CSV (col D) |
+| `city` *(2026-05-02)* | text | Home address — backfilled (col E) |
+| `province` *(2026-05-02)* | text | Home address — backfilled (col F) |
+| `postal_code` *(2026-05-02)* | text | Home address — backfilled (col G) |
+| `full_address` *(2026-05-02)* | text | Home address (composite line) — backfilled (col H) |
+| `google_photo_url` *(2026-05-02)* | text | Google Workspace profile photo URL. Populated by NextAuth `jwt` callback (`src/lib/auth/auth-options.ts → persistGooglePhoto`) on each Google sign-in |
+
+**Avatar fallback chain** (in `EmployeeAvatar`): Google SSO photo → Supabase upload (`Profile Photo URL`) → Gravatar → initials. Each layer self-heals if the image fails to load.
+
+**Address & Google-photo migrations:**
+- `references/seed_global_master_list_addresses.sql` — `ALTER TABLE` + 1,025-row CTE backfill from `references/NEW Payroll Dashboard - All Dept.csv`. Recreates the `active_employees` view so the new columns surface to PostgREST.
+- `references/seed_global_master_list_google_photo.sql` — `ALTER TABLE` + view refresh. No backfill — populates organically as users sign in.
+
+**Code-level robustness:** `fetchActiveEmployees` and `getEmployeeMasterRecord` both try the full select first and fall back to the base select if the new columns don't exist on the view yet (`/does not exist/i.test(error.message)` guard). The Profile page additionally always calls `/api/employee-master-record` as a parallel fetch and merges the address fields, so the Address panel surfaces even when the `active_employees` view is stale.
 
 **Primary key:** A surrogate `id` (`bigint`, identity) is recommended so bulk CSV replace can delete all existing rows in batches (see `references/supabase_global_master_list.sql`).
 

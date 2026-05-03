@@ -29,6 +29,7 @@ Placeholder `<div>` cards are rendered for `hogan-suite` and `settings` — they
 - **Approve / Deny** — for rows awaiting Accounting (`pending` or `orphanage_manager_approved`). Orphanage-style rows do not collect hour overrides at approval (manager-submitted disputes always have `override_hours = null` and the field is hidden); other reasons can set override hours in the dialog.
 - **Return** — only for orphanage-style with `orphanage_manager_approved`; calls `PATCH` with `return_to_orphanage` and optional note.
 - **Edit** — for terminal rows. Toggle Approved/Denied, adjust hours (non-orphanage-style), notes. When the row currently grants PAB forgiveness (`disputeGrantsPabForgiveness`), shows **Revoke PAB forgiveness** → confirm dialog → `PATCH` `edit` with `status: denied` and `override_hours: null`.
+- **Delete** *(2026-05-02)* — trash icon button gated by `DISPUTE_DELETE_ROLES` (`admin`, `payroll_manager`). Available on rows in **any** status. Confirmation dialog warns when deleting a previously-decided dispute. On confirm, calls `DELETE /api/pab-disputes/[id]?mode=admin`. Audit log: `pab_dispute.admin_deleted`. See [docs/delete-authorization.md](../docs/delete-authorization.md).
 
 All reason-specific gating uses `isOrphanageStyleReason(reason)` rather than the literal `reason === 'orphanage_visit'` check — so `ceo_visitation` follows the same hour-override / two-stage approval / day-after-removed semantics as orphanage_visit.
 
@@ -88,6 +89,23 @@ The legacy "verify or deny pending orphanage_visit submitted by employee" flow c
 - **"+ Create disputes" dialog** (`CreateOrphanageStyleDisputeDialog`) — manager-submitted, two-stage. Pre-fetches roster, hours, existing-disputes overlap on mount.
 
 UI copy was updated 2026-05-01 to drop the "and the following day" language (D+1 auto-forgiveness rule was removed).
+
+---
+
+## `src/components/LeaveRequestsPanel.tsx`
+
+Shared leave-request queue mounted by both **Accounting** (`/`) and **Manager** (`/manager`) dashboards.
+
+**Stats strip**: pending / approved / rejected counts.
+
+**Filters**: status (all / pending / approved / rejected / cancelled), free-text search across name, email, department, type, reason, dates.
+
+**Table columns**: Employee, Dept, Type, Dates (with day count), Manager, Status, Action.
+
+**Per-row actions:**
+
+- **Approve / Reject** — only on `pending` rows. Opens a dialog requesting the approver email + optional note. The approver must satisfy at least one of the four authorization paths (stored manager, live `department_managers`, legacy json map, or settings allow lists). See [API_REFERENCE.md](./API_REFERENCE.md#patch-apileave-requestsid).
+- **Delete** *(2026-05-02)* — trash icon button gated by `LEAVE_DELETE_ROLES` (`admin`, `payroll_manager`, `manager`). Visible on rows in any status when the user holds one of those roles. Confirmation dialog warns when deleting a previously-actioned request. On confirm, calls `DELETE /api/leave-requests/[id]`. Audit log: `leave.admin_deleted` with `details.scope = 'unrestricted' | 'department'`. Managers are scoped to their own department server-side via `isAuthorizedLeaveApprover`. See [docs/delete-authorization.md](../docs/delete-authorization.md).
 
 ---
 
@@ -174,11 +192,14 @@ On mount, fetches two endpoints in parallel:
 
 If the profile response includes merge errors (a `mergeNotes` field), a yellow banner appears at the top explaining which tables were inaccessible or blocked by RLS.
 
-### Table View
+### Cards & Table Views *(view toggle added 2026-05-02)*
+
+A sliding pill toggle in the toolbar (right of the rate filter) switches between **Cards** and **Table**, persisted to `localStorage` under `rates-view-mode`. The toggle is hidden under `md` because the table doesn't fit phones — mobile always renders cards. Active-pill animation uses `motion.layoutId="rates-viewmode-pill"` (same spring as the Overview view toggle).
 
 - `PAGE_SIZE = 12`
-- Columns: Employee ID, Name (with avatar), Department, Organization, Work Email, Regular Rate, OT Rate, View (eye icon), Delete (trash icon)
-- **Employee Avatar**: Each row shows an `<EmployeeAvatar>` beside the name — displays uploaded photo, Gravatar, or initials. Photo URL and email extracted from the profile fields via `getAvatarInfoFromProfile()`.
+- **Card view**: 1-column on mobile, 2-column at `sm`, 3-column at `xl`. Each card shows avatar + name + status pill, ID/department/organization chips, work email, Regular/OT rate tiles, and an action bar (View / Suspend·Unsuspend / Delete).
+- **Table view**: 8 columns — Employee (avatar + name + organization), ID, Department, Email, Regular, OT, Status (Complete / Master only / Rates blank / Suspended), Actions (View / Suspend·Unsuspend / Delete as ghost icon buttons). Sticky header with the orange-blue gradient; hover row tint; suspended rows dim to 75% opacity.
+- **Employee Avatar**: Each row shows an `<EmployeeAvatar>` beside the name — fallback chain is **Google SSO photo → uploaded photo → Gravatar → initials**. Photo URL, Google photo URL, and email extracted via `getAvatarInfoFromSummary()`. Google photos require migration `references/seed_global_master_list_google_photo.sql` and per-user sign-in to populate the `google_photo_url` column.
 - Search: filters across name, emails, department, employee ID
 - Rates formatted as `₱X,XXX.XX` using `en-PH` locale
 - Employee ID shown if found in the ID map; otherwise `—`
@@ -444,22 +465,28 @@ The primary employee-facing view. Shows weekly hours, pay calculations, and PAB 
 - **PAB Calendar**: Built via `buildPabCalendarWeeks()` — generates expected weekdays in the PAB range, maps actual hours, renders a grid with date/hours/status per cell.
 - **Skeleton loading**: Full-page skeleton (header, bonus cards, stats grid, chart/calendar/summary) shown during initial data load. PAB calendar has its own skeleton with staggered pulse.
 
-### `EmployeeProfile.tsx` — Profile
+### `EmployeeProfile.tsx` — Profile *(redesigned 2026-05-02)*
 
-Employee profile information view with hero header and info panels.
+Employee profile screen — modern minimal layout (Linear/Vercel-style) with three tabs.
 
-**Sections:**
-- **Hero Header**: Large avatar (80×80 / 96×96) with ring border and hover camera overlay for photo upload, employee name, email, department/job title/employee ID badges
-- **Identity Panel**: Full name, Employee ID
-- **Contact Panel**: Work email, Personal email
-- **Employment Panel**: Department, Job type, Job title, Organization, Start date (with icons per field)
-- **Compensation Panel**: Regular rate, OT rate (₱/hr)
-- **Bank Information Card** (full-width): Primary and alternative bank accounts (bank name, account holder, masked account number showing last 4 digits, routing number). "Edit" button navigates to Settings tab. Empty state shows "Add Bank Details in Settings" button.
-- **Data Sources Panel**: Shows the three Supabase tables that provide profile data
+**Hero**: 64-80px circular avatar with hover camera overlay → photo upload, name (24-28px semibold, tight tracking), department · ID inline, **Active** pill (with ping animation on the dot), and a **Payroll locked** pill when relevant.
 
-**Data sources**: Fetches from `/api/employees`, `/api/employee-hourly-rates`, `/api/hubstaff-hours`, and `/api/employee-ids` in parallel. Bank info comes from `employee_ids` table.
+**Tabs** (motion.layoutId-driven sliding orange underline; cross-faded content via `AnimatePresence`):
 
-**Skeleton**: Full-page skeleton matching the hero + cards layout during initial load.
+1. **Overview** — read-only identity & employment.
+   - **Personal**: Full Name, Work Email, Personal Email
+   - **Employment**: Department, Start Date, Status (Active with pulse dot)
+   - **Address** *(2026-05-02)*: only renders when at least one address field is populated. Top row shows Full Address with a small orange `MapPin` chip; below it, individual rows for Street / City / Province / Postal Code (mono).
+2. **Compensation** — read-only pay info as `CompactStat` blocks (uppercase label, 22px mono number, hint).
+   - **Hourly Rates**: Regular and Overtime in a 2-column grid.
+   - **Currency**: USD → PHP reference rate, with a "Live · payroll" pip.
+3. **Payment** — editable disbursement details. Wraps `PreferredPaymentMethodRadios` + `PayoutDetailsFields` with an editorial card frame; toolbar shows current channel as a stamp, plus Edit / Cancel / Save (orange CTA). Read-only when payroll is locked.
+
+**Avatar fallback chain**: Google SSO photo → uploaded Supabase photo → Gravatar → initials. The Google URL is provided by `EmployeeApp` from the NextAuth session, gated by an email-match check so impersonation paths (`?email=other@simple.biz`) don't show the wrong person's photo.
+
+**Data sources**: `/api/employees`, `/api/employee-hourly-rates`, `/api/employee-ids`, `/api/app-settings?key=usd_to_php_rate` in parallel. Always also calls `/api/employee-master-record` and merges its address fields into `master`, so the Address panel surfaces even when the `active_employees` view is stale (column added after the migration).
+
+**Skeleton**: Matches the new layout exactly — hero with circular avatar placeholder, tab strip, three card placeholders with staggered pulses.
 
 ### `EmployeeSettings.tsx` — Settings
 
@@ -475,7 +502,7 @@ Updates via POST to `/api/update-employee-ids`.
 
 ### `EmployeeAvatar.tsx` — Avatar Component
 
-Displays employee photo with fallback chain: uploaded photo (Supabase Storage) → Gravatar → initials (orange-to-blue gradient circle).
+Displays employee photo with fallback chain: **Google SSO photo → uploaded photo (Supabase Storage) → Gravatar → initials** (orange-to-blue gradient circle). Each layer self-heals if the image fails to load. Google photos use `referrerPolicy="no-referrer"` to avoid `googleusercontent.com` 403s. See [DATA_SOURCES.md](./DATA_SOURCES.md) for migration prerequisites.
 
 ### `EmployeeMyHours.tsx` — My Hours
 
@@ -517,6 +544,67 @@ Shared module for PAB (Perfect Attendance Bonus) date logic, used by both Payrol
 - `columnsAreAllCanonical(cols)` — Detects whether columns need resolution
 - `pabDateKey(date)` — Stable date key for lookup maps
 - `countMonFriInclusiveInRange(start, end)` — Counts weekdays in a range
+
+---
+
+## `src/components/SystemDiagnostics.tsx` *(added 2026-05-02)*
+
+**Admin → Diagnostics.** Admin-only health map for the Simple HRIS stack. Renders a Supabase-Schema-Visualiser-style React Flow diagram with relationship-aware edge animations, an alerts list, and per-node detail panels. Mounted exclusively in the Admin shell (`app/admin/page.tsx`); not present in any other dashboard.
+
+**Layout:**
+- **Header** — orange `Radar` icon + title + Live/Mock chip + "Updated HH:MM:SS" + Refresh button
+- **Summary cards** — 4-up grid with Healthy / Warnings / Critical / Unknown counts
+- **Service Map** (left, xl+) — React Flow diagram, draggable cards, status-tinted edges, edge legend pinned bottom-right
+- **Right panel** (top) — node details (label, category, status, summary, details, suggested checks, last-checked timestamp) when a card is clicked
+- **Alerts list** (right panel, bottom) — clicking an alert focuses the related node
+
+**Live data flow**: on mount, fetches `GET /api/admin/diagnostics` and replaces the mock baseline. Fetch errors fall back to mock with an amber banner explaining why ("HTTP 403", "Probe failed", etc.). The Live/Mock chip (`dataSource` state) is the source of truth — green when the last fetch succeeded, grey when it didn't.
+
+**Node design** (`DiagFlowNode`): 280px-wide cards mimicking Supabase column rows. Status-tinted header (icon + label + status pill); body has 4 rows (`category/enum`, `status/status`, `summary/text`, `checked_at/timestamp`) with mono labels and right-aligned values. Left/right `Handle` anchors for stable edge connections.
+
+**Edge animations** — relationship-driven via custom edge types (`MountEdge`, `FlowEdge`, `QueryEdge`, `EventEdge`):
+
+| Relationship | Triggered by | Visual |
+|---|---|---|
+| `mount` | `admin-shell → *` | Slow flowing dashes (7s, 4s when critical) |
+| `flow` | feature → data sink (e.g. payroll → records) | Solid line + traveling particle with halo (3.4s, 2.2s when critical) |
+| `query` | anything → DB layer (`supabase-client`, `supabase-postgres`, `pg-pool`) | Fast flowing dashes (1.6s, 1s when critical) |
+| `event` | `auth-login → audit-log` | Particle burst with discrete pause (4s cycle, 2.6s when critical) |
+
+Edge stroke colour = max-of-endpoint-statuses; markers tinted to match.
+
+**Drag and layout persistence**:
+- Cards draggable; positions written to `localStorage["system-diagnostics-positions-v1"]` on drag-end
+- Reset Layout button restores `NODE_POSITIONS` template and clears localStorage; disabled at template position
+- **Twitch fix**: dash animations live on CSS classes (`.sd-edge-mount`, `.sd-edge-query`) instead of inline `style.animation` so they don't restart when the style object reference changes per render. Particles (`<animateMotion>`) unmount during drag and remount cleanly on drag-stop, avoiding SVG motion resets when the path string changes 60×/sec
+- `.sd-paused` class freezes dash flow while any node drags
+
+**Reduced motion**: `@media (prefers-reduced-motion: reduce)` disables all edge animations, particles, and dash flow.
+
+**Admin gate**: visible only when the AdminSidebar's `securityNav` includes `'diagnostics'` AND the page mounts via `app/admin/page.tsx`. The Accounting / Manager / Employee / Orphanage shells have no reference to `SystemDiagnostics`. The probe endpoint additionally enforces `roles.includes('admin')` server-side so probe data is unreachable from non-admin sessions.
+
+See [docs/system-diagnostics.md](../docs/system-diagnostics.md) for the architecture, probe definitions, and extension guide. See [API_REFERENCE.md](./API_REFERENCE.md#127-admin-diagnostics) for the live endpoint shape.
+
+---
+
+## `src/lib/admin/diagnostics-probes.ts`
+
+Server-side probe helpers consumed by `app/api/admin/diagnostics/route.ts`. Each helper returns a `ProbeResult` (`status` + `summary` + `details` + `suggestedChecks`) and runs through `withProbeTimeout()` (4-second cap) so a hung Supabase doesn't stall the route.
+
+**Helpers**: `probeSupabase`, `probePgPool`, `probeHubstaffCsv`, `probeMasterList`, `probeAuditLog`, `probeDisbursementRecords`, `probeAuth`, `probeDailyReport`, `probeRates`. See `docs/system-diagnostics.md` for the per-probe status mapping.
+
+**Security policy**: every probe sanitizes errors via `trimError()` (one-line, 120-char cap) — no stack traces, no SQL text, no env secrets, no PII. PostgREST error codes (e.g. `42703`) pass through because they're useful for admin diagnosis.
+
+---
+
+## `src/components/admin/AdminSidebar.tsx`
+
+**AdminSidebar nav** — left rail for the Admin shell at `app/admin/page.tsx`. Two grouped nav arrays:
+
+- **systemNav**: Overview, Roles & permissions, Employees, Webhooks
+- **securityNav**: Audit log, **Diagnostics** *(2026-05-02)*, API tokens, Backups
+
+Diagnostics uses the `Radar` icon and is **only present in this sidebar** — not in the Accounting/Manager/Employee/Orphanage sidebars. Combined with the server-side `roles.includes('admin')` gate on `/api/admin/diagnostics`, this means the entire feature is admin-only at every layer.
 
 ---
 

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
+import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import EmployeeSidebar from './EmployeeSidebar';
@@ -12,7 +13,7 @@ import EmployeeLeaves from './EmployeeLeaves';
 import EmployeePolicies from './EmployeePolicies';
 import EmployeeSettings from './EmployeeSettings';
 import EmployeeMyHours from './EmployeeMyHours';
-import MyDisputes from './MyDisputes';
+// import MyDisputes from './MyDisputes'; // hidden — disputes now go through Orphanage Manager → Accounting flow
 import PayrollLockBanner from './PayrollLockBanner';
 import { Toaster } from '@/components/ui/sonner';
 import { Lock, Menu, Unlock } from 'lucide-react';
@@ -37,12 +38,8 @@ export default function EmployeeApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState('dashboard');
-  /**
-   * When the user clicks a sub-7h day in the PAB calendar we redirect them to
-   * the disputes tab with the date (and Hubstaff seconds) pre-loaded. Cleared
-   * by `MyDisputes` once the form has consumed it.
-   */
-  const [disputesPrefill, setDisputesPrefill] = useState<{ date: string; seconds?: number } | null>(null);
+  // Disputes prefill — kept for future use if the flow is re-enabled
+  // const [disputesPrefill, setDisputesPrefill] = useState<{ date: string; seconds?: number } | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -51,6 +48,19 @@ export default function EmployeeApp() {
   const [employeeName, setEmployeeName] = useState<string | null>(null);
   const [employeeDepartment, setEmployeeDepartment] = useState<string | null>(null);
   const [employeeId, setEmployeeId] = useState<string | null>(null);
+
+  // Google SSO profile photo — falls back through Supabase upload → Gravatar in EmployeeAvatar.
+  // Only honored when the NextAuth session email matches the employee being viewed, so
+  // impersonation paths (?email=other.user@simple.biz) don't show the wrong person's photo.
+  const { data: session } = useSession();
+  const googlePhotoUrl = useMemo(() => {
+    const sessionEmail = session?.user?.email?.trim().toLowerCase();
+    const sessionImage = session?.user?.image?.trim();
+    if (!sessionEmail || !sessionImage) return null;
+    const subjectEmail = (normEmail(employeeEmail ?? '') ?? employeeEmail?.trim().toLowerCase()) || null;
+    if (!subjectEmail) return null;
+    return sessionEmail === subjectEmail ? sessionImage : null;
+  }, [session?.user?.email, session?.user?.image, employeeEmail]);
 
   // Live payroll-processing lock — drives the global banner, sidebar lock
   // indicator, and one-time toast notifications when the state flips.
@@ -128,19 +138,36 @@ export default function EmployeeApp() {
 
         setProfilePhotoUrl(photoJson.profilePhotoUrl?.trim() || null);
 
-        const master = (empJson.employees ?? []).find((e) => {
+        let master = (empJson.employees ?? []).find((e) => {
           const we = normEmail(e.work_email ?? '');
           const pe = normEmail(e.personal_email ?? '');
           return we === norm || pe === norm;
-        });
+        }) ?? null;
+        // Fallback to the underlying `global_master_list` for people who aren't on the
+        // latest upload (e.g. internal devs). Keeps identity rendering instead of
+        // collapsing to "<email-prefix>" / no department.
+        if (!master) {
+          try {
+            const mrRes = await fetch(
+              `/api/employee-master-record?email=${encodeURIComponent(employeeEmail)}`,
+              { cache: 'no-store' },
+            );
+            const mrJson = (await mrRes.json()) as { employee?: EmployeeRow | null };
+            master = mrJson.employee ?? null;
+          } catch { /* ignore — master stays null */ }
+        }
         const rate = (rateJson.rows ?? []).find((r) => {
           const we = normEmail(r.work_email ?? '');
           const pe = normEmail(r.personal_email ?? '');
           return we === norm || pe === norm;
         });
 
+        if (cancelled) return;
         setEmployeeName(master?.name?.trim() || null);
-        setEmployeeDepartment(rate?.department?.trim() || master?.department?.trim() || null);
+        // Department is sourced from global_master_list — that's the canonical roster
+        // value. `employee_hourly_rates."Department"` is a payroll/routing bucket and
+        // shouldn't drive the portal's identity (per its lib comment).
+        setEmployeeDepartment(master?.department?.trim() || rate?.department?.trim() || null);
         setEmployeeId(master?.employee_id?.trim() || null);
       } catch {
         if (!cancelled) setProfilePhotoUrl(null);
@@ -187,10 +214,10 @@ export default function EmployeeApp() {
         return (
           <EmployeeDashboard
             employeeEmail={employeeEmail}
-            onNavigateToDisputes={(prefill) => {
-              setDisputesPrefill(prefill ?? null);
-              navigate('disputes');
-            }}
+            // onNavigateToDisputes={(prefill) => {
+            //   setDisputesPrefill(prefill ?? null);
+            //   navigate('disputes');
+            // }}
           />
         );
       case 'profile':
@@ -198,6 +225,7 @@ export default function EmployeeApp() {
           <EmployeeProfile
             employeeEmail={employeeEmail}
             profilePhotoUrl={profilePhotoUrl}
+            googlePhotoUrl={googlePhotoUrl}
             onProfilePhotoUpdated={(url) => setProfilePhotoUrl(url)}
             payrollLocked={lockState.locked}
           />
@@ -206,10 +234,10 @@ export default function EmployeeApp() {
         return (
           <EmployeeMyHours
             employeeEmail={employeeEmail}
-            onNavigateToDisputes={(prefill) => {
-              setDisputesPrefill(prefill ?? null);
-              navigate('disputes');
-            }}
+            // onNavigateToDisputes={(prefill) => {
+            //   setDisputesPrefill(prefill ?? null);
+            //   navigate('disputes');
+            // }}
           />
         );
       case 'leaves':
@@ -220,16 +248,16 @@ export default function EmployeeApp() {
             department={employeeDepartment ?? undefined}
           />
         );
-      case 'disputes':
-        return (
-          <MyDisputes
-            employeeEmail={employeeEmail}
-            employeeName={employeeName}
-            prefill={disputesPrefill}
-            onPrefillConsumed={() => setDisputesPrefill(null)}
-            payrollLocked={lockState.locked}
-          />
-        );
+      // case 'disputes': // hidden — disputes now go through Orphanage Manager → Accounting flow
+      //   return (
+      //     <MyDisputes
+      //       employeeEmail={employeeEmail}
+      //       employeeName={employeeName}
+      //       prefill={disputesPrefill}
+      //       onPrefillConsumed={() => setDisputesPrefill(null)}
+      //       payrollLocked={lockState.locked}
+      //     />
+      //   );
       case 'policies':
         return <EmployeePolicies department={employeeDepartment} />;
       case 'settings':
@@ -260,6 +288,7 @@ export default function EmployeeApp() {
         employeeId={employeeId || undefined}
         employeeEmail={employeeEmail}
         profilePhotoUrl={profilePhotoUrl}
+        googlePhotoUrl={googlePhotoUrl}
         payrollLocked={lockState.locked}
       />
       <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

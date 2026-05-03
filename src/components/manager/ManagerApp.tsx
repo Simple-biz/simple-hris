@@ -109,6 +109,15 @@ export default function ManagerApp() {
     return () => window.removeEventListener('keydown', onKey);
   }, [mobileNavOpen]);
 
+  useEffect(() => {
+    if (mobileNavOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [mobileNavOpen]);
+
   // Stub — wire to real /api/time-adjustments when that table lands.
   const pendingApprovals = 0;
 

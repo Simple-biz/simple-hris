@@ -169,6 +169,109 @@ export async function cancelLeaveRequestIfOwned(params: {
   return { error: error?.message ?? null };
 }
 
+/**
+ * Roles allowed to PERMANENTLY DELETE a leave request (any status, regardless of who filed it).
+ *
+ *  - `admin` / `payroll_manager` — unrestricted, can delete any request in any department.
+ *  - `manager` — scoped: can only delete requests for departments they actively manage
+ *    (verified via `isAuthorizedLeaveApprover`, same mechanism used for approve/reject).
+ *
+ * The role list controls which users see the trash button in the UI; the API enforces
+ * the per-row authorization.
+ */
+export const LEAVE_DELETE_ROLES: readonly string[] = [
+  'payroll_manager',
+  'admin',
+  'manager',
+];
+
+/** Roles whose delete authority is unrestricted (no per-department check). */
+export const LEAVE_DELETE_UNRESTRICTED_ROLES: readonly string[] = [
+  'payroll_manager',
+  'admin',
+];
+
+/**
+ * Returns true if `actorEmail` is allowed to action (approve/reject/delete) the given
+ * leave request based on per-department manager assignments. Mirrors the authorization
+ * chain used by the PATCH approve/reject route:
+ *   1. Listed in the row's stored `manager_email` (comma-joined).
+ *   2. Currently active manager for the row's department (via department_managers).
+ *   3. Listed in the legacy `leave_department_managers_json` map for the department.
+ *   4. In `leave_accounting_notify_emails` or `leave_approver_emails` settings.
+ *
+ * Note: callers fetching app_settings should pass them in to avoid duplicate reads when
+ * a route already has them. Each lookup short-circuits as soon as a match is found.
+ */
+export async function isAuthorizedLeaveApprover(params: {
+  actorEmail: string;
+  row: LeaveRequestRow;
+  managersJson?: string | null;
+  accountingNotify?: string | null;
+  approverAllow?: string | null;
+}): Promise<boolean> {
+  const { row, managersJson, accountingNotify, approverAllow } = params;
+  const a = (params.actorEmail ?? '').trim().toLowerCase();
+  if (!a) return false;
+  const dept = row.department?.trim() || null;
+
+  // 1. Stored manager_email on the row
+  const storedManagers = splitManagerEmails(row.manager_email);
+  if (storedManagers.includes(a)) return true;
+
+  // 2. Live department manager
+  const liveManagers = await listManagersForDepartment(dept);
+  if (liveManagers.includes(a)) return true;
+
+  // 3. Legacy json map
+  if (managersJson != null) {
+    const jsonManagers = resolveManagerEmailsFromJson(dept, managersJson);
+    if (jsonManagers.includes(a)) return true;
+  }
+
+  // 4. Accounting notify list
+  if (accountingNotify) {
+    const extra = accountingNotify
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    if (extra.includes(a)) return true;
+  }
+
+  // 5. Global approver allow list
+  if (approverAllow) {
+    const globalAllow = approverAllow
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    if (globalAllow.includes(a)) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Admin/payroll-manager-only hard delete. Works on any status. Caller is responsible
+ * for verifying the session holds a role in LEAVE_DELETE_ROLES — this function does NOT
+ * re-check authorization. Returns the deleted row's snapshot in `error: null` cases so
+ * the API layer can include it in the audit log.
+ */
+export async function adminDeleteLeaveRequest(
+  id: string,
+): Promise<{ row: LeaveRequestRow | null; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { row: null, error: 'Supabase not configured' };
+
+  const { row, error: fetchErr } = await getLeaveRequestById(id);
+  if (fetchErr) return { row: null, error: fetchErr };
+  if (!row) return { row: null, error: 'Leave request not found' };
+
+  const { error } = await supabase.from(tableName()).delete().eq('id', id);
+  if (error) return { row: null, error: error.message };
+
+  return { row, error: null };
+}
+
 export async function getLeaveRequestById(id: string): Promise<{
   row: LeaveRequestRow | null;
   error: string | null;
