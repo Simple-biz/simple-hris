@@ -55,7 +55,10 @@
       "Bash(echo \"EXIT=$?\")",
       "Bash(python -c \"import sys, csv; r = csv.reader\\(sys.stdin\\); print\\(next\\(r\\)\\)\")",
       "Bash(python *)",
-      "Bash(findstr /v \"node_modules\")"
+      "Bash(findstr /v \"node_modules\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }
