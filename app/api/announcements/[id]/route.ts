@@ -19,7 +19,8 @@ async function getRoles(email: string): Promise<string[]> {
 }
 
 // DELETE /api/announcements/[id]
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
   if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -34,7 +35,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const { data: ann } = await sb
     .from('announcements')
     .select('author_email')
-    .eq('id', params.id)
+    .eq('id', id)
     .maybeSingle();
 
   if (!ann) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -45,7 +46,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   }
 
   try {
-    await deleteAnnouncement(params.id);
+    await deleteAnnouncement(id);
     return NextResponse.json({ success: true });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
@@ -53,7 +54,8 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
 }
 
 // PATCH /api/announcements/[id] — toggle pin
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
   if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -70,7 +72,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   try {
-    await togglePinAnnouncement(params.id, pinned);
+    await togglePinAnnouncement(id, pinned);
     return NextResponse.json({ success: true });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
