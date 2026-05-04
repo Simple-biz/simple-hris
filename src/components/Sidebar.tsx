@@ -12,7 +12,8 @@ import {
   Building2,
   AlertCircle,
   CalendarDays,
-  CalendarHeart,
+  Megaphone,
+  Newspaper,
   Send,
   Settings,
   ChevronRight,
@@ -20,6 +21,7 @@ import {
   Moon,
   Sun,
 } from 'lucide-react';
+import { SWallNavLabel } from '@/components/swall/SWall';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -46,8 +48,8 @@ const navItems = [
   { id: 'hogan-suite', label: 'Hogan Suite', icon: Building2 },
   { id: 'payment-dispatch', label: 'Payment Dispatch', icon: Send },
   { id: 'leave-requests', label: 'Leave requests', icon: CalendarDays },
-  { id: 'disputes', label: 'Disputes', icon: AlertCircle },
-  { id: 'orphanage-visits', label: 'Orphanage Visits', icon: CalendarHeart },
+  { id: 'disputes', label: 'Orphanage Disputes', icon: AlertCircle },
+  { id: 'announcements', label: 'Announcements', icon: Megaphone },
   { id: 'settings', label: 'System Settings', icon: Settings },
 ];
 
@@ -126,7 +128,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
 
         <ScrollArea className="-mx-2 flex-1">
           <nav className="space-y-1 px-2">
-            {visibleNavItems.map((item) => (
+            {visibleNavItems.filter((item) => item.id !== 's-wall').map((item) => (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
@@ -151,6 +153,30 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
                 )}
               </button>
             ))}
+            {allowedTabSet.has('s-wall') && (
+              <button
+                onClick={() => setActiveTab('s-wall')}
+                className={cn(
+                  'group/sw flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200',
+                  activeTab === 's-wall'
+                    ? 'bg-gradient-to-r from-violet-100 to-violet-50 text-violet-900 shadow-sm dark:from-violet-950/70 dark:to-violet-950/40 dark:text-white'
+                    : 'hover:bg-violet-50 hover:text-zinc-900 dark:hover:bg-violet-950/30 dark:hover:text-zinc-200',
+                )}
+              >
+                <Newspaper
+                  className={cn(
+                    'h-4 w-4 shrink-0',
+                    activeTab === 's-wall'
+                      ? 'text-violet-500 dark:text-violet-400'
+                      : 'text-zinc-500 group-hover/sw:text-violet-500 dark:text-zinc-500 dark:group-hover/sw:text-violet-400',
+                  )}
+                />
+                <SWallNavLabel />
+                {activeTab === 's-wall' && (
+                  <ChevronRight className="ml-auto h-3 w-3 text-violet-400 dark:text-violet-500/70" />
+                )}
+              </button>
+            )}
           </nav>
         </ScrollArea>
       </div>

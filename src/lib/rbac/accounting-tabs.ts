@@ -8,7 +8,8 @@ export const ACCOUNTING_TAB_IDS = [
   'payment-dispatch',
   'leave-requests',
   'disputes',
-  'orphanage-visits',
+  'announcements',
+  's-wall',
   'settings',
 ] as const;
 

@@ -5,12 +5,19 @@ import {
 import { MAX_PROFILE_PHOTO_BYTES } from "@/lib/images/compress-profile-photo";
 import { NextResponse } from "next/server";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth/auth-options";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
  * GET ?email= — returns stored profile photo URL from the master list (if any).
+ *
+ * Special mode: ?email=...&_fmt=img
+ *   Returns a 302 redirect to the actual photo URL so the result can be used
+ *   directly as <img src>. Only requires any valid session (no role check) because
+ *   profile photos in social feeds (S-Wall, comments) are visible to all employees.
  */
 export async function GET(req: Request) {
   try {
@@ -18,6 +25,17 @@ export async function GET(req: Request) {
     const email = searchParams.get("email")?.trim();
     if (!email) {
       return NextResponse.json({ error: "email query parameter is required" }, { status: 400 });
+    }
+
+    // Image-redirect mode — any authenticated session can load any colleague's avatar
+    if (searchParams.get("_fmt") === "img") {
+      const session = await getServerSession(authOptions);
+      if (!session?.user?.email) {
+        return new Response(null, { status: 401 });
+      }
+      const photoUrl = await getProfilePhotoUrlForEmail(email);
+      if (!photoUrl) return new Response(null, { status: 404 });
+      return Response.redirect(photoUrl, 302);
     }
 
     const authz = await authorizeEmailAccess(email);

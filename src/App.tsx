@@ -14,10 +14,12 @@ import { Toaster } from '@/components/ui/sonner';
 import SystemSettings from './components/SystemSettings';
 import LeaveRequestsPanel from './components/LeaveRequestsPanel';
 import PabDisputeQueue from './components/payroll/PabDisputeQueue';
-import OrphanageVisits from './components/payroll/OrphanageVisits';
 import PayrollDispatch from './components/payroll-clerk/PayrollDispatch';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import AnnouncementWall from './components/announcements/AnnouncementWall';
+import AnnouncementComposer from './components/announcements/AnnouncementComposer';
+import SWall from './components/swall/SWall';
 import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForRoles, canAccessAccountingTab } from '@/lib/rbac/accounting-tabs';
 
 function isPlausibleEmail(s: string): boolean {
@@ -140,16 +142,35 @@ export default function App() {
         return <PayrollDispatch />;
       case 'disputes':
         return <PabDisputeQueue />;
-      case 'orphanage-visits':
-        return <OrphanageVisits />;
       case 'settings':
         return <SystemSettings />;
       case 'leave-requests':
         return <LeaveRequestsPanel />;
+      case 'announcements':
+        return (
+          <AccountingAnnouncementsTab
+            sessionEmail={sessionEmail}
+            canPostGeneral={canPostGeneral}
+            isElevated={isElevated}
+          />
+        );
+      case 's-wall':
+        return (
+          <AccountingSwallTab
+            sessionEmail={sessionEmail}
+            canPost={canPostGeneral}
+          />
+        );
       default:
         return <Overview onViewRates={handleViewRates} onNavigate={navigate} />;
     }
   };
+
+  // Roles that can post general announcements
+  const canPostGeneral = roles.some((r) =>
+    ['admin', 'ceo', 'hr_coordinator', 'finance', 'payroll_coordinator', 'payroll_manager', 'orphanage_manager'].includes(r),
+  );
+  const isElevated = roles.includes('admin') || roles.includes('ceo');
 
   return (
     <div className="flex h-dvh max-h-dvh overflow-hidden bg-white font-sans text-zinc-900 selection:bg-orange-500/20 selection:text-orange-900 dark:bg-[#0d1117] dark:text-zinc-100 dark:selection:bg-orange-500/30 dark:selection:text-orange-200">
@@ -202,6 +223,66 @@ export default function App() {
         </div>
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
+    </div>
+  );
+}
+
+function AccountingAnnouncementsTab({
+  sessionEmail,
+  canPostGeneral,
+  isElevated,
+}: {
+  sessionEmail: string | null;
+  canPostGeneral: boolean;
+  isElevated: boolean;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
+        <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
+          Announcements
+        </h1>
+        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
+          Post company-wide updates or read the general wall. Live via Realtime.
+        </p>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        <div className="mx-auto max-w-2xl space-y-4">
+          {canPostGeneral && (
+            <AnnouncementComposer
+              authorEmail={sessionEmail ?? ''}
+              allowGeneral
+              departments={[]}
+              canPin={isElevated}
+            />
+          )}
+          <AnnouncementWall scope="all" viewerEmail={sessionEmail} isElevated={isElevated} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AccountingSwallTab({
+  sessionEmail,
+  canPost,
+}: {
+  sessionEmail: string | null;
+  canPost: boolean;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
+        <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
+          Simple Wall
+        </h1>
+        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
+          Company-wide social feed. Post updates, react, and comment — live via Realtime.
+        </p>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] dark:bg-[#0d1117]">
+        <SWall viewerEmail={sessionEmail} canPost={canPost} sourceLabel={canPost ? 'Accounting' : undefined} />
+      </div>
     </div>
   );
 }

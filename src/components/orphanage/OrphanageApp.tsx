@@ -13,12 +13,14 @@ import {
   LogOut,
   Menu,
   Moon,
+  Newspaper,
   Plus,
   RefreshCw,
   Search,
   Sparkles,
   Sun,
 } from 'lucide-react';
+import SWall, { SWallNavLabel } from '@/components/swall/SWall';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { toast, Toaster } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -158,6 +160,8 @@ export default function OrphanageApp() {
     } catch { /* ignore */ }
   }, []);
   const welcomeMsg = WELCOME_MESSAGES[welcomeIdx]!;
+
+  const [activeTab, setActiveTab] = useState<'queue' | 's-wall'>('queue');
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   useEffect(() => {
@@ -398,11 +402,29 @@ export default function OrphanageApp() {
             <nav className="flex flex-col gap-px">
               <button
                 type="button"
-                className="flex w-full items-center gap-2.5 rounded-md bg-gradient-to-r from-pink-600 to-rose-700 px-2.5 py-[7px] text-[13.5px] font-medium text-white shadow-sm shadow-pink-600/25"
-                onClick={() => setMobileNavOpen(false)}
+                onClick={() => { setActiveTab('queue'); setMobileNavOpen(false); }}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+                  activeTab === 'queue'
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-700 font-medium text-white shadow-sm shadow-pink-600/25'
+                    : 'text-[#3f3f46] hover:bg-pink-50 hover:text-pink-900 dark:text-zinc-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
+                )}
               >
-                <HeartHandshake className="h-[15px] w-[15px] shrink-0 text-white/85" />
+                <HeartHandshake className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'queue' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <span className="truncate text-left">Dispute queue</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setActiveTab('s-wall'); setMobileNavOpen(false); }}
+                className={cn(
+                  'group/sw flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+                  activeTab === 's-wall'
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-700 font-medium text-white shadow-sm shadow-violet-600/25'
+                    : 'text-[#3f3f46] hover:bg-violet-50 hover:text-violet-900 dark:text-zinc-300 dark:hover:bg-violet-950/40 dark:hover:text-violet-100',
+                )}
+              >
+                <Newspaper className={cn('h-[15px] w-[15px] shrink-0', activeTab === 's-wall' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
+                <SWallNavLabel />
               </button>
             </nav>
           </div>
@@ -489,10 +511,14 @@ export default function OrphanageApp() {
           disputesLoading={disputesByEmployeeLoading}
         />
 
+        <AnimatePresence mode="wait" initial={false}>
+          {activeTab === 'queue' ? (
         <motion.div
+          key="queue"
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
           className="flex min-h-0 flex-1 flex-col overflow-y-auto"
         >
           <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
@@ -813,6 +839,29 @@ export default function OrphanageApp() {
             </Card>
           </div>
         </motion.div>
+          ) : (
+            <motion.div
+              key="s-wall"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <div className="shrink-0 border-b border-pink-100/70 bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-pink-950/40 dark:bg-zinc-950">
+                <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
+                  Simple Wall
+                </h1>
+                <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
+                  Company-wide social feed. Post updates, react, and comment — live via Realtime.
+                </p>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] dark:bg-[#0d1117]">
+                <SWall viewerEmail={viewerEmail} canPost sourceLabel="Orphanage" />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
       <Toaster position="top-right" />
 

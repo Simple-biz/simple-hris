@@ -298,7 +298,7 @@ export default function PayrollDispatch() {
   };
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
+    <div className="relative flex min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117] lg:h-full lg:overflow-hidden">
       {/* Decorative background blobs — pure dopamine */}
       <BackgroundOrbs />
 
@@ -359,10 +359,10 @@ export default function PayrollDispatch() {
       {/* ── Two-column layout: bank cards left, stats + table right ── */}
       <div
         className={cn(
-          'relative mt-4 flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4 sm:mt-6 sm:px-8 sm:pb-8',
+          'relative mt-4 flex flex-col gap-3 px-4 pb-6 sm:mt-6 sm:px-8 sm:pb-8',
           // lg+ becomes a 2-col / 2-row grid: banks span the left column full
           // height, stats top-right, table bottom-right.
-          'lg:grid lg:grid-cols-[260px_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-4',
+          'lg:min-h-0 lg:flex-1 lg:grid lg:grid-cols-[260px_minmax(0,1fr)] lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-4',
         )}
       >
         {/* RIGHT TOP — Hero stats. Order 1 on mobile so stats sit above
@@ -419,14 +419,13 @@ export default function PayrollDispatch() {
             initial="hidden"
             animate="visible"
             className={cn(
-              // Mobile: 2-col grid pack; sm: 4-col; lg: stack vertically inside
-              // the narrow left column.
-              'grid grid-cols-2 gap-1.5 sm:grid-cols-4 sm:gap-2 lg:grid-cols-1 lg:gap-2',
-              // Allow the rail to scroll independently of the table on lg.
-              'lg:overflow-y-auto lg:pr-1',
+              // Mobile / sm: horizontal scroll strip — no more 5-row grid crushing the table
+              'flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+              // lg: stack vertically inside the narrow left column
+              'lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:pb-0 lg:pr-1',
             )}
           >
-            <motion.div variants={itemPop}>
+            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
               <ProcessorCard
                 label="All pending"
                 subtitle={ALL_VISUAL.blurb}
@@ -442,7 +441,7 @@ export default function PayrollDispatch() {
             {PROCESSORS.map((p) => {
               const v = PROCESSOR_VISUALS[p.id];
               return (
-                <motion.div key={p.id} variants={itemPop}>
+                <motion.div key={p.id} variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
                   <ProcessorCard
                     label={p.label}
                     subtitle={v.blurb}
@@ -456,7 +455,7 @@ export default function PayrollDispatch() {
                 </motion.div>
               );
             })}
-            <motion.div variants={itemPop}>
+            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
               <ProcessorCard
                 label="History"
                 subtitle={HISTORY_VISUAL.blurb}
@@ -469,7 +468,7 @@ export default function PayrollDispatch() {
                 iconOnlyFallback
               />
             </motion.div>
-            <motion.div variants={itemPop}>
+            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
               <ProcessorCard
                 label="Reports"
                 subtitle={REPORTS_VISUAL.blurb}
@@ -485,7 +484,7 @@ export default function PayrollDispatch() {
         </div>
 
         {/* RIGHT BOTTOM — Table body. Order 3 on mobile, bottom-right cell on lg. */}
-        <div className="relative order-3 min-h-0 flex-1 overflow-hidden rounded-2xl border border-orange-100/80 bg-white/90 shadow-[0_8px_28px_-12px_rgba(255,138,76,0.18)] backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80 lg:order-none lg:col-start-2 lg:row-start-2">
+        <div className="relative order-3 min-h-[420px] overflow-hidden rounded-2xl border border-orange-100/80 bg-white/90 shadow-[0_8px_28px_-12px_rgba(255,138,76,0.18)] backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80 lg:order-none lg:col-start-2 lg:row-start-2 lg:min-h-0 lg:flex-1">
           <AnimatePresence mode="wait">
             <motion.div
               key={

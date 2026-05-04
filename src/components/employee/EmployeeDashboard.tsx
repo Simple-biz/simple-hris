@@ -14,6 +14,7 @@ import {
   FileText,
   RefreshCw,
   CircleHelp,
+  Sparkles,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button } from '@/components/ui/button';
@@ -261,6 +262,41 @@ function isoDateToUtcDow(iso: string): number | null {
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
+
+const EMPLOYEE_MESSAGES: { heading: (name: string) => string; body: string }[] = [
+  {
+    heading: (name) => `Welcome back, ${name} — your work keeps this company moving. ✦`,
+    body: "Track your hours, check your pay estimates, and keep your Perfect Attendance streak alive. Everything you need is right here.",
+  },
+  {
+    heading: (name) => `Hi ${name} — consistency is your superpower. ✦`,
+    body: "Every hour you log and every shift you show up for adds up. Your dashboard has the full picture — hours, pay, and attendance all in one place.",
+  },
+  {
+    heading: (name) => `Good to see you, ${name} — keep showing up. ✦`,
+    body: "Your effort is measured here, recognized, and rewarded. Check your current estimates and make sure everything looks right.",
+  },
+  {
+    heading: (name) => `Hey ${name} — great work starts with knowing where you stand. ✦`,
+    body: "Review your hours, estimated pay, and PAB status below. Reach out to your manager if anything looks off.",
+  },
+  {
+    heading: (name) => `Welcome, ${name} — every shift counts and so do you. ✦`,
+    body: "Your hours, bonuses, and attendance are tracked transparently here. Keep it going — you're doing great.",
+  },
+];
+
+const SPARKLES_FLOAT = [
+  { left: '4%',  delay: '0s',    dur: '4.1s', size: '18px' },
+  { left: '12%', delay: '1.3s',  dur: '3.7s', size: '14px' },
+  { left: '22%', delay: '2.6s',  dur: '4.5s', size: '22px' },
+  { left: '35%', delay: '0.7s',  dur: '3.4s', size: '16px' },
+  { left: '48%', delay: '2.0s',  dur: '4.0s', size: '12px' },
+  { left: '60%', delay: '0.4s',  dur: '4.7s', size: '20px' },
+  { left: '72%', delay: '2.9s',  dur: '3.8s', size: '15px' },
+  { left: '83%', delay: '1.6s',  dur: '4.2s', size: '19px' },
+  { left: '93%', delay: '3.3s',  dur: '3.6s', size: '13px' },
+] as const;
 
 export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
@@ -1404,8 +1440,61 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
     );
   }
 
+  const _welcomeMsg = EMPLOYEE_MESSAGES[Math.floor(Date.now() / 86400000) % EMPLOYEE_MESSAGES.length]!;
+  const _rawFirst = email.includes('@')
+    ? email.split('@')[0]!.replace(/[._-]/g, ' ').split(' ')[0]!
+    : 'there';
+  const _greeting = _rawFirst.charAt(0).toUpperCase() + _rawFirst.slice(1);
+
   return (
     <div className="box-border flex h-full min-h-0 flex-col gap-2 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [@media(max-height:900px)]:gap-1.5 sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:py-3 dark:bg-none dark:bg-[#0d1117]">
+      {/* ── Hero intro card ── */}
+      <header className="relative shrink-0 overflow-hidden rounded-2xl border border-orange-200/80 bg-gradient-to-br from-orange-500 via-amber-500 to-zinc-900 px-5 py-6 text-white shadow-lg shadow-orange-500/20 dark:border-orange-900/50 dark:from-orange-600 dark:via-amber-800 dark:to-black sm:px-7">
+        <style>{`
+          @keyframes floatSparkle {
+            0%   { transform: translateY(0)      scale(1);    opacity: 0; }
+            12%  {                                             opacity: 0.5; }
+            80%  { transform: translateY(-110px) scale(0.65); opacity: 0.2; }
+            100% { transform: translateY(-130px) scale(0.45); opacity: 0; }
+          }
+        `}</style>
+        {SPARKLES_FLOAT.map((s, i) => (
+          <span
+            key={i}
+            aria-hidden
+            style={{
+              position: 'absolute',
+              bottom: '6px',
+              left: s.left,
+              fontSize: s.size,
+              color: 'rgba(255,255,255,0.70)',
+              animation: `floatSparkle ${s.dur} ${s.delay} infinite ease-in`,
+              pointerEvents: 'none',
+              userSelect: 'none',
+              lineHeight: 1,
+            }}
+          >
+            ✦
+          </span>
+        ))}
+        {/* glow blobs */}
+        <div className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10 blur-3xl" aria-hidden />
+        <div className="absolute -bottom-10 left-6 h-28 w-28 rounded-full bg-amber-300/20 blur-2xl" aria-hidden />
+
+        <div className="relative flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-orange-100/90">
+            <Sparkles className="h-3 w-3 shrink-0" />
+            Employee dashboard
+          </div>
+          <h1 className="text-balance text-xl font-bold tracking-tight sm:text-2xl">
+            {_welcomeMsg.heading(_greeting)}
+          </h1>
+          <p className="max-w-2xl text-sm leading-relaxed text-orange-100/80">
+            {_welcomeMsg.body}
+          </p>
+        </div>
+      </header>
+
       {/* Header — editorial: eyebrow + display title + source picker; lg actions on the right */}
       <header className="flex shrink-0 flex-col gap-3 border-b border-zinc-200/70 pb-2.5 dark:border-zinc-800/70 lg:flex-row lg:items-end lg:justify-between lg:gap-6 lg:pb-3">
         <div className="min-w-0 flex-1">

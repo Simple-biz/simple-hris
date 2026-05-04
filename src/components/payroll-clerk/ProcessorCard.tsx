@@ -46,7 +46,7 @@ export default function ProcessorCard({
       whileTap={{ scale: 0.97 }}
       transition={{ type: 'spring', stiffness: 400, damping: 28 }}
       className={cn(
-        'group relative flex h-full w-full flex-col items-start gap-1.5 overflow-hidden rounded-xl border p-2.5 text-left',
+        'group relative flex h-full min-h-[80px] w-full flex-col items-start gap-1.5 overflow-hidden rounded-xl border p-2.5 text-left',
         'transition-colors duration-200',
         active
           ? 'border-transparent bg-white shadow-[0_6px_18px_-8px_rgba(0,0,0,0.18)] dark:bg-zinc-900'

@@ -31,9 +31,11 @@ import {
   Controls,
   Handle,
   MarkerType,
+  MiniMap,
   Panel,
   Position,
-  getSmoothStepPath,
+  getBezierPath,
+  useNodesState,
   type Edge,
   type EdgeProps,
   type EdgeTypes,
@@ -46,16 +48,27 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
+  Banknote,
   CheckCircle2,
   CircleDashed,
   Clock,
   Database,
+  DollarSign,
+  FileSpreadsheet,
   FileText,
+  KeyRound,
+  LayoutDashboard,
   RefreshCw,
   Radar as RadarIcon,
   RotateCcw,
+  ScrollText,
+  Server,
   ShieldAlert,
+  Sparkles,
   Tag,
+  Users,
+  Wrench,
   XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -81,6 +94,17 @@ export type DiagnosticCategory =
   | 'reports'
   | 'infra';
 
+/** A concrete remediation step. `kind` lets the UI hint at the type of action:
+ *  config = settings/env tweak, code = source change, db = SQL/migration,
+ *  ops = operational/manual step, monitor = observability/audit-only. */
+export type DiagnosticFix = {
+  title: string;
+  description: string;
+  kind?: 'config' | 'code' | 'db' | 'ops' | 'monitor';
+  /** Optional file path or command shown verbatim under the fix. */
+  hint?: string;
+};
+
 export type DiagnosticNode = {
   id: string;
   label: string;
@@ -89,6 +113,9 @@ export type DiagnosticNode = {
   summary: string;
   details: string[];
   suggestedChecks: string[];
+  /** Concrete fixes/remediations for this node. Optional — older API responses
+   *  without this field keep working; the UI just hides the section. */
+  suggestedFixes?: DiagnosticFix[];
   lastChecked: string;
 };
 
@@ -194,6 +221,30 @@ const CATEGORY_LABEL: Record<DiagnosticCategory, string> = {
   infra: 'infra',
 };
 
+/** Category-specific glyph for the node header — gives each card a visual
+ *  fingerprint so admins can pick services out of the map at a glance instead
+ *  of reading every label. */
+const CATEGORY_ICON: Record<DiagnosticCategory, React.ComponentType<{ className?: string }>> = {
+  'admin-ui': LayoutDashboard,
+  payroll: Banknote,
+  rates: DollarSign,
+  csv: FileSpreadsheet,
+  'employee-data': Users,
+  database: Database,
+  auth: KeyRound,
+  audit: ScrollText,
+  reports: BarChart3,
+  infra: Server,
+};
+
+const FIX_KIND_LABEL: Record<NonNullable<DiagnosticFix['kind']>, string> = {
+  config: 'config',
+  code: 'code',
+  db: 'db',
+  ops: 'ops',
+  monitor: 'monitor',
+};
+
 /* ────────────────── Mock data ────────────────── */
 
 function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
@@ -231,6 +282,22 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
         'Verify the calendar-column-dedupe map for the latest upload.',
         'Spot-check totals against a single employee’s expected pay.',
       ],
+      suggestedFixes: [
+        {
+          title: 'Re-import the latest Hubstaff CSV',
+          description:
+            'Pull a fresh export and re-run the import — fixes most stale-column / mis-dated total issues without code changes.',
+          kind: 'ops',
+          hint: 'Admin → Payroll Wizard → Import Hubstaff',
+        },
+        {
+          title: 'Tighten daily-column header detection',
+          description:
+            'Reject rows where any expected daily slot maps to null instead of silently coercing to 0; surfaces broken exports immediately.',
+          kind: 'code',
+          hint: 'src/lib/payroll/hubstaff-import.ts',
+        },
+      ],
       lastChecked: iso,
     },
     {
@@ -262,6 +329,21 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
       suggestedChecks: [
         'Validate header detection on the latest upload.',
         'Reject rows with null daily totals before persistence.',
+      ],
+      suggestedFixes: [
+        {
+          title: 'Add a pre-persist null guard',
+          description:
+            'Throw before insert when any daily slot is null so the importer fails loudly rather than producing zero-pay rows downstream.',
+          kind: 'code',
+          hint: 'src/lib/payroll/hubstaff-import.ts → validateRow()',
+        },
+        {
+          title: 'Surface a dry-run preview',
+          description:
+            'Show parsed rows + detected day columns before commit; admin clicks confirm only when the mapping is correct.',
+          kind: 'code',
+        },
       ],
       lastChecked: iso,
     },
@@ -311,6 +393,28 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
         'Review service-role usage list quarterly.',
         'Confirm pending migrations applied (see references/seed_*.sql).',
       ],
+      suggestedFixes: [
+        {
+          title: 'Apply pending migrations',
+          description:
+            'Run the unapplied SQL files from the references/ folder against staging first, then prod.',
+          kind: 'db',
+          hint: 'references/seed_*.sql',
+        },
+        {
+          title: 'Refresh dependent views after ADD COLUMN',
+          description:
+            'Re-create active_employees and any view that selects * from a changed table so new columns propagate.',
+          kind: 'db',
+        },
+        {
+          title: 'Audit service-role call sites',
+          description:
+            'List every route using the service-role client and confirm each one genuinely needs RLS bypass.',
+          kind: 'code',
+          hint: 'grep service-role-client',
+        },
+      ],
       lastChecked: iso,
     },
     {
@@ -342,6 +446,20 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
         'Inspect the latest auto-created table’s column list.',
         'Confirm naming conventions match downstream readers.',
       ],
+      suggestedFixes: [
+        {
+          title: 'Pin the import schema',
+          description:
+            'Switch from on-demand CREATE TABLE to a versioned schema with explicit migrations; auto-detected columns become opt-in additions, not silent mutations.',
+          kind: 'db',
+        },
+        {
+          title: 'Emit a schema-diff log line per import',
+          description:
+            'Record added/removed columns in audit_log so downstream readers can be patched before they break.',
+          kind: 'monitor',
+        },
+      ],
       lastChecked: iso,
     },
     {
@@ -357,6 +475,27 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
       suggestedChecks: [
         'Add server-side admin checks on destructive routes.',
         'Audit sessionStorage-driven role lookups for tampering risk.',
+      ],
+      suggestedFixes: [
+        {
+          title: 'Wrap destructive routes with a server-side admin guard',
+          description:
+            'Every POST/DELETE under /api/admin should re-check the session role server-side; never trust the client tab gate.',
+          kind: 'code',
+          hint: 'middleware.ts + /api/admin/* handlers',
+        },
+        {
+          title: 'Move role lookups off sessionStorage',
+          description:
+            'Resolve role from the signed JWT or a server-issued cookie so a user can\'t edit their role in DevTools.',
+          kind: 'code',
+        },
+        {
+          title: 'Log unauthorised attempts to audit_log',
+          description:
+            'Write a row whenever a non-admin hits a guarded endpoint; turns silent denials into something investigable.',
+          kind: 'monitor',
+        },
       ],
       lastChecked: iso,
     },
@@ -551,65 +690,107 @@ function SchemaRow({
   );
 }
 
-function DiagFlowNode({ data, selected: rfSelected }: NodeProps<Node<DiagNodeData>>) {
+const DiagFlowNode = React.memo(function DiagFlowNode({
+  data,
+  selected: rfSelected,
+}: NodeProps<Node<DiagNodeData>>) {
   const { diag, selected } = data;
   const palette = STATUS_CLASSES[diag.status];
   const isSelected = selected || rfSelected;
+  const isAttention = diag.status === 'warning' || diag.status === 'critical';
+  const fixCount = diag.suggestedFixes?.length ?? 0;
+  const CategoryGlyph = CATEGORY_ICON[diag.category] ?? Database;
   return (
     <div
       className={cn(
-        'group w-[280px] overflow-hidden rounded-xl border bg-white shadow-md transition-all duration-200 dark:bg-zinc-950',
-        'border-zinc-200 dark:border-zinc-800',
+        'group relative w-[284px] overflow-hidden rounded-xl border bg-white shadow-md transition-all duration-200 dark:bg-zinc-950',
+        'border-zinc-200/90 dark:border-zinc-800',
+        // Soft status glow on warning/critical so trouble spots are visible at a
+        // glance even when zoomed out — kept low-opacity so it doesn't dominate.
+        isAttention && diag.status === 'warning' && 'shadow-amber-500/10 dark:shadow-amber-500/15',
+        isAttention && diag.status === 'critical' && 'shadow-rose-500/15 dark:shadow-rose-500/20',
         isSelected
-          ? 'ring-2 ring-orange-500/55 shadow-lg shadow-orange-500/10 dark:ring-orange-400/45'
-          : 'hover:shadow-lg hover:shadow-zinc-900/5 dark:hover:shadow-black/30',
+          ? 'ring-2 ring-orange-500/60 shadow-lg shadow-orange-500/15 dark:ring-orange-400/50'
+          : 'hover:shadow-lg hover:-translate-y-px hover:shadow-zinc-900/10 dark:hover:shadow-black/40',
       )}
     >
-      {/* Edge handles — tied to the card edges (not row-level) so connections stay stable
-          while users drag. Hidden visually; present so React Flow can attach edges. */}
+      {/* Status accent stripe — full-height bar on the left edge, color-matched
+          to the node status. Reads as a "tab" you'd see in an IDE / error list. */}
+      <span
+        aria-hidden
+        className={cn('absolute inset-y-0 left-0 w-[3px]', palette.accentDot)}
+      />
+
+      {/* Edge handles — anchored to the card sides so connections stay stable
+          while users drag. Made visually invisible (transparent + no border) so
+          edges appear to dock directly to the card edge instead of into a dot. */}
       <Handle
         type="target"
         position={Position.Left}
-        className="!h-2 !w-2 !-translate-x-1 !border-zinc-300 !bg-white dark:!border-zinc-600 dark:!bg-zinc-900"
+        className="!h-2 !w-2 !-translate-x-[1px] !border-0 !bg-transparent !opacity-0"
         style={{ top: '50%' }}
       />
       <Handle
         type="source"
         position={Position.Right}
-        className="!h-2 !w-2 !translate-x-1 !border-zinc-300 !bg-white dark:!border-zinc-600 dark:!bg-zinc-900"
+        className="!h-2 !w-2 !translate-x-[1px] !border-0 !bg-transparent !opacity-0"
         style={{ top: '50%' }}
       />
 
       {/* Header — drag handle (the whole card is draggable; this just looks like one). */}
       <div
         className={cn(
-          'relative flex items-center gap-2 border-b px-3 py-2.5',
+          'relative flex items-center gap-2 border-b px-3 py-2.5 pl-3.5',
           palette.headerBg,
           palette.headerBorder,
         )}
       >
         <span
-          className={cn('inline-block h-2 w-2 shrink-0 rounded-full ring-2 ring-white dark:ring-zinc-950', palette.accentDot)}
+          className={cn(
+            'relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md ring-1 ring-inset',
+            'bg-white/70 dark:bg-zinc-900/60',
+            diag.status === 'healthy' && 'ring-emerald-200/70 dark:ring-emerald-800/50',
+            diag.status === 'warning' && 'ring-amber-200/70 dark:ring-amber-800/50',
+            diag.status === 'critical' && 'ring-rose-200/70 dark:ring-rose-800/50',
+            diag.status === 'unknown' && 'ring-zinc-200 dark:ring-zinc-800',
+          )}
           aria-hidden
-        />
-        <Database className={cn('h-3.5 w-3.5 shrink-0', palette.iconColor)} aria-hidden />
-        <span
-          className={cn(
-            'min-w-0 flex-1 truncate text-[12.5px] font-semibold leading-none tracking-tight',
-            palette.headerText,
-          )}
-          title={diag.label}
         >
-          {diag.label}
+          <CategoryGlyph className={cn('h-3.5 w-3.5', palette.iconColor)} />
         </span>
-        <span
-          className={cn(
-            'rounded-full border px-1.5 py-0 font-mono text-[8.5px] font-semibold uppercase tracking-wider',
-            palette.badge,
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span
+            className={cn(
+              'min-w-0 truncate text-[12.5px] font-semibold leading-none tracking-tight',
+              palette.headerText,
+            )}
+            title={diag.label}
+          >
+            {diag.label}
+          </span>
+          <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500/80 dark:text-zinc-500">
+            {CATEGORY_LABEL[diag.category]}
+          </span>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span
+            className={cn(
+              'rounded-full border px-1.5 py-0 font-mono text-[8.5px] font-semibold uppercase tracking-wider',
+              palette.badge,
+            )}
+          >
+            {STATUS_LABEL[diag.status]}
+          </span>
+          {fixCount > 0 && isAttention && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full border border-orange-200 bg-orange-50 px-1.5 py-px font-mono text-[8.5px] font-semibold uppercase tracking-wider text-orange-700 dark:border-orange-900/60 dark:bg-orange-950/40 dark:text-orange-300"
+              title={`${fixCount} suggested fix${fixCount === 1 ? '' : 'es'}`}
+            >
+              <Wrench className="h-2.5 w-2.5" />
+              {fixCount}
+            </span>
           )}
-        >
-          {STATUS_LABEL[diag.status]}
-        </span>
+        </div>
       </div>
 
       {/* Body — Supabase-style "column" rows. */}
@@ -653,7 +834,7 @@ function DiagFlowNode({ data, selected: rfSelected }: NodeProps<Node<DiagNodeDat
       </div>
     </div>
   );
-}
+});
 
 const NODE_TYPES = { diag: DiagFlowNode };
 
@@ -692,52 +873,167 @@ function relationshipFor(source: string, target: string): RelationshipType {
 type DiagEdgeData = {
   status: DiagnosticStatus;
   relationship: RelationshipType;
+  /** Source-side and target-side status colors. Used to render a directional
+   *  gradient stroke that fades from where the call originates → where it lands,
+   *  so the relationship reads as "this → that" rather than a single-color line. */
+  colorFrom: string;
+  colorTo: string;
   /** True while ANY node is being dragged. We drop particle <circle>s and pause
    *  dash animations during drag to avoid SVG <animateMotion> twitching when its
    *  path string changes 60× per second. Particles re-mount cleanly on drag-stop. */
   dragging?: boolean;
 };
 
-/** Mount — slow flowing dashes; the structural / "contains" relationship.
- *  The animation declaration lives on the wrapping <g> via the edge's className
- *  (sd-edge-mount), NOT inline style.animation — keeping it stable across renders. */
+/** Curvature for our bezier edges. Subtle enough to feel structural, generous
+ *  enough that overlapping edges fan apart visually instead of stacking. */
+const EDGE_CURVATURE = 0.32;
+
+/** Per-edge linear gradient. Anchored to userspace coordinates so the fade
+ *  follows the actual source→target geometry of the path, not the bounding
+ *  box. The id is unique per edge so multiple edges can coexist. */
+function EdgeGradient({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  fromColor,
+  toColor,
+  fromOpacity = 0.55,
+  toOpacity = 0.95,
+}: {
+  id: string;
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  fromColor: string;
+  toColor: string;
+  fromOpacity?: number;
+  toOpacity?: number;
+}) {
+  return (
+    <defs>
+      <linearGradient
+        id={id}
+        gradientUnits="userSpaceOnUse"
+        x1={sourceX}
+        y1={sourceY}
+        x2={targetX}
+        y2={targetY}
+      >
+        <stop offset="0%" stopColor={fromColor} stopOpacity={fromOpacity} />
+        <stop offset="100%" stopColor={toColor} stopOpacity={toOpacity} />
+      </linearGradient>
+    </defs>
+  );
+}
+
+/** Common path style: gradient stroke + non-scaling so the line stays crisp at
+ *  any zoom, plus a soft tint-matched drop shadow on critical edges. */
+function edgePathStyle(
+  base: React.CSSProperties | undefined,
+  gradId: string,
+  status: DiagnosticStatus,
+  toColor: string,
+): React.CSSProperties {
+  return {
+    ...base,
+    stroke: `url(#${gradId})`,
+    strokeLinecap: 'round',
+    vectorEffect: 'non-scaling-stroke' as React.CSSProperties['vectorEffect'],
+    filter:
+      status === 'critical'
+        ? `drop-shadow(0 0 4px ${toColor}55)`
+        : status === 'warning'
+          ? `drop-shadow(0 0 2px ${toColor}33)`
+          : undefined,
+  };
+}
+
+/** Mount — slow flowing dashes; the structural / "contains" relationship. */
 function MountEdge({
-  id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, style, markerEnd,
+  id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, style, markerEnd, data,
 }: EdgeProps<Edge<DiagEdgeData>>) {
-  const [edgePath] = getSmoothStepPath({
-    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 14,
+  const [edgePath] = getBezierPath({
+    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, curvature: EDGE_CURVATURE,
   });
-  return <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />;
+  const gradId = `sd-grad-${id}`;
+  const fromColor = data?.colorFrom ?? '#a1a1aa';
+  const toColor = data?.colorTo ?? '#a1a1aa';
+  return (
+    <>
+      <EdgeGradient
+        id={gradId}
+        sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY}
+        fromColor={fromColor} toColor={toColor}
+      />
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={edgePathStyle(style, gradId, data?.status ?? 'unknown', toColor)}
+      />
+    </>
+  );
 }
 
 /** Query — faster flowing dashes; live reads talking to the DB layer. */
 function QueryEdge({
-  id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, style, markerEnd,
+  id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, style, markerEnd, data,
 }: EdgeProps<Edge<DiagEdgeData>>) {
-  const [edgePath] = getSmoothStepPath({
-    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 14,
+  const [edgePath] = getBezierPath({
+    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, curvature: EDGE_CURVATURE,
   });
-  return <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />;
+  const gradId = `sd-grad-${id}`;
+  const fromColor = data?.colorFrom ?? '#a1a1aa';
+  const toColor = data?.colorTo ?? '#a1a1aa';
+  return (
+    <>
+      <EdgeGradient
+        id={gradId}
+        sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY}
+        fromColor={fromColor} toColor={toColor}
+        fromOpacity={0.45} toOpacity={1}
+      />
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={edgePathStyle(style, gradId, data?.status ?? 'unknown', toColor)}
+      />
+    </>
+  );
 }
 
-/** Flow — solid line + a small particle traveling along the path.
- *  Particles unmount during drag so SVG <animateMotion> doesn't reset every frame. */
+/** Flow — solid line + a small particle traveling along the path. */
 function FlowEdge({
   id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, style, markerEnd, data,
 }: EdgeProps<Edge<DiagEdgeData>>) {
-  const [edgePath] = getSmoothStepPath({
-    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 14,
+  const [edgePath] = getBezierPath({
+    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, curvature: EDGE_CURVATURE,
   });
-  const stroke = (style?.stroke as string) ?? '#71717a';
+  const gradId = `sd-grad-${id}`;
+  const fromColor = data?.colorFrom ?? '#a1a1aa';
+  const toColor = data?.colorTo ?? '#a1a1aa';
   const isCritical = data?.status === 'critical';
   const isDragging = data?.dragging === true;
   return (
     <>
-      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />
+      <EdgeGradient
+        id={gradId}
+        sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY}
+        fromColor={fromColor} toColor={toColor}
+      />
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={edgePathStyle(style, gradId, data?.status ?? 'unknown', toColor)}
+      />
       {!isDragging && (
         <>
-          {/* Glow halo trailing the particle */}
-          <circle r={isCritical ? 6 : 5} fill={stroke} opacity={0.18} className="sd-particle-halo">
+          <circle r={isCritical ? 6 : 5} fill={toColor} opacity={0.18} className="sd-particle-halo">
             <animateMotion
               dur={isCritical ? '2.2s' : '3.4s'}
               repeatCount="indefinite"
@@ -745,8 +1041,7 @@ function FlowEdge({
               rotate="auto"
             />
           </circle>
-          {/* Solid travelling particle */}
-          <circle r={isCritical ? 3.4 : 3} fill={stroke}>
+          <circle r={isCritical ? 3.4 : 3} fill={toColor}>
             <animateMotion
               dur={isCritical ? '2.2s' : '3.4s'}
               repeatCount="indefinite"
@@ -764,23 +1059,34 @@ function FlowEdge({
 function EventEdge({
   id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, style, markerEnd, data,
 }: EdgeProps<Edge<DiagEdgeData>>) {
-  const [edgePath] = getSmoothStepPath({
-    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 14,
+  const [edgePath] = getBezierPath({
+    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, curvature: EDGE_CURVATURE,
   });
-  const stroke = (style?.stroke as string) ?? '#71717a';
+  const gradId = `sd-grad-${id}`;
+  const fromColor = data?.colorFrom ?? '#a1a1aa';
+  const toColor = data?.colorTo ?? '#a1a1aa';
   const isDragging = data?.dragging === true;
   const cycle = data?.status === 'critical' ? 2.6 : 4.0;
   const burst = 1.4;
   return (
     <>
+      <EdgeGradient
+        id={gradId}
+        sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY}
+        fromColor={fromColor} toColor={toColor}
+        fromOpacity={0.35} toOpacity={0.85}
+      />
       <BaseEdge
         id={id}
         path={edgePath}
         markerEnd={markerEnd}
-        style={{ ...style, strokeWidth: 1.4, opacity: 0.7 }}
+        style={{
+          ...edgePathStyle(style, gradId, data?.status ?? 'unknown', toColor),
+          strokeWidth: 1.4,
+        }}
       />
       {!isDragging && (
-        <circle r="3" fill={stroke}>
+        <circle r="3" fill={toColor}>
           <animateMotion
             dur={`${burst}s`}
             begin="0s"
@@ -833,7 +1139,8 @@ function DiagnosticsKeyframes() {
 
       /* Mount edges — slow flowing dashes (structural). */
       .react-flow__edge.sd-edge-mount > .react-flow__edge-path {
-        stroke-dasharray: 6 5;
+        stroke-dasharray: 7 6;
+        stroke-linecap: round;
         animation: sd-dash-flow 7s linear infinite;
       }
       .react-flow__edge.sd-edge-mount.sd-critical > .react-flow__edge-path {
@@ -842,12 +1149,18 @@ function DiagnosticsKeyframes() {
 
       /* Query edges — faster flowing dashes (live DB reads). */
       .react-flow__edge.sd-edge-query > .react-flow__edge-path {
-        stroke-dasharray: 4 3;
-        stroke-width: 1.8px;
+        stroke-dasharray: 4 4;
+        stroke-linecap: round;
         animation: sd-dash-flow 1.6s linear infinite;
       }
       .react-flow__edge.sd-edge-query.sd-critical > .react-flow__edge-path {
         animation-duration: 1s;
+      }
+
+      /* Default — clean, slightly translucent endpoints so multiple edges
+         landing on the same handle don't pile up into an opaque blob. */
+      .react-flow__edge > .react-flow__edge-path {
+        stroke-linecap: round;
       }
 
       /* Pause dash flow while any node is dragging — avoids visible "stutter"
@@ -858,11 +1171,85 @@ function DiagnosticsKeyframes() {
 
       .sd-particle-halo { filter: blur(2px); }
 
+      /* ── Glowing scroll affordance for the right-side panels ──────────────
+         Base UI's ScrollArea hides its scrollbar by default until scroll/hover,
+         which made the Node details + Active alerts panels look "empty below."
+         We force the bar to render whenever it can scroll, give the thumb an
+         orange glow, and fade in/out a soft pulse so it reads as alive. */
+      .sd-scroll [data-slot="scroll-area-scrollbar"] {
+        opacity: 1 !important;
+        width: 9px !important;
+        padding: 2px 1px !important;
+      }
+      .sd-scroll [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+        height: 9px !important;
+        width: auto !important;
+      }
+      .sd-scroll [data-slot="scroll-area-thumb"] {
+        background: linear-gradient(180deg, #fdba74 0%, #f97316 50%, #ea580c 100%) !important;
+        box-shadow:
+          0 0 6px rgba(249, 115, 22, 0.55),
+          0 0 14px rgba(249, 115, 22, 0.28),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+        border-radius: 9999px;
+        animation: sd-scroll-pulse 2.4s ease-in-out infinite;
+      }
+      .sd-scroll [data-slot="scroll-area-thumb"]:hover {
+        background: linear-gradient(180deg, #fed7aa 0%, #fb923c 50%, #f97316 100%) !important;
+        box-shadow:
+          0 0 10px rgba(249, 115, 22, 0.75),
+          0 0 22px rgba(249, 115, 22, 0.4),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+      }
+      .dark .sd-scroll [data-slot="scroll-area-thumb"] {
+        background: linear-gradient(180deg, #fb923c 0%, #f97316 50%, #c2410c 100%) !important;
+        box-shadow:
+          0 0 8px rgba(249, 115, 22, 0.6),
+          0 0 18px rgba(249, 115, 22, 0.32),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+      }
+      @keyframes sd-scroll-pulse {
+        0%, 100% {
+          box-shadow:
+            0 0 6px rgba(249, 115, 22, 0.45),
+            0 0 12px rgba(249, 115, 22, 0.22),
+            inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+        }
+        50% {
+          box-shadow:
+            0 0 11px rgba(249, 115, 22, 0.7),
+            0 0 22px rgba(249, 115, 22, 0.4),
+            inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+        }
+      }
+
+      /* Subtle "more content below" fade overlay at the bottom of the scroll
+         viewport — purely decorative, sits above the content but below the
+         scrollbar. Implemented as a ::after on the wrapping container. */
+      .sd-scroll-wrap {
+        position: relative;
+      }
+      .sd-scroll-wrap::after {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 10px; /* leave room for the scrollbar */
+        bottom: 0;
+        height: 22px;
+        background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.85));
+        pointer-events: none;
+        border-radius: 0 0 0.5rem 0.5rem;
+      }
+      .dark .sd-scroll-wrap::after {
+        background: linear-gradient(to bottom, transparent, rgba(9, 9, 11, 0.9));
+      }
+
       /* Respect users who want reduced motion — disable all edge animation. */
       @media (prefers-reduced-motion: reduce) {
         .react-flow__edge-path,
         .sd-particle-halo,
-        .react-flow__edge circle[fill] {
+        .react-flow__edge circle[fill],
+        .sd-scroll [data-slot="scroll-area-thumb"] {
           animation: none !important;
         }
       }
@@ -897,10 +1284,17 @@ export default function SystemDiagnostics() {
   const [data, setData] = useState<DiagnosticsHealthResponse>(() => buildMockDiagnostics());
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => ({
-    ...NODE_POSITIONS,
-    ...loadStoredPositions(),
-  }));
+  // Initial positions snapshot — used at first paint and as the "template" we can
+  // restore via Reset Layout. Live positions live inside the React Flow node state
+  // (see `flowNodes` below) so position changes don't trigger top-level rerenders.
+  const initialPositions = useMemo<Record<string, { x: number; y: number }>>(
+    () => ({ ...NODE_POSITIONS, ...loadStoredPositions() }),
+    [],
+  );
+  const [hasCustomLayout, setHasCustomLayout] = useState(() => {
+    const stored = loadStoredPositions();
+    return Object.keys(stored).length > 0;
+  });
   /** True from `onNodeDragStart` to `onNodeDragStop`. Edge components conditionally
    *  drop their <animateMotion> particles while this is true, and CSS `.sd-paused`
    *  pauses the dash flow on edge paths so the geometry can recompute without
@@ -945,8 +1339,70 @@ export default function SystemDiagnostics() {
     void loadDiagnostics();
   }, [loadDiagnostics]);
 
+  // React Flow-managed node state. `useNodesState` exposes a change handler that
+  // applies position updates in-place and only mutates the moving node's reference,
+  // so unaffected node components (memoized via React.memo) skip re-render during
+  // drag. This is the single biggest drag-perf win versus rebuilding the array
+  // through useMemo on every position event.
+  const [flowNodes, setFlowNodes, onNodesChangeRf] = useNodesState<Node<DiagNodeData>>(
+    data.nodes.map((diag) => ({
+      id: diag.id,
+      type: 'diag',
+      position: initialPositions[diag.id] ?? NODE_POSITIONS[diag.id] ?? { x: 0, y: 0 },
+      data: { diag, selected: diag.id === selectedNodeId },
+      draggable: true,
+      selectable: true,
+    })),
+  );
+
+  // Sync data refreshes (every 60s) into nodes without disturbing positions or
+  // re-creating data objects unless the underlying diag actually changed.
+  useEffect(() => {
+    setFlowNodes((prev) => {
+      const prevById = new Map(prev.map((n) => [n.id, n]));
+      let changed = false;
+      const next = data.nodes.map((diag) => {
+        const existing = prevById.get(diag.id);
+        if (existing && existing.data.diag === diag) return existing;
+        changed = true;
+        return {
+          id: diag.id,
+          type: 'diag' as const,
+          position:
+            existing?.position ??
+            initialPositions[diag.id] ??
+            NODE_POSITIONS[diag.id] ?? { x: 0, y: 0 },
+          data: { diag, selected: diag.id === selectedNodeId },
+          draggable: true,
+          selectable: true,
+        };
+      });
+      return changed || next.length !== prev.length ? next : prev;
+    });
+  }, [data.nodes, initialPositions, selectedNodeId, setFlowNodes]);
+
+  // Selection-only updates: flip `data.selected` on just the two nodes whose
+  // selection state changed. Preserves reference identity for everyone else so
+  // React.memo can short-circuit them.
+  useEffect(() => {
+    setFlowNodes((prev) =>
+      prev.map((n) => {
+        const isSel = n.id === selectedNodeId;
+        if (n.data.selected === isSel) return n;
+        return { ...n, data: { ...n.data, selected: isSel } };
+      }),
+    );
+  }, [selectedNodeId, setFlowNodes]);
+
   const resetLayout = useCallback(() => {
-    setPositions({ ...NODE_POSITIONS });
+    setFlowNodes((prev) =>
+      prev.map((n) => {
+        const tpl = NODE_POSITIONS[n.id];
+        if (!tpl || (n.position.x === tpl.x && n.position.y === tpl.y)) return n;
+        return { ...n, position: { ...tpl } };
+      }),
+    );
+    setHasCustomLayout(false);
     if (typeof window !== 'undefined') {
       try {
         window.localStorage.removeItem(POSITIONS_STORAGE_KEY);
@@ -954,47 +1410,27 @@ export default function SystemDiagnostics() {
         /* ignore */
       }
     }
-  }, []);
-
-  // Track whether the user has moved any node off its template position. Used to
-  // enable/disable the Reset Layout button.
-  const hasCustomLayout = useMemo(() => {
-    return data.nodes.some((n) => {
-      const pos = positions[n.id];
-      const tpl = NODE_POSITIONS[n.id];
-      if (!pos || !tpl) return false;
-      return pos.x !== tpl.x || pos.y !== tpl.y;
-    });
-  }, [positions, data.nodes]);
-
-  const flowNodes: Node<DiagNodeData>[] = useMemo(
-    () =>
-      data.nodes.map((diag) => ({
-        id: diag.id,
-        type: 'diag',
-        position: positions[diag.id] ?? NODE_POSITIONS[diag.id] ?? { x: 0, y: 0 },
-        data: { diag, selected: diag.id === selectedNodeId },
-        draggable: true,
-        selectable: true,
-      })),
-    [data.nodes, selectedNodeId, positions],
-  );
+  }, [setFlowNodes]);
 
   const flowEdges: Edge<DiagEdgeData>[] = useMemo(() => {
     const byId = new Map(data.nodes.map((n) => [n.id, n]));
+    const order: DiagnosticStatus[] = ['healthy', 'unknown', 'warning', 'critical'];
     return EDGES.map((e) => {
       const a = byId.get(e.source)?.status ?? 'unknown';
       const b = byId.get(e.target)?.status ?? 'unknown';
-      const order: DiagnosticStatus[] = ['healthy', 'unknown', 'warning', 'critical'];
       const worst = order[Math.max(order.indexOf(a), order.indexOf(b))];
-      const stroke = STATUS_CLASSES[worst].edge;
+      const colorFrom = STATUS_CLASSES[a].edge;
+      const colorTo = STATUS_CLASSES[b].edge;
       const relationship = relationshipFor(e.source, e.target);
+      // Stroke width scales with severity so critical edges visually dominate
+      // without us having to color the whole map red.
+      const strokeWidth = worst === 'critical' ? 2.4 : worst === 'warning' ? 1.9 : 1.6;
       return {
         id: `${e.source}__${e.target}`,
         source: e.source,
         target: e.target,
         type: relationship,
-        data: { status: worst, relationship, dragging },
+        data: { status: worst, relationship, colorFrom, colorTo, dragging },
         // className lives on the wrapping <g class="react-flow__edge"> — used by
         // CSS to apply the dash animations once and pause them during drag.
         className: cn(
@@ -1002,37 +1438,41 @@ export default function SystemDiagnostics() {
           worst === 'critical' && 'sd-critical',
           dragging && 'sd-paused',
         ),
-        style: { stroke, strokeWidth: 1.6, opacity: 0.85 },
+        // The actual stroke color is overridden inside each edge component to a
+        // gradient (url(#sd-grad-...)). We still set a fallback color here so the
+        // path renders sanely if the gradient defs haven't mounted yet.
+        style: { stroke: colorTo, strokeWidth, opacity: 0.95 },
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          width: 14,
-          height: 14,
-          color: stroke,
+          width: 16,
+          height: 16,
+          color: colorTo,
         },
       };
     });
   }, [data.nodes, dragging]);
 
-  // Apply React Flow node changes (drag positions) into our persisted store.
+  // Defer to React Flow's built-in change applier (cheap — only the moving node's
+  // ref is replaced). On drag end, snapshot all positions and persist to
+  // localStorage; we don't write on every frame because writes are slow and we
+  // don't need intermediate states.
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      let next: Record<string, { x: number; y: number }> | null = null;
-      for (const c of changes) {
-        if (c.type === 'position' && c.position) {
-          next = next ?? { ...positions };
-          next[c.id] = { x: c.position.x, y: c.position.y };
-        }
-      }
-      if (next) {
-        setPositions(next);
-        // Only persist when the drag finishes (dragging=false on the final change).
-        const lastChange = changes[changes.length - 1];
-        if (lastChange?.type === 'position' && lastChange.dragging === false) {
-          persistPositions(next);
-        }
+      onNodesChangeRf(changes);
+      const dragStop = changes.some(
+        (c) => c.type === 'position' && c.dragging === false,
+      );
+      if (dragStop) {
+        setFlowNodes((prev) => {
+          const snap: Record<string, { x: number; y: number }> = {};
+          for (const n of prev) snap[n.id] = { x: n.position.x, y: n.position.y };
+          persistPositions(snap);
+          return prev;
+        });
+        setHasCustomLayout(true);
       }
     },
-    [positions],
+    [onNodesChangeRf, setFlowNodes],
   );
 
   const selectedNode = useMemo(
@@ -1132,7 +1572,7 @@ export default function SystemDiagnostics() {
       {/* ── Main: diagram + side panel ── */}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-hidden xl:grid-cols-[1fr_22rem]">
         {/* Diagram */}
-        <Card className="relative flex min-h-[480px] flex-col overflow-hidden border-zinc-200/80 bg-zinc-50/40 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/60">
+        <Card className="relative flex min-h-[480px] flex-col overflow-hidden border border-zinc-200/80 bg-zinc-50/40 ring-0 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/60">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800/60">
             <div className="flex min-w-0 items-center gap-2">
               <Activity className="h-3.5 w-3.5 shrink-0 text-orange-500 dark:text-orange-400" />
@@ -1187,6 +1627,7 @@ export default function SystemDiagnostics() {
               className="bg-transparent"
               nodesConnectable={false}
               elementsSelectable
+              onlyRenderVisibleElements
             >
               <Background
                 gap={28}
@@ -1197,6 +1638,39 @@ export default function SystemDiagnostics() {
               <Controls
                 showInteractive={false}
                 className="!border-zinc-200 !bg-white !text-zinc-700 dark:!border-zinc-800 dark:!bg-zinc-900 dark:!text-zinc-200"
+              />
+              {/* Translucent navigator — pannable so admins can scrub the canvas
+                  without losing their dragged layout, status-tinted so trouble
+                  spots are visible at a glance. */}
+              <MiniMap
+                position="top-right"
+                pannable
+                zoomable
+                ariaLabel="Service map navigator"
+                nodeStrokeWidth={2}
+                nodeBorderRadius={6}
+                nodeColor={(n) => {
+                  const d = (n.data as DiagNodeData | undefined)?.diag;
+                  return d ? STATUS_CLASSES[d.status].edge : '#a1a1aa';
+                }}
+                nodeStrokeColor={(n) => {
+                  const d = (n.data as DiagNodeData | undefined)?.diag;
+                  return d ? STATUS_CLASSES[d.status].edge : '#71717a';
+                }}
+                maskColor="rgba(244,244,245,0.55)"
+                style={{
+                  width: 168,
+                  height: 112,
+                  opacity: 0.78,
+                  transition: 'opacity 160ms ease',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.opacity = '1';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.opacity = '0.78';
+                }}
+                className="!m-2 !rounded-lg !border !border-zinc-200/80 !bg-white/70 !shadow-sm backdrop-blur-md dark:!border-zinc-800/80 dark:!bg-zinc-950/60"
               />
               <Panel
                 position="bottom-right"
@@ -1219,14 +1693,15 @@ export default function SystemDiagnostics() {
         {/* Right side stack: node details + alerts */}
         <div className="flex min-h-0 flex-col gap-3 overflow-hidden">
           {/* Node details */}
-          <Card className="flex min-h-[260px] flex-1 flex-col overflow-hidden border-zinc-200/80 bg-white/80 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/40">
+          <Card className="flex min-h-[260px] flex-1 flex-col overflow-hidden border border-zinc-200/80 bg-white/80 ring-0 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/40">
             <div className="flex shrink-0 items-center gap-2 border-b border-zinc-100 px-4 py-3 dark:border-zinc-800/60">
               <ShieldAlert className="h-3.5 w-3.5 text-orange-500 dark:text-orange-400" />
               <span className="text-[12px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
                 Node details
               </span>
             </div>
-            <ScrollArea className="min-h-0 flex-1">
+            <div className="sd-scroll-wrap min-h-0 flex-1">
+            <ScrollArea className="sd-scroll h-full min-h-0">
               <div className="px-4 py-4">
                 <AnimatePresence mode="wait" initial={false}>
                   {selectedNode ? (
@@ -1259,6 +1734,13 @@ export default function SystemDiagnostics() {
                       <p className="text-[12.5px] leading-relaxed text-zinc-700 dark:text-zinc-300">
                         {selectedNode.summary}
                       </p>
+
+                      {selectedNode.suggestedFixes && selectedNode.suggestedFixes.length > 0 && (
+                        <>
+                          <Separator className="bg-zinc-200/80 dark:bg-zinc-800/80" />
+                          <SuggestedFixes fixes={selectedNode.suggestedFixes} />
+                        </>
+                      )}
 
                       <Separator className="bg-zinc-200/80 dark:bg-zinc-800/80" />
 
@@ -1316,10 +1798,11 @@ export default function SystemDiagnostics() {
                 </AnimatePresence>
               </div>
             </ScrollArea>
+            </div>
           </Card>
 
           {/* Alerts list */}
-          <Card className="flex min-h-[200px] shrink-0 flex-col overflow-hidden border-zinc-200/80 bg-white/80 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/40">
+          <Card className="flex h-[280px] max-h-[40vh] min-h-[200px] shrink-0 flex-col overflow-hidden border border-zinc-200/80 bg-white/80 ring-0 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/40">
             <div className="flex shrink-0 items-center justify-between border-b border-zinc-100 px-4 py-3 dark:border-zinc-800/60">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
@@ -1331,7 +1814,8 @@ export default function SystemDiagnostics() {
                 {data.alerts.length}
               </span>
             </div>
-            <ScrollArea className="min-h-0 flex-1">
+            <div className="sd-scroll-wrap min-h-0 flex-1">
+            <ScrollArea className="sd-scroll h-full min-h-0">
               <div className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
                 {data.alerts.length === 0 ? (
                   <div className="flex flex-col items-center gap-1.5 py-8 text-center">
@@ -1378,9 +1862,88 @@ export default function SystemDiagnostics() {
                 )}
               </div>
             </ScrollArea>
+            </div>
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ────────────────── Suggested fixes ──────────────────
+ * Displays the actionable remediation list for the selected node. Each fix is
+ * presented as a small card with a kind-tinted icon, title, description, and an
+ * optional `hint` (file path / command) shown in a monospace pill. The block is
+ * rendered above Details so admins see "what to do" before "why it's flagged."
+ */
+
+const FIX_KIND_CLASSES: Record<NonNullable<DiagnosticFix['kind']>, string> = {
+  config: 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300',
+  code: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300',
+  db: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300',
+  ops: 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900/60 dark:bg-orange-950/40 dark:text-orange-300',
+  monitor: 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300',
+};
+
+function SuggestedFixes({ fixes }: { fixes: DiagnosticFix[] }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1.5">
+        <Sparkles className="h-3 w-3 text-orange-500 dark:text-orange-400" aria-hidden />
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+          Suggested fixes
+        </p>
+        <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+          {fixes.length}
+        </span>
+      </div>
+      <ul className="space-y-2">
+        {fixes.map((fix, i) => (
+          <li
+            key={i}
+            className={cn(
+              'group/fix relative rounded-lg border bg-gradient-to-br from-white to-zinc-50/50 p-2.5 transition-colors',
+              'border-zinc-200/80 hover:border-orange-300/70 hover:from-orange-50/30 hover:to-white',
+              'dark:border-zinc-800 dark:from-zinc-950 dark:to-zinc-900/40',
+              'dark:hover:border-orange-500/40 dark:hover:from-orange-500/5 dark:hover:to-zinc-950',
+            )}
+          >
+            <div className="flex items-start gap-2">
+              <span
+                className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-orange-100/70 text-orange-600 ring-1 ring-orange-200/70 dark:bg-orange-500/15 dark:text-orange-400 dark:ring-orange-500/25"
+                aria-hidden
+              >
+                <Wrench className="h-3 w-3" />
+              </span>
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="min-w-0 flex-1 text-[12px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
+                    {fix.title}
+                  </p>
+                  {fix.kind && (
+                    <span
+                      className={cn(
+                        'shrink-0 rounded-full border px-1.5 py-0 font-mono text-[8.5px] font-semibold uppercase tracking-wider',
+                        FIX_KIND_CLASSES[fix.kind],
+                      )}
+                    >
+                      {FIX_KIND_LABEL[fix.kind]}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                  {fix.description}
+                </p>
+                {fix.hint && (
+                  <p className="inline-flex items-center gap-1 rounded-md bg-zinc-100/80 px-1.5 py-0.5 font-mono text-[10px] text-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-300">
+                    {fix.hint}
+                  </p>
+                )}
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

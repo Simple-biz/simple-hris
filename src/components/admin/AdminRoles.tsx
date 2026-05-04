@@ -33,6 +33,7 @@ const ROLES = [
   { key: 'finance', label: 'Finance / Accounting', blurb: 'Access the Accounting Dashboard.' },
   { key: 'manager', label: 'Manager', blurb: 'Approve time adjustments, manage own team.' },
   { key: 'orphanage_manager', label: 'Orphanage Manager', blurb: 'Verify orphanage PAB disputes.' },
+  { key: 'ceo', label: 'CEO', blurb: 'Executive dashboard access, post company-wide announcements.' },
   { key: 'admin', label: 'Admin', blurb: 'Full system access.' },
 ] as const;
 
@@ -45,6 +46,7 @@ const ROLE_GROUPS: { title: string; caption: string; keys: RoleKey[] }[] = [
   { title: 'Coordinators', caption: 'HR & payroll inputs', keys: ['hr_coordinator', 'payroll_coordinator'] },
   { title: 'Management', caption: 'Rates, dispatch & books', keys: ['payroll_manager', 'finance'] },
   { title: 'Team Lead', caption: 'Team-scoped approvals', keys: ['manager', 'orphanage_manager'] },
+  { title: 'Executive', caption: 'Company-wide access', keys: ['ceo'] },
   { title: 'System', caption: 'Full control', keys: ['admin'] },
 ];
 
@@ -64,6 +66,8 @@ function rolePillClasses(role: RoleKey): string {
       'border-indigo-500/35 bg-indigo-500/10 text-indigo-800 dark:text-indigo-300/95 dark:border-indigo-600/40',
     orphanage_manager:
       'border-pink-500/35 bg-pink-500/10 text-pink-800 dark:text-pink-300/95 dark:border-pink-600/40',
+    ceo:
+      'border-yellow-500/40 bg-yellow-500/10 text-yellow-900 dark:text-yellow-200/95 dark:border-yellow-600/45',
     admin:
       'border-rose-500/40 bg-rose-500/10 text-rose-900 dark:text-rose-200/95 dark:border-rose-600/45',
   };
@@ -79,6 +83,7 @@ function roleRowAccent(role: RoleKey): string {
     finance: 'border-l-sky-500',
     manager: 'border-l-indigo-500',
     orphanage_manager: 'border-l-pink-500',
+    ceo: 'border-l-yellow-500',
     admin: 'border-l-rose-500',
   };
   return map[role];

@@ -32,6 +32,9 @@ import { cn } from '@/lib/utils';
 import ManagerSidebar, { type ManagerTab } from './ManagerSidebar';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
 import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
+import AnnouncementWall from '@/components/announcements/AnnouncementWall';
+import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
+import SWall from '@/components/swall/SWall';
 
 /** How `/api/manager/department-members` scoped the roster for this session (server-driven). */
 type ManagerTeamGate =
@@ -268,6 +271,12 @@ export default function ManagerApp() {
               {activeTab === 'team' && (
                 <TeamPanel members={teamMembers} teamGate={teamGate} />
               )}
+              {activeTab === 'announcements' && (
+                <ManagerAnnouncementsTab viewerEmail={viewerEmail} teamGate={teamGate} />
+              )}
+              {activeTab === 's-wall' && (
+                <ManagerSwallTab viewerEmail={viewerEmail} />
+              )}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -404,7 +413,71 @@ function Overview({
   );
 }
 
+// ─── S-Wall tab ──────────────────────────────────────────────────────────────
+
+function ManagerSwallTab({ viewerEmail }: { viewerEmail: string | null }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
+        <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
+          Simple Wall
+        </h1>
+        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
+          Company-wide social feed. Post updates, react, and comment — live via Realtime.
+        </p>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] dark:bg-[#0d1117]">
+        <SWall viewerEmail={viewerEmail} canPost sourceLabel="Manager" />
+      </div>
+    </div>
+  );
+}
+
 // ─── Time adjustments tab ───────────────────────────────────────────────────
+
+// ─── Announcements ───────────────────────────────────────────────────────────
+
+function ManagerAnnouncementsTab({
+  viewerEmail,
+  teamGate,
+}: {
+  viewerEmail: string | null;
+  teamGate: ManagerTeamGate;
+}) {
+  const departments =
+    teamGate.kind === 'department' ? teamGate.departments : [];
+
+  // Wall scope: general + their departments
+  const wallScope: 'all' | string[] =
+    teamGate.kind === 'elevated' ? 'all' : ['general', ...departments].filter(Boolean);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
+        <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
+          Announcements
+        </h1>
+        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
+          Post to your team or read company-wide updates. New posts appear live.
+        </p>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        <div className="mx-auto max-w-2xl space-y-4">
+          <AnnouncementComposer
+            authorEmail={viewerEmail ?? ''}
+            allowGeneral={teamGate.kind === 'elevated'}
+            departments={departments}
+          />
+          <AnnouncementWall
+            scope={wallScope}
+            viewerEmail={viewerEmail}
+            isElevated={teamGate.kind === 'elevated'}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function TimeAdjustments() {
   return (

@@ -58,7 +58,12 @@
       "Bash(findstr /v \"node_modules\")",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(ls pages *)",
+      "Bash(ls pages/api)",
+      "Bash(rmdir \"app/api/auth/[...nextauth]\")",
+      "Bash(rmdir \"app/api/auth\")",
+      "PowerShell(cd C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris; npx tsc --noEmit 2>&1 | Where-Object { $_ -notmatch \"validator\\\\.ts|SystemDiagnostics|EmployeeApp|searchParams\" } | Select-Object -First 20)"
     ]
   }
 }

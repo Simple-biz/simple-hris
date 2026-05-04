@@ -11,8 +11,9 @@ import EmployeeDashboard from './EmployeeDashboard';
 import EmployeeProfile from './EmployeeProfile';
 import EmployeeLeaves from './EmployeeLeaves';
 import EmployeePolicies from './EmployeePolicies';
-import EmployeeSettings from './EmployeeSettings';
 import EmployeeMyHours from './EmployeeMyHours';
+import AnnouncementWall from '@/components/announcements/AnnouncementWall';
+import SWall from '@/components/swall/SWall';
 // import MyDisputes from './MyDisputes'; // hidden — disputes now go through Orphanage Manager → Accounting flow
 import PayrollLockBanner from './PayrollLockBanner';
 import { Toaster } from '@/components/ui/sonner';
@@ -260,8 +261,29 @@ export default function EmployeeApp() {
       //   );
       case 'policies':
         return <EmployeePolicies department={employeeDepartment} />;
-      case 'settings':
-        return <EmployeeSettings employeeEmail={employeeEmail} />;
+      case 'announcements':
+        return (
+          <EmployeeAnnouncementsTab
+            employeeEmail={employeeEmail}
+            department={employeeDepartment}
+          />
+        );
+      case 's-wall':
+        return (
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="shrink-0 border-b border-orange-100 bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-blue-950/60 dark:bg-[#0d1117]">
+              <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
+                Simple Wall
+              </h1>
+              <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
+                Company-wide social feed — comment and react to posts from your team.
+              </p>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] dark:bg-[#0d1117]">
+              <SWall viewerEmail={employeeEmail} canPost={false} />
+            </div>
+          </div>
+        );
       default:
         return <EmployeeDashboard employeeEmail={employeeEmail} />;
     }
@@ -325,6 +347,33 @@ export default function EmployeeApp() {
         </AnimatePresence>
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
+    </div>
+  );
+}
+
+function EmployeeAnnouncementsTab({
+  employeeEmail,
+  department,
+}: {
+  employeeEmail: string | null;
+  department: string | null;
+}) {
+  const scope: string[] = department ? [department] : [];
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
+        <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
+          Announcements
+        </h1>
+        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
+          Company-wide and team updates. New posts appear live.
+        </p>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        <div className="mx-auto max-w-2xl">
+          <AnnouncementWall scope={scope} viewerEmail={employeeEmail} />
+        </div>
+      </div>
     </div>
   );
 }

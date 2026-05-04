@@ -59,7 +59,7 @@ export async function middleware(req: NextRequest) {
     const elevated = Boolean((token as { elevated?: boolean }).elevated);
 
     // /manager and /employee are strictly personal — no cross-email access regardless of role.
-    const PERSONAL_ROUTES = ['/manager', '/employee'];
+    const PERSONAL_ROUTES = ['/manager', '/employee', '/ceo'];
     const isPersonalRoute = PERSONAL_ROUTES.some(
       (r) => pathname === r || pathname.startsWith(`${r}/`),
     );

@@ -4,19 +4,7 @@ import React from 'react';
 import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
-import {
-  CalendarClock,
-  CalendarDays,
-  ClipboardCheck,
-  LayoutDashboard,
-  LogOut,
-  Megaphone,
-  Moon,
-  MoreHorizontal,
-  Newspaper,
-  Sun,
-  Users,
-} from 'lucide-react';
+import { Crown, LayoutDashboard, LogOut, Megaphone, Moon, MoreHorizontal, Newspaper, Sun } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -24,47 +12,38 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 
-export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'announcements' | 's-wall';
+export type CeoTab = 'overview' | 'announcements' | 's-wall';
 
-interface ManagerSidebarProps {
-  activeTab: ManagerTab;
-  setActiveTab: (tab: ManagerTab) => void;
+interface CeoSidebarProps {
+  activeTab: CeoTab;
+  setActiveTab: (tab: CeoTab) => void;
   mobileOpen: boolean;
   viewerEmail: string | null;
-  pendingApprovals: number;
-  pendingLeaves?: number;
 }
 
-export default function ManagerSidebar({
+export default function CeoSidebar({
   activeTab,
   setActiveTab,
   mobileOpen,
   viewerEmail,
-  pendingApprovals,
-  pendingLeaves = 0,
-}: ManagerSidebarProps) {
+}: CeoSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
-
+  React.useEffect(() => { setMounted(true); }, []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
   const displayName = viewerEmail?.includes('@')
     ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ')
-    : viewerEmail || 'Manager';
+    : viewerEmail || 'CEO';
   const titleName = displayName
     .split(' ')
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');
 
   const navBtn = (
-    id: ManagerTab,
+    id: CeoTab,
     label: string,
     Icon: React.ComponentType<{ className?: string }>,
-    badge?: React.ReactNode,
   ) => (
     <button
       key={id}
@@ -73,61 +52,43 @@ export default function ManagerSidebar({
       className={cn(
         'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
         activeTab === id
-          ? 'bg-gradient-to-r from-blue-600 to-blue-800 font-medium text-white shadow-sm shadow-blue-600/25'
-          : 'text-[#3f3f46] hover:bg-blue-50 hover:text-blue-900 dark:text-zinc-300 dark:hover:bg-blue-950/40 dark:hover:text-blue-100',
+          ? 'bg-gradient-to-r from-yellow-500 to-amber-600 font-medium text-white shadow-sm shadow-yellow-600/25'
+          : 'text-[#3f3f46] hover:bg-yellow-50 hover:text-yellow-900 dark:text-zinc-300 dark:hover:bg-yellow-950/40 dark:hover:text-yellow-100',
       )}
     >
       <Icon
         className={cn(
           'h-[15px] w-[15px] shrink-0',
-          activeTab === id
-            ? 'text-white/85'
-            : 'text-[#a1a1aa] dark:text-zinc-500',
+          activeTab === id ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500',
         )}
       />
       <span className="truncate text-left">{label}</span>
-      {badge}
     </button>
   );
-
-  const countBadge = (n: number, active: boolean) => {
-    if (n <= 0) return null;
-    return (
-      <span
-        className={cn(
-          'ml-auto rounded-full px-1.5 py-px text-[10.5px] font-semibold tabular-nums',
-          active
-            ? 'bg-white/20 text-white'
-            : 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
-        )}
-      >
-        {n}
-      </span>
-    );
-  };
 
   return (
     <aside
       className={cn(
-        'flex h-dvh w-[220px] max-w-[min(100vw,220px)] shrink-0 flex-col border-r border-blue-100/70 bg-gradient-to-b from-white via-blue-50/30 to-white shadow-xl dark:border-blue-950/40 dark:from-black dark:via-blue-950/20 dark:to-black md:max-w-none md:shadow-none',
+        'flex h-dvh w-[220px] max-w-[min(100vw,220px)] shrink-0 flex-col border-r border-yellow-100/70 bg-gradient-to-b from-white via-yellow-50/30 to-white shadow-xl dark:border-yellow-950/40 dark:from-black dark:via-yellow-950/10 dark:to-black md:max-w-none md:shadow-none',
         'fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-out md:static md:z-auto md:translate-x-0',
         mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
       )}
-      id="manager-sidebar-nav"
+      id="ceo-sidebar-nav"
       role="navigation"
-      aria-label="Manager navigation"
+      aria-label="CEO navigation"
     >
       <div className="flex flex-1 flex-col px-5 pb-4 pt-7">
+        {/* Brand */}
         <div className="mb-8 flex items-center gap-2.5 px-1">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-gradient-to-br from-blue-600 to-black text-sm font-bold tracking-[-0.02em] text-white shadow-sm shadow-blue-600/30">
-            s
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-gradient-to-br from-yellow-500 to-amber-600 text-sm font-bold tracking-[-0.02em] text-white shadow-sm shadow-yellow-600/30">
+            <Crown className="h-4 w-4" />
           </div>
           <div className="flex min-w-0 flex-col leading-tight">
-            <span className="bg-gradient-to-r from-blue-700 to-zinc-900 bg-clip-text text-[13.5px] font-semibold tracking-[-0.01em] text-transparent dark:from-blue-300 dark:to-white">
+            <span className="bg-gradient-to-r from-yellow-700 to-zinc-900 bg-clip-text text-[13.5px] font-semibold tracking-[-0.01em] text-transparent dark:from-yellow-300 dark:to-white">
               simple·hris
             </span>
-            <span className="mt-0.5 text-[10.5px] tracking-[0.02em] text-blue-700/70 dark:text-blue-400/70">
-              Manager
+            <span className="mt-0.5 text-[10.5px] tracking-[0.02em] text-yellow-700/70 dark:text-yellow-400/70">
+              CEO
             </span>
           </div>
         </div>
@@ -138,19 +99,6 @@ export default function ManagerSidebar({
           </p>
           <nav className="flex flex-col gap-px">
             {navBtn('overview', 'Overview', LayoutDashboard)}
-            {navBtn(
-              'time-adjustments',
-              'Time adjustments',
-              ClipboardCheck,
-              countBadge(pendingApprovals, activeTab === 'time-adjustments'),
-            )}
-            {navBtn(
-              'leaves',
-              'Leaves',
-              CalendarDays,
-              countBadge(pendingLeaves, activeTab === 'leaves'),
-            )}
-            {navBtn('team', 'My team', Users)}
             {navBtn('announcements', 'Announcements', Megaphone)}
             <button
               key="s-wall"
@@ -173,22 +121,12 @@ export default function ManagerSidebar({
             </button>
           </nav>
 
-          <div className="my-5 mx-2.5 h-px bg-gradient-to-r from-transparent via-blue-200/60 to-transparent dark:via-blue-900/40" />
-
-          <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
-            Coming soon
-          </p>
-          <div className="px-2.5 text-[11px] leading-snug text-[#71717a] dark:text-zinc-500">
-            <CalendarClock className="mr-1.5 inline h-3 w-3 -translate-y-px" />
-            Bonus entry, team transfers, KPI input
-          </div>
-
-          <div className="mt-6 border-t border-blue-100/60 pt-4 dark:border-blue-950/40">
-            <ViewSwitcher email={viewerEmail} currentView="manager" />
+          <div className="mt-6 border-t border-yellow-100/60 pt-4 dark:border-yellow-950/40">
+            <ViewSwitcher email={viewerEmail} currentView="ceo" />
             <button
               type="button"
               onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
-              className="mb-2 mt-3 flex w-full items-center justify-between rounded-md border border-blue-100/70 bg-gradient-to-br from-white to-blue-50/60 px-3 py-2 text-left transition-colors hover:from-blue-50 hover:to-blue-100/60 dark:border-blue-950/40 dark:from-zinc-950 dark:to-blue-950/20 dark:hover:from-blue-950/30 dark:hover:to-blue-950/40"
+              className="mb-2 mt-3 flex w-full items-center justify-between rounded-md border border-yellow-100/70 bg-gradient-to-br from-white to-yellow-50/60 px-3 py-2 text-left transition-colors hover:from-yellow-50 hover:to-yellow-100/60 dark:border-yellow-950/40 dark:from-zinc-950 dark:to-yellow-950/10 dark:hover:from-yellow-950/20 dark:hover:to-yellow-950/30"
               aria-label="Toggle dark mode"
             >
               <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
@@ -201,30 +139,26 @@ export default function ManagerSidebar({
         </ScrollArea>
       </div>
 
-      <div className="mt-auto border-t border-blue-100/60 p-5 dark:border-blue-950/40">
-        <div className="flex items-center gap-2.5 rounded-md border border-blue-100/70 bg-gradient-to-br from-white to-blue-50/60 px-2.5 py-2 dark:border-blue-950/40 dark:from-zinc-950 dark:to-blue-950/20">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-black text-[11px] font-semibold text-white shadow-sm shadow-blue-600/25">
+      <div className="mt-auto border-t border-yellow-100/60 p-5 dark:border-yellow-950/40">
+        <div className="flex items-center gap-2.5 rounded-md border border-yellow-100/70 bg-gradient-to-br from-white to-yellow-50/60 px-2.5 py-2 dark:border-yellow-950/40 dark:from-zinc-950 dark:to-yellow-950/10">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-yellow-500 to-amber-600 text-[11px] font-semibold text-white shadow-sm shadow-yellow-600/25">
             {(viewerEmail || '?').slice(0, 2).toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-[13px] font-medium leading-tight text-[#18181b] dark:text-zinc-100">
               {titleName}
             </div>
-            <div className="mt-px truncate text-[11px] leading-tight text-blue-700/70 dark:text-blue-400/70">
-              Manager
+            <div className="mt-px truncate text-[11px] leading-tight text-yellow-700/70 dark:text-yellow-400/70">
+              CEO
             </div>
           </div>
-          <MoreHorizontal className="h-4 w-4 shrink-0 cursor-pointer text-blue-400/70 dark:text-blue-500/70" aria-hidden />
+          <MoreHorizontal className="h-4 w-4 shrink-0 cursor-pointer text-yellow-400/70" aria-hidden />
         </div>
         <Button
           variant="ghost"
           className="mt-3 w-full justify-start gap-3 text-[#71717a] hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
           onClick={() => {
-            try {
-              sessionStorage.removeItem(SESSION_EMAIL_KEY);
-            } catch {
-              /* ignore */
-            }
+            try { sessionStorage.removeItem(SESSION_EMAIL_KEY); } catch { /* ignore */ }
             void signOut({ callbackUrl: '/login' });
           }}
         >

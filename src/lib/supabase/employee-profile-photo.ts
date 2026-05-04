@@ -71,25 +71,33 @@ export async function getProfilePhotoUrlForEmail(
 
   const table = masterTable();
 
+  // Prefer the manually-uploaded photo; fall back to the Google SSO photo
+  // that persistGooglePhoto() writes to google_photo_url on each sign-in.
+  function pickUrl(row: Record<string, unknown> | null): string | null {
+    if (!row) return null;
+    const uploaded = row["Profile Photo URL"];
+    if (typeof uploaded === "string" && uploaded.trim()) return uploaded.trim();
+    const google = row["google_photo_url"];
+    if (typeof google === "string" && google.trim()) return google.trim();
+    return null;
+  }
+
   const { data: byWork } = await supabase
     .from(table)
-    .select('"Profile Photo URL"')
+    .select('"Profile Photo URL", google_photo_url')
     .ilike("Work Email", n)
     .maybeSingle();
 
-  const wUrl = byWork?.["Profile Photo URL"];
-  if (typeof wUrl === "string" && wUrl.trim()) return wUrl.trim();
+  const wUrl = pickUrl(byWork as Record<string, unknown> | null);
+  if (wUrl) return wUrl;
 
   const { data: byPersonal } = await supabase
     .from(table)
-    .select('"Profile Photo URL"')
+    .select('"Profile Photo URL", google_photo_url')
     .ilike("Personal Email", n)
     .maybeSingle();
 
-  const pUrl = byPersonal?.["Profile Photo URL"];
-  if (typeof pUrl === "string" && pUrl.trim()) return pUrl.trim();
-
-  return null;
+  return pickUrl(byPersonal as Record<string, unknown> | null);
 }
 
 export async function uploadEmployeeProfilePhotoAndUpdateRow(

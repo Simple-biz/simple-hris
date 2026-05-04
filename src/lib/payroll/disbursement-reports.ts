@@ -75,6 +75,14 @@ export interface DisbursementReportTotals {
   totalOwedUSD: number;
 }
 
+/** A single recipient who received pay this cycle. Surfaced on the report
+ *  card so admins can see *who* was paid without having to drill in. */
+export interface DisbursementReportRecipient {
+  email: string;
+  name: string | null;
+  amountUSD: number;
+}
+
 export interface DisbursementReportSummary {
   cycleId: string;
   /** ISO YYYY-MM-DD or null when no dispatches and not the current cycle. */
@@ -91,6 +99,9 @@ export interface DisbursementReportSummary {
   totals: DisbursementReportTotals;
   /** Per-processor breakdown of paid amounts. */
   byProcessor: Record<string, { count: number; usd: number }>;
+  /** Every recipient with status='paid' for this cycle, sorted by name. Used
+   *  on the report card so admins can scan who actually got paid that week. */
+  paidRecipients: DisbursementReportRecipient[];
 }
 
 export interface DisbursementReportDetail extends DisbursementReportSummary {
@@ -351,6 +362,9 @@ export async function listDisbursementReports(): Promise<{
     uploadId: string | null;
     totals: DisbursementReportTotals;
     byProcessor: Record<string, { count: number; usd: number }>;
+    /** Map keyed by lowercased email so each recipient is counted once even if
+     *  they appear in multiple disbursement_records rows for the same cycle. */
+    paidByEmail: Map<string, DisbursementReportRecipient>;
   };
   const buckets = new Map<string, Bucket>();
   for (const r of records) {
@@ -364,17 +378,32 @@ export async function listDisbursementReports(): Promise<{
         uploadId: r.upload_id,
         totals: EMPTY_TOTALS(),
         byProcessor: {},
+        paidByEmail: new Map(),
       };
       buckets.set(r.source_file, bucket);
     }
     tallyRecord(bucket.totals, r);
 
     if (r.status === "paid") {
-      const proc = processorByEmail.get(r.recipient_email.trim().toLowerCase()) ?? "unknown";
+      const emailKey = r.recipient_email.trim().toLowerCase();
+      const proc = processorByEmail.get(emailKey) ?? "unknown";
       const acc = bucket.byProcessor[proc] ?? { count: 0, usd: 0 };
       acc.count += 1;
       acc.usd += num(r.paid_amount_usd) || num(r.amount_usd);
       bucket.byProcessor[proc] = acc;
+
+      const paidUSD = num(r.paid_amount_usd) || num(r.amount_usd);
+      const existing = bucket.paidByEmail.get(emailKey);
+      if (existing) {
+        existing.amountUSD += paidUSD;
+        if (!existing.name && r.recipient_name) existing.name = r.recipient_name;
+      } else {
+        bucket.paidByEmail.set(emailKey, {
+          email: r.recipient_email,
+          name: r.recipient_name,
+          amountUSD: paidUSD,
+        });
+      }
     }
   }
 
@@ -400,6 +429,12 @@ export async function listDisbursementReports(): Promise<{
     const fallbackName = bucket.sourceFile.replace(/\.csv$/i, "");
     const reportName = formatDisbursementReportName(periodStart, periodEnd, fallbackName);
 
+    const paidRecipients = Array.from(bucket.paidByEmail.values()).sort((a, b) => {
+      const an = (a.name ?? a.email).toLocaleLowerCase();
+      const bn = (b.name ?? b.email).toLocaleLowerCase();
+      return an.localeCompare(bn);
+    });
+
     reports.push({
       cycleId: upload?.id ?? bucket.uploadId ?? `source:${bucket.sourceFile}`,
       periodStart,
@@ -412,6 +447,7 @@ export async function listDisbursementReports(): Promise<{
       reportName,
       totals: bucket.totals,
       byProcessor: bucket.byProcessor,
+      paidRecipients,
     });
   }
 

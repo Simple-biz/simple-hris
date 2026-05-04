@@ -17,6 +17,7 @@ import {
   Loader2,
   Send,
   Sparkles,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -39,6 +40,12 @@ interface ReportTotals {
   totalDispatchedUSD: number;
 }
 
+export interface ReportRecipient {
+  email: string;
+  name: string | null;
+  amountUSD: number;
+}
+
 export interface ReportSummary {
   cycleId: string;
   periodStart: string | null;
@@ -51,6 +58,8 @@ export interface ReportSummary {
   reportName: string;
   totals: ReportTotals;
   byProcessor: Record<string, { count: number; usd: number }>;
+  /** Every recipient with status='paid' for this cycle, sorted by name. */
+  paidRecipients: ReportRecipient[];
 }
 
 export interface ReportDetail extends ReportSummary {
@@ -761,6 +770,11 @@ function ReportDetail({
           </section>
         )}
 
+        {/* Paid this week — every employee whose dispatch landed in 'paid' status. */}
+        {report.paidRecipients.length > 0 && (
+          <PaidRecipientsPanel recipients={report.paidRecipients} />
+        )}
+
         {/* Dispatches table */}
         <section className="mt-4 rounded-2xl border border-[#ececec] bg-white dark:border-zinc-800 dark:bg-zinc-950">
           <div className="flex items-center justify-between border-b border-[#ececec] px-4 py-2.5 dark:border-zinc-800">
@@ -834,6 +848,150 @@ function ReportDetail({
         </section>
       </div>
     </div>
+  );
+}
+
+const RECIPIENTS_PER_PAGE = 6;
+
+function PaidRecipientsPanel({ recipients }: { recipients: ReportRecipient[] }) {
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(0);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return recipients;
+    return recipients.filter(
+      (r) =>
+        (r.name ?? '').toLowerCase().includes(q) ||
+        r.email.toLowerCase().includes(q),
+    );
+  }, [recipients, query]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / RECIPIENTS_PER_PAGE));
+  const safePage = Math.min(page, pageCount - 1);
+  const start = safePage * RECIPIENTS_PER_PAGE;
+  const visible = filtered.slice(start, start + RECIPIENTS_PER_PAGE);
+
+  const handleQuery = (v: string) => {
+    setQuery(v);
+    setPage(0);
+  };
+
+  return (
+    <section className="mt-4 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50/60 to-white p-3 sm:p-4 dark:border-emerald-500/20 dark:from-emerald-500/5 dark:to-zinc-950">
+      {/* header */}
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-800 dark:text-emerald-300">
+          <Users className="h-3.5 w-3.5" />
+          Paid this week
+        </h2>
+        <span className="font-mono text-[10px] tabular-nums text-emerald-800/80 dark:text-emerald-300/80">
+          {recipients.length} employee{recipients.length === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      {/* search */}
+      <div className="relative mt-2.5">
+        <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center">
+          <svg
+            className="h-3.5 w-3.5 text-emerald-600/60 dark:text-emerald-400/50"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            aria-hidden
+          >
+            <path
+              fillRule="evenodd"
+              d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </span>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => handleQuery(e.target.value)}
+          placeholder="Search by name or email…"
+          className="w-full rounded-lg border border-emerald-200/80 bg-white/90 py-1.5 pl-7 pr-3 text-[12px] placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-emerald-400/60 dark:border-emerald-500/20 dark:bg-zinc-950/60 dark:placeholder:text-zinc-600 dark:focus:ring-emerald-500/40"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => handleQuery('')}
+            className="absolute inset-y-0 right-2 flex items-center text-zinc-400 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
+            aria-label="Clear search"
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+            </svg>
+          </button>
+        )}
+      </div>
+
+      {/* grid */}
+      {filtered.length === 0 ? (
+        <p className="mt-3 text-center text-[11px] text-zinc-500 dark:text-zinc-500">
+          No results for &ldquo;{query}&rdquo;
+        </p>
+      ) : (
+        <ul className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+          {visible.map((r) => (
+            <li
+              key={r.email}
+              className="flex items-center justify-between gap-2 rounded-lg border border-emerald-200/70 bg-white/80 px-2.5 py-1.5 dark:border-emerald-500/20 dark:bg-zinc-950/60"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-[12px] font-medium text-zinc-900 dark:text-zinc-100">
+                  {r.name?.trim() || r.email}
+                </div>
+                <div className="truncate font-mono text-[10px] text-zinc-500 dark:text-zinc-500">
+                  {r.email}
+                </div>
+              </div>
+              <span className="shrink-0 font-mono text-[11px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">
+                {formatUSD(r.amountUSD)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* pagination */}
+      {pageCount > 1 && (
+        <div className="mt-2.5 flex items-center justify-between gap-2 rounded-xl border border-emerald-100 bg-white/60 px-3 py-1.5 dark:border-emerald-500/10 dark:bg-zinc-950/40">
+          <span className="text-[10px] text-zinc-500 dark:text-zinc-500">
+            <span className="font-semibold text-zinc-700 dark:text-zinc-300">{start + 1}</span>
+            {' – '}
+            <span className="font-semibold text-zinc-700 dark:text-zinc-300">
+              {start + visible.length}
+            </span>
+            {' of '}
+            <span className="font-semibold text-zinc-700 dark:text-zinc-300">{filtered.length}</span>
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={safePage === 0}
+              className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-200/70 bg-white text-zinc-600 transition-colors hover:bg-emerald-50 disabled:pointer-events-none disabled:opacity-40 dark:border-emerald-500/20 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:bg-emerald-500/10"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="min-w-[4rem] text-center text-[10px] font-semibold tabular-nums text-zinc-700 dark:text-zinc-300">
+              {safePage + 1} / {pageCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={safePage >= pageCount - 1}
+              className="flex h-6 w-6 items-center justify-center rounded-md border border-emerald-200/70 bg-white text-zinc-600 transition-colors hover:bg-emerald-50 disabled:pointer-events-none disabled:opacity-40 dark:border-emerald-500/20 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:bg-emerald-500/10"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

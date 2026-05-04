@@ -8,7 +8,6 @@ import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import {
   LayoutDashboard,
-  FileText,
   Clock,
   CalendarDays,
   Moon,
@@ -17,8 +16,9 @@ import {
   ChevronRight,
   User,
   UserCircle,
-  Settings,
   Lock,
+  Megaphone,
+  Newspaper,
   ScrollText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -52,7 +52,7 @@ const navItems = [
   { id: 'leaves', label: 'Leave', icon: CalendarDays },
   // { id: 'disputes', label: 'My Disputes', icon: FileText }, // hidden — disputes now go through Orphanage Manager → Accounting flow (no employee submission)
   { id: 'policies', label: 'Policies', icon: ScrollText },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'announcements', label: 'Announcements', icon: Megaphone },
 ];
 
 export default function EmployeeSidebar({
@@ -161,6 +161,31 @@ export default function EmployeeSidebar({
                 )}
               </button>
             ))}
+            {/* S-Wall — all authenticated users can view; employees comment/react only */}
+            <button
+              onClick={() => setActiveTab('s-wall')}
+              style={{ transitionDelay: mobileOpen ? `${60 + navItems.length * 35}ms` : '0ms' }}
+              className={cn(
+                'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,transform,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                mobileOpen ? 'translate-x-0' : '-translate-x-8 md:translate-x-0',
+                activeTab === 's-wall'
+                  ? 'bg-gradient-to-r from-violet-100 to-violet-50 text-violet-900 shadow-sm dark:from-violet-950/70 dark:to-violet-950/40 dark:text-white'
+                  : 'hover:bg-violet-50 hover:text-zinc-900 dark:hover:bg-violet-950/30 dark:hover:text-zinc-200',
+              )}
+            >
+              <Newspaper
+                className={cn(
+                  'h-4 w-4 shrink-0 transition-colors duration-200',
+                  activeTab === 's-wall'
+                    ? 'text-violet-500 dark:text-violet-400'
+                    : 'text-zinc-500 group-hover:text-violet-500 dark:text-zinc-500 dark:group-hover:text-violet-400',
+                )}
+              />
+              S-Wall
+              {activeTab === 's-wall' && (
+                <ChevronRight className="ml-auto h-3 w-3 text-violet-400 dark:text-violet-500/70" />
+              )}
+            </button>
           </nav>
         </ScrollArea>
       </div>
