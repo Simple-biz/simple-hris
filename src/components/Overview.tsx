@@ -199,6 +199,9 @@ interface SimpleViewProps {
   onViewRates?: (email: string) => void;
   onNavigate?: (tab: string) => void;
   loading: boolean;
+  pabEligibilityByEmail: Map<string, boolean>;
+  pabFilter: 'all' | 'eligible' | 'not-eligible';
+  setPabFilter: (v: 'all' | 'eligible' | 'not-eligible') => void;
 }
 
 /** PHP → USD FX rate used only for the informational subtitle under the total payout. */
@@ -257,6 +260,9 @@ function SimpleView({
   onViewRates,
   onNavigate,
   loading,
+  pabEligibilityByEmail,
+  pabFilter,
+  setPabFilter,
 }: SimpleViewProps) {
   const reconcileGaps =
     inPayrollNotMaster != null && inMasterNotPayroll != null
@@ -600,6 +606,32 @@ function SimpleView({
                   </option>
                 ))}
               </select>
+              {/* PAB filter */}
+              <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                {(['all', 'eligible', 'not-eligible'] as const).map((f) => {
+                  const labels = { all: 'All', eligible: 'PAB Eligible', 'not-eligible': 'Not Eligible' };
+                  const active = pabFilter === f;
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setPabFilter(f)}
+                      className={cn(
+                        'h-7 rounded-md px-2.5 text-[11.5px] font-medium transition-colors',
+                        active
+                          ? f === 'eligible'
+                            ? 'bg-emerald-700 text-white dark:bg-emerald-600'
+                            : f === 'not-eligible'
+                              ? 'bg-red-700 text-white dark:bg-red-600'
+                              : 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                          : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                      )}
+                    >
+                      {labels[f]}
+                    </button>
+                  );
+                })}
+              </div>
               <div className="ml-auto text-xs text-zinc-500 dark:text-zinc-400">
                 <strong className="font-semibold text-zinc-900 dark:text-white">{filteredTotal}</strong>{' '}
                 workers · page {safePage} of {totalPages}
@@ -644,6 +676,20 @@ function SimpleView({
                           <span className={cn('inline-block h-1.5 w-1.5 rounded-full', isHubstaff ? 'bg-blue-700 dark:bg-blue-500' : 'bg-emerald-700 dark:bg-emerald-500')} />
                           {isHubstaff ? 'Hubstaff' : 'Master'}
                         </span>
+                        {(() => {
+                          const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
+                          if (elig === true) return (
+                            <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10.5px] font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                              PAB ✓
+                            </span>
+                          );
+                          if (elig === false) return (
+                            <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10.5px] font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                              PAB ✗
+                            </span>
+                          );
+                          return null;
+                        })()}
                         {row.start_date && (
                           <span className="text-[11px] text-zinc-400 dark:text-zinc-600">{formatStartDate(row.start_date)}</span>
                         )}
@@ -700,6 +746,9 @@ function SimpleView({
                     <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                       Start date
                     </th>
+                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                      PAB
+                    </th>
                     <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                       Hours
                     </th>
@@ -712,13 +761,13 @@ function SimpleView({
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-12 text-center text-zinc-500 dark:text-zinc-400">
+                      <td colSpan={8} className="px-4 py-12 text-center text-zinc-500 dark:text-zinc-400">
                         <Loader2 className="mx-auto h-4 w-4 animate-spin" />
                       </td>
                     </tr>
                   ) : pageRows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                      <td colSpan={8} className="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
                         No workers match your search.
                       </td>
                     </tr>
@@ -775,6 +824,23 @@ function SimpleView({
                           </td>
                           <td className="px-4 py-3.5 text-[12.5px] text-zinc-500 dark:text-zinc-400">
                             {formatStartDate(row.start_date)}
+                          </td>
+                          <td className="px-4 py-3.5">
+                            {(() => {
+                              const emailKey = normEmail(email) ?? '';
+                              const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
+                              if (elig === true) return (
+                                <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                                  Eligible
+                                </span>
+                              );
+                              if (elig === false) return (
+                                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                                  Not eligible
+                                </span>
+                              );
+                              return <span className="text-zinc-400 dark:text-zinc-600">—</span>;
+                            })()}
                           </td>
                           <td className="px-4 py-3.5 text-right font-mono text-zinc-900 tabular-nums dark:text-white">
                             {pay ? `${pay.hours.toFixed(2)}h` : '—'}
@@ -1243,6 +1309,9 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     monthLabel: string | null;
   }>({ loading: true, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null });
 
+  const [pabEligibilityByEmail, setPabEligibilityByEmail] = useState<Map<string, boolean>>(new Map());
+  const [pabFilter, setPabFilter] = useState<'all' | 'eligible' | 'not-eligible'>('all');
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -1482,6 +1551,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         let eligible = 0;
         let notEligible = 0;
         let evaluated = 0;
+        const eligMap = new Map<string, boolean>();
 
         for (const [email, mergedRow] of rowsByEmail) {
           evaluated++;
@@ -1510,7 +1580,9 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
 
           const weeks = buildPabCalendarWeeks(start, end, hoursByDateKey);
           const allDays = weeks.flat();
-          if (allDays.length > 0 && allDays.every(d => d.passes)) {
+          const isEligible = allDays.length > 0 && allDays.every(d => d.passes);
+          eligMap.set(email, isEligible);
+          if (isEligible) {
             eligible++;
           } else {
             notEligible++;
@@ -1518,6 +1590,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         }
 
         if (!cancelled) {
+          setPabEligibilityByEmail(eligMap);
           setPabMetrics({
             loading: false,
             totalEmployees: evaluated,
@@ -1578,6 +1651,13 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     if (departmentFilter) {
       list = list.filter((e) => (e.department ?? '').trim() === departmentFilter);
     }
+    if (pabFilter !== 'all') {
+      list = list.filter((e) => {
+        const emailKey = normEmail(e.work_email ?? e.personal_email ?? '') ?? '';
+        const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
+        return pabFilter === 'eligible' ? elig === true : elig === false;
+      });
+    }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
       list = list.filter((e) => {
@@ -1588,14 +1668,14 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
       });
     }
     return list;
-  }, [mergedEmployees, departmentFilter, searchQuery]);
+  }, [mergedEmployees, departmentFilter, searchQuery, pabFilter, pabEligibilityByEmail]);
 
   const totalPages = Math.max(1, Math.ceil(filteredEmployees.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, departmentFilter]);
+  }, [searchQuery, departmentFilter, pabFilter]);
 
   useEffect(() => {
     setPage((p) => Math.min(p, totalPages));
@@ -1826,6 +1906,9 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
               onViewRates={onViewRates}
               onNavigate={onNavigate}
               loading={loading}
+              pabEligibilityByEmail={pabEligibilityByEmail}
+              pabFilter={pabFilter}
+              setPabFilter={setPabFilter}
             />
           </motion.div>
         ) : (
