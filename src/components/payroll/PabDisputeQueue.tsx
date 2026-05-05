@@ -78,7 +78,7 @@ export default function PabDisputeQueue() {
   const [canApprove, setCanApprove] = useState(false);
   const [canDelete, setCanDelete] = useState(false);
   const searchParams = useSearchParams();
-  const emailFromQuery = searchParams.get('email');
+  const emailFromQuery = searchParams?.get('email') ?? null;
   useEffect(() => {
     try {
       const q = emailFromQuery?.trim() ?? '';

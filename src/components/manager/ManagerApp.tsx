@@ -50,7 +50,7 @@ function isPlausibleEmail(s: string): boolean {
 export default function ManagerApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const emailFromQuery = searchParams.get('email');
+  const emailFromQuery = searchParams?.get('email') ?? null;
 
   const [activeTab, setActiveTab] = useState<ManagerTab>('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);

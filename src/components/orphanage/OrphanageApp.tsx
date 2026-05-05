@@ -139,7 +139,7 @@ const WELCOME_SESSION_KEY = 'orphanage_welcome_idx';
 
 export default function OrphanageApp() {
   const searchParams = useSearchParams();
-  const emailFromQuery = searchParams.get('email');
+  const emailFromQuery = searchParams?.get('email') ?? null;
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);

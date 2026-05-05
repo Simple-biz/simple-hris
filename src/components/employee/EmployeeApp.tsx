@@ -91,7 +91,7 @@ export default function EmployeeApp() {
     previousLocked.current = current;
   }, [lockState.locked, lockLoading]);
 
-  const emailFromQuery = searchParams.get('email');
+  const emailFromQuery = searchParams?.get('email') ?? null;
 
   useEffect(() => {
     setMounted(true);
