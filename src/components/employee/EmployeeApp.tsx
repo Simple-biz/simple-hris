@@ -245,8 +245,8 @@ export default function EmployeeApp() {
         return (
           <EmployeeLeaves
             employeeEmail={employeeEmail}
-            employeeName={employeeName ?? undefined}
-            department={employeeDepartment ?? undefined}
+            employeeName={employeeName ?? null}
+            department={employeeDepartment ?? null}
           />
         );
       // case 'disputes': // hidden — disputes now go through Orphanage Manager → Accounting flow
