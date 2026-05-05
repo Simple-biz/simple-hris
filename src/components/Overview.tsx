@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Users,
   DollarSign,
+  Download,
   Loader2,
   Search,
   ChevronLeft,
@@ -49,6 +50,7 @@ import {
   resolveCanonicalColumnsToIso,
   columnsAreAllCanonical,
   buildPabCalendarWeeks,
+  checkHslPabEligibility,
   pabDateKey,
   parseColDate,
   groupDateColumnsByCalendarDay,
@@ -202,6 +204,7 @@ interface SimpleViewProps {
   pabEligibilityByEmail: Map<string, boolean>;
   pabFilter: 'all' | 'eligible' | 'not-eligible';
   setPabFilter: (v: 'all' | 'eligible' | 'not-eligible') => void;
+  onExportCsv: () => void;
 }
 
 /** PHP → USD FX rate used only for the informational subtitle under the total payout. */
@@ -263,6 +266,7 @@ function SimpleView({
   pabEligibilityByEmail,
   pabFilter,
   setPabFilter,
+  onExportCsv,
 }: SimpleViewProps) {
   const reconcileGaps =
     inPayrollNotMaster != null && inMasterNotPayroll != null
@@ -632,9 +636,19 @@ function SimpleView({
                   );
                 })}
               </div>
-              <div className="ml-auto text-xs text-zinc-500 dark:text-zinc-400">
-                <strong className="font-semibold text-zinc-900 dark:text-white">{filteredTotal}</strong>{' '}
-                workers · page {safePage} of {totalPages}
+              <div className="ml-auto flex items-center gap-3">
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                  <strong className="font-semibold text-zinc-900 dark:text-white">{filteredTotal}</strong>{' '}
+                  workers · page {safePage} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={onExportCsv}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Export CSV
+                </button>
               </div>
             </div>
 
@@ -1548,6 +1562,15 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
           monthLabel = `${monthNames[pabMonth.month]} ${pabMonth.year}`;
         }
 
+        // Build HSL email set from master list for per-employee rule branching
+        const hslMasterEmails = new Set<string>();
+        for (const e of employees) {
+          if (e.department?.trim().toLowerCase() === 'hsl') {
+            const em = normEmail(e.personal_email ?? null) ?? normEmail(e.work_email ?? null);
+            if (em) hslMasterEmails.add(em);
+          }
+        }
+
         let eligible = 0;
         let notEligible = 0;
         let evaluated = 0;
@@ -1578,9 +1601,26 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
             hoursByDateKey.set(pabDateKey(d), Math.max(hoursByDateKey.get(pabDateKey(d)) ?? 0, maxS));
           }
 
-          const weeks = buildPabCalendarWeeks(start, end, hoursByDateKey);
-          const allDays = weeks.flat();
-          const isEligible = allDays.length > 0 && allDays.every(d => d.passes);
+          // Determine if this employee falls under the HSL rule.
+          // Primary source: master list. Fallback: Job type column in the Hubstaff row
+          // (covers Hubstaff-only workers not yet on the master list).
+          const rawDept = String(
+            mergedRow['Job type'] ?? mergedRow['job_type'] ?? mergedRow['Job Type'] ??
+            mergedRow['department'] ?? mergedRow['Department'] ?? ''
+          ).trim().toLowerCase();
+          const isHsl = hslMasterEmails.has(email) || rawDept === 'hsl';
+
+          let isEligible: boolean;
+          if (isHsl) {
+            // HSL rule: Mon–Sun weeks, ≥5 days at ≥7 h per week
+            isEligible = checkHslPabEligibility(start, end, hoursByDateKey);
+          } else {
+            // Standard rule: all Mon–Fri days must be ≥7 h
+            const weeks = buildPabCalendarWeeks(start, end, hoursByDateKey);
+            const allDays = weeks.flat();
+            isEligible = allDays.length > 0 && allDays.every(d => d.passes);
+          }
+
           eligMap.set(email, isEligible);
           if (isEligible) {
             eligible++;
@@ -1795,6 +1835,42 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
 
   const totalPendingActions = (pendingDisputes ?? 0) + (pendingLeaves ?? 0);
 
+  const exportToCsv = () => {
+    const headers = [
+      'Name', 'Email', 'Department', 'Source', 'Employee ID',
+      'Start Date', 'Hours', 'Initial Pay (PHP)', 'PAB Eligibility',
+    ];
+    const rows = filteredEmployees.map((row) => {
+      const email = row.work_email ?? row.personal_email ?? '';
+      const emailKey = normEmail(email) ?? '';
+      const pay = emailKey ? employeePayByEmail[emailKey] : undefined;
+      const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
+      const pabStatus = elig === true ? 'Eligible' : elig === false ? 'Not eligible' : '—';
+      return [
+        row.name ?? '',
+        email,
+        row.department ?? '',
+        row.recordSource === 'master' ? 'Master' : 'Hubstaff',
+        row.employee_id ?? '',
+        row.start_date ?? '',
+        pay ? pay.hours.toFixed(2) : '',
+        pay?.pay != null ? pay.pay.toFixed(2) : '',
+        pabStatus,
+      ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',');
+    });
+    const csv = [headers.map((h) => `"${h}"`).join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filterSuffix = pabFilter !== 'all' ? `_pab-${pabFilter}` : '';
+    const deptSuffix = departmentFilter ? `_${departmentFilter.toLowerCase().replace(/\s+/g, '-')}` : '';
+    a.download = `employees_${dateStr}${deptSuffix}${filterSuffix}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className={cn(
       'flex h-full min-h-0 flex-col gap-4 overflow-hidden p-5 transition-colors duration-300 ease-out dark:bg-[#0d1117]',
@@ -1909,6 +1985,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
               pabEligibilityByEmail={pabEligibilityByEmail}
               pabFilter={pabFilter}
               setPabFilter={setPabFilter}
+              onExportCsv={exportToCsv}
             />
           </motion.div>
         ) : (
@@ -1985,9 +2062,19 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         <Card size="sm" className="flex min-h-0 flex-col overflow-hidden bg-gradient-to-br from-white to-blue-50/20 shadow-sm ring-1 ring-orange-200/90 max-h-[70vh] lg:max-h-none dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-900/70 lg:col-span-2 2xl:col-span-3">
           <CardHeader className="shrink-0 flex flex-row items-center justify-between gap-4 pb-1.5">
             <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">Employees</CardTitle>
-            <Badge variant="outline" className="border-blue-500/20 bg-blue-500/10 font-mono text-[10px] text-blue-700 dark:border-blue-500/30 dark:text-blue-400">
-              master + Hubstaff fallback
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="border-blue-500/20 bg-blue-500/10 font-mono text-[10px] text-blue-700 dark:border-blue-500/30 dark:text-blue-400">
+                master + Hubstaff fallback
+              </Badge>
+              <button
+                type="button"
+                onClick={exportToCsv}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 text-[11.5px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                <Download className="h-3 w-3" />
+                Export CSV
+              </button>
+            </div>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {loading ? (
@@ -2021,43 +2108,79 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                   </p>
                 )}
                 {/* Filters */}
-                <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-end">
-                  <div className="flex-1 space-y-1.5">
-                    <Label htmlFor="employee-search" className="text-xs text-zinc-600 dark:text-zinc-500">
-                      Search
-                    </Label>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
-                      <Input
-                        id="employee-search"
-                        placeholder="Name, email, department, date…"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="h-9 border-zinc-200 bg-white pl-9 text-zinc-900 placeholder:text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600"
-                      />
+                <div className="flex shrink-0 flex-col gap-2">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <div className="flex-1 space-y-1.5">
+                      <Label htmlFor="employee-search" className="text-xs text-zinc-600 dark:text-zinc-500">
+                        Search
+                      </Label>
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
+                        <Input
+                          id="employee-search"
+                          placeholder="Name, email, department, date…"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="h-9 border-zinc-200 bg-white pl-9 text-zinc-900 placeholder:text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600"
+                        />
+                      </div>
+                    </div>
+                    <div className="w-full space-y-1.5 sm:w-48">
+                      <Label htmlFor="department-filter" className="text-xs text-zinc-600 dark:text-zinc-500">
+                        Department
+                      </Label>
+                      <select
+                        id="department-filter"
+                        value={departmentFilter}
+                        onChange={(e) => setDepartmentFilter(e.target.value)}
+                        className={cn(
+                          'h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900',
+                          'outline-none focus-visible:border-orange-500 focus-visible:ring-2 focus-visible:ring-orange-500/30',
+                          'dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200',
+                        )}
+                      >
+                        <option value="">All departments</option>
+                        {departmentOptions.map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
-                  <div className="w-full space-y-1.5 sm:w-48">
-                    <Label htmlFor="department-filter" className="text-xs text-zinc-600 dark:text-zinc-500">
-                      Department
-                    </Label>
-                    <select
-                      id="department-filter"
-                      value={departmentFilter}
-                      onChange={(e) => setDepartmentFilter(e.target.value)}
-                      className={cn(
-                        'h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900',
-                        'outline-none focus-visible:border-orange-500 focus-visible:ring-2 focus-visible:ring-orange-500/30',
-                        'dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200',
-                      )}
-                    >
-                      <option value="">All departments</option>
-                      {departmentOptions.map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </select>
+                  {/* PAB filter */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">PAB:</span>
+                    <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                      {(['all', 'eligible', 'not-eligible'] as const).map((f) => {
+                        const labels = { all: 'All', eligible: 'Eligible', 'not-eligible': 'Not Eligible' };
+                        const active = pabFilter === f;
+                        return (
+                          <button
+                            key={f}
+                            type="button"
+                            onClick={() => setPabFilter(f)}
+                            className={cn(
+                              'h-6 rounded-md px-2.5 text-[11px] font-medium transition-colors',
+                              active
+                                ? f === 'eligible'
+                                  ? 'bg-emerald-700 text-white dark:bg-emerald-600'
+                                  : f === 'not-eligible'
+                                    ? 'bg-red-700 text-white dark:bg-red-600'
+                                    : 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                                : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                            )}
+                          >
+                            {labels[f]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {pabFilter !== 'all' && (
+                      <span className="text-[11px] text-zinc-400 dark:text-zinc-600">
+                        {filteredEmployees.length} result{filteredEmployees.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -2091,6 +2214,21 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                                 Master
                               </Badge>
                             )}
+                            {(() => {
+                              const emailKey = normEmail(row.work_email ?? row.personal_email ?? '') ?? '';
+                              const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
+                              if (elig === true) return (
+                                <Badge variant="outline" className="border-emerald-300 bg-emerald-50 font-mono text-[10px] text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                                  PAB ✓
+                                </Badge>
+                              );
+                              if (elig === false) return (
+                                <Badge variant="outline" className="border-red-300 bg-red-50 font-mono text-[10px] text-red-800 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-300">
+                                  PAB ✗
+                                </Badge>
+                              );
+                              return null;
+                            })()}
                           </div>
                           <div className="min-w-0">
                             <div className="truncate font-medium text-zinc-900 dark:text-white">{row.name ?? '—'}</div>
@@ -2141,13 +2279,14 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                         <TableHead className="text-zinc-600 dark:text-zinc-400">Name</TableHead>
                         <TableHead className="text-zinc-600 dark:text-zinc-400">Email</TableHead>
                         <TableHead className="text-right text-zinc-600 dark:text-zinc-400">Start Date</TableHead>
+                        <TableHead className="text-zinc-600 dark:text-zinc-400">PAB</TableHead>
                         <TableHead className="w-[90px] text-right text-zinc-600 dark:text-zinc-400">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {pageRows.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="py-8 text-center text-zinc-600 dark:text-zinc-500">
+                          <TableCell colSpan={8} className="py-8 text-center text-zinc-600 dark:text-zinc-500">
                             No employees match your search or filter.
                           </TableCell>
                         </TableRow>
@@ -2199,6 +2338,23 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                             </TableCell>
                             <TableCell className="text-right text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
                               {formatStartDate(row.start_date)}
+                            </TableCell>
+                            <TableCell>
+                              {(() => {
+                                const emailKey = normEmail(row.work_email ?? row.personal_email ?? '') ?? '';
+                                const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
+                                if (elig === true) return (
+                                  <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                                    Eligible
+                                  </span>
+                                );
+                                if (elig === false) return (
+                                  <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                                    Not eligible
+                                  </span>
+                                );
+                                return <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>;
+                              })()}
                             </TableCell>
                             <TableCell className="text-right">
                               {(() => {

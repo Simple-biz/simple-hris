@@ -416,6 +416,48 @@ export function pabDateKey(d: Date): string {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
+/**
+ * HSL-specific PAB eligibility check.
+ *
+ * Rules (HSL dept only, all other depts use the standard Mon–Fri / every-day-passes logic):
+ *  - PAB week runs Monday → Sunday (7 days).
+ *  - Within each Mon–Sun week that falls inside [pabStart, pabEnd], the employee must
+ *    have ≥ 5 days with ≥ 7 h worked.
+ *  - Partial weeks at the period boundary are evaluated with the same ≥ 5-day threshold
+ *    (so if the last chunk has only 6 days, they still need 5 qualifying days).
+ *  - Returns true if every week in the period passes, false otherwise.
+ */
+export function checkHslPabEligibility(
+  pabStart: Date,
+  pabEnd: Date,
+  hoursByDateKey: Map<string, number>,
+): boolean {
+  const endTime = new Date(pabEnd.getFullYear(), pabEnd.getMonth(), pabEnd.getDate()).getTime();
+
+  // Advance to the first Monday on or after pabStart
+  const cur = new Date(pabStart.getFullYear(), pabStart.getMonth(), pabStart.getDate());
+  const dow = cur.getDay(); // Sun=0 … Sat=6
+  const daysToMon = dow === 0 ? 1 : dow === 1 ? 0 : 8 - dow;
+  cur.setDate(cur.getDate() + daysToMon);
+
+  if (cur.getTime() > endTime) return true; // nothing to evaluate
+
+  while (cur.getTime() <= endTime) {
+    let qualifying = 0;
+    // Walk the 7 days of this Mon–Sun week (stops early if period ends mid-week)
+    for (let d = 0; d < 7; d++) {
+      if (cur.getTime() > endTime) break;
+      const seconds = hoursByDateKey.get(pabDateKey(cur)) ?? 0;
+      if (seconds >= 7 * 3600) qualifying++;
+      cur.setDate(cur.getDate() + 1);
+    }
+    // After the inner loop cur is already at the next Monday (or past endTime)
+    if (qualifying < 5) return false;
+  }
+
+  return true;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Canonical-column → ISO-date resolution for source files            */
 /* ------------------------------------------------------------------ */
