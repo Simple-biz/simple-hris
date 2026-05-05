@@ -443,16 +443,26 @@ export function checkHslPabEligibility(
   if (cur.getTime() > endTime) return true; // nothing to evaluate
 
   while (cur.getTime() <= endTime) {
-    let qualifying = 0;
+    let goodWeekdays = 0;
+    let satSeconds = 0;
+    let sunSeconds = 0;
     // Walk the 7 days of this Mon–Sun week (stops early if period ends mid-week)
     for (let d = 0; d < 7; d++) {
       if (cur.getTime() > endTime) break;
+      const dayDow = cur.getDay(); // Sun=0, Mon=1, ..., Sat=6
       const seconds = hoursByDateKey.get(pabDateKey(cur)) ?? 0;
-      if (seconds >= 7 * 3600) qualifying++;
+      if (dayDow === 6) {
+        satSeconds = seconds;
+      } else if (dayDow === 0) {
+        sunSeconds = seconds;
+      } else if (seconds >= 7 * 3600) {
+        goodWeekdays++;
+      }
       cur.setDate(cur.getDate() + 1);
     }
-    // After the inner loop cur is already at the next Monday (or past endTime)
-    if (qualifying < 5) return false;
+    // Weekdays that fall short can be reconciled only if BOTH Sat AND Sun reach ≥ 7h
+    const weekendBonus = satSeconds >= 7 * 3600 && sunSeconds >= 7 * 3600 ? 2 : 0;
+    if (goodWeekdays + weekendBonus < 5) return false;
   }
 
   return true;
