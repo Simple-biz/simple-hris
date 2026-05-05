@@ -1837,7 +1837,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
 
   const exportToCsv = () => {
     const headers = [
-      'Name', 'Email', 'Department', 'Source', 'Employee ID',
+      'Name', 'Personal Email', 'Work Email', 'Department', 'Source', 'Employee ID',
       'Start Date', 'Hours', 'Initial Pay (PHP)', 'PAB Eligibility',
     ];
     const rows = filteredEmployees.map((row) => {
@@ -1848,7 +1848,8 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
       const pabStatus = elig === true ? 'Eligible' : elig === false ? 'Not eligible' : '—';
       return [
         row.name ?? '',
-        email,
+        row.personal_email ?? '',
+        row.work_email ?? '',
         row.department ?? '',
         row.recordSource === 'master' ? 'Master' : 'Hubstaff',
         row.employee_id ?? '',
