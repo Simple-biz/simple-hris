@@ -1845,7 +1845,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
       const emailKey = normEmail(email) ?? '';
       const pay = emailKey ? employeePayByEmail[emailKey] : undefined;
       const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
-      const pabStatus = elig === true ? 'Eligible' : elig === false ? 'Not eligible' : '—';
+      const pabStatus = elig === true ? 'Eligible' : elig === false ? 'Ineligible' : 'N/A';
       return [
         row.name ?? '',
         row.personal_email ?? '',
@@ -1860,7 +1860,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
       ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',');
     });
     const csv = [headers.map((h) => `"${h}"`).join(','), ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

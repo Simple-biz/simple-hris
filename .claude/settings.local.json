@@ -63,7 +63,14 @@
       "Bash(ls pages/api)",
       "Bash(rmdir \"app/api/auth/[...nextauth]\")",
       "Bash(rmdir \"app/api/auth\")",
-      "PowerShell(cd C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris; npx tsc --noEmit 2>&1 | Where-Object { $_ -notmatch \"validator\\\\.ts|SystemDiagnostics|EmployeeApp|searchParams\" } | Select-Object -First 20)"
+      "PowerShell(cd C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris; npx tsc --noEmit 2>&1 | Where-Object { $_ -notmatch \"validator\\\\.ts|SystemDiagnostics|EmployeeApp|searchParams\" } | Select-Object -First 20)",
+      "Bash(Get-ChildItem -Recurse -Name)",
+      "Bash(Select-String -Pattern \"doc\")",
+      "Bash(mv docs/meeting-with-carla.md docs/meeting-with-carla-2026-05-05.md)",
+      "Bash(cp Documentation/API_REFERENCE.md docs/api-reference.md)",
+      "Bash(cp Documentation/AUDIT_2026-04-21.md docs/audit-2026-04-21.md)",
+      "Bash(cp Documentation/AUDIT_2026-04-25.md docs/audit-2026-04-25.md)",
+      "Bash(cp Documentation/BUSINESS_LOGIC.md docs/business-logic.md)"
     ]
   }
 }
