@@ -95,7 +95,7 @@ export default function EmployeeSidebar({
       role="navigation"
       aria-label="Employee navigation"
     >
-      <div className="p-6">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
         <div className="mb-8 flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/30">
             <User className="h-5 w-5 text-white" />
