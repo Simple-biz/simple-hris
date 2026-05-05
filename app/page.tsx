@@ -15,7 +15,7 @@ function RootRedirectInner() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const qs = searchParams.toString();
+    const qs = searchParams?.toString() ?? '';
     router.replace(qs ? `/employee?${qs}` : '/employee');
   }, [router, searchParams]);
 

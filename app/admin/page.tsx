@@ -46,7 +46,7 @@ function AdminPageInner() {
     webhookAlert: 0,
   });
   const searchParams = useSearchParams();
-  const emailFromQuery = searchParams.get('email');
+  const emailFromQuery = searchParams?.get('email') ?? null;
 
   useEffect(() => {
     try {

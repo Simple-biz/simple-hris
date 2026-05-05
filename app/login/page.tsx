@@ -65,7 +65,7 @@ function LoginPageInner() {
   const { data: session, status } = useSession();
   const [resolvingRole, setResolvingRole] = useState(false);
 
-  const authError = searchParams.get('error');
+  const authError = searchParams?.get('error') ?? null;
 
   // When NextAuth finishes, resolve role and route the user.
   useEffect(() => {
@@ -99,7 +99,7 @@ function LoginPageInner() {
 
       // Honor `?callbackUrl=…` if the middleware pushed us here from a specific page.
       // Reject obviously-bad callback URLs (external, or a loop back to /login).
-      const rawCallback = searchParams.get('callbackUrl');
+      const rawCallback = searchParams?.get('callbackUrl') ?? null;
       const safeCallback =
         rawCallback && rawCallback.startsWith('/') && !rawCallback.startsWith('/login')
           ? rawCallback

@@ -1457,7 +1457,7 @@ export default function SystemDiagnostics() {
   // localStorage; we don't write on every frame because writes are slow and we
   // don't need intermediate states.
   const handleNodesChange = useCallback(
-    (changes: NodeChange[]) => {
+    (changes: NodeChange<Node<DiagNodeData>>[]) => {
       onNodesChangeRf(changes);
       const dragStop = changes.some(
         (c) => c.type === 'position' && c.dragging === false,
@@ -1665,10 +1665,10 @@ export default function SystemDiagnostics() {
                   transition: 'opacity 160ms ease',
                 }}
                 onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.opacity = '1';
+                  (e.currentTarget as unknown as HTMLElement).style.opacity = '1';
                 }}
                 onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.opacity = '0.78';
+                  (e.currentTarget as unknown as HTMLElement).style.opacity = '0.78';
                 }}
                 className="!m-2 !rounded-lg !border !border-zinc-200/80 !bg-white/70 !shadow-sm backdrop-blur-md dark:!border-zinc-800/80 dark:!bg-zinc-950/60"
               />

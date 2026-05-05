@@ -59,7 +59,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
   const [email, setEmail] = React.useState<string | null>(null);
   const [roles, setRoles] = React.useState<string[]>([]);
   const searchParams = useSearchParams();
-  const emailFromQuery = searchParams.get('email');
+  const emailFromQuery = searchParams?.get('email') ?? null;
   React.useEffect(() => {
     setMounted(true);
     try {

@@ -35,7 +35,7 @@ export default function App() {
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const searchParams = useSearchParams();
-  const emailFromQuery = searchParams.get('email');
+  const emailFromQuery = searchParams?.get('email') ?? null;
 
   useEffect(() => {
     setMounted(true);

@@ -76,7 +76,7 @@ export default function AdminSidebar({
   const [mounted, setMounted] = React.useState(false);
   const [email, setEmail] = React.useState<string | null>(viewerEmailProp ?? null);
   const searchParams = useSearchParams();
-  const emailFromQuery = searchParams.get('email');
+  const emailFromQuery = searchParams?.get('email') ?? null;
 
   React.useEffect(() => {
     setMounted(true);
