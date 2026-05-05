@@ -48,6 +48,8 @@ import {
   resolveCanonicalColumnsToIso,
   columnsAreAllCanonical,
   parseDateRangeFromFilename,
+  checkHslPabEligibility,
+  pabDateKey,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { parseCsv } from '@/lib/csv/parse-csv';
@@ -1460,6 +1462,23 @@ export default function PayrollWizard() {
     return filterColumnGroupsByPabRange(groups, cols, pabMonthRange.start, pabMonthRange.end);
   }, [hubstaffColsForPab, pabMonthRange]);
 
+  /** All date-column groups (Mon–Sun) within the PAB range — used for HSL eligibility. */
+  const allDaysColumnGroups = useMemo(() => {
+    const cols = hubstaffColsForPab;
+    if (!cols?.length) return [];
+    const allDateCols = cols.filter(col => {
+      const s = col.trim();
+      const lower = s.toLowerCase();
+      for (const nd of HUBSTAFF_NON_DATE_COLS) {
+        if (lower === nd || lower.startsWith(nd + ' ')) return false;
+      }
+      return parseColDate(s) !== null;
+    });
+    const groups = groupDateColumnsByCalendarDay(allDateCols, cols);
+    if (!pabMonthRange) return groups;
+    return filterColumnGroupsByPabRange(groups, cols, pabMonthRange.start, pabMonthRange.end);
+  }, [hubstaffColsForPab, pabMonthRange]);
+
   /** Mon–Fri days in the PAB window; column groups must match this count for monthly PAB. */
   const pabExpectedMonFriCount = useMemo(() => {
     if (!pabMonthRange) return 0;
@@ -1531,26 +1550,53 @@ export default function PayrollWizard() {
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
 
-      let perfect = true;
       const forgivenDates = approvedDisputeDates.get(email);
-      for (const group of weekdayColumnGroups) {
-        const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
-        const groupDate = isoDateFromColumnGroup(group);
-        const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
-        // SET semantics: override_hours replaces Hubstaff hours for the day. `null` means the
-        // dispute floor-drops without changing hours (e.g. orphanage visit); `0` intentionally
-        // zeros out the day. Only `undefined` (no dispute on this date) falls back to Hubstaff.
-        const effectiveSeconds =
-          overrideHours != null ? overrideHours * 3600 : rawSeconds;
-        if (effectiveSeconds < 7 * 3600) {
-          const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && effectiveSeconds >= 4 * 3600);
-          if (!forgiven) {
-            perfect = false;
-            break;
+      // Check both raw and normalized keys since employeeDepts is keyed by raw Hubstaff email
+      const isHsl =
+        employeeDepts[rawEmail] === 'hogan_smith_law' ||
+        employeeDepts[rawEmail.toLowerCase()] === 'hogan_smith_law';
+
+      if (isHsl) {
+        // HSL rule: Mon–Sun weeks, ≥5 days at ≥7 h per week.
+        // Approved disputes with ≥4 h effective floor are treated as a passing day.
+        const hoursByDateKey = new Map<string, number>();
+        for (const group of allDaysColumnGroups) {
+          const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
+          const groupDate = isoDateFromColumnGroup(group);
+          if (!groupDate) continue;
+          const overrideHours = forgivenDates?.get(groupDate);
+          const effectiveSeconds = overrideHours != null ? overrideHours * 3600 : rawSeconds;
+          // Force-pass forgiven days so they count toward the 5-day quota
+          const isForgiven = !!(forgivenDates?.has(groupDate) && effectiveSeconds >= 4 * 3600);
+          const recordedSeconds = isForgiven ? 7 * 3600 : effectiveSeconds;
+          const [y, m, d] = groupDate.split('-').map(Number);
+          hoursByDateKey.set(pabDateKey(new Date(y, m - 1, d)), recordedSeconds);
+        }
+        if (checkHslPabEligibility(pabMonthRange.start, pabMonthRange.end, hoursByDateKey)) {
+          eligible.add(email);
+        }
+      } else {
+        // Standard rule: all Mon–Fri days must be ≥7 h (dispute forgiveness applied).
+        let perfect = true;
+        for (const group of weekdayColumnGroups) {
+          const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
+          const groupDate = isoDateFromColumnGroup(group);
+          const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
+          // SET semantics: override_hours replaces Hubstaff hours for the day. `null` means the
+          // dispute floor-drops without changing hours (e.g. orphanage visit); `0` intentionally
+          // zeros out the day. Only `undefined` (no dispute on this date) falls back to Hubstaff.
+          const effectiveSeconds =
+            overrideHours != null ? overrideHours * 3600 : rawSeconds;
+          if (effectiveSeconds < 7 * 3600) {
+            const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && effectiveSeconds >= 4 * 3600);
+            if (!forgiven) {
+              perfect = false;
+              break;
+            }
           }
         }
+        if (perfect) eligible.add(email);
       }
-      if (perfect) eligible.add(email);
     }
     return eligible;
   }, [
@@ -1559,7 +1605,9 @@ export default function PayrollWizard() {
     pabMonthRange,
     pabMonthColumnCoverageComplete,
     weekdayColumnGroups,
+    allDaysColumnGroups,
     approvedDisputeDates,
+    employeeDepts,
   ]);
 
   /**
@@ -1618,6 +1666,23 @@ export default function PayrollWizard() {
     const periodEnded = today.getTime() > endDay.getTime();
 
     for (const [email, breakdown] of employeeWeekdayHours.entries()) {
+      // HSL uses Mon–Sun / 5-of-7 rule — Mon-Fri breakdown doesn't apply.
+      // Use perfectAttendanceEligible (already computed with HSL logic) for the
+      // period-ended verdict; show in_progress while the period is still open.
+      const isHsl =
+        employeeDepts[email] === 'hogan_smith_law' ||
+        employeeDepts[email.toLowerCase()] === 'hogan_smith_law';
+
+      if (isHsl) {
+        if (periodEnded) {
+          map.set(email, perfectAttendanceEligible.has(email) ? 'eligible' : 'ineligible');
+        } else {
+          map.set(email, 'in_progress');
+        }
+        continue;
+      }
+
+      // Standard departments: any past Mon–Fri day below threshold → locked ineligible.
       let hasPastFailure = false;
       for (const entry of breakdown) {
         if (entry.passes) continue;
@@ -1638,7 +1703,7 @@ export default function PayrollWizard() {
       }
     }
     return map;
-  }, [pabMonthRange, employeeWeekdayHours]);
+  }, [pabMonthRange, employeeWeekdayHours, perfectAttendanceEligible, employeeDepts]);
 
   /**
    * Auto-apply / remove perfect_attendance toggle whenever eligibility is
