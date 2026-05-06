@@ -494,7 +494,7 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
           <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Loading overview…</p>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2 [@media(max-height:900px)]:gap-1.5 [@media(max-height:900px)]:p-1.5 lg:gap-3 lg:p-3">
+        <div className="flex flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-2 [@media(max-height:900px)]:gap-1.5 [@media(max-height:900px)]:p-1.5 lg:min-h-0 lg:gap-3 lg:overflow-hidden lg:p-3">
           <section className="shrink-0 rounded-lg border border-zinc-200/90 bg-gradient-to-br from-white via-white to-zinc-50/90 p-3 shadow-sm [@media(max-height:900px)]:p-2.5 xl:p-4 dark:border-zinc-800/80 dark:from-zinc-900/80 dark:via-zinc-900/60 dark:to-zinc-950/90">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between lg:gap-3">
               <div className="min-w-0 space-y-1">
@@ -540,9 +540,9 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
             </div>
           </section>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden lg:flex-row lg:items-stretch lg:gap-3">
+          <div className="flex flex-col gap-2 lg:min-h-0 lg:flex-1 lg:flex-row lg:items-stretch lg:gap-3 lg:overflow-hidden">
           {/* Left — metrics + rbac / hooks */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 lg:min-w-0 lg:gap-3">
+          <div className="flex min-w-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:gap-3">
           {/* Signals */}
           <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:gap-3">
             {[
@@ -813,7 +813,7 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
           </div>
 
           {/* RBAC + hooks — equal-height columns */}
-          <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 overflow-hidden sm:grid-cols-2">
+          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
           {/* RBAC */}
           <div className={cn(card, 'h-full min-h-[200px] sm:min-h-0')}>
             <div className={panelHead}>
