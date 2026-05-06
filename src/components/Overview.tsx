@@ -30,6 +30,8 @@ import {
   MapPin,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import EmployeePabCalendar from './employee/EmployeePabCalendar';
+import { X } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -45,8 +47,8 @@ import type { PayrollHubstaffRow } from '@/lib/supabase/hubstaff-hours';
 import { normEmail } from '@/lib/email/norm-email';
 import { phpHourlyPayFromSeconds, splitRegularOvertimeSeconds } from '@/lib/payroll/money-php';
 import {
+  getCurrentPabMonth,
   getPabMonthRange,
-  inferPabMonthFromColumns,
   resolveCanonicalColumnsToIso,
   columnsAreAllCanonical,
   buildPabCalendarWeeks,
@@ -184,6 +186,7 @@ interface SimpleViewProps {
     notEligible: number;
     monthLabel: string | null;
     periodEnd: Date | null;
+    pabMonth: { year: number; month: number } | null;
   };
   techBonusEligibility: { eligible: number; pending: number; unknown: number; total: number };
   pageRows: OverviewEmployeeRow[];
@@ -196,6 +199,9 @@ interface SimpleViewProps {
   departmentFilter: string;
   setDepartmentFilter: (v: string) => void;
   departmentOptions: string[];
+  monthFilter: string;
+  setMonthFilter: (v: string) => void;
+  monthOptions: { value: string; label: string }[];
   activeSourceFile: string | null;
   activePeriod: { label: string; week: number | null } | null;
   employeePayByEmail: Record<string, { hours: number; pay: number | null }>;
@@ -258,6 +264,9 @@ function SimpleView({
   departmentFilter,
   setDepartmentFilter,
   departmentOptions,
+  monthFilter,
+  setMonthFilter,
+  monthOptions,
   activeSourceFile,
   activePeriod,
   employeePayByEmail,
@@ -269,6 +278,8 @@ function SimpleView({
   setPabFilter,
   onExportCsv,
 }: SimpleViewProps) {
+  const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
+
   const reconcileGaps =
     inPayrollNotMaster != null && inMasterNotPayroll != null
       ? inPayrollNotMaster + inMasterNotPayroll
@@ -463,54 +474,90 @@ function SimpleView({
           <div className="grid grid-cols-1 gap-6 [@media(max-height:900px)]:gap-5 md:grid-cols-2 lg:gap-8 xl:gap-12">
             {/* PAB */}
             <div className="grid grid-cols-[120px_1fr] items-center gap-4 lg:gap-6 xl:gap-7">
-              <div className="flex flex-col items-center gap-2.5">
-                <div className="relative h-20 w-20 xl:h-24 xl:w-24">
-                  <Donut pct={pabPct} color="#047857" fillContainer />
-                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-base font-semibold tracking-tight text-zinc-900 xl:text-xl dark:text-white">
-                      {pabTotal > 0 ? `${pabPct}%` : '—'}
-                    </span>
-                    {pabTotal > 0 && (
-                      <span className="mt-0.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-                        {pabMetrics.eligible} / {pabTotal}
+              {pabMetrics.loading ? (
+                <>
+                  <div className="flex flex-col items-center gap-2.5">
+                    <div className="h-20 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800 xl:h-24 xl:w-24" />
+                    <span className="h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="h-4 w-48 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                    <div className="h-3 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                    <div className="h-12 w-full animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
+                  </div>
+                </>
+              ) : (() => {
+                const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+                const periodEnd = pabMetrics.periodEnd ? new Date(pabMetrics.periodEnd) : null;
+                if (periodEnd) periodEnd.setHours(0, 0, 0, 0);
+                const inProgress = !!periodEnd && today0.getTime() <= periodEnd.getTime();
+                return (
+                  <>
+                    <div className="flex flex-col items-center gap-2.5">
+                      <div className="relative h-20 w-20 xl:h-24 xl:w-24">
+                        <Donut
+                          pct={inProgress ? 0 : pabPct}
+                          color={inProgress ? '#b45309' : '#047857'}
+                          fillContainer
+                        />
+                        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                          <span className="text-base font-semibold tracking-tight text-zinc-900 xl:text-xl dark:text-white">
+                            {inProgress ? '⏳' : pabTotal > 0 ? `${pabPct}%` : '—'}
+                          </span>
+                          {pabTotal > 0 && (
+                            <span className="mt-0.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                              {inProgress ? `${pabTotal} pending` : `${pabMetrics.eligible} / ${pabTotal}`}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                        Perfect Attendance
                       </span>
-                    )}
-                  </div>
-                </div>
-                <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
-                  Perfect Attendance
-                </span>
-              </div>
-              <div>
-                <h4 className="mb-1 text-[13px] font-semibold text-zinc-900 dark:text-white">
-                  Perfect Attendance Bonus · ₱5,000
-                </h4>
-                <p className="mb-2 text-xs text-zinc-500 [@media(max-height:900px)]:mb-1.5 xl:mb-3.5 dark:text-zinc-400">
-                  {pabMetrics.monthLabel ?? '—'}
-                  {' · '}
-                  {activeSourceFile ? 'selected cycle' : 'merged month'}
-                </p>
-                <div className="grid grid-cols-[auto_auto] gap-x-5 gap-y-1 text-[13px]">
-                  <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
-                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-700 dark:bg-emerald-500" />
-                    Eligible
-                  </div>
-                  <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
-                    {pabMetrics.loading ? '…' : pabMetrics.eligible}
-                  </div>
-                  <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
-                    <span className="inline-block h-2 w-2 rounded-full bg-red-700 dark:bg-red-500" />
-                    Not eligible
-                  </div>
-                  <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
-                    {pabMetrics.loading ? '…' : pabMetrics.notEligible}
-                  </div>
-                </div>
-                <p className="mt-3.5 text-[11.5px] leading-snug text-zinc-400 dark:text-zinc-500">
-                  Accrues ₱{(pabMetrics.eligible * 5000).toLocaleString('en-PH')} if all eligible
-                  hold through month end.
-                </p>
-              </div>
+                    </div>
+                    <div>
+                      <h4 className="mb-1 text-[13px] font-semibold text-zinc-900 dark:text-white">
+                        Perfect Attendance Bonus · ₱5,000
+                      </h4>
+                      <p className="mb-2 text-xs text-zinc-500 [@media(max-height:900px)]:mb-1.5 xl:mb-3.5 dark:text-zinc-400">
+                        {pabMetrics.monthLabel ?? '—'}
+                        {' · '}
+                        {inProgress
+                          ? 'in progress'
+                          : activeSourceFile ? 'selected cycle' : 'merged month'}
+                      </p>
+                      {inProgress ? (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-[12px] text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+                          Period still open — final eligibility will be available after{' '}
+                          {periodEnd?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-[auto_auto] gap-x-5 gap-y-1 text-[13px]">
+                          <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
+                            <span className="inline-block h-2 w-2 rounded-full bg-emerald-700 dark:bg-emerald-500" />
+                            Eligible
+                          </div>
+                          <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
+                            {pabMetrics.loading ? '…' : pabMetrics.eligible}
+                          </div>
+                          <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
+                            <span className="inline-block h-2 w-2 rounded-full bg-red-700 dark:bg-red-500" />
+                            Not eligible
+                          </div>
+                          <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
+                            {pabMetrics.loading ? '…' : pabMetrics.notEligible}
+                          </div>
+                        </div>
+                      )}
+                      <p className="mt-3.5 text-[11.5px] leading-snug text-zinc-400 dark:text-zinc-500">
+                        {inProgress
+                          ? `Tracking ${pabTotal} workers — accrual locks once period closes.`
+                          : `Accrues ₱${(pabMetrics.eligible * 5000).toLocaleString('en-PH')} if all eligible hold through month end.`}
+                      </p>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             {/* Tech Bonus */}
@@ -612,6 +659,19 @@ function SimpleView({
                 {departmentOptions.map((d) => (
                   <option key={d} value={d}>
                     {d}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={monthFilter}
+                onChange={(e) => setMonthFilter(e.target.value)}
+                className="h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-[12.5px] font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+                title="PAB month"
+              >
+                <option value="">All months</option>
+                {monthOptions.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
                   </option>
                 ))}
               </select>
@@ -753,37 +813,65 @@ function SimpleView({
               <table className="w-full border-collapse text-[13px]">
                 <thead>
                   <tr>
-                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400" style={{ width: '44%' }}>
-                      Worker
-                    </th>
                     <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                      Department
+                      Employee ID
                     </th>
                     <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                       Source
                     </th>
                     <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                      Start date
+                      Department
+                    </th>
+                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                      Name
+                    </th>
+                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                      Email
+                    </th>
+                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                      Start Date
                     </th>
                     <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
                       PAB
                     </th>
-                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                      Hours
+                    <th className="w-[90px] border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                      Actions
                     </th>
-                    <th className="border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                      Initial pay
-                    </th>
-                    <th className="w-14 border-b border-zinc-200 bg-[#fafaf8] px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {loading ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center text-zinc-500 dark:text-zinc-400">
-                        <Loader2 className="mx-auto h-4 w-4 animate-spin" />
-                      </td>
-                    </tr>
+                  {loading || payoutLoading || pabMetrics.loading ? (
+                    Array.from({ length: 8 }).map((_, i) => (
+                      <tr
+                        key={`skel-${i}`}
+                        className="border-b border-zinc-100 last:border-b-0 dark:border-zinc-800/60"
+                      >
+                        <td className="px-4 py-3.5">
+                          <span className="inline-block h-4 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <span className="inline-block h-4 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <span className="inline-block h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <span className="inline-block h-3 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <span className="inline-block h-3 w-40 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                        </td>
+                        <td className="px-4 py-3.5 text-right">
+                          <span className="inline-block h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <span className="inline-block h-5 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+                        </td>
+                        <td className="px-4 py-3.5 text-right">
+                          <span className="inline-block h-7 w-14 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" />
+                        </td>
+                      </tr>
+                    ))
                   ) : pageRows.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="px-4 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
@@ -793,8 +881,6 @@ function SimpleView({
                   ) : (
                     pageRows.map((row) => {
                       const email = row.work_email ?? row.personal_email ?? '';
-                      const emailKey = normEmail(email) ?? '';
-                      const pay = emailKey ? employeePayByEmail[emailKey] : undefined;
                       const isHubstaff = row.recordSource === 'hubstaff';
                       return (
                         <tr
@@ -802,87 +888,100 @@ function SimpleView({
                           className="border-b border-zinc-100 last:border-b-0 hover:bg-[#fafaf8] dark:border-zinc-800/60 dark:hover:bg-zinc-900/60"
                         >
                           <td className="px-4 py-3.5">
-                            <div className="flex items-center gap-3">
-                              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-[11px] font-semibold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                                {initialsFromName(row.name)}
+                            {row.employee_id ? (
+                              <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 font-mono text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                                {row.employee_id}
                               </span>
-                              <div>
-                                <div className="font-medium leading-tight text-zinc-900 dark:text-white">
-                                  {row.name ?? '—'}
-                                </div>
-                                <div className="mt-0.5 font-mono text-[11.5px] leading-tight text-zinc-500 dark:text-zinc-400">
-                                  {email || '—'}
-                                </div>
-                                {(() => {
-                                  const loc = [row.city, row.province].filter(Boolean).join(', ');
-                                  return loc ? (
-                                    <div className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-                                      <MapPin className="h-3 w-3" />
-                                      {loc}
-                                    </div>
-                                  ) : null;
-                                })()}
-                              </div>
-                            </div>
+                            ) : (
+                              <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
+                            )}
                           </td>
                           <td className="px-4 py-3.5">
-                            <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[11.5px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                              {row.department ?? '—'}
-                            </span>
+                            {isHubstaff ? (
+                              <Badge
+                                variant="outline"
+                                className="border-sky-300 bg-sky-50 font-mono text-[10px] text-sky-800 dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-300"
+                              >
+                                Hubstaff
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className="border-emerald-300 bg-emerald-50 font-mono text-[10px] text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300"
+                              >
+                                Master
+                              </Badge>
+                            )}
                           </td>
-                          <td className="px-4 py-3.5">
-                            <span className="inline-flex items-center gap-1.5 text-[10.5px] font-medium text-zinc-500 dark:text-zinc-400">
-                              <span
-                                className={cn(
-                                  'inline-block h-1.5 w-1.5 rounded-full',
-                                  isHubstaff ? 'bg-blue-700 dark:bg-blue-500' : 'bg-emerald-700 dark:bg-emerald-500',
-                                )}
-                              />
-                              {isHubstaff ? 'Hubstaff' : 'Master'}
-                            </span>
+                          <td className="px-4 py-3.5 text-zinc-800 dark:text-zinc-200">
+                            {row.department ?? '—'}
                           </td>
-                          <td className="px-4 py-3.5 text-[12.5px] text-zinc-500 dark:text-zinc-400">
+                          <td className="px-4 py-3.5 font-medium text-zinc-800 dark:text-zinc-200">
+                            {row.name ?? '—'}
+                          </td>
+                          <td className="px-4 py-3.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                            <div>{row.personal_email ?? row.work_email ?? '—'}</div>
+                            {(() => {
+                              const loc = [row.city, row.province].filter(Boolean).join(', ');
+                              return loc ? (
+                                <div className="mt-0.5 flex items-center gap-1 font-sans text-[11px] text-zinc-400 dark:text-zinc-500">
+                                  <MapPin className="h-3 w-3" />
+                                  {loc}
+                                </div>
+                              ) : null;
+                            })()}
+                          </td>
+                          <td className="px-4 py-3.5 text-right text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
                             {formatStartDate(row.start_date)}
                           </td>
                           <td className="px-4 py-3.5">
                             {(() => {
                               const emailKey = normEmail(email) ?? '';
                               const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
-                              if (elig === true) return (
-                                <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
-                                  Eligible
-                                </span>
+                              if (elig === undefined) {
+                                return <span className="text-zinc-400 dark:text-zinc-600">—</span>;
+                              }
+                              const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+                              const periodEnd = pabMetrics.periodEnd ? new Date(pabMetrics.periodEnd) : null;
+                              if (periodEnd) periodEnd.setHours(0, 0, 0, 0);
+                              const inProgress = !!periodEnd && today0.getTime() <= periodEnd.getTime();
+                              const tone = inProgress
+                                ? 'amber'
+                                : elig === true ? 'green' : 'red';
+                              const label = inProgress
+                                ? 'In Progress'
+                                : elig === true ? 'Eligible' : 'Not eligible';
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => email && setPabCalEmail(email)}
+                                  disabled={!email}
+                                  title="Open PAB calendar"
+                                  className={cn(
+                                    'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60',
+                                    tone === 'green' && 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50',
+                                    tone === 'red'   && 'bg-red-100 text-red-800 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50',
+                                    tone === 'amber' && 'bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50',
+                                  )}
+                                >
+                                  {label}
+                                  <CalendarDays className="h-2.5 w-2.5 opacity-70" />
+                                </button>
                               );
-                              if (elig === false) return (
-                                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
-                                  Not eligible
-                                </span>
-                              );
-                              return <span className="text-zinc-400 dark:text-zinc-600">—</span>;
                             })()}
                           </td>
-                          <td className="px-4 py-3.5 text-right font-mono text-zinc-900 tabular-nums dark:text-white">
-                            {pay ? `${pay.hours.toFixed(2)}h` : '—'}
-                          </td>
-                          <td
-                            className={cn(
-                              'px-4 py-3.5 text-right font-mono tabular-nums',
-                              pay?.pay == null ? 'text-zinc-400 dark:text-zinc-600' : 'text-zinc-900 dark:text-white',
-                            )}
-                          >
-                            {pay ? formatPhp(pay.pay, 2) : '—'}
-                          </td>
                           <td className="px-4 py-3.5 text-right">
-                            <button
+                            <Button
                               type="button"
+                              size="sm"
+                              variant="outline"
                               disabled={!email || !onViewRates}
                               onClick={() => email && onViewRates?.(email)}
-                              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-                              aria-label="View rates"
-                              title="View rates"
+                              className="h-7 border-orange-300 px-2 text-[11px] text-orange-700 hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-orange-700 dark:text-orange-400"
                             >
-                              <ChevronRight className="h-3.5 w-3.5" />
-                            </button>
+                              <Eye className="mr-1 h-3 w-3" />
+                              View
+                            </Button>
                           </td>
                         </tr>
                       );
@@ -953,6 +1052,60 @@ function SimpleView({
           <div>Bonuses applied during payroll processing</div>
         </div>
       </div>
+
+      {/* PAB calendar modal — opens when an Eligible/Not-eligible pill is clicked */}
+      <AnimatePresence>
+        {pabCalEmail && (
+          <motion.div
+            key="pab-cal-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+            onClick={() => setPabCalEmail(null)}
+          >
+            <motion.div
+              key="pab-cal-panel"
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, y: 4 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 28, mass: 0.6 }}
+              className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3 border-b border-zinc-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 px-5 py-3.5 dark:border-zinc-800 dark:from-indigo-950/30 dark:via-zinc-950 dark:to-violet-950/30">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <CalendarDays className="h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">
+                      PAB Calendar
+                    </h2>
+                  </div>
+                  <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
+                    {pabCalEmail}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPabCalEmail(null)}
+                  className="shrink-0 rounded-md p-1 text-zinc-400 transition hover:bg-zinc-200/60 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <EmployeePabCalendar
+                  employeeEmail={pabCalEmail}
+                  trimToElapsedWeeks={false}
+                  pabMonthOverride={pabMetrics.pabMonth}
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1154,11 +1307,14 @@ function PagerEdgeBtn({
 }
 
 export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}) {
+  const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [employeesError, setEmployeesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState<string>('');
+  /** Month filter (YYYY-MM). Empty string = All months / no override. */
+  const [monthFilter, setMonthFilter] = useState<string>('');
   const [page, setPage] = useState(1);
   const [totalPayout, setTotalPayout] = useState<number | null>(null);
   const [payoutLoading, setPayoutLoading] = useState(true);
@@ -1299,7 +1455,8 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     notEligible: number;
     monthLabel: string | null;
     periodEnd: Date | null;
-  }>({ loading: true, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null });
+    pabMonth: { year: number; month: number } | null;
+  }>({ loading: true, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null, pabMonth: null });
 
   const [pabEligibilityByEmail, setPabEligibilityByEmail] = useState<Map<string, boolean>>(new Map());
   const [pabFilter, setPabFilter] = useState<'all' | 'eligible' | 'not-eligible'>('all');
@@ -1548,28 +1705,34 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         let start: Date;
         let end: Date;
         let monthLabel: string;
+        let pabMonth: { year: number; month: number } | null = null;
 
         if (isValidManualPabRange(pabCfg)) {
           start = pabCfg.start;
           end = pabCfg.end;
           monthLabel = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+          pabMonth = { year: end.getFullYear(), month: end.getMonth() };
         } else {
-          // Anchor the PAB month to the SELECTED file (so picking March → March's
-          // PAB period). When the picker is on __all__ / null, fall back to the
-          // most-frequent month across the merged columns.
-          let pabMonth: { year: number; month: number } | null = null;
-          if (selectedSourceFile && selectedSourceFile !== '__all__') {
-            const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(selectedSourceFile);
-            if (m) {
-              // Use the cycle's start date to pick the calendar month it belongs to
-              pabMonth = { year: +m[1], month: +m[2] - 1 };
+          // Anchor priority:
+          //   1. monthFilter (explicit "Month" dropdown pick)
+          //   2. older specific CSV (not the newest)
+          //   3. current calendar month (default — keeps "In Progress" view fresh)
+          if (monthFilter) {
+            const m = /^(\d{4})-(\d{2})$/.exec(monthFilter);
+            if (m) pabMonth = { year: +m[1], month: +m[2] - 1 };
+          }
+          if (!pabMonth) {
+            const newest = sourceFiles[0] ?? null;
+            const isCustomPick =
+              !!selectedSourceFile &&
+              selectedSourceFile !== '__all__' &&
+              selectedSourceFile !== newest;
+            if (isCustomPick) {
+              const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(selectedSourceFile);
+              if (m) pabMonth = { year: +m[1], month: +m[2] - 1 };
             }
           }
-          if (!pabMonth) pabMonth = inferPabMonthFromColumns(cols);
-          if (!pabMonth) {
-            setPabMetrics({ loading: false, totalEmployees: rowsByEmail.size, eligible: 0, notEligible: rowsByEmail.size, monthLabel: null, periodEnd: null });
-            return;
-          }
+          if (!pabMonth) pabMonth = getCurrentPabMonth();
           const r = getPabMonthRange(pabMonth.year, pabMonth.month);
           start = r.start;
           end = r.end;
@@ -1653,14 +1816,15 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
             notEligible,
             monthLabel,
             periodEnd: end,
+            pabMonth,
           });
         }
       } catch {
-        if (!cancelled) setPabMetrics({ loading: false, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null });
+        if (!cancelled) setPabMetrics({ loading: false, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null, pabMonth: null });
       }
     })();
     return () => { cancelled = true; };
-  }, [sourceFiles, selectedSourceFile, employees]);
+  }, [sourceFiles, selectedSourceFile, monthFilter, employees]);
 
   /** Master list rows plus Hubstaff-only workers (same payroll scope as stats). */
   const mergedEmployees = useMemo((): OverviewEmployeeRow[] => {
@@ -1702,6 +1866,23 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }, [mergedEmployees]);
 
+  /** Distinct months derived from source filenames (YYYY-MM-DD_to_YYYY-MM-DD), newest first. */
+  const monthOptions = useMemo<{ value: string; label: string }[]>(() => {
+    const seen = new Map<string, { year: number; month: number }>();
+    for (const f of sourceFiles) {
+      const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(f);
+      if (!m) continue;
+      const y = +m[1];
+      const mo = +m[2] - 1;
+      const key = `${y}-${String(mo + 1).padStart(2, '0')}`;
+      if (!seen.has(key)) seen.set(key, { year: y, month: mo });
+    }
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    return [...seen.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([value, { year, month }]) => ({ value, label: `${monthNames[month]} ${year}` }));
+  }, [sourceFiles]);
+
   const filteredEmployees = useMemo(() => {
     let list = mergedEmployees;
     if (departmentFilter) {
@@ -1731,7 +1912,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, departmentFilter, pabFilter]);
+  }, [searchQuery, departmentFilter, pabFilter, monthFilter]);
 
   useEffect(() => {
     setPage((p) => Math.min(p, totalPages));
@@ -1955,7 +2136,12 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                 </option>
               ))}
             </select>
-            {payoutLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />}
+            {(payoutLoading || pabMetrics.loading) && (
+              <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-orange-600 dark:text-orange-400">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading…
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -1993,6 +2179,9 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
               departmentFilter={departmentFilter}
               setDepartmentFilter={setDepartmentFilter}
               departmentOptions={departmentOptions}
+              monthFilter={monthFilter}
+              setMonthFilter={setMonthFilter}
+              monthOptions={monthOptions}
               activeSourceFile={activeSourceFile}
               activePeriod={activePeriod}
               employeePayByEmail={employeePayByEmail}
@@ -2164,6 +2353,28 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                         ))}
                       </select>
                     </div>
+                    <div className="w-full space-y-1.5 sm:w-44">
+                      <Label htmlFor="month-filter" className="text-xs text-zinc-600 dark:text-zinc-500">
+                        Month
+                      </Label>
+                      <select
+                        id="month-filter"
+                        value={monthFilter}
+                        onChange={(e) => setMonthFilter(e.target.value)}
+                        className={cn(
+                          'h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900',
+                          'outline-none focus-visible:border-orange-500 focus-visible:ring-2 focus-visible:ring-orange-500/30',
+                          'dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200',
+                        )}
+                      >
+                        <option value="">All months</option>
+                        {monthOptions.map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                   {/* PAB filter */}
                   <div className="flex items-center gap-1.5">
@@ -2301,7 +2512,23 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {pageRows.length === 0 ? (
+                      {payoutLoading || pabMetrics.loading ? (
+                        Array.from({ length: 8 }).map((_, i) => (
+                          <TableRow
+                            key={`skel-${i}`}
+                            className="border-zinc-200 dark:border-zinc-800"
+                          >
+                            <TableCell><span className="inline-block h-4 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></TableCell>
+                            <TableCell><span className="inline-block h-5 w-16 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" /></TableCell>
+                            <TableCell><span className="inline-block h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></TableCell>
+                            <TableCell><span className="inline-block h-3 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></TableCell>
+                            <TableCell><span className="inline-block h-3 w-40 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></TableCell>
+                            <TableCell className="text-right"><span className="inline-block h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" /></TableCell>
+                            <TableCell><span className="inline-block h-5 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" /></TableCell>
+                            <TableCell className="text-right"><span className="inline-block h-7 w-14 animate-pulse rounded-md bg-zinc-200 dark:bg-zinc-800" /></TableCell>
+                          </TableRow>
+                        ))
+                      ) : pageRows.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={8} className="py-8 text-center text-zinc-600 dark:text-zinc-500">
                             No employees match your search or filter.
@@ -2358,19 +2585,35 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                             </TableCell>
                             <TableCell>
                               {(() => {
-                                const emailKey = normEmail(row.work_email ?? row.personal_email ?? '') ?? '';
+                                const rowEmail = row.work_email ?? row.personal_email ?? '';
+                                const emailKey = normEmail(rowEmail) ?? '';
                                 const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
-                                if (elig === true) return (
-                                  <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
-                                    Eligible
-                                  </span>
+                                if (elig === undefined) {
+                                  return <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>;
+                                }
+                                const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+                                const periodEnd = pabMetrics.periodEnd ? new Date(pabMetrics.periodEnd) : null;
+                                if (periodEnd) periodEnd.setHours(0, 0, 0, 0);
+                                const inProgress = !!periodEnd && today0.getTime() <= periodEnd.getTime();
+                                const tone = inProgress ? 'amber' : elig === true ? 'green' : 'red';
+                                const label = inProgress ? 'In Progress' : elig === true ? 'Eligible' : 'Not eligible';
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => rowEmail && setPabCalEmail(rowEmail)}
+                                    disabled={!rowEmail}
+                                    title="Open PAB calendar"
+                                    className={cn(
+                                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60',
+                                      tone === 'green' && 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-900/50',
+                                      tone === 'red'   && 'bg-red-100 text-red-800 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50',
+                                      tone === 'amber' && 'bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50',
+                                    )}
+                                  >
+                                    {label}
+                                    <CalendarDays className="h-2.5 w-2.5 opacity-70" />
+                                  </button>
                                 );
-                                if (elig === false) return (
-                                  <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
-                                    Not eligible
-                                  </span>
-                                );
-                                return <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>;
                               })()}
                             </TableCell>
                             <TableCell className="text-right">
@@ -2665,6 +2908,56 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
           </Card>
         </div>
       </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* PAB calendar modal — opens when an Eligible/Not-eligible pill is clicked in the worker table */}
+      <AnimatePresence>
+        {pabCalEmail && (
+          <motion.div
+            key="pab-cal-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+            onClick={() => setPabCalEmail(null)}
+          >
+            <motion.div
+              key="pab-cal-panel"
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.97, y: 4 }}
+              transition={{ type: 'spring', stiffness: 340, damping: 28, mass: 0.6 }}
+              className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3 border-b border-zinc-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 px-5 py-3.5 dark:border-zinc-800 dark:from-indigo-950/30 dark:via-zinc-950 dark:to-violet-950/30">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <CalendarDays className="h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                    <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">PAB Calendar</h2>
+                  </div>
+                  <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-600 dark:text-zinc-400">{pabCalEmail}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPabCalEmail(null)}
+                  className="shrink-0 rounded-md p-1 text-zinc-400 transition hover:bg-zinc-200/60 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <EmployeePabCalendar
+                  employeeEmail={pabCalEmail}
+                  trimToElapsedWeeks={false}
+                  pabMonthOverride={pabMetrics.pabMonth}
+                />
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

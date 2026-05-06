@@ -43,6 +43,18 @@ type EmployeePabCalendarProps = {
   /** Bumping this prop forces a re-fetch of disputes (e.g. after a successful submit). */
   refreshKey?: number;
   className?: string;
+  /**
+   * When true (default), only weeks up through today (or the latest day with hours)
+   * are shown — keeps the employee's view focused on what has actually happened.
+   * Pass `false` from admin/audit surfaces to render every week of the PAB period.
+   */
+  trimToElapsedWeeks?: boolean;
+  /**
+   * Force the calendar to display a specific PAB month (year + 0-based month index)
+   * instead of inferring from merged columns. Use this when the calendar must
+   * stay in sync with an external CSV / period picker.
+   */
+  pabMonthOverride?: { year: number; month: number } | null;
 };
 
 const NON_DATE_COLS = new Set([
@@ -136,6 +148,8 @@ export default function EmployeePabCalendar({
   onCellClick,
   refreshKey = 0,
   className,
+  trimToElapsedWeeks = true,
+  pabMonthOverride = null,
 }: EmployeePabCalendarProps) {
   const [aliasEmails, setAliasEmails] = useState<string[]>([]);
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
@@ -271,18 +285,20 @@ export default function EmployeePabCalendar({
     }
   }, [fetchMerged, fetchDisputes]);
 
-  // ── Compute PAB month range from merged columns ─────────────────────────
+  // ── Compute PAB month range — override > merged columns > current month ─
   const pabMonthRange = useMemo(() => {
     const cols = mergedColumns;
     const pabMonth: { year: number; month: number } =
-      (cols.length > 0 ? getLatestPabMonthFromColumns(cols) : null) ?? getCurrentPabMonth();
+      pabMonthOverride
+      ?? (cols.length > 0 ? getLatestPabMonthFromColumns(cols) : null)
+      ?? getCurrentPabMonth();
     const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December',
     ];
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
-  }, [mergedColumns]);
+  }, [mergedColumns, pabMonthOverride]);
 
   // ── Build date → ISO map of disputes for quick lookup ───────────────────
   const disputesByDate = useMemo(() => {
@@ -330,7 +346,9 @@ export default function EmployeePabCalendar({
     }
     const weeks = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, hoursByDateKey);
 
-    // Trim to elapsed weeks
+    if (!trimToElapsedWeeks) return weeks;
+
+    // Trim to elapsed weeks (employee-facing view)
     let latest: Date | null = null;
     for (const [k, secs] of hoursByDateKey) {
       if (secs <= 0) continue;
@@ -349,10 +367,20 @@ export default function EmployeePabCalendar({
       return weekStart.getTime() <= cutoff.getTime();
     });
     return trimmed.length > 0 ? trimmed : weeks.slice(0, 1);
-  }, [mergedRow, mergedColumns, pabMonthRange, disputes]);
+  }, [mergedRow, mergedColumns, pabMonthRange, disputes, trimToElapsedWeeks]);
 
   const allPabDays = pabCalendar?.flat() ?? [];
   const isPAEligible = allPabDays.length > 0 && allPabDays.every((d) => d.passes);
+  // Verdict: in-progress while today is on/before the period end.
+  const verdict: 'eligible' | 'ineligible' | 'in_progress' = useMemo(() => {
+    if (!pabMonthRange) return 'ineligible';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const end = new Date(pabMonthRange.end);
+    end.setHours(0, 0, 0, 0);
+    if (today.getTime() <= end.getTime()) return 'in_progress';
+    return isPAEligible ? 'eligible' : 'ineligible';
+  }, [pabMonthRange, isPAEligible]);
 
   return (
     <Card
@@ -541,7 +569,9 @@ export default function EmployeePabCalendar({
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 ring-1 ring-emerald-400 sm:h-2 sm:w-2" /> Forgiven
               </span>
               <span className="ml-auto font-medium">
-                {isPAEligible ? (
+                {verdict === 'in_progress' ? (
+                  <span className="text-amber-600 dark:text-amber-400">⏳ In Progress</span>
+                ) : verdict === 'eligible' ? (
                   <span className="text-emerald-600 dark:text-emerald-400">PAB Eligible</span>
                 ) : (
                   <span className="text-red-500 dark:text-red-400">PAB Not Met</span>
