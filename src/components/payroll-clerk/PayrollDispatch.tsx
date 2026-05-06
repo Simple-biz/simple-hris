@@ -17,6 +17,7 @@ import {
   Lock,
   Play,
   Send,
+  ShieldOff,
   Sparkles,
   StopCircle,
   Wallet,
@@ -27,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import ProcessorQueue from './ProcessorQueue';
+import ExcludedQueue from './ExcludedQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
 import DispatchReports from './DispatchReports';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
@@ -45,7 +47,7 @@ import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-type TabId = 'all' | 'history' | 'reports' | ProcessorId;
+type TabId = 'all' | 'history' | 'reports' | 'excluded' | ProcessorId;
 
 interface ProcessorVisual {
   Icon: React.ComponentType<{ className?: string }>;
@@ -116,6 +118,13 @@ const REPORTS_VISUAL: ProcessorVisual = {
   blurb: 'Weekly summary',
 };
 
+const EXCLUDED_VISUAL: ProcessorVisual = {
+  Icon: ShieldOff,
+  accent: 'from-zinc-500 to-zinc-700',
+  glow: 'from-zinc-100/80 via-zinc-50/60 to-white dark:from-zinc-800/60 dark:via-zinc-900/40 dark:to-zinc-900',
+  blurb: 'No bank · pay · hours',
+};
+
 const containerStagger = {
   hidden: { opacity: 0 },
   visible: { opacity: 1, transition: { staggerChildren: 0.04, delayChildren: 0.05 } },
@@ -133,7 +142,7 @@ export default function PayrollDispatch() {
     session?.user?.email,
   ]);
   const [activeTab, setActiveTab] = useState<TabId>('all');
-  const { rows: fetched, paid, period, loading, error, refresh } = useDispatchQueue();
+  const { rows: fetched, excluded, paid, period, loading, error, refresh } = useDispatchQueue();
   const { state: lockState, setLocked } = useDispatchLock();
   const [pending, setPending] = useState<QueueRow[]>([]);
   const [markPaidRow, setMarkPaidRow] = useState<QueueRow | null>(null);
@@ -269,6 +278,9 @@ export default function PayrollDispatch() {
       return (
         <SentPaymentsHistory records={paid} periodStart={period.start} periodEnd={period.end} />
       );
+    }
+    if (activeTab === 'excluded') {
+      return <ExcludedQueue rows={excluded} />;
     }
     return (
       <ProcessorQueue
@@ -486,6 +498,19 @@ export default function PayrollDispatch() {
                 iconOnlyFallback
               />
             </motion.div>
+            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+              <ProcessorCard
+                label="Excluded"
+                subtitle={EXCLUDED_VISUAL.blurb}
+                count={excluded.length}
+                Icon={EXCLUDED_VISUAL.Icon}
+                accent={EXCLUDED_VISUAL.accent}
+                glow={EXCLUDED_VISUAL.glow}
+                active={activeTab === 'excluded'}
+                onClick={() => setActiveTab('excluded')}
+                iconOnlyFallback
+              />
+            </motion.div>
           </motion.div>
         </div>
 
@@ -494,8 +519,8 @@ export default function PayrollDispatch() {
           <AnimatePresence mode="wait">
             <motion.div
               key={
-                activeTab === 'reports'
-                  ? 'reports'
+                activeTab === 'reports' || activeTab === 'excluded'
+                  ? activeTab
                   : activeTab +
                     (loading || !hydrated
                       ? '-loading'

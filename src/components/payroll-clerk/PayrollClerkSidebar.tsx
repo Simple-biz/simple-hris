@@ -7,6 +7,7 @@ import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   Banknote,
   ClipboardList,
+  ShieldOff,
   Coins,
   Globe2,
   LogOut,
@@ -182,6 +183,7 @@ export default function PayrollClerkSidebar({
           <nav className="flex flex-col gap-px">
             {navBtn('history', 'Sent payments', Banknote)}
             {navBtn('reports', 'Weekly reports', ClipboardList)}
+            {navBtn('excluded', 'Excluded', ShieldOff)}
           </nav>
 
           <div className="mt-6 border-t border-[#ececec] pt-4 dark:border-zinc-800">

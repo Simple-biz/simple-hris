@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import PayrollClerkSidebar from './PayrollClerkSidebar';
 import ProcessorQueue from './ProcessorQueue';
 import QueueSkeleton from './QueueSkeleton';
+import ExcludedQueue from './ExcludedQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
 import DispatchReports from './DispatchReports';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
@@ -33,7 +34,7 @@ export default function PayrollClerkApp() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
 
-  const { rows: fetched, paid, period, loading, error, refresh } = useDispatchQueue();
+  const { rows: fetched, excluded, paid, period, loading, error, refresh } = useDispatchQueue();
   const [pending, setPending] = useState<QueueRow[]>([]);
   const [markPaidRow, setMarkPaidRow] = useState<QueueRow | null>(null);
   const [hydrated, setHydrated] = useState(false);
@@ -192,6 +193,9 @@ export default function PayrollClerkApp() {
       return (
         <SentPaymentsHistory records={paid} periodStart={period.start} periodEnd={period.end} />
       );
+    }
+    if (activeTab === 'excluded') {
+      return <ExcludedQueue rows={excluded} />;
     }
 
     return (

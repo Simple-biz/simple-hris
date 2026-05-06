@@ -5,7 +5,7 @@ import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { CurrentPayResult, PayrollPeriod } from '@/lib/payroll/current-pay';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
-import { buildQueueFromRates, type QueueRow } from './mock-queue';
+import { buildQueueFromRates, type ExcludedRow, type QueueRow } from './mock-queue';
 
 /**
  * Build a lowercased-email → EmployeeIdRow map. Both work_email and
@@ -27,6 +27,12 @@ function buildIdsMap(rows: EmployeeIdRow[]): Map<string, EmployeeIdRow> {
 interface DispatchQueueState {
   /** Pending rows — already-paid recipients are filtered out. */
   rows: QueueRow[];
+  /**
+   * Employees the queue can NOT pay this cycle because they're missing one or
+   * more of: bank/processor, current pay, or hours. Surfaced in a separate
+   * tab so they're still visible.
+   */
+  excluded: ExcludedRow[];
   /** Already-paid records for the current cycle. */
   paid: PaymentDispatchRow[];
   period: PayrollPeriod;
@@ -46,6 +52,7 @@ const EMPTY_PERIOD: PayrollPeriod = {
 
 async function loadAll(signal?: AbortSignal): Promise<{
   rows: QueueRow[];
+  excluded: ExcludedRow[];
   paid: PaymentDispatchRow[];
   period: PayrollPeriod;
   fxRate: number;
@@ -71,6 +78,7 @@ async function loadAll(signal?: AbortSignal): Promise<{
   if (ratesJson.error) {
     return {
       rows: [],
+      excluded: [],
       paid: [],
       period: EMPTY_PERIOD,
       fxRate: 0,
@@ -107,15 +115,17 @@ async function loadAll(signal?: AbortSignal): Promise<{
       .filter((p) => p.status === 'paid')
       .map((p) => p.recipient_email.trim().toLowerCase()),
   );
-  const allQueue = buildQueueFromRates(
+  const { active, excluded } = buildQueueFromRates(
     ratesJson.rows ?? [],
     payJson.byEmail ?? {},
     idsByEmail,
   );
-  const pendingQueue = allQueue.filter((r) => !paidEmails.has(r.id));
+  const pendingQueue = active.filter((r) => !paidEmails.has(r.id));
+  const excludedQueue = excluded.filter((r) => !paidEmails.has(r.id));
 
   return {
     rows: pendingQueue,
+    excluded: excludedQueue,
     paid,
     period,
     fxRate: payJson.fxRate ?? 0,
@@ -134,6 +144,7 @@ async function loadAll(signal?: AbortSignal): Promise<{
 export function useDispatchQueue(): DispatchQueueState {
   const [state, setState] = useState<Omit<DispatchQueueState, 'refresh'>>({
     rows: [],
+    excluded: [],
     paid: [],
     period: EMPTY_PERIOD,
     fxRate: 0,
@@ -148,6 +159,7 @@ export function useDispatchQueue(): DispatchQueueState {
       if (signal?.aborted) return;
       setState({
         rows: result.rows,
+        excluded: result.excluded,
         paid: result.paid,
         period: result.period,
         fxRate: result.fxRate,
@@ -159,6 +171,7 @@ export function useDispatchQueue(): DispatchQueueState {
       if (e instanceof DOMException && e.name === 'AbortError') return;
       setState({
         rows: [],
+        excluded: [],
         paid: [],
         period: EMPTY_PERIOD,
         fxRate: 0,

@@ -219,23 +219,26 @@ export default function AdminSidebar({
           <div className="my-5 mx-2.5 h-px bg-[#ececec] dark:bg-zinc-800" />
 
           <nav className="flex flex-col gap-px">{navBtn('settings', 'System settings', Settings)}</nav>
-
-          <div className="mt-6 border-t border-[#ececec] pt-4 dark:border-zinc-800">
-            <ViewSwitcher email={email} currentView="admin" />
-            <button
-              type="button"
-              onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
-              className="mb-2 mt-3 flex w-full items-center justify-between rounded-md border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-left transition-colors hover:bg-[#f3f3f3] dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-              aria-label="Toggle dark mode"
-            >
-              <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
-                {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-                {isDark ? 'Dark' : 'Light'}
-              </div>
-              <span className="text-[#a1a1aa]">{isDark ? '☀' : '☾'}</span>
-            </button>
-          </div>
         </ScrollArea>
+
+        {/* Anchored bottom block — ViewSwitcher + theme toggle. Lives OUTSIDE
+            the ScrollArea so it stays reachable on short screens; the
+            System/Security/Settings nav above scrolls when content overflows. */}
+        <div className="shrink-0 border-t border-[#ececec] pt-4 dark:border-zinc-800">
+          <ViewSwitcher email={email} currentView="admin" />
+          <button
+            type="button"
+            onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
+            className="mb-2 mt-3 flex w-full items-center justify-between rounded-md border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-left transition-colors hover:bg-[#f3f3f3] dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+            aria-label="Toggle dark mode"
+          >
+            <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
+              {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+              {isDark ? 'Dark' : 'Light'}
+            </div>
+            <span className="text-[#a1a1aa]">{isDark ? '☀' : '☾'}</span>
+          </button>
+        </div>
       </div>
 
       <div className="mt-auto border-t border-[#ececec] p-5 dark:border-zinc-800">

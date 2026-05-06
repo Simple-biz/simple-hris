@@ -51,6 +51,24 @@ export const PROCESSORS: ProcessorMeta[] = [
   },
 ];
 
+/**
+ * A row that can't be dispatched this cycle. Surfaced in the "No Bank Preferred /
+ * No Current Pay / No Hours" tab so Lenny can see why someone is missing from
+ * the active queue rather than them silently disappearing.
+ */
+export type ExclusionReason = 'no_bank' | 'no_pay' | 'no_hours';
+
+export interface ExcludedRow {
+  id: string;
+  name: string;
+  email: string;
+  totalHours: number | null;
+  amountUSD: number | null;
+  amountPHP: number | null;
+  bankPreferredRaw: string | null;
+  reasons: ExclusionReason[];
+}
+
 export interface QueueRow {
   id: string;
   processor: ProcessorId;
@@ -139,8 +157,9 @@ export function buildQueueFromRates(
   rows: EmployeeHourlyRateRow[],
   payByEmail: Record<string, CurrentPayEntry> = {},
   idsByEmail: Map<string, EmployeeIdRow> = new Map(),
-): QueueRow[] {
+): { active: QueueRow[]; excluded: ExcludedRow[] } {
   const out: QueueRow[] = [];
+  const excluded: ExcludedRow[] = [];
   for (const r of rows) {
     const email = r.work_email?.trim() || r.personal_email?.trim() || '';
     if (!email) continue;
@@ -155,7 +174,6 @@ export function buildQueueFromRates(
     const choseProcessor = (idsRow?.preferred_processor ?? '').trim().toLowerCase();
     const chosen = isKnownProcessor(choseProcessor) ? choseProcessor : null;
     const processor = chosen ?? processorIdFromBankPreferred(r.bank_preferred);
-    if (!processor) continue;
     const name =
       idsRow?.name?.trim() ||
       email
@@ -164,6 +182,30 @@ export function buildQueueFromRates(
         .replace(/\b\w/g, (c) => c.toUpperCase()) ||
       email;
     const pay = payByEmail[email.toLowerCase()];
+
+    // Apply the gate the user wants for the active queue: must have a
+    // recognized bank/processor, a non-null current-pay amount, and non-null
+    // hours. Anything missing → excluded bucket so it's still visible.
+    const reasons: ExclusionReason[] = [];
+    if (!processor) reasons.push('no_bank');
+    if (pay?.totalPayUSD == null && pay?.initialPayUSD == null) reasons.push('no_pay');
+    if (pay?.totalHours == null) reasons.push('no_hours');
+    if (reasons.length > 0) {
+      excluded.push({
+        id: email.toLowerCase(),
+        name,
+        email,
+        totalHours: pay?.totalHours ?? null,
+        amountUSD: pay?.totalPayUSD ?? pay?.initialPayUSD ?? null,
+        amountPHP: pay?.totalPayPHP ?? pay?.initialPayPHP ?? null,
+        bankPreferredRaw: r.bank_preferred,
+        reasons,
+      });
+      continue;
+    }
+    // From here on, processor is non-null because reasons would have caught
+    // it. Narrow the type so TypeScript stops complaining.
+    const activeProcessor: ProcessorId = processor!;
     const bankSlot = preferredBankSlot(idsRow);
     const preferredBankName = bankSlot === 'alternative'
       ? pickFirst(idsRow?.alt_bank_name, idsRow?.bank_name)
@@ -180,7 +222,7 @@ export function buildQueueFromRates(
 
     out.push({
       id: email.toLowerCase(),
-      processor,
+      processor: activeProcessor,
       name,
       email,
       // amountUSD/PHP carry regular + OT + bonuses so the dispatch row shows
@@ -218,7 +260,8 @@ export function buildQueueFromRates(
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
-  return out;
+  excluded.sort((a, b) => a.name.localeCompare(b.name));
+  return { active: out, excluded };
 }
 
 const KNOWN_PROCESSOR_IDS: ReadonlySet<string> = new Set([
