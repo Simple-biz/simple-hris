@@ -109,7 +109,7 @@ export default function EmployeeSidebar({
           </div>
         </div>
 
-        <ScrollArea className="-mx-2 flex-1">
+        <ScrollArea className="-mx-2 min-h-0 flex-1">
           <nav className="space-y-1 px-2">
             {navItems.map((item, index) => (
               <button
