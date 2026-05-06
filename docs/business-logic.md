@@ -214,6 +214,14 @@ The Overview dashboard's **Bonus & Status** panel computes PAB eligibility acros
 
 This runs on mount and is independent of the CSV selector used for the stat cards (PAB always evaluates the full month across all files).
 
+### Payment Dispatch — bonus mirror
+
+The Payment Dispatch view (`/accounting` → Payment Dispatch and `/payroll-clerk`) shows Lenny the **total** Lenny needs to pay, not just regular + OT. PAB and Tech bonuses are recomputed server-side in `src/lib/payroll/dispatch-bonuses.ts` — a deliberate parallel implementation of the wizard's gating logic so the dispatch row matches what the wizard would dispatch for the active week.
+
+The dispatch mirror covers the same rules described in this section (per-week gates: final-PAB-week and 3rd-paycheck-of-month; per-employee gates: PAB eligibility and 30-day service; no-rates suppression). Department-specific bonuses (collections tiers, lead-gen) are **not** mirrored — those depend on per-employee toggle state that lives only inside the wizard's React session. See `docs/payment-dispatch.md` § 4.2.1 for the full list of helpers, schema details (canonical-column resolution from `source_file`), and which rules are deliberately skipped.
+
+> **Single source of truth.** This document remains authoritative for the rules; the dispatch lib mirrors them. If a rule changes, update the wizard, then `dispatch-bonuses.ts`, then this doc.
+
 ---
 
 ## Technology Bonus

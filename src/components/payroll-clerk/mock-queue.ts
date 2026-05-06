@@ -56,10 +56,19 @@ export interface QueueRow {
   processor: ProcessorId;
   name: string;
   email: string;
-  /** USD amount for this dispatch. `null` until the pay cycle ties amounts to people. */
+  /** USD amount Lenny should pay = regular + OT + bonuses. */
   amountUSD: number | null;
-  /** PHP amount, kept for tooltip / reference; null when pay can't be computed. */
+  /** PHP equivalent of amountUSD. */
   amountPHP: number | null;
+  /** Regular + OT only (no bonuses). For the breakdown tooltip / chip. */
+  initialPayUSD: number | null;
+  initialPayPHP: number | null;
+  /** PAB ₱5,000 when this is the final week of the PAB month and the employee qualifies. */
+  pabBonusPHP: number;
+  /** Tech ₱1,850 on the salary-falls-in-3rd-week paycheck with 30 days of service. */
+  techBonusPHP: number;
+  /** Sum of all bonuses included in amountUSD/PHP. */
+  bonusTotalPHP: number;
   /** Hours worked in the current period; null when not present in Hubstaff. */
   totalHours: number | null;
   /** Overtime hours (total – regular). `null` when no Hubstaff entry. */
@@ -174,8 +183,16 @@ export function buildQueueFromRates(
       processor,
       name,
       email,
-      amountUSD: pay?.initialPayUSD ?? null,
-      amountPHP: pay?.initialPayPHP ?? null,
+      // amountUSD/PHP carry regular + OT + bonuses so the dispatch row shows
+      // the full amount Lenny needs to pay. Breakdown fields below let the
+      // UI surface a "+ ₱5,000 PAB" chip when there's an addition.
+      amountUSD: pay?.totalPayUSD ?? pay?.initialPayUSD ?? null,
+      amountPHP: pay?.totalPayPHP ?? pay?.initialPayPHP ?? null,
+      initialPayUSD: pay?.initialPayUSD ?? null,
+      initialPayPHP: pay?.initialPayPHP ?? null,
+      pabBonusPHP: pay?.pabBonusPHP ?? 0,
+      techBonusPHP: pay?.techBonusPHP ?? 0,
+      bonusTotalPHP: pay?.bonusTotalPHP ?? 0,
       totalHours: pay?.totalHours ?? null,
       otHours: pay?.otHours ?? null,
       bankPreferredRaw: r.bank_preferred,

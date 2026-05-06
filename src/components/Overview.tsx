@@ -320,96 +320,148 @@ function SimpleView({
     <div className="min-h-0 flex-1 overflow-auto">
       <div className="mx-auto w-full max-w-[1600px] px-3 pb-6 sm:px-4 md:px-6 lg:px-8 xl:px-10 [@media(max-height:900px)]:pb-4 xl:pb-12">
 
-        {/* Hero — scales up at xl/2xl so 13" laptops (~1280×800) are not dominated by md:text-7xl */}
-        <section className="mb-5 grid grid-cols-1 items-end gap-4 border-b border-zinc-200 pb-5 [@media(max-height:900px)]:mb-4 [@media(max-height:900px)]:gap-3 [@media(max-height:900px)]:pb-4 lg:mb-8 lg:gap-6 lg:pb-6 lg:grid-cols-[1fr_auto] xl:mb-10 xl:gap-8 xl:pb-8 dark:border-zinc-800">
-          <div>
-            <p className="mb-2 text-[13px] text-zinc-500 [@media(max-height:900px)]:mb-1 lg:mb-3 xl:mb-4 dark:text-zinc-400">
-              <span>{greeting}. Accounting team dashboard.</span>
-            </p>
-            <p className="mb-2 text-[12.5px] font-medium text-zinc-500 xl:mb-3 dark:text-zinc-400">
-              Total payout for this accounting pay run
-            </p>
-            <div className="flex items-baseline">
-              <span className="mr-1.5 text-4xl font-medium text-zinc-400 lg:text-5xl xl:text-6xl 2xl:text-7xl">₱</span>
-              {payoutLoading ? (
-                <span className="inline-block h-[1em] w-[220px] animate-pulse rounded-md bg-zinc-200/80 align-bottom text-4xl lg:w-[280px] lg:text-5xl xl:w-[360px] xl:text-6xl 2xl:w-[420px] 2xl:text-7xl dark:bg-zinc-800" />
-              ) : (
-                <span className="font-mono text-4xl font-semibold tracking-tight text-zinc-900 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-white">
-                  {totalPayout != null
-                    ? totalPayout.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                    : '—'}
+        {/* Hero — branded chip, accent rule, floating orbs in the corners */}
+        <section className="relative mb-5 overflow-hidden rounded-3xl border border-orange-100/80 bg-gradient-to-br from-white via-orange-50/40 to-blue-50/30 p-5 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.25)] [@media(max-height:900px)]:mb-4 [@media(max-height:900px)]:p-4 lg:mb-8 lg:p-7 xl:mb-10 xl:p-8 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15">
+          {/* Decorative orbs — pure dopamine */}
+          <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.9 }}
+              className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-orange-300/30 blur-3xl dark:bg-orange-500/15"
+            />
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 1.1, delay: 0.1 }}
+              className="absolute -right-20 top-12 h-64 w-64 rounded-full bg-rose-300/25 blur-3xl dark:bg-rose-500/15"
+            />
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 1.3, delay: 0.2 }}
+              className="absolute bottom-0 left-1/3 h-56 w-56 rounded-full bg-blue-300/20 blur-3xl dark:bg-blue-500/15"
+            />
+          </div>
+
+          <motion.div
+            initial="hidden"
+            animate="visible"
+            variants={{
+              hidden: { opacity: 0 },
+              visible: { opacity: 1, transition: { staggerChildren: 0.06, delayChildren: 0.05 } },
+            }}
+            className="relative grid grid-cols-1 items-end gap-4 lg:gap-6 lg:grid-cols-[1fr_auto] xl:gap-8"
+          >
+            <motion.div
+              variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
+            >
+              {/* Caption pill */}
+              <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-orange-200/80 bg-white/70 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300">
+                <Activity className="h-3 w-3" />
+                Dashboard · live
+              </div>
+              <p className="mb-2 text-[13px] text-zinc-600 [@media(max-height:900px)]:mb-1 lg:mb-3 dark:text-zinc-400">
+                {greeting}.{' '}
+                <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
+                  Accounting team
+                </span>{' '}
+                dashboard.
+              </p>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700/80 xl:mb-3 dark:text-orange-400/80">
+                Total payout · this accounting pay run
+              </p>
+              <div className="flex items-baseline">
+                <span className="mr-1.5 text-4xl font-medium text-zinc-400 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-zinc-500">
+                  ₱
                 </span>
-              )}
-            </div>
-            <p className="mt-2 flex flex-wrap items-center gap-3 text-[13px] text-zinc-500 [@media(max-height:900px)]:mt-1.5 lg:mt-3 xl:mt-4 dark:text-zinc-400">
-              <span>
-                <strong className="font-semibold text-zinc-900 dark:text-white">
-                  {payrollWorkerCount ?? '—'}
-                </strong>{' '}
-                active workers
-              </span>
-              {usdEquivalent != null && (
-                <>
-                  <span className="text-zinc-400 dark:text-zinc-600">·</span>
-                  <span>
-                    ≈{' '}
-                    <strong className="font-semibold text-zinc-900 dark:text-white">
-                      ${usdEquivalent.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-                    </strong>{' '}
-                    USD
+                {payoutLoading ? (
+                  <span className="inline-block h-[1em] w-[220px] animate-pulse rounded-md bg-zinc-200/80 align-bottom text-4xl lg:w-[280px] lg:text-5xl xl:w-[360px] xl:text-6xl 2xl:w-[420px] 2xl:text-7xl dark:bg-zinc-800" />
+                ) : (
+                  <span className="font-mono text-4xl font-bold tracking-tight text-zinc-900 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-white">
+                    {totalPayout != null
+                      ? totalPayout.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : '—'}
                   </span>
-                </>
-              )}
-              <span className="text-zinc-400 dark:text-zinc-600">·</span>
-              <span>Initial pay · bonuses applied at payroll</span>
-            </p>
-          </div>
-          <div className="flex w-full flex-col items-start gap-3 lg:w-auto lg:min-w-[280px] lg:items-end">
-            {activePeriod && (
-              <div className="text-[12.5px] font-medium text-zinc-500 dark:text-zinc-400">
-                <strong className="font-semibold text-zinc-900 dark:text-white">{activePeriod.label}</strong>
-                {activePeriod.week != null && <> · week {activePeriod.week}</>}
-              </div>
-            )}
-            <div className="grid grid-cols-[auto_auto] gap-x-6 gap-y-1.5 text-[13px]">
-              <div className="flex items-center gap-2 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
-                <Users className="h-3 w-3 text-zinc-400" />
-                Master list
-              </div>
-              <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
-                {masterTotal}
-              </div>
-              <div className="flex items-center gap-2 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
-                <Activity className="h-3 w-3 text-zinc-400" />
-                In this payroll
-              </div>
-              <div className="text-right font-mono font-medium text-zinc-900 dark:text-white">
-                {payrollWorkerCount ?? '—'}
-              </div>
-              <div className="flex items-center gap-2 whitespace-nowrap text-zinc-500 dark:text-zinc-400">
-                <AlertTriangle className="h-3 w-3 text-zinc-400" />
-                Reconcile gaps
-              </div>
-              <div
-                className={cn(
-                  'text-right font-mono font-medium',
-                  reconcileGaps && reconcileGaps > 0
-                    ? 'text-amber-700 dark:text-amber-400'
-                    : 'text-zinc-900 dark:text-white',
                 )}
-              >
-                {reconcileGaps ?? '—'}
               </div>
-            </div>
-          </div>
+              {/* Accent rule — orange→rose hairline under the hero number */}
+              <div className="mt-2.5 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
+              <p className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-zinc-600 [@media(max-height:900px)]:mt-2 dark:text-zinc-400">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-flex h-5 items-center justify-center rounded-full bg-emerald-100 px-1.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                    {payrollWorkerCount ?? '—'}
+                  </span>
+                  active workers
+                </span>
+                {usdEquivalent != null && (
+                  <>
+                    <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                    <span>
+                      ≈{' '}
+                      <strong className="font-mono font-semibold text-zinc-900 dark:text-white">
+                        ${usdEquivalent.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                      </strong>{' '}
+                      USD
+                    </span>
+                  </>
+                )}
+                <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                <span>Initial pay · bonuses applied at payroll</span>
+              </p>
+            </motion.div>
+
+            {/* Right rail — period pill + status pills with colored icon tiles */}
+            <motion.div
+              variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
+              className="flex w-full flex-col gap-2.5 lg:w-auto lg:min-w-[280px]"
+            >
+              {activePeriod && (
+                <div className="inline-flex items-center gap-2 self-start rounded-xl border border-orange-200/80 bg-white/80 px-3 py-1.5 text-[11.5px] backdrop-blur-md lg:self-end dark:border-orange-900/40 dark:bg-zinc-900/70">
+                  <CalendarDays className="h-3.5 w-3.5 text-orange-500 dark:text-orange-400" />
+                  <span className="flex flex-col leading-tight">
+                    <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
+                      Payroll period
+                    </span>
+                    <span className="font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
+                      {activePeriod.label}
+                      {activePeriod.week != null && (
+                        <span className="ml-1.5 text-zinc-400 dark:text-zinc-500">
+                          · wk {activePeriod.week}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                </div>
+              )}
+              <HeroStatRow
+                Icon={Users}
+                tone="neutral"
+                label="Master list"
+                value={masterTotal}
+              />
+              <HeroStatRow
+                Icon={Activity}
+                tone="info"
+                label="In this payroll"
+                value={payrollWorkerCount ?? null}
+              />
+              <HeroStatRow
+                Icon={AlertTriangle}
+                tone={reconcileGaps && reconcileGaps > 0 ? 'warn' : 'ok'}
+                label="Reconcile gaps"
+                value={reconcileGaps ?? null}
+              />
+            </motion.div>
+          </motion.div>
         </section>
 
         {/* Attention row */}
         <section className="mb-6 grid grid-cols-1 gap-3.5 [@media(max-height:900px)]:mb-4 lg:mb-10 xl:mb-14 md:grid-cols-3">
           <AttentionCard
-            icon={<AlertCircle className="h-3.5 w-3.5" />}
+            icon={<AlertCircle />}
             label="Needs your decision"
-            tone={pendingDisputes && pendingDisputes > 0 ? 'warn' : 'normal'}
+            tone={pendingDisputes && pendingDisputes > 0 ? 'warn' : 'ok'}
             tag={disputeTag}
             value={pendingDisputes ?? 0}
             unit={pendingDisputes === 1 ? 'dispute pending' : 'disputes pending'}
@@ -418,9 +470,9 @@ function SimpleView({
             onClick={onNavigate ? () => onNavigate('disputes') : undefined}
           />
           <AttentionCard
-            icon={<FileWarning className="h-3.5 w-3.5" />}
+            icon={<FileWarning />}
             label="Reconciliation"
-            tone="normal"
+            tone={reconcileGaps && reconcileGaps > 0 ? 'info' : 'ok'}
             tag="2 sources"
             value={reconcileGaps ?? 0}
             unit={reconcileGaps === 1 ? 'mismatch' : 'mismatches'}
@@ -440,9 +492,9 @@ function SimpleView({
             onClick={onNavigate ? () => onNavigate('payroll-wizard') : undefined}
           />
           <AttentionCard
-            icon={<CalendarDays className="h-3.5 w-3.5" />}
+            icon={<CalendarDays />}
             label="Leave & visits"
-            tone="normal"
+            tone={leaveAndVisitsTotal > 0 ? 'ok' : 'neutral'}
             tag="this week"
             value={leaveAndVisitsTotal}
             unit={leaveAndVisitsTotal === 1 ? 'item' : 'items'}
@@ -1110,6 +1162,68 @@ function SimpleView({
   );
 }
 
+type AttentionTone = 'warn' | 'info' | 'ok' | 'neutral';
+
+const ATTENTION_PALETTE: Record<AttentionTone, {
+  ring: string;
+  surface: string;
+  iconTile: string;
+  label: string;
+  valueText: string;
+  tag: string;
+  cta: string;
+  hoverShadow: string;
+  blob: string;
+}> = {
+  warn: {
+    ring: 'border-amber-200/70 hover:border-amber-300/90 dark:border-amber-900/40 dark:hover:border-amber-700/50',
+    surface:
+      'bg-gradient-to-br from-amber-50/90 via-orange-50/40 to-white dark:from-amber-950/40 dark:via-orange-950/20 dark:to-zinc-950',
+    iconTile: 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-md shadow-amber-500/40',
+    label: 'text-amber-800/90 dark:text-amber-300',
+    valueText: 'text-amber-900 dark:text-amber-100',
+    tag: 'bg-white/80 text-amber-800 ring-1 ring-amber-200/70 dark:bg-zinc-900/70 dark:text-amber-300 dark:ring-amber-900/40',
+    cta: 'text-amber-800 dark:text-amber-300',
+    hoverShadow: 'group-hover:shadow-[0_12px_32px_-12px_rgba(245,158,11,0.35)]',
+    blob: 'bg-amber-300/30 dark:bg-amber-500/15',
+  },
+  info: {
+    ring: 'border-sky-200/70 hover:border-sky-300/90 dark:border-sky-900/40 dark:hover:border-sky-700/50',
+    surface:
+      'bg-gradient-to-br from-sky-50/90 via-blue-50/40 to-white dark:from-sky-950/40 dark:via-blue-950/20 dark:to-zinc-950',
+    iconTile: 'bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-md shadow-blue-500/40',
+    label: 'text-sky-800/90 dark:text-sky-300',
+    valueText: 'text-sky-900 dark:text-sky-100',
+    tag: 'bg-white/80 text-sky-800 ring-1 ring-sky-200/70 dark:bg-zinc-900/70 dark:text-sky-300 dark:ring-sky-900/40',
+    cta: 'text-sky-800 dark:text-sky-300',
+    hoverShadow: 'group-hover:shadow-[0_12px_32px_-12px_rgba(59,130,246,0.35)]',
+    blob: 'bg-sky-300/30 dark:bg-sky-500/15',
+  },
+  ok: {
+    ring: 'border-emerald-200/70 hover:border-emerald-300/90 dark:border-emerald-900/40 dark:hover:border-emerald-700/50',
+    surface:
+      'bg-gradient-to-br from-emerald-50/90 via-teal-50/40 to-white dark:from-emerald-950/40 dark:via-teal-950/20 dark:to-zinc-950',
+    iconTile: 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md shadow-emerald-500/40',
+    label: 'text-emerald-800/90 dark:text-emerald-300',
+    valueText: 'text-emerald-900 dark:text-emerald-100',
+    tag: 'bg-white/80 text-emerald-800 ring-1 ring-emerald-200/70 dark:bg-zinc-900/70 dark:text-emerald-300 dark:ring-emerald-900/40',
+    cta: 'text-emerald-800 dark:text-emerald-300',
+    hoverShadow: 'group-hover:shadow-[0_12px_32px_-12px_rgba(16,185,129,0.35)]',
+    blob: 'bg-emerald-300/30 dark:bg-emerald-500/15',
+  },
+  neutral: {
+    ring: 'border-zinc-200/80 hover:border-zinc-300 dark:border-zinc-800/80 dark:hover:border-zinc-700',
+    surface: 'bg-gradient-to-br from-white to-zinc-50/60 dark:from-zinc-900/60 dark:to-zinc-950',
+    iconTile: 'bg-gradient-to-br from-zinc-700 to-zinc-900 text-white shadow-md shadow-zinc-900/30 dark:from-zinc-100 dark:to-zinc-300 dark:text-zinc-900',
+    label: 'text-zinc-600 dark:text-zinc-400',
+    valueText: 'text-zinc-900 dark:text-zinc-100',
+    tag: 'bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:ring-zinc-700',
+    cta: 'text-zinc-900 dark:text-zinc-100',
+    hoverShadow: 'group-hover:shadow-[0_12px_32px_-12px_rgba(0,0,0,0.18)]',
+    blob: 'bg-zinc-200/30 dark:bg-zinc-700/20',
+  },
+};
+
 function AttentionCard({
   icon,
   label,
@@ -1123,7 +1237,8 @@ function AttentionCard({
 }: {
   icon: React.ReactNode;
   label: string;
-  tone: 'normal' | 'warn';
+  /** Visual tone — drives gradient surface, icon tile, and accent palette. */
+  tone: AttentionTone;
   tag: string | null;
   value: number;
   unit: string;
@@ -1132,68 +1247,177 @@ function AttentionCard({
   onClick?: () => void;
 }) {
   const interactive = !!onClick;
-  const Tag = interactive ? 'button' : 'div';
+  const palette = ATTENTION_PALETTE[tone];
+  const Tag = interactive ? motion.button : motion.div;
   return (
     <Tag
       type={interactive ? 'button' : undefined}
       onClick={onClick}
-      disabled={interactive ? false : undefined}
+      whileHover={interactive ? { y: -2 } : undefined}
+      whileTap={interactive ? { scale: 0.99 } : undefined}
+      transition={{ type: 'spring', stiffness: 320, damping: 24 }}
       className={cn(
-        'group relative w-full rounded-xl border p-5 text-left transition-colors',
+        'group relative w-full overflow-hidden rounded-2xl border p-5 text-left shadow-sm transition-all duration-300',
+        palette.ring,
+        palette.surface,
+        palette.hoverShadow,
         interactive && 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40',
-        tone === 'warn'
-          ? 'border-transparent bg-amber-50 dark:bg-amber-950/30'
-          : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40',
-        interactive && tone === 'warn' && 'hover:bg-amber-100/80 dark:hover:bg-amber-950/50',
-        interactive && tone !== 'warn' && 'hover:border-zinc-400 dark:hover:border-zinc-600',
       )}
     >
+      {/* Decorative corner blob — subtle bloom in the card's tone */}
       <div
+        aria-hidden
         className={cn(
-          'mb-4 flex items-center justify-between text-[11.5px] font-medium uppercase tracking-wider',
-          tone === 'warn'
-            ? 'text-amber-700 dark:text-amber-400'
-            : 'text-zinc-500 dark:text-zinc-400',
+          'pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full blur-3xl transition-opacity duration-500 group-hover:opacity-80',
+          palette.blob,
+          'opacity-50',
         )}
-      >
-        <span className="flex items-center gap-1.5">
-          {icon}
-          {label}
-        </span>
+      />
+
+      <div className={cn('relative mb-4 flex items-start justify-between gap-3')}>
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg [&_svg]:h-4 [&_svg]:w-4',
+              palette.iconTile,
+            )}
+          >
+            {icon}
+          </span>
+          <span
+            className={cn(
+              'text-[10px] font-semibold uppercase tracking-[0.16em]',
+              palette.label,
+            )}
+          >
+            {label}
+          </span>
+        </div>
         {tag && (
           <span
             className={cn(
-              'rounded-full px-2 py-0.5 text-[10.5px] font-medium normal-case tracking-normal',
-              tone === 'warn'
-                ? 'bg-white text-amber-700 dark:bg-zinc-900 dark:text-amber-400'
-                : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+              'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-normal',
+              palette.tag,
             )}
           >
             {tag}
           </span>
         )}
       </div>
-      <div
-        className={cn(
-          'flex items-baseline gap-2 font-mono text-3xl font-semibold leading-none tracking-tight tabular-nums',
-          tone === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-900 dark:text-white',
-        )}
-      >
-        {value}
-        <span className="font-sans text-sm font-medium text-zinc-500 dark:text-zinc-400">{unit}</span>
+
+      <div className="relative flex items-baseline gap-2">
+        <span
+          className={cn(
+            'font-mono text-4xl font-bold leading-none tracking-tight tabular-nums',
+            palette.valueText,
+          )}
+        >
+          <AnimatedCounter value={value} />
+        </span>
+        <span className="font-sans text-sm font-medium text-zinc-500 dark:text-zinc-400">
+          {unit}
+        </span>
       </div>
-      <p className="mt-2.5 text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">{sub}</p>
-      <div
-        className={cn(
-          'mt-3.5 flex items-center gap-1 text-xs font-medium',
-          tone === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-900 dark:text-white',
-        )}
-      >
-        {cta}
-        <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
-      </div>
+
+      <p className="relative mt-2.5 text-[12.5px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+        {sub}
+      </p>
+
+      {interactive && (
+        <div
+          className={cn(
+            'relative mt-4 inline-flex items-center gap-1 text-xs font-semibold',
+            palette.cta,
+          )}
+        >
+          {cta}
+          <ArrowRight className="h-3 w-3 transition-transform duration-200 group-hover:translate-x-1" />
+        </div>
+      )}
     </Tag>
   );
+}
+
+/**
+ * Compact horizontal stat row used in the hero's right rail. Status icon tile
+ * on the left, label, then value right-aligned in mono. Tone drives the icon
+ * tile + value color so "reconcile gaps" reads as warning when non-zero.
+ */
+function HeroStatRow({
+  Icon,
+  tone,
+  label,
+  value,
+}: {
+  Icon: React.ComponentType<{ className?: string }>;
+  tone: AttentionTone;
+  label: string;
+  value: number | null;
+}) {
+  const palette = ATTENTION_PALETTE[tone];
+  return (
+    <div
+      className={cn(
+        'flex items-center gap-2.5 rounded-xl border bg-white/70 px-3 py-2 backdrop-blur-md transition-colors',
+        palette.ring,
+        'dark:bg-zinc-900/60',
+      )}
+    >
+      <span
+        className={cn(
+          'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg [&_svg]:h-3.5 [&_svg]:w-3.5',
+          palette.iconTile,
+        )}
+      >
+        <Icon />
+      </span>
+      <span className="flex-1 truncate text-[11.5px] text-zinc-600 dark:text-zinc-400">
+        {label}
+      </span>
+      <span
+        className={cn(
+          'font-mono text-sm font-semibold tabular-nums',
+          palette.valueText,
+        )}
+      >
+        {value == null ? '—' : value.toLocaleString('en-US')}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Lightweight count-up. Animates a numeric value over ~600ms with ease-out
+ * cubic. Snaps to the final value when `prefers-reduced-motion` is set.
+ */
+function AnimatedCounter({ value, duration = 600 }: { value: number; duration?: number }) {
+  const [n, setN] = React.useState(value);
+  React.useEffect(() => {
+    if (typeof window === 'undefined') {
+      setN(value);
+      return;
+    }
+    const reduce =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      setN(value);
+      return;
+    }
+    const start = performance.now();
+    const from = n;
+    let raf = 0;
+    const tick = (t: number) => {
+      const k = Math.min(1, (t - start) / duration);
+      const eased = 1 - Math.pow(1 - k, 3);
+      setN(Math.round(from + (value - from) * eased));
+      if (k < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, duration]);
+  return <>{n.toLocaleString('en-US')}</>;
 }
 
 function KpiTile({

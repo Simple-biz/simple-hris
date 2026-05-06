@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/dialog';
 import ProcessorCard from './ProcessorCard';
 import AnimatedNumber from './AnimatedNumber';
-import QueueSkeleton from './QueueSkeleton';
+import DispatchScanLoader from './DispatchScanLoader';
 import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -263,14 +263,20 @@ export default function PayrollDispatch() {
     // haven't mirrored the first server snapshot into local state yet.
     if (activeTab === 'reports') return <DispatchReports />;
     if (error) return <ErrorState message={error} />;
-    if (loading || !hydrated) return <QueueSkeleton />;
+    if (loading || !hydrated) return <DispatchScanLoader />;
     if (!cycleReady) return <NoCycleState />;
-    if (activeTab === 'history') return <SentPaymentsHistory records={paid} />;
+    if (activeTab === 'history') {
+      return (
+        <SentPaymentsHistory records={paid} periodStart={period.start} periodEnd={period.end} />
+      );
+    }
     return (
       <ProcessorQueue
         processor={activeTab === 'all' ? null : activeTab}
         rows={visibleRows}
         onMarkPaid={handleOpenMarkPaid}
+        periodStart={period.start}
+        periodEnd={period.end}
       />
     );
   };

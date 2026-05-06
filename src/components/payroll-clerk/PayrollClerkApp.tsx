@@ -12,7 +12,7 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
 import PayrollClerkSidebar from './PayrollClerkSidebar';
 import ProcessorQueue from './ProcessorQueue';
-import QueueSkeleton from './QueueSkeleton';
+import DispatchScanLoader from './DispatchScanLoader';
 import SentPaymentsHistory from './SentPaymentsHistory';
 import DispatchReports from './DispatchReports';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
@@ -186,10 +186,12 @@ export default function PayrollClerkApp() {
       );
     }
     if (loading || !hydrated) {
-      return <QueueSkeleton />;
+      return <DispatchScanLoader />;
     }
     if (activeTab === 'history') {
-      return <SentPaymentsHistory records={paid} />;
+      return (
+        <SentPaymentsHistory records={paid} periodStart={period.start} periodEnd={period.end} />
+      );
     }
 
     return (
@@ -197,6 +199,8 @@ export default function PayrollClerkApp() {
         processor={activeTab === 'all' ? null : (activeTab as ProcessorId)}
         rows={visibleRows}
         onMarkPaid={handleOpenMarkPaid}
+        periodStart={period.start}
+        periodEnd={period.end}
       />
     );
   };

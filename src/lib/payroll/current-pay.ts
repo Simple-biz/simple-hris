@@ -1,12 +1,19 @@
 /**
  * Server-side calculator that turns the **latest Hubstaff upload** + the
- * `employee_hourly_rates` table into a per-employee initial-pay summary.
+ * `employee_hourly_rates` table into a per-employee pay summary that the
+ * Payment Dispatch view shows to Lenny.
  *
- * This is intentionally a simplified version of what `PayrollWizard` shows in
- * Step 2 — it does not apply department-specific bonuses, the OT-suppression
- * toggle, or any manual hour overrides. It's meant for the Payment Dispatch
- * view so Lenny can see roughly how much each person is owed for the current
- * cycle. The wizard remains the source of truth for the final paystub.
+ * Mirrors the bonus gates the wizard applies in Step 2:
+ *  - PAB ₱5,000 on the final week of the PAB month, per-employee gated by
+ *    perfect-attendance eligibility (standard or HSL variant).
+ *  - Tech ₱1,850 on the salary-date-falls-in-3rd-week paycheck, per-employee
+ *    gated by 30 days of service from `master.start_date`.
+ *  - No-rates suppression: bonuses are 0 when the employee has neither a
+ *    regular nor an OT rate.
+ *
+ * Department-specific bonuses (collections tiers, lead-gen) are NOT mirrored
+ * — those depend on per-employee toggle state that lives only in the wizard's
+ * browser session. See `src/lib/payroll/dispatch-bonuses.ts`.
  */
 import {
   fetchHubstaffRowsOrdered,
@@ -21,6 +28,25 @@ import {
 } from "@/lib/supabase/server";
 import { effectiveUsdToPhpRateFromStored } from "@/lib/fx/usd-php";
 import { normEmail } from "@/lib/email/norm-email";
+import {
+  getPabMonthRange,
+  parseDateRangeFromFilename,
+  resolveCanonicalColumnsToIso,
+} from "@/lib/hubstaff/calendar-column-dedupe";
+import {
+  PAB_PERIOD_OVERRIDES_KEY,
+  parsePabPeriodOverrides,
+  yearMonthKey,
+} from "@/lib/pab-period-settings";
+import {
+  computeEmployeeBonus,
+  computePabEligibleEmails,
+  getHslAdjustedEnd,
+  hasThirtyDaysFromStart,
+  isFinalPabWeek as gateIsFinalPabWeek,
+  isTechBonusWeek as gateIsTechBonusWeek,
+  pabMonthFromWeekStart,
+} from "@/lib/payroll/dispatch-bonuses";
 
 export interface PayrollPeriod {
   /** UUID of the active hubstaff_uploads row — null if no upload exists yet. */
@@ -39,9 +65,20 @@ export interface CurrentPayEntry {
   otHours: number;
   regularPayPHP: number | null;
   otPayPHP: number | null;
+  /** Regular + OT only (no bonuses). Kept for historical callers. */
   initialPayPHP: number | null;
   /** initialPayPHP / fxRate — null when either input is missing. */
   initialPayUSD: number | null;
+  /** PAB ₱5,000 when final week of PAB month + eligible. */
+  pabBonusPHP: number;
+  /** Tech ₱1,850 when 3rd-week salary + 30-day service. */
+  techBonusPHP: number;
+  /** Sum of all bonuses. */
+  bonusTotalPHP: number;
+  /** Regular + OT + bonuses — what the dispatch screen should show as the amount Lenny pays. */
+  totalPayPHP: number | null;
+  /** USD equivalent of totalPayPHP. */
+  totalPayUSD: number | null;
   hasRate: boolean;
 }
 
@@ -60,17 +97,105 @@ function parseRateText(v: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Fetch every Hubstaff row across all uploads (not just the current week).
+ * Required for PAB eligibility — the rule needs full-month coverage so the
+ * standard variant can check every Mon–Fri ≥ 7h.
+ */
+async function fetchAllHubstaffRowsForBonusMonth(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+): Promise<Record<string, unknown>[]> {
+  const table =
+    process.env.NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE?.trim() ||
+    "hubstaff_hours";
+  const PAGE = 1000;
+  const out: Record<string, unknown>[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.warn(
+        "[current-pay] fetchAllHubstaffRowsForBonusMonth failed:",
+        error.message,
+      );
+      return [];
+    }
+    const page = (data ?? []) as Record<string, unknown>[];
+    out.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
+}
+
+interface MasterEmployeeMin {
+  work_email: string | null;
+  personal_email: string | null;
+  start_date: string | null;
+  department: string | null;
+}
+
+async function fetchMasterMin(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+): Promise<MasterEmployeeMin[]> {
+  // active_employees view has the master columns we need (Work Email,
+  // Personal Email, Start Date, Department). Quoted PascalCase column names.
+  const { data, error } = await supabase
+    .from("active_employees")
+    .select('"Work Email", "Personal Email", "Start Date", "Department"');
+  if (error || !data) {
+    console.warn("[current-pay] fetchMasterMin failed:", error?.message);
+    return [];
+  }
+  return (data as Array<Record<string, unknown>>).map((r) => ({
+    work_email: typeof r["Work Email"] === "string" ? (r["Work Email"] as string) : null,
+    personal_email:
+      typeof r["Personal Email"] === "string" ? (r["Personal Email"] as string) : null,
+    start_date:
+      typeof r["Start Date"] === "string" ? (r["Start Date"] as string) : null,
+    department:
+      typeof r["Department"] === "string" ? (r["Department"] as string) : null,
+  }));
+}
+
+/** Parse a YYYY-MM-DD or longer ISO string to a local Date, null on failure. */
+function parseLocalIso(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export async function computeCurrentPay(): Promise<CurrentPayResult> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   const cycleIdPromise = supabase
     ? getCurrentHubstaffUploadId(supabase)
     : Promise.resolve(null);
 
-  const [hubstaff, rates, fxValue, cycleId] = await Promise.all([
+  const [
+    hubstaff,
+    rates,
+    fxValue,
+    cycleId,
+    allHubstaffRows,
+    masterRows,
+    pabOverridesValue,
+  ] = await Promise.all([
     fetchHubstaffRowsOrdered(),
     getEmployeeHourlyRatesRows(),
     getAppSetting("usd_to_php_rate"),
     cycleIdPromise,
+    // Best-effort: only available with the service-role client. Used for
+    // PAB eligibility merge across the whole month.
+    supabase
+      ? fetchAllHubstaffRowsForBonusMonth(supabase)
+      : Promise.resolve<Record<string, unknown>[]>([]),
+    supabase ? fetchMasterMin(supabase) : Promise.resolve<MasterEmployeeMin[]>([]),
+    getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
   ]);
 
   const fxRate = effectiveUsdToPhpRateFromStored(fxValue);
@@ -88,6 +213,128 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     if (pe && !rateByEmail.has(pe)) rateByEmail.set(pe, entry);
   }
 
+  // ── Bonus prep ───────────────────────────────────────────────────────
+  // 1. Determine the dispatch week's date range. Two paths:
+  //    a) ISO-date columns on `hubstaff.columns` (some schemas have them).
+  //    b) Fallback: parse the date range out of any row's `source_file`
+  //       filename (e.g. `..._2026-04-26_to_2026-05-02.csv`). Hubstaff
+  //       schemas that store canonical weekday columns rely on this.
+  const dateColsIso = hubstaff.columns
+    .filter((c) => /^\d{4}-\d{2}-\d{2}$/.test(c))
+    .sort();
+  let periodStartIso: string | null = dateColsIso[0] ?? null;
+  let periodEndIso: string | null = dateColsIso[dateColsIso.length - 1] ?? null;
+  if (!periodStartIso || !periodEndIso) {
+    for (const r of hubstaff.rows) {
+      const srcRaw = r.source_file;
+      if (typeof srcRaw !== "string" || !srcRaw.trim()) continue;
+      const range = parseDateRangeFromFilename(srcRaw);
+      if (!range) continue;
+      const fmt = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      periodStartIso = fmt(range.start);
+      periodEndIso = fmt(range.end);
+      break;
+    }
+  }
+  const periodStart = parseLocalIso(periodStartIso);
+  const periodEnd = parseLocalIso(periodEndIso);
+
+  let pabRange: { start: Date; end: Date } | null = null;
+  let hslAdjustedEnd: Date | null = null;
+  let weekIsFinalPab = false;
+  let weekIsTechBonus = false;
+  let weekMonday: Date | null = null;
+
+  if (periodStart) {
+    const pabMonth = pabMonthFromWeekStart(periodStart);
+    // Honor any manual override the wizard may have saved for this month;
+    // fall back to the canonical Mon-week-on-or-after-the-1st range.
+    const overrides = parsePabPeriodOverrides(pabOverridesValue);
+    const overrideEntry = overrides.get(yearMonthKey(pabMonth.year, pabMonth.month));
+    pabRange = overrideEntry
+      ? { start: overrideEntry.start, end: overrideEntry.end }
+      : getPabMonthRange(pabMonth.year, pabMonth.month);
+    hslAdjustedEnd = getHslAdjustedEnd(pabRange.end);
+
+    // The pay-period Monday is what the wizard checks against (not Sunday).
+    const dow = periodStart.getDay();
+    const daysBackToMon = dow === 0 ? 6 : dow - 1;
+    weekMonday = new Date(
+      periodStart.getFullYear(),
+      periodStart.getMonth(),
+      periodStart.getDate() - daysBackToMon,
+    );
+
+    if (periodEnd) {
+      weekIsFinalPab = gateIsFinalPabWeek(periodEnd, pabRange.end);
+    }
+    weekIsTechBonus = gateIsTechBonusWeek(weekMonday);
+  }
+
+  // 2. Build HSL email set + start_date map from master.
+  const hslEmails = new Set<string>();
+  const startDateByEmail = new Map<string, Date>();
+  for (const m of masterRows) {
+    const we = normEmail(m.work_email);
+    const pe = normEmail(m.personal_email);
+    if (m.department && m.department.trim().toLowerCase() === "hsl") {
+      if (we) hslEmails.add(we);
+      if (pe) hslEmails.add(pe);
+    }
+    const sd = parseLocalIso(m.start_date);
+    if (sd) {
+      if (we) startDateByEmail.set(we, sd);
+      if (pe && !startDateByEmail.has(pe)) startDateByEmail.set(pe, sd);
+    }
+  }
+
+  // 3. Compute PAB eligibility from all Hubstaff rows merged by email
+  //    across the PAB month.
+  //
+  // CRITICAL: rows from `hubstaff_hours` use canonical weekday columns
+  // (`monday`, `tuesday`, …) — the actual calendar date is encoded in the
+  // row's `source_file` filename (e.g. `..._2026-04-26_to_2026-05-02.csv`).
+  // Each row must be passed through `resolveCanonicalColumnsToIso` so the
+  // PAB eligibility check (which looks for ISO-date columns) actually sees
+  // the daily hours.
+  const pabEligible = new Set<string>();
+  if (pabRange && hslAdjustedEnd && weekIsFinalPab && allHubstaffRows.length > 0) {
+    const merged = new Map<string, Record<string, unknown>>();
+    for (const row of allHubstaffRows) {
+      const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
+      const em = normEmail(rawEmail) ?? rawEmail.toLowerCase();
+      if (!em) continue;
+      const sourceFileForRow =
+        typeof row['source_file'] === 'string' ? (row['source_file'] as string) : '';
+      // Resolve canonical day columns to ISO dates using THIS row's filename.
+      // Rows from different uploads each get their own resolution before merge.
+      const resolved = sourceFileForRow
+        ? resolveCanonicalColumnsToIso(row, sourceFileForRow)
+        : row;
+
+      const existing = merged.get(em);
+      if (!existing) {
+        merged.set(em, { ...resolved });
+      } else {
+        // Combine — later (newer) uploads win on collision, but only when their
+        // value is non-empty so an empty cell in this week doesn't clobber a
+        // populated cell from another week.
+        for (const [k, v] of Object.entries(resolved)) {
+          if (v != null && String(v).trim() !== '') existing[k] = v;
+        }
+      }
+    }
+    const passes = computePabEligibleEmails({
+      rows: Array.from(merged.values()),
+      pabRange,
+      hslAdjustedEnd,
+      hslEmails,
+    });
+    for (const e of passes) pabEligible.add(e);
+  }
+
+  // ── Per-employee assembly ────────────────────────────────────────────
   const byEmail: Record<string, CurrentPayEntry> = {};
 
   for (const raw of hubstaff.rows) {
@@ -106,6 +353,25 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     const otPayPHP = ot != null ? otHours * ot : null;
     const initialPayPHP =
       regularPayPHP != null && otPayPHP != null ? regularPayPHP + otPayPHP : null;
+
+    // Bonus computation — gated by week + per-employee eligibility + has-rates.
+    const hasRates = reg != null || ot != null;
+    const startDate = startDateByEmail.get(em) ?? null;
+    const empHasThirtyDays =
+      weekMonday && startDate ? hasThirtyDaysFromStart(weekMonday, startDate) : false;
+
+    const bonus = computeEmployeeBonus({
+      hasRates,
+      isFinalPabWeek: weekIsFinalPab,
+      isPabEligible: pabEligible.has(em),
+      isTechBonusWeek: weekIsTechBonus,
+      hasThirtyDays: empHasThirtyDays,
+    });
+
+    const totalPayPHP =
+      initialPayPHP != null ? initialPayPHP + bonus.totalPHP : null;
+    const totalPayUSD =
+      totalPayPHP != null && fxRate > 0 ? totalPayPHP / fxRate : null;
     const initialPayUSD =
       initialPayPHP != null && fxRate > 0 ? initialPayPHP / fxRate : null;
 
@@ -119,19 +385,14 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
         initialPayPHP != null ? Math.round(initialPayPHP * 100) / 100 : null,
       initialPayUSD:
         initialPayUSD != null ? Math.round(initialPayUSD * 100) / 100 : null,
+      pabBonusPHP: bonus.pabBonusPHP,
+      techBonusPHP: bonus.techBonusPHP,
+      bonusTotalPHP: bonus.totalPHP,
+      totalPayPHP: totalPayPHP != null ? Math.round(totalPayPHP * 100) / 100 : null,
+      totalPayUSD: totalPayUSD != null ? Math.round(totalPayUSD * 100) / 100 : null,
       hasRate: reg != null,
     };
   }
-
-  // Period — derive from the date columns Hubstaff CSVs include (e.g. 2026-03-22).
-  // The columns are sorted Sun→Sat by `sortHubstaffColumnsForDisplay`, but we
-  // don't depend on that here: we just take min/max of any ISO-date-shaped
-  // column names we recognise.
-  const dateCols = hubstaff.columns
-    .filter((c) => /^\d{4}-\d{2}-\d{2}$/.test(c))
-    .sort();
-  const start = dateCols[0] ?? null;
-  const end = dateCols[dateCols.length - 1] ?? null;
 
   // source_file is repeated on every row in the current upload — sample one.
   const sourceFile = (() => {
@@ -143,7 +404,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
   })();
 
   return {
-    period: { cycleId, start, end, sourceFile },
+    period: { cycleId, start: periodStartIso, end: periodEndIso, sourceFile },
     fxRate,
     byEmail,
   };

@@ -2,19 +2,28 @@
 
 import React, { useCallback, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, Copy, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
+import { ChevronDown, Copy, Download, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { PROCESSORS, formatPHP, formatUSD, type ProcessorId, type QueueRow } from './mock-queue';
+import {
+  buildPendingRows,
+  dispatchClientFilename,
+  downloadCsv,
+  pendingRowsToCsv,
+} from '@/lib/payroll/dispatch-client-csv';
 
 interface ProcessorQueueProps {
   /** `null` means "All pending". */
   processor: ProcessorId | null;
   rows: QueueRow[];
   onMarkPaid: (row: QueueRow) => void;
+  /** Period info from the parent — used for CSV filename. */
+  periodStart?: string | null;
+  periodEnd?: string | null;
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -52,6 +61,27 @@ const PROCESSOR_DOT: Record<ProcessorId, string> = {
   jeeves: 'bg-pink-500',
   wires: 'bg-zinc-700 dark:bg-zinc-300',
 };
+
+/**
+ * Inline breakdown chip for rows that include a PAB or Tech bonus on top of
+ * regular + OT pay. Renders nothing when there's no bonus, so the queue stays
+ * quiet on regular weeks. Tooltip exposes the per-bonus split.
+ */
+function BonusChip({ row }: { row: QueueRow }) {
+  if (row.bonusTotalPHP <= 0) return null;
+  const parts: string[] = [];
+  if (row.pabBonusPHP > 0) parts.push(`PAB ₱${row.pabBonusPHP.toLocaleString('en-PH')}`);
+  if (row.techBonusPHP > 0) parts.push(`Tech ₱${row.techBonusPHP.toLocaleString('en-PH')}`);
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-emerald-100/80 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+      title={`Bonus added on top of regular + OT pay: ${parts.join(' · ')}`}
+    >
+      + ₱{row.bonusTotalPHP.toLocaleString('en-PH')}
+      <span className="text-[8px] uppercase tracking-[0.14em] opacity-80">bonus</span>
+    </span>
+  );
+}
 
 function BankCell({
   processor,
@@ -99,7 +129,7 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-function ProcessorQueue({ processor, rows, onMarkPaid }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -181,6 +211,31 @@ function ProcessorQueue({ processor, rows, onMarkPaid }: ProcessorQueueProps) {
                 Amounts pending pay calc
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => {
+                if (filtered.length === 0) return;
+                const csv = pendingRowsToCsv(buildPendingRows(filtered));
+                const filename = dispatchClientFilename({
+                  prefix: 'pending',
+                  processor: processor ?? 'all',
+                  periodStart,
+                  periodEnd,
+                });
+                downloadCsv(filename, csv);
+                toast.success(`Exported ${filtered.length} ${filtered.length === 1 ? 'row' : 'rows'}`);
+              }}
+              disabled={filtered.length === 0}
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-200 bg-white px-2.5 text-[11px] font-semibold text-emerald-700 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-500/30 dark:bg-zinc-950 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+              title={
+                filtered.length === 0
+                  ? 'Nothing to export — queue is empty for the current filter'
+                  : `Export ${filtered.length} ${filtered.length === 1 ? 'row' : 'rows'} as CSV`
+              }
+            >
+              <Download className="h-3 w-3" />
+              Export CSV
+            </button>
           </div>
         </div>
 
@@ -345,6 +400,11 @@ const QueueRowItem = React.memo(function QueueRowItem({
               >
                 {formatPHP(row.amountPHP)}
               </div>
+              {row.bonusTotalPHP > 0 && (
+                <div className="mt-1 flex justify-end">
+                  <BonusChip row={row} />
+                </div>
+              )}
             </div>
           </button>
         </div>
@@ -438,6 +498,11 @@ const QueueRowItem = React.memo(function QueueRowItem({
           >
             {formatPHP(row.amountPHP)}
           </div>
+          {row.bonusTotalPHP > 0 && (
+            <div className="mt-1 flex justify-end">
+              <BonusChip row={row} />
+            </div>
+          )}
         </div>
 
         <div className="text-right">

@@ -228,22 +228,71 @@ Three things, all idempotent:
 
 ### 4.2 Pay calculator
 
-`src/lib/payroll/current-pay.ts` exposes `computeCurrentPay()`, which:
+`src/lib/payroll/current-pay.ts` exposes `computeCurrentPay()`, which produces the per-employee total Lenny needs to pay this cycle, including PAB and Tech bonuses when they apply:
 
-1. Fetches the **current** Hubstaff upload (`is_current = true`) via `getCurrentHubstaffUploadId()` + `fetchHubstaffRowsOrdered()`
-2. Reads `employee_hourly_rates`
-3. Reads `app_settings.usd_to_php_rate` (or falls back to `OFFICIAL_USD_TO_PHP_RATE`)
-4. Per employee:
+1. Fetches the **current** Hubstaff upload (`is_current = true`) via `getCurrentHubstaffUploadId()` + `fetchHubstaffRowsOrdered()`.
+2. Reads `employee_hourly_rates`.
+3. Reads `app_settings.usd_to_php_rate` (falls back to `OFFICIAL_USD_TO_PHP_RATE`).
+4. Reads **all** rows from `hubstaff_hours` (every upload, not just the current one) so PAB eligibility can see a full month of daily hours.
+5. Reads minimal master columns from `active_employees` — `Name`, `Work Email`, `Personal Email`, `Start Date`, `Department` — for the 30-day Tech-bonus check and HSL identification.
+6. Reads `app_settings.pab_period_overrides` so any wizard-saved manual PAB period for the active month is honored.
+7. Computes per-employee:
    - `regularHours = max(0, totalHours − otHours)`
-   - `otHours = max(0, totalHours − 40)` (already on the Hubstaff row)
+   - `otHours` (already on the Hubstaff row, capped at >40h)
    - `regularPayPHP = regularHours × regularRate`
    - `otPayPHP = otHours × otRate`
    - `initialPayPHP = regularPayPHP + otPayPHP`
-   - `initialPayUSD = initialPayPHP / fxRate`
-5. Derives `period.start` and `period.end` from the ISO-shaped date column names (Sun…Sat) in the Hubstaff data
-6. Returns `{ period: { cycleId, start, end, sourceFile }, fxRate, byEmail }`
+   - **Bonuses** (see § 4.2.1 below)
+   - `totalPayPHP = initialPayPHP + bonusTotalPHP`
+   - `totalPayUSD = totalPayPHP / fxRate`
+8. Resolves period via two paths:
+   - ISO-date columns on `hubstaff.columns`, OR
+   - `parseDateRangeFromFilename(row.source_file)` as a fallback when the schema only has canonical weekday columns (`monday`, `tuesday`, …).
+9. Returns `{ period, fxRate, byEmail }` where each `byEmail` entry now carries `pabBonusPHP`, `techBonusPHP`, `bonusTotalPHP`, `totalPayPHP`, `totalPayUSD` in addition to the original `initialPay*` fields.
 
-> **Caveats:** This is "initial pay" only — no department bonuses, no Tech / Perfect Attendance bonuses, no OT-suppression toggles, no manual hour overrides. The PayrollWizard remains the source of truth for the final paystub. The dispatch view is a quick "roughly how much" reference for Lenny so amounts can grow into the wizard later.
+`QueueRow.amountUSD` / `amountPHP` (in `mock-queue.ts`) are wired to the **total** (regular + OT + bonuses) so the dispatch row shows the actual amount Lenny pays. The breakdown fields drive a small "+ ₱5,000 bonus" chip in `ProcessorQueue.tsx`.
+
+#### 4.2.1 Bonus pipeline
+
+Implemented in **`src/lib/payroll/dispatch-bonuses.ts`** as a server-side mirror of the gating logic that lives inside `PayrollWizard.tsx` (the wizard is **not** modified — these helpers re-derive the same rules so the dispatch view's totals match what the wizard would dispatch for the active week).
+
+**Rules captured verbatim from the wizard:**
+
+| Bonus | Amount | Per-week gate | Per-employee gate |
+|---|---|---|---|
+| **Perfect Attendance Bonus (PAB)** | ₱5,000 | `weekEnd ≥ pabPeriodEnd` (final paycheck of the PAB month) | Standard rule: every Mon–Fri in the PAB period ≥ 7h. HSL exception: ≥ 5 qualifying days per Mon–Sun week with weekend reconciliation. Approved disputes can forgive a day at ≥ 4h effective hours. |
+| **Tech Bonus** | ₱1,850 | `salaryDate ∈ [3rd-week-Monday, 4th-week-Monday)` of its month, where `salaryDate = periodStart + 8d`. Strict 3rd week only — equality, not ≥. Week 1 = the Mon–Sun week containing the 1st of the month, even if partial. | `weekStart ≥ master.start_date + 30d`. Subtle: checked against the period's start date, **not** the salary Tuesday — the wizard's docstring flags this. |
+| **No-rates suppression** | — | — | When neither `regular_rate` nor `ot_rate` is set, every PHP-side bonus is forced to 0. Bonuses on no-rate paystubs would produce misleading totals. |
+
+**PAB month resolution** (`pabMonthFromWeekStart`): the PAB period is the calendar month containing the Monday of the dispatch week. For a Sun-Sat Hubstaff filename like `..._2026-04-26_to_2026-05-02.csv`, the Monday is Apr 27 → PAB month = April 2026 → range is Apr 6 – May 1 (or whatever the saved override says).
+
+**Critical schema detail** — `hubstaff_hours` rows store day data under canonical weekday column names (`monday`, `tuesday`, …) on most schemas, with the actual date encoded in the row's `source_file` filename. Before the eligibility merge, every row is passed through `resolveCanonicalColumnsToIso(row, row.source_file)` so the per-employee merged row has ISO-date columns the standard / HSL rules can read. Without this step, every employee's `hoursByDateKey` would come up empty and PAB would silently award zero people.
+
+**What's deliberately NOT mirrored:**
+
+- **Department-specific bonuses** (collections tiers, lead-gen formula). These depend on per-employee toggle state that lives only inside the wizard's React session — they aren't auto-derivable from Hubstaff. The dispatch view will undercount bonuses for employees whose pay includes a dept-specific addition until/unless the wizard persists a snapshot to a table.
+- **OT suppression toggles** and **manual hour overrides**. The wizard's per-row UI surfaces those; the dispatch view trusts the raw Hubstaff numbers.
+
+**Helpers exported from `dispatch-bonuses.ts`:**
+
+| Export | Purpose |
+|---|---|
+| `PAB_BONUS_PHP` / `TECH_BONUS_PHP` | Constants — ₱5,000 / ₱1,850 |
+| `pabMonthFromWeekStart(weekStart)` | `{ year, month }` — PAB month from any week's start date |
+| `getHslAdjustedEnd(pabEnd)` | Extends end to closing Sunday for HSL Mon–Sun weeks |
+| `isFinalPabWeek(weekEnd, pabPeriodEnd)` | Boolean — is this the paycheck that closes the PAB month? |
+| `isTechBonusWeek(weekStart)` | Boolean — does the salary date fall in the 3rd Mon–Sun calendar week? |
+| `hasThirtyDaysFromStart(weekStart, startDate)` | Boolean — 30-day service check, period-Monday-relative |
+| `computePabEligibleEmails({ rows, pabRange, hslAdjustedEnd, hslEmails })` | `Set<email>` — runs the standard / HSL eligibility checks across a merged-by-email row set |
+| `computeEmployeeBonus({ hasRates, isFinalPabWeek, isPabEligible, isTechBonusWeek, hasThirtyDays })` | `{ pabBonusPHP, techBonusPHP, totalPHP }` — combined gate with no-rates suppression |
+
+**CSV export** — the per-processor "Export CSV" in `ProcessorQueue` includes four bonus-related columns (`Regular + OT (PHP)`, `PAB Bonus (PHP)`, `Tech Bonus (PHP)`, `Bonus Total (PHP)`) so the spreadsheet shows the same breakdown as the on-screen chip.
+
+**On a non-bonus week:** zero visual change — `bonusTotalPHP === 0` for everyone, `amountUSD` equals what it was before, no chips render.
+
+**On the final week of the PAB month:** every PAB-eligible employee shows `+ ₱5,000 bonus` and their total goes up by that amount. Eligibility is recomputed every page load by merging all uploaded Hubstaff rows for the period — if uploads are missing, eligibility correctly fails.
+
+**On the salary-falls-in-3rd-week paycheck:** employees with ≥ 30 days of service and at least one of `regular_rate` / `ot_rate` show `+ ₱1,850 bonus`.
 
 ### 4.3 API routes
 
