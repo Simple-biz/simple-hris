@@ -639,7 +639,30 @@ async function resolveMergeTableList(
   return [...new Set([ratesTable, masterTable, hub])];
 }
 
+/**
+ * In-memory TTL cache for the heavy merge result. Both `getEmployeeRateProfiles`
+ * and `getEmployeeRateProfileSummaries` paginate through the rates / master /
+ * employee_ids tables and then build merged profiles for every employee — for
+ * a per-click profile lookup that's tens of thousands of unnecessary rows.
+ *
+ * Cache for 60s; invalidate explicitly when the underlying tables change
+ * (rate edits, profile edits, suspend toggles, add/delete employee). First
+ * call is slow, subsequent calls within the TTL are instant.
+ */
+const PROFILES_TTL_MS = 60_000;
+let cachedFullProfiles: { ts: number; data: GetEmployeeRateProfilesResult } | null = null;
+let cachedSummaries: { ts: number; data: GetEmployeeRateProfileSummariesResult } | null = null;
+
+/** Drop both caches. Call from any route that mutates rates / master / ids. */
+export function invalidateRateProfilesCache(): void {
+  cachedFullProfiles = null;
+  cachedSummaries = null;
+}
+
 export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfilesResult> {
+  if (cachedFullProfiles && Date.now() - cachedFullProfiles.ts < PROFILES_TTL_MS) {
+    return cachedFullProfiles.data;
+  }
   const ratesTable =
     process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() ||
     "employee_hourly_rates";
@@ -905,10 +928,194 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
     a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" }),
   );
 
-  return { profiles, error: null, mergeNotes };
+  const result = { profiles, error: null, mergeNotes };
+  cachedFullProfiles = { ts: Date.now(), data: result };
+  return result;
+}
+
+/* ───────── focused single-employee fast path ─────────
+ *
+ * `getEmployeeRateProfiles()` paginates through every row of `employee_hourly_rates`,
+ * `active_employees`, and the configured extra merge tables — then runs the full
+ * merge across all employees just so the per-profile dialog can `.find()` one of
+ * them by email. For a single dialog open that's literally tens of thousands of
+ * rows of wasted I/O.
+ *
+ * `getEmployeeRateProfileByEmail` does focused parallel `.ilike` queries
+ * filtered to the input email (and any alternate emails the rates/master rows
+ * reveal), then runs the same merge helpers on that small dataset. Hubstaff
+ * member-name resolution and exotic SUPABASE_PROFILE_TABLES merging are skipped
+ * here — the dialog gets its display name from the master/rates row, which is
+ * how the summary card already labels the row.
+ */
+
+/**
+ * Run parallel `.ilike` queries across every (column × email) pair and dedupe
+ * by row id (or row JSON when no id is present). Returns rows from one table.
+ */
+async function fetchRowsByEmails(
+  supabase: ReturnType<typeof createSupabaseServiceRoleClient>,
+  table: string,
+  emails: string[],
+  emailColumns: string[],
+): Promise<{ rows: RawRow[]; error: string | null }> {
+  if (!supabase) return { rows: [], error: null };
+  if (emails.length === 0 || emailColumns.length === 0) return { rows: [], error: null };
+
+  const queries: Promise<{ data: RawRow[] | null; error: { message: string } | null }>[] = [];
+  for (const column of emailColumns) {
+    for (const email of emails) {
+      queries.push(
+        supabase
+          .from(table)
+          .select("*")
+          .ilike(column, email)
+          .limit(50) as unknown as Promise<{ data: RawRow[] | null; error: { message: string } | null }>,
+      );
+    }
+  }
+
+  const results = await Promise.all(queries);
+
+  const seen = new Set<string>();
+  const rows: RawRow[] = [];
+  let firstError: string | null = null;
+  for (const { data, error } of results) {
+    if (error) {
+      firstError = firstError ?? error.message;
+      continue;
+    }
+    for (const row of data ?? []) {
+      const id = (row as { id?: unknown }).id;
+      const key = id !== undefined && id !== null ? `id:${String(id)}` : `json:${JSON.stringify(row)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(row);
+    }
+  }
+  return { rows, error: firstError };
+}
+
+/** Pull every email referenced by a rate/master row (Work + Personal). */
+function emailsFromRow(row: RawRow): string[] {
+  const out: string[] = [];
+  const we = normEmail(toStr(getField(row, ["Work Email", "work_email", "Work_Email"])));
+  const pe = normEmail(toStr(getField(row, ["Personal Email", "personal_email", "Personal_Email"])));
+  if (we) out.push(we);
+  if (pe) out.push(pe);
+  return out;
+}
+
+export async function getEmployeeRateProfileByEmail(
+  emailInput: string,
+): Promise<{ profile: EmployeeRateProfile | null; error: string | null; mergeNotes: string[] }> {
+  const norm = normEmail(emailInput);
+  if (!norm) return { profile: null, error: null, mergeNotes: [] };
+
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { profile: null, error: "Supabase client unavailable", mergeNotes: [] };
+  }
+
+  const ratesTable =
+    process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() ||
+    "employee_hourly_rates";
+
+  // Step 1: parallel focused fetch — rates + master rows that match the input email.
+  const [ratesInitial, masterInitial, currentRatesUploadId] = await Promise.all([
+    fetchRowsByEmails(supabase, ratesTable, [norm], ["Work Email", "Personal Email"]),
+    fetchRowsByEmails(supabase, "active_employees", [norm], ["Work Email", "Personal Email"]),
+    getCurrentRatesUploadIdForProfiles(),
+  ]);
+
+  // Step 2: discover alternate emails from those rows.
+  const allEmails = new Set<string>([norm]);
+  for (const row of [...ratesInitial.rows, ...masterInitial.rows]) {
+    for (const e of emailsFromRow(row)) allEmails.add(e);
+  }
+  const altEmails = [...allEmails].filter((e) => e !== norm);
+
+  // Step 3: if alternates revealed, fetch any additional rate/master rows
+  //         keyed on those alternates (e.g. user looked up by Personal but
+  //         the rate row is keyed on Work).
+  let rates = ratesInitial.rows;
+  let masters = masterInitial.rows;
+  if (altEmails.length > 0) {
+    const [moreRates, moreMasters] = await Promise.all([
+      fetchRowsByEmails(supabase, ratesTable, altEmails, ["Work Email", "Personal Email"]),
+      fetchRowsByEmails(supabase, "active_employees", altEmails, ["Work Email", "Personal Email"]),
+    ]);
+    if (moreRates.rows.length > 0) {
+      const seen = new Set<string>();
+      const merged: RawRow[] = [];
+      for (const r of [...rates, ...moreRates.rows]) {
+        const id = (r as { id?: unknown }).id;
+        const key = id !== undefined && id !== null ? `id:${String(id)}` : `json:${JSON.stringify(r)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(r);
+      }
+      rates = merged;
+    }
+    if (moreMasters.rows.length > 0) {
+      const seen = new Set<string>();
+      const merged: RawRow[] = [];
+      for (const r of [...masters, ...moreMasters.rows]) {
+        const id = (r as { id?: unknown }).id;
+        const key = id !== undefined && id !== null ? `id:${String(id)}` : `json:${JSON.stringify(r)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(r);
+      }
+      masters = merged;
+    }
+  }
+
+  if (rates.length === 0 && masters.length === 0) {
+    return { profile: null, error: null, mergeNotes: [] };
+  }
+
+  // Step 4: run the existing merge helpers on this tiny set.
+  const orderedRates = [...rates].sort(
+    (a, b) => rateRowPriority(b, currentRatesUploadId) - rateRowPriority(a, currentRatesUploadId),
+  );
+  const mergedRates =
+    orderedRates.length > 0 ? mergeRowsUniqueFieldOrder(orderedRates) : ({} as RawRow);
+
+  const { byEmail, byName } = buildMasterIndexes(masters);
+  const master =
+    Object.keys(mergedRates).length > 0
+      ? findMasterForMergedRates(mergedRates, byEmail, byName)
+      : (masters[0] ?? null);
+
+  const sources: RawRow[] = [mergedRates, master ?? {}];
+  const rawFields = mergeSourcesDeduped(sources);
+  const { fields, department, organization, primaryEmail, workEmail, personalEmail } =
+    finalizeProfileFields(rawFields);
+  const displayName = resolveDisplayName(mergedRates, master);
+
+  const id = rateGroupKey(mergedRates, 0, master);
+
+  return {
+    profile: {
+      id,
+      displayName,
+      subtitle: primaryEmail,
+      department,
+      organization,
+      workEmail,
+      personalEmail,
+      fields,
+    },
+    error: null,
+    mergeNotes: [],
+  };
 }
 
 export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRateProfileSummariesResult> {
+  if (cachedSummaries && Date.now() - cachedSummaries.ts < PROFILES_TTL_MS) {
+    return cachedSummaries.data;
+  }
   const ratesTable =
     process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() ||
     "employee_hourly_rates";
@@ -1112,5 +1319,7 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
     a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" }),
   );
 
-  return { profiles, error: null, mergeNotes };
+  const result = { profiles, error: null, mergeNotes };
+  cachedSummaries = { ts: Date.now(), data: result };
+  return result;
 }

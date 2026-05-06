@@ -1,5 +1,6 @@
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,8 @@ export async function POST(req: Request) {
       .eq(matchCol, matchVal);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    invalidateRateProfilesCache();
 
     void insertAuditLog({
       user_name:   SYSTEM_USER.name,

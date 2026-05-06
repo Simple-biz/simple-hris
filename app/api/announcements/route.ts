@@ -5,6 +5,7 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import {
   listAnnouncements,
   insertAnnouncement,
+  lookupFullNameForEmail,
 } from '@/lib/supabase/announcements';
 
 export const dynamic = 'force-dynamic';
@@ -72,7 +73,10 @@ export async function POST(req: NextRequest) {
   if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const email = ((token.email as string) ?? '').trim().toLowerCase();
-  const name = (token.name as string | null) ?? null;
+  // Prefer the canonical roster name from the master list over whatever
+  // NextAuth's JWT got from the OAuth profile (often a truncated first name).
+  const fullName = await lookupFullNameForEmail(email);
+  const name = fullName ?? (token.name as string | null) ?? null;
 
   try {
     const body = (await req.json()) as {

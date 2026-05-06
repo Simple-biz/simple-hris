@@ -315,6 +315,16 @@ const HIDDEN_FIELD_KEYS = new Set([
   "photo url",
   "avatar_url",
   "avatar url",
+  // Internal / auth bookkeeping that doesn't belong in the visible profile.
+  "password_hash",
+  "previous_password_hash",
+  "password_updated_at",
+  // Upload provenance fields — useful for debugging in the DB but noise here.
+  "source_file",
+  "import_batch_id",
+  "upload_id",
+  "first_seen_upload_id",
+  "last_seen_upload_id",
 ]);
 
 function getAvatarInfoFromProfile(

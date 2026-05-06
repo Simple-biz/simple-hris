@@ -1,5 +1,6 @@
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { NextResponse } from "next/server";
 
 const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
@@ -109,6 +110,8 @@ export async function POST(req: Request) {
     if (errors.length > 0) {
       return NextResponse.json({ error: errors.join("; ") }, { status: 500 });
     }
+
+    invalidateRateProfilesCache();
 
     // Build a concise map of what actually changed
     const changes: Record<string, unknown> = {};

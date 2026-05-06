@@ -1,6 +1,7 @@
 import { updateEmployeeRates } from "@/lib/supabase/employee-hourly-rates";
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { NextResponse } from "next/server";
 
 const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
@@ -52,6 +53,8 @@ export async function POST(req: Request) {
     if (error) {
       return NextResponse.json({ error }, { status: 500 });
     }
+
+    invalidateRateProfilesCache();
 
     void insertAuditLog({
       user_name:   SYSTEM_USER.name,

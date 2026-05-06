@@ -12,6 +12,7 @@ import {
   CircleDashed,
   Clock,
   Coins,
+  Download,
   FileSpreadsheet,
   Gauge,
   Loader2,
@@ -644,11 +645,36 @@ function ReportDetail({
               )}
             </div>
           </div>
-          {report.isCurrent && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-gradient-to-br from-orange-50 to-rose-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:border-orange-900/40 dark:from-orange-950/40 dark:to-rose-950/30 dark:text-orange-300">
-              Current cycle
-            </span>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {report.isCurrent && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-gradient-to-br from-orange-50 to-rose-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:border-orange-900/40 dark:from-orange-950/40 dark:to-rose-950/30 dark:text-orange-300">
+                Current cycle
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={
+                report.totals.sentCount === 0 &&
+                report.outstanding.length === 0 &&
+                report.paidRecipients.length === 0
+              }
+              onClick={() => {
+                window.location.href = `/api/payment-dispatches/reports/${encodeURIComponent(report.cycleId)}/export`;
+              }}
+              className="h-8 gap-1.5 border-emerald-200 bg-white px-3 text-[11px] font-medium text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-500/30 dark:bg-zinc-950 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+              title={
+                report.totals.sentCount === 0 &&
+                report.outstanding.length === 0 &&
+                report.paidRecipients.length === 0
+                  ? 'No recipients in this cycle'
+                  : 'Download CSV of every recipient in this report'
+              }
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export CSV
+            </Button>
+          </div>
         </div>
       </div>
 

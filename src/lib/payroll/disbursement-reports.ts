@@ -21,7 +21,7 @@ import type {
 } from "@/lib/supabase/payment-dispatches";
 
 /** One row in `public.disbursement_records`. */
-interface DisbursementRecordRow {
+export interface DisbursementRecordRow {
   id: string;
   cycle_period_start: string;
   cycle_period_end: string;
@@ -261,6 +261,32 @@ type UploadRowShape = {
 };
 
 /** Pages through `disbursement_records` (Supabase has a 1k default cap). */
+/** Fetch every `disbursement_records` row tied to a single cycle's source CSV.
+ *  Used by the per-report CSV export route. */
+export async function loadDisbursementRecordsForCycle(
+  sourceFile: string,
+): Promise<DisbursementRecordRow[]> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return [];
+  const PAGE = 1000;
+  const out: DisbursementRecordRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("disbursement_records")
+      .select("*")
+      .eq("source_file", sourceFile)
+      .order("recipient_email", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const page = (data ?? []) as DisbursementRecordRow[];
+    out.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
+}
+
 async function loadAllDisbursementRecords(): Promise<DisbursementRecordRow[]> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return [];

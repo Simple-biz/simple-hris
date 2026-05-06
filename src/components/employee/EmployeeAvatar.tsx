@@ -12,45 +12,42 @@ type EmployeeAvatarProps = {
    * session email matches the avatar subject before passing.
    */
   googlePhotoUrl?: string | null | undefined;
-  /** Work or personal email — used for Gravatar (MD5). */
-  email: string | null | undefined;
-  /** Shown when email missing or image fails to load. */
+  /** Email — kept for API compatibility, no longer used for image lookup. */
+  email?: string | null | undefined;
+  /** Shown when no photo source is available or every source failed to load. */
   initials: string;
   /** Tailwind size class, e.g. h-8 w-8 */
   className?: string;
-  /** Pixel size for Gravatar request (2× for retina). */
+  /** Pixel size hint — kept for caller compatibility. */
   pixelSize?: number;
 };
 
 /**
- * Order: Google SSO photo → uploaded photo → Gravatar → initials.
- * Each layer falls through to the next if the image fails to load.
+ * Order: Google SSO photo → uploaded photo → initials.
+ *
+ * The Gravatar layer was removed: this is an internal HRIS where ~nobody
+ * has a Gravatar registered, so every avatar render fired a 404 (by design,
+ * for the `<img onError>` fallback) and spammed the browser console. Initials
+ * are the universal fallback now.
  */
 export default function EmployeeAvatar({
   photoUrl,
   googlePhotoUrl,
-  email,
   initials,
   className = 'h-8 w-8',
-  pixelSize = 64,
 }: EmployeeAvatarProps) {
   const [failedGoogle, setFailedGoogle] = useState(false);
   const [failedUploaded, setFailedUploaded] = useState(false);
-  const [failedGravatar, setFailedGravatar] = useState(false);
-  const trimmed = email?.trim();
   const uploaded = photoUrl?.trim();
   const google = googlePhotoUrl?.trim();
 
   useEffect(() => {
     setFailedGoogle(false);
     setFailedUploaded(false);
-    setFailedGravatar(false);
-  }, [google, uploaded, trimmed]);
+  }, [google, uploaded]);
 
   const showInitials =
-    (!google || failedGoogle) &&
-    (!uploaded || failedUploaded) &&
-    (!trimmed || failedGravatar);
+    (!google || failedGoogle) && (!uploaded || failedUploaded);
 
   if (showInitials) {
     return (
@@ -79,27 +76,13 @@ export default function EmployeeAvatar({
     );
   }
 
-  if (uploaded && !failedUploaded) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element -- Supabase public URL
-      <img
-        src={uploaded}
-        alt=""
-        className={cn('shrink-0 rounded-full object-cover', className)}
-        onError={() => setFailedUploaded(true)}
-      />
-    );
-  }
-
-  const src = `/api/avatar?email=${encodeURIComponent(trimmed!)}&s=${pixelSize}&d=404`;
-
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- same-origin /api/avatar → Gravatar redirect
+    // eslint-disable-next-line @next/next/no-img-element -- Supabase public URL
     <img
-      src={src}
+      src={uploaded}
       alt=""
       className={cn('shrink-0 rounded-full object-cover', className)}
-      onError={() => setFailedGravatar(true)}
+      onError={() => setFailedUploaded(true)}
     />
   );
 }

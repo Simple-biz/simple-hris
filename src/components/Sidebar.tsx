@@ -107,8 +107,8 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
       role="navigation"
       aria-label="Accounting navigation"
     >
-      <div className="p-6">
-        <div className="mb-8 flex items-center gap-3">
+      <div className="flex min-h-0 flex-1 flex-col p-6">
+        <div className="mb-8 flex shrink-0 items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/30">
             <Wand2 className="h-5 w-5 text-white" />
           </div>
@@ -126,7 +126,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
           </div>
         </div>
 
-        <ScrollArea className="-mx-2 flex-1">
+        <ScrollArea className="-mx-2 min-h-0 flex-1">
           <nav className="space-y-1 px-2">
             {visibleNavItems.filter((item) => item.id !== 's-wall').map((item) => (
               <button

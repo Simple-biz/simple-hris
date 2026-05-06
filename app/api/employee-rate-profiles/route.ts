@@ -1,4 +1,7 @@
-import { getEmployeeRateProfiles } from "@/lib/supabase/employee-rate-profiles";
+import {
+  getEmployeeRateProfiles,
+  getEmployeeRateProfileByEmail,
+} from "@/lib/supabase/employee-rate-profiles";
 import { NextResponse } from "next/server";
 import {
   authorizeEmailAccess,
@@ -24,6 +27,17 @@ export async function GET(req: Request) {
       : await requireElevatedSession();
     if (!authz.ok) return deniedResponse(authz);
 
+    // ── Fast path: single-email lookup. Avoids the multi-second
+    //    paginated load + full-org merge that the bulk path runs.
+    if (emailQuery && !idQuery) {
+      const { profile, error, mergeNotes } = await getEmployeeRateProfileByEmail(
+        authz.effectiveEmail,
+      );
+      return NextResponse.json({ profile, error, mergeNotes });
+    }
+
+    // ── Slow path: id-based lookup or full-list fetch — needs the
+    //    cross-employee merge so id collisions resolve correctly.
     const { profiles, error, mergeNotes } = await getEmployeeRateProfiles();
 
     if (emailQuery || idQuery) {

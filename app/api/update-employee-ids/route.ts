@@ -1,5 +1,6 @@
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { getPayrollDispatchLock } from "@/lib/supabase/payroll-dispatch-lock";
+import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 
@@ -193,6 +194,7 @@ export async function POST(req: Request) {
     }
 
     if (updatedRows && updatedRows.length > 0) {
+      invalidateRateProfilesCache();
       return NextResponse.json({ success: true, created: false });
     }
 
@@ -225,6 +227,7 @@ export async function POST(req: Request) {
     const { error: insertError } = await supabase.from("employee_ids").insert(insertRow);
 
     if (!insertError) {
+      invalidateRateProfilesCache();
       return NextResponse.json({ success: true, created: true });
     }
 
@@ -239,6 +242,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: explainEmployeeIdsError(retryError.message) }, { status: 500 });
     }
     if (retryRows && retryRows.length > 0) {
+      invalidateRateProfilesCache();
       return NextResponse.json({ success: true, created: false });
     }
 
