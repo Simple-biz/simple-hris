@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 
 const ROLES = [
   { key: 'viewer', label: 'Viewer', blurb: 'Read-only dashboard access.' },
@@ -313,6 +314,25 @@ export default function AdminRoles() {
     () => new Set(selectedDeptAssignments.map((d) => d.department.trim().toLowerCase())),
     [selectedDeptAssignments],
   );
+
+  const hasHslParent = useMemo(
+    () =>
+      [...selectedDeptSet].some(
+        (d) => d === 'hogan_smith_law' || d === 'hogan smith law' || d === 'hsl',
+      ),
+    [selectedDeptSet],
+  );
+
+  const selectedHslSubDepts = useMemo(() => {
+    const out = new Set<HslDeptKey>();
+    selectedDeptAssignments.forEach((d) => {
+      const k = d.department.trim().toLowerCase();
+      if (!k.startsWith('hsl:')) return;
+      const sub = k.slice(4) as HslDeptKey;
+      if ((HSL_DEPT_KEYS as readonly string[]).includes(sub)) out.add(sub);
+    });
+    return out;
+  }, [selectedDeptAssignments]);
 
   async function refreshDeptAssignments() {
     try {
@@ -696,6 +716,60 @@ export default function AdminRoles() {
                         })}
                       </div>
                     )}
+                  </section>
+                )}
+
+                {hasRole('manager') && hasHslParent && (
+                  <section className="space-y-2">
+                    <div className="flex items-baseline justify-between gap-2 border-b border-zinc-100 pb-1 dark:border-zinc-800/80">
+                      <div>
+                        <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-zinc-800 dark:text-zinc-200">
+                          <Building2 className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" aria-hidden />
+                          HSL sub-departments
+                        </h3>
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                          Pick which Hogan Smith Law sub-departments this manager runs the
+                          KPI calculator for. Each pick stores a granular hsl:&lt;key&gt; grant in
+                          department_managers; with the parent dept also assigned, the manager
+                          sees all sub-depts.
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
+                        {selectedHslSubDepts.size} active
+                      </Badge>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {HSL_DEPT_KEYS.map((key) => {
+                        const cfg = HSL_DEPTS[key];
+                        const grantStr = hslAccessKey(key);
+                        const on = selectedHslSubDepts.has(key);
+                        const busy = deptMutating === grantStr;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => toggleDepartment(grantStr)}
+                            disabled={busy}
+                            className={cn(
+                              'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-60',
+                              on
+                                ? 'border-violet-500/60 bg-violet-500/15 text-violet-800 hover:bg-violet-500/20 dark:border-violet-500/50 dark:bg-violet-950/50 dark:text-violet-200'
+                                : 'border-zinc-200 bg-white text-zinc-600 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-800 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400 dark:hover:border-violet-700/60 dark:hover:bg-violet-950/30 dark:hover:text-violet-200',
+                            )}
+                            title={cfg.cadence === 'weekly' ? 'Weekly bonus' : 'Monthly bonus'}
+                          >
+                            {busy ? (
+                              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                            ) : on ? (
+                              <Check className="h-3 w-3" aria-hidden />
+                            ) : (
+                              <Plus className="h-3 w-3" aria-hidden />
+                            )}
+                            {cfg.name}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </section>
                 )}
 

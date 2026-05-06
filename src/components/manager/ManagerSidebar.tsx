@@ -5,9 +5,9 @@ import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
-  CalendarClock,
   CalendarDays,
   ClipboardCheck,
+  Calculator,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -24,7 +24,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 
-export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'announcements' | 's-wall';
+export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'announcements' | 's-wall' | 'hsl-bonus';
 
 interface ManagerSidebarProps {
   activeTab: ManagerTab;
@@ -176,12 +176,11 @@ export default function ManagerSidebar({
           <div className="my-5 mx-2.5 h-px bg-gradient-to-r from-transparent via-blue-200/60 to-transparent dark:via-blue-900/40" />
 
           <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
-            Coming soon
+            Bonuses
           </p>
-          <div className="px-2.5 text-[11px] leading-snug text-[#71717a] dark:text-zinc-500">
-            <CalendarClock className="mr-1.5 inline h-3 w-3 -translate-y-px" />
-            Bonus entry, team transfers, KPI input
-          </div>
+          <nav className="flex flex-col gap-px">
+            {navBtn('hsl-bonus', 'KPI Calculator', Calculator)}
+          </nav>
 
           <div className="mt-6 border-t border-blue-100/60 pt-4 dark:border-blue-950/40">
             <ViewSwitcher email={viewerEmail} currentView="manager" />

@@ -183,6 +183,7 @@ interface SimpleViewProps {
     eligible: number;
     notEligible: number;
     monthLabel: string | null;
+    periodEnd: Date | null;
   };
   techBonusEligibility: { eligible: number; pending: number; unknown: number; total: number };
   pageRows: OverviewEmployeeRow[];
@@ -453,7 +454,9 @@ function SimpleView({
               Monthly bonuses
             </h3>
             <span className="text-[12.5px] text-zinc-500 dark:text-zinc-400">
-              {pabMetrics.monthLabel ?? '—'} · merged from all Hubstaff uploads
+              {pabMetrics.monthLabel ?? '—'}
+              {' · '}
+              {activeSourceFile ? 'this Hubstaff cycle' : 'merged from all Hubstaff uploads'}
             </span>
           </div>
 
@@ -483,7 +486,9 @@ function SimpleView({
                   Perfect Attendance Bonus · ₱5,000
                 </h4>
                 <p className="mb-2 text-xs text-zinc-500 [@media(max-height:900px)]:mb-1.5 xl:mb-3.5 dark:text-zinc-400">
-                  {pabMetrics.monthLabel ?? '—'} · merged month
+                  {pabMetrics.monthLabel ?? '—'}
+                  {' · '}
+                  {activeSourceFile ? 'selected cycle' : 'merged month'}
                 </p>
                 <div className="grid grid-cols-[auto_auto] gap-x-5 gap-y-1 text-[13px]">
                   <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
@@ -1286,45 +1291,40 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     };
   }, []);
 
-  /**
-   * Tech Bonus eligibility: employees who have completed 30 days of service
-   * from their start_date (as of today). This is the standing eligibility —
-   * the bonus is paid on the 3rd paycheck of each month.
-   */
-  const techBonusEligibility = useMemo(() => {
-    const today = new Date();
-    const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-    let eligible = 0;
-    let pending = 0;
-    let unknown = 0;
-    for (const e of employees) {
-      if (!e.start_date) {
-        unknown += 1;
-        continue;
-      }
-      const sd = new Date(e.start_date);
-      if (isNaN(sd.getTime())) {
-        unknown += 1;
-        continue;
-      }
-      const eligibleFrom = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() + 30).getTime();
-      if (todayMid >= eligibleFrom) eligible += 1;
-      else pending += 1;
-    }
-    return { eligible, pending, unknown, total: employees.length };
-  }, [employees]);
-
-  /** PAB metrics — computed from all source files. */
+  /** PAB metrics — scoped to the currently selected source file (or merged across all when __all__). */
   const [pabMetrics, setPabMetrics] = useState<{
     loading: boolean;
     totalEmployees: number;
     eligible: number;
     notEligible: number;
     monthLabel: string | null;
-  }>({ loading: true, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null });
+    periodEnd: Date | null;
+  }>({ loading: true, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null });
 
   const [pabEligibilityByEmail, setPabEligibilityByEmail] = useState<Map<string, boolean>>(new Map());
   const [pabFilter, setPabFilter] = useState<'all' | 'eligible' | 'not-eligible'>('all');
+
+  /**
+   * Tech Bonus eligibility: employees who have completed 30 days of service
+   * by the **selected period's end date** (or today, if no period is loaded).
+   * Picking April's CSV shows tech eligibility as of end-of-April.
+   */
+  const techBonusEligibility = useMemo(() => {
+    const asOf = pabMetrics.periodEnd ?? new Date();
+    const asOfMid = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate()).getTime();
+    let eligible = 0;
+    let pending = 0;
+    let unknown = 0;
+    for (const e of employees) {
+      if (!e.start_date) { unknown += 1; continue; }
+      const sd = new Date(e.start_date);
+      if (isNaN(sd.getTime())) { unknown += 1; continue; }
+      const eligibleFrom = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() + 30).getTime();
+      if (asOfMid >= eligibleFrom) eligible += 1;
+      else pending += 1;
+    }
+    return { eligible, pending, unknown, total: employees.length };
+  }, [employees, pabMetrics.periodEnd]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1500,7 +1500,8 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     return () => { cancelled = true; };
   }, [selectedSourceFile, sourceFiles]);
 
-  // Compute PAB eligibility across all source files (full month merge)
+  // Compute PAB eligibility for the currently-selected source file
+  // (or merged across every file when "__all__" is selected).
   useEffect(() => {
     if (sourceFiles.length === 0) return;
     let cancelled = false;
@@ -1510,6 +1511,9 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         const allCols = new Set<string>();
         const rowsByEmail = new Map<string, Record<string, unknown>>();
 
+        // Always merge every source file so we have a complete picture of every
+        // employee's hours. The currently-selected file only affects WHICH PAB
+        // month we anchor the eligibility window to (computed below).
         for (const file of sourceFiles) {
           const res = await fetch(
             `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
@@ -1550,9 +1554,20 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
           end = pabCfg.end;
           monthLabel = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
         } else {
-          const pabMonth = inferPabMonthFromColumns(cols);
+          // Anchor the PAB month to the SELECTED file (so picking March → March's
+          // PAB period). When the picker is on __all__ / null, fall back to the
+          // most-frequent month across the merged columns.
+          let pabMonth: { year: number; month: number } | null = null;
+          if (selectedSourceFile && selectedSourceFile !== '__all__') {
+            const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(selectedSourceFile);
+            if (m) {
+              // Use the cycle's start date to pick the calendar month it belongs to
+              pabMonth = { year: +m[1], month: +m[2] - 1 };
+            }
+          }
+          if (!pabMonth) pabMonth = inferPabMonthFromColumns(cols);
           if (!pabMonth) {
-            setPabMetrics({ loading: false, totalEmployees: rowsByEmail.size, eligible: 0, notEligible: rowsByEmail.size, monthLabel: null });
+            setPabMetrics({ loading: false, totalEmployees: rowsByEmail.size, eligible: 0, notEligible: rowsByEmail.size, monthLabel: null, periodEnd: null });
             return;
           }
           const r = getPabMonthRange(pabMonth.year, pabMonth.month);
@@ -1637,14 +1652,15 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
             eligible,
             notEligible,
             monthLabel,
+            periodEnd: end,
           });
         }
       } catch {
-        if (!cancelled) setPabMetrics({ loading: false, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null });
+        if (!cancelled) setPabMetrics({ loading: false, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null });
       }
     })();
     return () => { cancelled = true; };
-  }, [sourceFiles, employees]);
+  }, [sourceFiles, selectedSourceFile, employees]);
 
   /** Master list rows plus Hubstaff-only workers (same payroll scope as stats). */
   const mergedEmployees = useMemo((): OverviewEmployeeRow[] => {

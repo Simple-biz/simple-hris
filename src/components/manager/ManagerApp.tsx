@@ -35,6 +35,7 @@ import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
 import SWall from '@/components/swall/SWall';
+import HslBonusCalculator from '@/components/manager/HslBonusCalculator';
 
 /** How `/api/manager/department-members` scoped the roster for this session (server-driven). */
 type ManagerTeamGate =
@@ -276,6 +277,13 @@ export default function ManagerApp() {
               )}
               {activeTab === 's-wall' && (
                 <ManagerSwallTab viewerEmail={viewerEmail} />
+              )}
+              {activeTab === 'hsl-bonus' && (
+                <HslBonusCalculator
+                  viewerEmail={viewerEmail}
+                  managedDepts={teamGate.kind === 'department' ? teamGate.departments : []}
+                  isElevated={teamGate.kind === 'elevated'}
+                />
               )}
             </motion.div>
           </AnimatePresence>
