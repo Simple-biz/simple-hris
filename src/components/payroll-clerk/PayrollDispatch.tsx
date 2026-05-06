@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/dialog';
 import ProcessorCard from './ProcessorCard';
 import AnimatedNumber from './AnimatedNumber';
-import DispatchScanLoader from './DispatchScanLoader';
+import QueueSkeleton from './QueueSkeleton';
 import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -263,7 +263,7 @@ export default function PayrollDispatch() {
     // haven't mirrored the first server snapshot into local state yet.
     if (activeTab === 'reports') return <DispatchReports />;
     if (error) return <ErrorState message={error} />;
-    if (loading || !hydrated) return <DispatchScanLoader />;
+    if (loading || !hydrated) return <QueueSkeleton />;
     if (!cycleReady) return <NoCycleState />;
     if (activeTab === 'history') {
       return (
