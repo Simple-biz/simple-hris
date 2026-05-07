@@ -60,6 +60,7 @@ import {
   disputeIsAwaitingResolution,
   isOrphanageStyleReason,
 } from '@/lib/supabase/pab-day-disputes';
+import HiddenValue from './HiddenValue';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -301,6 +302,10 @@ const SPARKLES_FLOAT = [
 export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
+  // Shared mask state for the hero pay values (Take-Home, Regular, Overtime).
+  // Default hidden on every mount so passers-by see masked amounts; one click
+  // on the eye next to Take-Home reveals all three together.
+  const [payValuesRevealed, setPayValuesRevealed] = useState(false);
   /** All normalized emails known for this employee (login + work + personal). */
   const [aliasEmails, setAliasEmails] = useState<string[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
@@ -1644,17 +1649,38 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                 Estimated Take-Home
               </p>
               <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <span
-                  className="break-words font-mono text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white"
-                  title={totalPay != null ? formatPHP(totalPay + pabBonusAmount + technologyBonusAmount) : undefined}
-                >
-                  {totalPay != null
-                    ? formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)
-                    : '—'}
-                </span>
-                {totalPay != null && (
-                  <span className="font-mono text-xs text-zinc-500 sm:text-sm dark:text-zinc-500">
-                    ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount) / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                {totalPay != null ? (
+                  <HiddenValue
+                    revealed={payValuesRevealed}
+                    onToggleRevealed={setPayValuesRevealed}
+                    iconClass="h-5 w-5"
+                    showLabel="Reveal pay amounts"
+                    hideLabel="Hide pay amounts"
+                    className="flex-wrap items-baseline gap-x-3 gap-y-1"
+                    mask={
+                      <>
+                        <span className="break-words font-mono text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-400 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-zinc-600">
+                          ₱•••••••••
+                        </span>
+                        <span className="font-mono text-xs text-zinc-400 sm:text-sm dark:text-zinc-600">
+                          ≈ $••••• USD
+                        </span>
+                      </>
+                    }
+                  >
+                    <span
+                      className="break-words font-mono text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white"
+                      title={formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)}
+                    >
+                      {formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)}
+                    </span>
+                    <span className="font-mono text-xs text-zinc-500 sm:text-sm dark:text-zinc-500">
+                      ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount) / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                    </span>
+                  </HiddenValue>
+                ) : (
+                  <span className="break-words font-mono text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white">
+                    —
                   </span>
                 )}
               </div>
@@ -1674,7 +1700,16 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                     className="mt-1 break-words font-mono text-base font-medium tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
                     title={regularPay != null ? formatPHP(regularPay) : undefined}
                   >
-                    {regularPay != null ? formatPHP(regularPay) : '—'}
+                    {regularPay != null ? (
+                      <HiddenValue
+                        revealed={payValuesRevealed}
+                        mask={<span className="text-zinc-400 dark:text-zinc-600">₱••••••••</span>}
+                      >
+                        {formatPHP(regularPay)}
+                      </HiddenValue>
+                    ) : (
+                      '—'
+                    )}
                   </dd>
                   <p className="mt-0.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
                     {regularHours.toFixed(2)}h
@@ -1689,7 +1724,23 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                     className="mt-1 break-words font-mono text-base font-medium tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
                     title={otPay != null ? formatPHP(otPay) : undefined}
                   >
-                    {otPay != null ? formatPHP(otPay) : otHours > 0 ? '—' : formatPHP(0)}
+                    {otPay != null ? (
+                      <HiddenValue
+                        revealed={payValuesRevealed}
+                        mask={<span className="text-zinc-400 dark:text-zinc-600">₱••••••••</span>}
+                      >
+                        {formatPHP(otPay)}
+                      </HiddenValue>
+                    ) : otHours > 0 ? (
+                      '—'
+                    ) : (
+                      <HiddenValue
+                        revealed={payValuesRevealed}
+                        mask={<span className="text-zinc-400 dark:text-zinc-600">₱••••</span>}
+                      >
+                        {formatPHP(0)}
+                      </HiddenValue>
+                    )}
                   </dd>
                   <p className="mt-0.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
                     {otHours > 0

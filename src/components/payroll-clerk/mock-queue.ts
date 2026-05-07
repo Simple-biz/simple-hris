@@ -158,9 +158,31 @@ export function buildQueueFromRates(
   payByEmail: Record<string, CurrentPayEntry> = {},
   idsByEmail: Map<string, EmployeeIdRow> = new Map(),
 ): { active: QueueRow[]; excluded: ExcludedRow[] } {
+  // Dedupe by lowercased email — `getEmployeeHourlyRatesRows` returns every
+  // row in `employee_hourly_rates` regardless of upload_id, so an employee
+  // who appears in multiple historical uploads shows up multiple times here.
+  // Without this collapse, we emit two queue rows with the same `id` (which
+  // is the email), and React fires "Encountered two children with the same
+  // key" inside the dispatch table. Last occurrence wins — the rates ingest
+  // upserts by email so the latest row carries the freshest values.
+  const dedupedRows: EmployeeHourlyRateRow[] = [];
+  {
+    const byEmail = new Map<string, EmployeeHourlyRateRow>();
+    const withoutEmail: EmployeeHourlyRateRow[] = [];
+    for (const r of rows) {
+      const e = (r.work_email?.trim() || r.personal_email?.trim() || '').toLowerCase();
+      if (!e) {
+        withoutEmail.push(r);
+        continue;
+      }
+      byEmail.set(e, r);
+    }
+    dedupedRows.push(...byEmail.values(), ...withoutEmail);
+  }
+
   const out: QueueRow[] = [];
   const excluded: ExcludedRow[] = [];
-  for (const r of rows) {
+  for (const r of dedupedRows) {
     const email = r.work_email?.trim() || r.personal_email?.trim() || '';
     if (!email) continue;
     const lowerEmail = email.toLowerCase();

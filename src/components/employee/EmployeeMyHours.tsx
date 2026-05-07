@@ -45,6 +45,7 @@ import {
   isOrphanageStyleReason,
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
+import HiddenValue from './HiddenValue';
 
 /** Matches PayrollWizard COMMON_BONUSES / EmployeeDashboard. */
 const PERFECT_ATTENDANCE_BONUS_PHP = 5000;
@@ -1086,18 +1087,44 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                   <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-emerald-800/70 dark:text-emerald-400/80">
                     Estimated take-home
                   </p>
-                  <p className="mt-1 font-mono text-2xl font-bold tabular-nums tracking-tight text-emerald-800 dark:text-emerald-300">
-                    {monthTakeHomePay != null ? formatPHP(monthTakeHomePay) : '—'}
-                  </p>
-                  {monthTakeHomePay != null && (
-                    <p className="mt-1 font-mono text-[11px] tabular-nums text-zinc-600 dark:text-zinc-400">
-                      ≈{' '}
-                      {(monthTakeHomePay / usdToPhpRate).toLocaleString('en-US', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}{' '}
-                      USD
-                      <span className="text-zinc-400"> @ {formatPHP(usdToPhpRate)}/USD</span>
+                  {monthTakeHomePay != null ? (
+                    <HiddenValue
+                      iconClass="h-4 w-4"
+                      showLabel="Reveal monthly take-home"
+                      hideLabel="Hide monthly take-home"
+                      className="mt-1 inline-flex flex-wrap items-baseline gap-2"
+                      mask={
+                        <span className="block">
+                          <span className="font-mono text-2xl font-bold tabular-nums tracking-tight text-emerald-800/40 dark:text-emerald-300/40">
+                            ₱•••••••••
+                          </span>
+                          <span className="ml-2 font-mono text-[11px] tabular-nums text-zinc-400 dark:text-zinc-600">
+                            ≈ $••••• USD
+                            <span className="text-zinc-300 dark:text-zinc-700">
+                              {' '}@ {formatPHP(usdToPhpRate)}/USD
+                            </span>
+                          </span>
+                        </span>
+                      }
+                    >
+                      <span className="block">
+                        <span className="font-mono text-2xl font-bold tabular-nums tracking-tight text-emerald-800 dark:text-emerald-300">
+                          {formatPHP(monthTakeHomePay)}
+                        </span>
+                        <span className="ml-2 font-mono text-[11px] tabular-nums text-zinc-600 dark:text-zinc-400">
+                          ≈{' '}
+                          {(monthTakeHomePay / usdToPhpRate).toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          USD
+                          <span className="text-zinc-400"> @ {formatPHP(usdToPhpRate)}/USD</span>
+                        </span>
+                      </span>
+                    </HiddenValue>
+                  ) : (
+                    <p className="mt-1 font-mono text-2xl font-bold tabular-nums tracking-tight text-emerald-800 dark:text-emerald-300">
+                      —
                     </p>
                   )}
                   {monthTakeHomePay != null && (pabBonusAmount > 0 || technologyBonusAmount > 0) && (

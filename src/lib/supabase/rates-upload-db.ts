@@ -31,9 +31,14 @@ function normalizeEmail(v: unknown): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-function findHeaderIndex(headers: string[], target: string): number {
-  const t = normHeader(target);
-  return headers.findIndex((h) => normHeader(h) === t);
+function findHeaderIndex(headers: string[], ...targets: string[]): number {
+  const norms = headers.map(normHeader);
+  for (const target of targets) {
+    const t = normHeader(target);
+    const idx = norms.indexOf(t);
+    if (idx >= 0) return idx;
+  }
+  return -1;
 }
 
 /**
@@ -183,6 +188,19 @@ export async function replaceEmployeeHourlyRatesFromCsv(
   const regularRateIdx = findHeaderIndex(headers, "Regular Rate");
   const otRateIdx = findHeaderIndex(headers, "OT Rate");
   const weekIdx = findHeaderIndex(headers, "Week");
+  // "Bank Preferred" is the HR-set fallback used by Payment Dispatch when an
+  // employee hasn't picked a processor in their dashboard. We sync it here but
+  // never touch employee_ids columns — those are written exclusively from the
+  // employee profile UI (`/api/update-employee-ids`) and outrank this value
+  // inside `mock-queue.ts:174`. Aliases cover the most plausible label
+  // variations on the All Dept sheet.
+  const bankPreferredIdx = findHeaderIndex(
+    headers,
+    "Bank Preferred",
+    "Preferred Bank",
+    "bank_preferred",
+    "BankPreferred",
+  );
 
   const missing: string[] = [];
   if (workEmailIdx < 0) missing.push("Work Email");
@@ -201,6 +219,10 @@ export async function replaceEmployeeHourlyRatesFromCsv(
     regularRate: string;
     otRate: string | null;
     weekTs: number;
+    /** Free-text bank label from the sheet (e.g. "Wise", "BPI"). Null when the
+     *  cell is blank — payload below skips the field entirely so a blank cell
+     *  never clobbers an existing DB value. */
+    bankPreferred: string | null;
   };
 
   let skippedNoWorkEmail = 0;
@@ -222,12 +244,19 @@ export async function replaceEmployeeHourlyRatesFromCsv(
       continue;
     }
 
+    let bankPreferred: string | null = null;
+    if (bankPreferredIdx >= 0) {
+      const raw = String(row[bankPreferredIdx] ?? "").trim();
+      bankPreferred = raw === "" ? null : raw;
+    }
+
     candidates.push({
       workEmail,
       personalEmail: normalizeEmail(row[personalEmailIdx]),
       regularRate,
       otRate: parseRate(row[otRateIdx]),
       weekTs: weekIdx >= 0 ? parseWeekStartTs(row[weekIdx]) : 0,
+      bankPreferred,
     });
   }
 
@@ -289,6 +318,14 @@ export async function replaceEmployeeHourlyRatesFromCsv(
       "Regular Rate": c.regularRate,
       "OT Rate": c.otRate,
     };
+    // No-clobber guard: only write Bank Preferred when the sheet cell has a
+    // value. A blank cell leaves the existing DB value alone — covers the case
+    // where HR has only some employees filled in on the sheet, or where an
+    // admin already set the value through Supabase directly. Employee-set
+    // bank info lives on `employee_ids` and is never touched here.
+    if (c.bankPreferred != null) {
+      payload["Bank Preferred"] = c.bankPreferred;
+    }
 
     const existing =
       existingByWorkEmail.get(c.workEmail) ??
