@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { Eye, EyeOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -89,29 +90,58 @@ export default function HiddenValue({
 
   return (
     <span className={cn('inline-flex items-baseline gap-2', className)}>
-      <span
-        onClick={canClickToReveal ? () => setRevealed(true) : undefined}
-        aria-hidden={!revealed ? true : undefined}
-        className={cn(
-          innerClassName,
-          'transition-opacity duration-150',
-          !revealed && canClickToReveal && 'cursor-pointer select-none',
-          !revealed && !canClickToReveal && 'select-none',
-        )}
-      >
-        {revealed ? children : mask}
-      </span>
+      {/*
+        Crossfade between masked and revealed states with a quick blur+fade
+        morph. mode="wait" sequences exit→enter so they never overlap visually
+        (which would look messy for inline content with different widths).
+        Total animation ≈ 320ms — slow enough to feel smooth, fast enough that
+        revealing isn't annoying.
+      */}
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span
+          key={revealed ? 'revealed' : 'masked'}
+          initial={{ opacity: 0, filter: 'blur(6px)', scale: 0.985 }}
+          animate={{ opacity: 1, filter: 'blur(0px)', scale: 1 }}
+          exit={{ opacity: 0, filter: 'blur(6px)', scale: 0.985 }}
+          transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          onClick={canClickToReveal ? () => setRevealed(true) : undefined}
+          aria-hidden={!revealed ? true : undefined}
+          className={cn(
+            innerClassName,
+            // inline-block so transform/scale animate cleanly even when the
+            // wrapped content is itself inline.
+            'inline-block origin-left',
+            !revealed && canClickToReveal && 'cursor-pointer select-none',
+            !revealed && !canClickToReveal && 'select-none',
+          )}
+        >
+          {revealed ? children : mask}
+        </motion.span>
+      </AnimatePresence>
       {showEye && (
-        <button
+        <motion.button
           type="button"
           onClick={() => setRevealed(!revealed)}
           aria-pressed={revealed}
           aria-label={revealed ? hideLabel : showLabel}
           title={revealed ? hideLabel : showLabel}
+          // Subtle press + tone shift on toggle so the button feels "physical".
+          whileTap={{ scale: 0.92 }}
           className="inline-flex shrink-0 translate-y-[2px] items-center justify-center rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
         >
-          {revealed ? <EyeOff className={iconClass} aria-hidden /> : <Eye className={iconClass} aria-hidden />}
-        </button>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span
+              key={revealed ? 'eye-off' : 'eye-on'}
+              initial={{ opacity: 0, rotate: -25 }}
+              animate={{ opacity: 1, rotate: 0 }}
+              exit={{ opacity: 0, rotate: 25 }}
+              transition={{ duration: 0.14, ease: 'easeOut' }}
+              className="inline-flex"
+            >
+              {revealed ? <EyeOff className={iconClass} aria-hidden /> : <Eye className={iconClass} aria-hidden />}
+            </motion.span>
+          </AnimatePresence>
+        </motion.button>
       )}
     </span>
   );

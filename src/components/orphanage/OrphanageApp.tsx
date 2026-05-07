@@ -14,6 +14,7 @@ import {
   Menu,
   Moon,
   Newspaper,
+  PiggyBank,
   Plus,
   RefreshCw,
   Search,
@@ -41,6 +42,7 @@ import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import CreateOrphanageStyleDisputeDialog, {
   type EmployeeOption,
 } from '@/components/orphanage/CreateOrphanageStyleDisputeDialog';
+import OrphanageBudgetForm from '@/components/orphanage/OrphanageBudgetForm';
 import {
   fetchHoursByEmployee,
   type HubstaffHoursByEmployee,
@@ -161,7 +163,7 @@ export default function OrphanageApp() {
   }, []);
   const welcomeMsg = WELCOME_MESSAGES[welcomeIdx]!;
 
-  const [activeTab, setActiveTab] = useState<'queue' | 's-wall'>('queue');
+  const [activeTab, setActiveTab] = useState<'queue' | 'budget' | 's-wall'>('queue');
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   useEffect(() => {
@@ -415,6 +417,19 @@ export default function OrphanageApp() {
               </button>
               <button
                 type="button"
+                onClick={() => { setActiveTab('budget'); setMobileNavOpen(false); }}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+                  activeTab === 'budget'
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-700 font-medium text-white shadow-sm shadow-pink-600/25'
+                    : 'text-[#3f3f46] hover:bg-pink-50 hover:text-pink-900 dark:text-zinc-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
+                )}
+              >
+                <PiggyBank className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'budget' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
+                <span className="truncate text-left">Orphanage Budget</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => { setActiveTab('s-wall'); setMobileNavOpen(false); }}
                 className={cn(
                   'group/sw flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
@@ -512,7 +527,7 @@ export default function OrphanageApp() {
         />
 
         <AnimatePresence mode="wait" initial={false}>
-          {activeTab === 'queue' ? (
+          {activeTab === 'queue' && (
         <motion.div
           key="queue"
           initial={{ opacity: 0, y: 10 }}
@@ -839,7 +854,67 @@ export default function OrphanageApp() {
             </Card>
           </div>
         </motion.div>
-          ) : (
+          )}
+          {activeTab === 'budget' && (
+            <motion.div
+              key="budget"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+            >
+              <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
+                {/* Pink-themed header — matches the Dispute queue's brand. */}
+                <header className="relative overflow-hidden rounded-2xl border border-pink-100/90 bg-gradient-to-br from-pink-600 via-rose-600 to-zinc-900 px-5 py-7 text-white shadow-lg shadow-pink-600/20 dark:border-pink-900/50 dark:from-pink-700 dark:via-rose-900 dark:to-black sm:px-7">
+                  <div
+                    className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/15 blur-3xl"
+                    aria-hidden
+                  />
+                  <div
+                    className="absolute -bottom-12 left-8 h-32 w-32 rounded-full bg-rose-300/25 blur-2xl"
+                    aria-hidden
+                  />
+                  <div className="relative flex flex-col gap-3">
+                    <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-pink-100/95">
+                      <PiggyBank className="h-3 w-3 shrink-0" />
+                      Orphanage budget
+                    </div>
+                    <h1 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
+                      Orphanage Budget Request
+                    </h1>
+                    <p className="max-w-2xl text-sm leading-relaxed text-pink-100/90">
+                      Submit a request for funds tied to a planned visit. Static form for now —
+                      submit isn&apos;t wired yet.
+                    </p>
+                  </div>
+                </header>
+
+                {/* The form lives in its own component for readability. Wrapped
+                    in a pink-tinged card to match the Dispute queue's surface. */}
+                <Card className="border-pink-100/80 bg-gradient-to-br from-white via-pink-50/30 to-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:from-zinc-950 dark:via-pink-950/12 dark:to-zinc-950 dark:ring-pink-400/10">
+                  <CardHeader className="border-b border-pink-100/60 dark:border-pink-900/40">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-600/25">
+                        <PiggyBank className="h-4 w-4" />
+                      </div>
+                      <CardTitle className="text-base font-semibold">
+                        Budget request form
+                      </CardTitle>
+                    </div>
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      Fields mirror the existing paper / external form. Required fields are marked
+                      with a <span className="font-semibold text-rose-500">*</span>.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="pt-5">
+                    <OrphanageBudgetForm />
+                  </CardContent>
+                </Card>
+              </div>
+            </motion.div>
+          )}
+          {activeTab === 's-wall' && (
             <motion.div
               key="s-wall"
               initial={{ opacity: 0, y: 10 }}
