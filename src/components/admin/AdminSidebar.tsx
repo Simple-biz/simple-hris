@@ -7,6 +7,7 @@ import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   Database,
+  FileUp,
   KeyRound,
   LayoutDashboard,
   LogOut,
@@ -55,6 +56,7 @@ const systemNav: Array<{
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'roles', label: 'Roles & permissions', icon: UserCog, badge: 'count' },
   { id: 'employees', label: 'Employees', icon: Users, badge: 'count' },
+  { id: 'csv-imports', label: 'CSV imports', icon: FileUp },
   { id: 'webhooks', label: 'Webhooks', icon: Webhook, badge: 'alert' },
 ];
 
@@ -141,8 +143,9 @@ export default function AdminSidebar({
       role="navigation"
       aria-label="Admin navigation"
     >
-      <div className="flex flex-1 flex-col px-5 pb-4 pt-7">
-        <div className="mb-10 flex items-center gap-2.5 px-1">
+      {/* Brand — anchored at the top */}
+      <div className="shrink-0 px-5 pb-4 pt-7">
+        <div className="flex items-center gap-2.5 px-1">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-[#18181b] text-sm font-bold tracking-[-0.02em] text-white dark:bg-zinc-100 dark:text-zinc-900">
             s
           </div>
@@ -153,8 +156,12 @@ export default function AdminSidebar({
             <span className="mt-0.5 text-[10.5px] tracking-[0.02em] text-[#71717a] dark:text-zinc-500">Admin</span>
           </div>
         </div>
+      </div>
 
-        <ScrollArea className="min-h-0 flex-1 pr-2">
+      {/* Middle column — single scroll surface for nav + view switcher + theme toggle.
+          Brand at top and Sign Out at bottom stay anchored regardless of viewport height. */}
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="px-5 pb-4 pr-3">
           <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
             System
           </p>
@@ -219,29 +226,29 @@ export default function AdminSidebar({
           <div className="my-5 mx-2.5 h-px bg-[#ececec] dark:bg-zinc-800" />
 
           <nav className="flex flex-col gap-px">{navBtn('settings', 'System settings', Settings)}</nav>
-        </ScrollArea>
 
-        {/* Anchored bottom block — ViewSwitcher + theme toggle. Lives OUTSIDE
-            the ScrollArea so it stays reachable on short screens; the
-            System/Security/Settings nav above scrolls when content overflows. */}
-        <div className="shrink-0 border-t border-[#ececec] pt-4 dark:border-zinc-800">
-          <ViewSwitcher email={email} currentView="admin" />
-          <button
-            type="button"
-            onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
-            className="mb-2 mt-3 flex w-full items-center justify-between rounded-md border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-left transition-colors hover:bg-[#f3f3f3] dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-            aria-label="Toggle dark mode"
-          >
-            <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
-              {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-              {isDark ? 'Dark' : 'Light'}
-            </div>
-            <span className="text-[#a1a1aa]">{isDark ? '☀' : '☾'}</span>
-          </button>
+          {/* ViewSwitcher + theme toggle — moved INSIDE the scroll area so they're
+              reachable via the same scrollbar when the viewport is short. */}
+          <div className="mt-5 border-t border-[#ececec] pt-4 dark:border-zinc-800">
+            <ViewSwitcher email={email} currentView="admin" />
+            <button
+              type="button"
+              onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
+              className="mb-1 mt-3 flex w-full items-center justify-between rounded-md border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-left transition-colors hover:bg-[#f3f3f3] dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+              aria-label="Toggle dark mode"
+            >
+              <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
+                {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+                {isDark ? 'Dark' : 'Light'}
+              </div>
+              <span className="text-[#a1a1aa]">{isDark ? '☀' : '☾'}</span>
+            </button>
+          </div>
         </div>
-      </div>
+      </ScrollArea>
 
-      <div className="mt-auto border-t border-[#ececec] p-5 dark:border-zinc-800">
+      {/* Identity + Sign Out — anchored at the bottom, always reachable */}
+      <div className="shrink-0 border-t border-[#ececec] p-5 dark:border-zinc-800">
         <div className="flex items-center gap-2.5 rounded-md border border-[#ececec] bg-[#fafaf8] px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#18181b] text-[11px] font-semibold text-white dark:bg-zinc-200 dark:text-zinc-900">
             {(email || '?').slice(0, 2).toUpperCase()}

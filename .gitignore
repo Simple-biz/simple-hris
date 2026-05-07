@@ -13,3 +13,13 @@ coverage/
 
 .vercel
 .env*.local
+
+# ── Never commit service-account credentials or other secret files ──
+# Google Cloud service account JSON keys (downloaded from Console → Keys → Create)
+**/*-iam.gserviceaccount.com.json
+**/global-master-list-hris-*.json
+**/service-account-*.json
+**/*-service-account.json
+**/credentials*.json
+# Safe escape hatch — anything dropped in references/secrets/ is ignored.
+references/secrets/

@@ -4,6 +4,8 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 
 > **Auth status** (as of 2026-04-21): most endpoints are still **unauthenticated** pending SSO. The PAB dispute decide/edit endpoints (`PATCH /api/pab-disputes/[id]`) enforce server-side role-based access via `canActOnDisputes(email)` — caller must hold an active role from `DISPUTE_ACTOR_ROLES` in `employee_roles`. Orphanage-visit endpoints still trust a client-supplied `admin_name` (auth gap). See [IMPLEMENTATION_PLAN_RBAC.md](./IMPLEMENTATION_PLAN_RBAC.md) and [AUDIT_2026-04-21.md](./AUDIT_2026-04-21.md) for the full picture.
 
+> **Google Sheet sync endpoints** (`/api/cron/sync-master-from-sheet`, `/api/cron/sync-rates-from-sheet`) and the new **`?uploads=1`** GET shapes on the master + rates upload routes are documented inline below. For the full feature picture (Admin tab, env setup, ingest fixes, troubleshooting), see [csv-imports.md](./csv-imports.md).
+
 ---
 
 ## Table of Contents
@@ -82,6 +84,11 @@ Imports the configured employees table (`NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE`, 
 {
   "success": true,
   "rowCount": 120,
+  "inserted": 12,
+  "updated": 108,
+  "rowsMissingPersonalEmail": 0,
+  "duplicatesInCsv": 3,
+  "uploadId": "2fd56fde-08bb-4608-80cb-77246260e5bb",
   "ratesReconcile": {
     "masterCount": 120,
     "ratesCount": 115,
@@ -91,9 +98,9 @@ Imports the configured employees table (`NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE`, 
 }
 ```
 
-`ratesReconcile` may be `null` if counts could not be read after import.
+`ratesReconcile` may be `null` if counts could not be read after import. `duplicatesInCsv` *(added 2026-05-07)* counts CSV rows that shared a `(personal_email, department)` key with another CSV row — last occurrence wins; earlier ones are silently dropped instead of triggering the partial unique index.
 
-**Tables**: Writes `global_master_list` only (does not change `employee_hourly_rates`).
+**Tables**: Writes `global_master_list` + a new row in `master_list_uploads` (promoted to `is_current`). Does **not** change `employee_hourly_rates`.
 
 **Service Role**: Required
 
@@ -101,11 +108,64 @@ Imports the configured employees table (`NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE`, 
 
 ### `GET /api/global-master-list`
 
-Lightweight check that the service role can read row counts on the master and rates tables. No file upload.
+**Without query string** — lightweight check that the service role can read row counts on the master and rates tables. No file upload.
 
 **Response** `200`: `{ "ok": true, "masterCount": 120, "ratesCount": 115, "masterError": null, "ratesError": null }`
 
+**With `?uploads=1`** *(added 2026-05-07)* — returns archived `master_list_uploads` rows newest-first. Powers the **Files** tab → Master list section in the Admin → CSV imports UI.
+
+**Response** `200`:
+```json
+{
+  "uploads": [
+    {
+      "id": "2fd56fde-…",
+      "source_file": "google-sheet:1ModkjXlI2_K…@2026-05-07 17:41:19 UTC",
+      "uploaded_at": "2026-05-07T17:41:38.083906+00:00",
+      "uploaded_by": null,
+      "row_count": 784,
+      "is_current": true
+    }
+  ],
+  "error": null
+}
+```
+
 **Service Role**: Required
+
+---
+
+### `POST /api/cron/sync-master-from-sheet` *(added 2026-05-07)*
+
+Manual-button-only Google Sheet sync for the master list. Reads the configured Google Sheet via service-account JWT, builds a CSV that `replaceGlobalMasterListFromCsvText()` accepts (auto-detects the header row, prepends two synthetic `MASTERLIST` sentinel rows), and pipes it through the same ingest as `POST /api/global-master-list`. **No daily cron** — `vercel.json` has no schedule for this path despite the legacy URL segment. Both `GET` and `POST` accepted.
+
+**Auth**: if `CRON_SECRET` env var is set, requires `Authorization: Bearer <secret>`; otherwise open. The in-app button posts without that header, so leave `CRON_SECRET` unset (or wire session auth) to keep the button working.
+
+**Required env**: `GOOGLE_SHEETS_MASTER_SHEET_ID`, `GOOGLE_SHEETS_MASTER_TAB_NAME`, `GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SHEETS_SERVICE_ACCOUNT_PRIVATE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+
+**Response** `200`:
+```json
+{
+  "success": true,
+  "sheetId": "1ModkjXlI2_KoiRVpxCo202oTxdZsVLlvCrd_547IKsQ",
+  "tabName": "MASTERLIST",
+  "totalRows": 786,
+  "dataRows": 784,
+  "headerRowIndex": 2,
+  "headerColumns": ["Department", "Name", "Personal Email", "Work Email", "Start Date", "..."],
+  "apiRowCount": 786,
+  "rowCount": 781,
+  "inserted": 24,
+  "updated": 757,
+  "rowsMissingPersonalEmail": 0,
+  "duplicatesInCsv": 3,
+  "uploadId": "…"
+}
+```
+
+Emits `[fetch-master-sheet]` and `[sync-master-from-sheet] result` console diagnostics for debugging row drops. Audit log entry `csv.master.sync` (or `csv.master.sync.error` on failure).
+
+See [csv-imports.md](./csv-imports.md) for the full feature doc.
 
 ---
 
@@ -283,6 +343,49 @@ Updates the regular and overtime pay rates for an employee.
 
 **Tables**: Updates `employee_hourly_rates`
 **Service Role**: Depends on utility function
+
+---
+
+### `POST /api/employee-hourly-rates-upload`
+
+Imports the **All-Dept payroll dashboard CSV** into `employee_hourly_rates`. Multipart `file=<csv>`. Reads only 5 columns by header: `Work Email`, `Personal Email`, `Week`, `Regular Rate`, `OT Rate`. Multiple weekly rows per employee are expected — the function picks the row with the latest parsed `Week M/D/YY - M/D/YY` value per work email. **Recent fixes (2026-05-07)**: existing-row lookup is now a single full-table SELECT with case-insensitive in-memory matching (was a chunked case-sensitive `.in()`); UPDATEs run in parallel chunks of 20 (was sequential).
+
+**Response** `200`:
+```json
+{
+  "success": true,
+  "rowCount": 1062,
+  "uploadId": "5b671c02-…",
+  "inserted": 12,
+  "updated": 1050,
+  "uniqueEmployees": 1062,
+  "skippedNoWorkEmail": 0,
+  "skippedNoRate": 3
+}
+```
+
+**Tables**: Writes `employee_hourly_rates` + new row in `rates_uploads` (promoted to `is_current`).
+**Service Role**: Required
+
+---
+
+### `GET /api/employee-hourly-rates-upload?uploads=1` *(added 2026-05-07)*
+
+Returns archived `rates_uploads` rows newest-first. Powers the **Files** tab → Payroll rates section in the Admin → CSV imports UI. Calling without `?uploads=1` returns 400 — the route does not expose any other GET shape.
+
+**Response** `200`: identical schema to `GET /api/global-master-list?uploads=1`.
+
+---
+
+### `POST /api/cron/sync-rates-from-sheet` *(added 2026-05-07)*
+
+Manual-button-only Google Sheet sync for the rates ledger. Reads the configured Google Sheet via the same service-account auth as the master list sync, expects headers on row 1 (no sentinel synthesis — rates have no `MASTERLIST` analogue), and pipes the resulting CSV through `replaceEmployeeHourlyRatesFromCsv()`.
+
+**Required env**: `GOOGLE_SHEETS_RATES_SHEET_ID`, `GOOGLE_SHEETS_RATES_TAB_NAME`, plus the shared `GOOGLE_SHEETS_SERVICE_ACCOUNT_*` and `SUPABASE_SERVICE_ROLE_KEY`.
+
+**Response** `200`: same shape as the master sync but with the rates ingest result fields (`uniqueEmployees`, `skippedNoWorkEmail`, `skippedNoRate`).
+
+Audit log entry `csv.rates.sync` (or `csv.rates.sync.error` on failure). See [csv-imports.md](./csv-imports.md).
 
 ---
 

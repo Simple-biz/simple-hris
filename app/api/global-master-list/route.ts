@@ -2,6 +2,7 @@ import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import {
   countMasterAndRatesRows,
+  listMasterListUploads,
   replaceGlobalMasterListFromCsvText,
 } from "@/lib/supabase/global-master-list-db";
 import { NextRequest, NextResponse } from "next/server";
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
     const text = await (file as Blob).text();
     const fileName = (file as File).name || form.get("fileName")?.toString() || "unknown.csv";
 
-    const { rowCount, uploadId, inserted, updated, rowsMissingPersonalEmail } =
+    const { rowCount, uploadId, inserted, updated, rowsMissingPersonalEmail, duplicatesInCsv } =
       await replaceGlobalMasterListFromCsvText(text, fileName);
 
     let ratesReconcile: {
@@ -92,6 +93,7 @@ export async function POST(req: NextRequest) {
         inserted,
         updated,
         rows_missing_personal_email: rowsMissingPersonalEmail,
+        duplicates_in_csv: duplicatesInCsv,
         upload_id: uploadId,
       },
       ip_address: clientIp(req),
@@ -103,6 +105,7 @@ export async function POST(req: NextRequest) {
       inserted,
       updated,
       rowsMissingPersonalEmail,
+      duplicatesInCsv,
       uploadId,
       ratesReconcile,
     });
@@ -114,8 +117,13 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** Optional: confirm service role can reach the employees table (no CSV body). */
-export async function GET() {
+/**
+ * - With `?uploads=1`: returns archived `master_list_uploads` rows (newest first).
+ *   Powers the admin CSV-imports Files tab.
+ * - Without that flag: confirms service role can reach the employees table and
+ *   reports master/rates row counts.
+ */
+export async function GET(req: NextRequest) {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) {
     return NextResponse.json({ ok: false, error: "Supabase not configured" }, { status: 500 });
@@ -126,6 +134,17 @@ export async function GET() {
       { status: 400 },
     );
   }
+
+  if (new URL(req.url).searchParams.get("uploads") === "1") {
+    try {
+      const uploads = await listMasterListUploads();
+      return NextResponse.json({ uploads, error: null });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ uploads: [], error: msg }, { status: 500 });
+    }
+  }
+
   try {
     const { masterCount, ratesCount, masterError, ratesError } = await countMasterAndRatesRows();
     return NextResponse.json({

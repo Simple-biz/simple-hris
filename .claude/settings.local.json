@@ -71,7 +71,8 @@
       "Bash(cp Documentation/AUDIT_2026-04-21.md docs/audit-2026-04-21.md)",
       "Bash(cp Documentation/AUDIT_2026-04-25.md docs/audit-2026-04-25.md)",
       "Bash(cp Documentation/BUSINESS_LOGIC.md docs/business-logic.md)",
-      "Bash(awk 'NR>=2550 && /^}/{ print NR\": \"$0; if \\(++c==3\\) exit}' src/components/Overview.tsx)"
+      "Bash(awk 'NR>=2550 && /^}/{ print NR\": \"$0; if \\(++c==3\\) exit}' src/components/Overview.tsx)",
+      "Bash(curl -s \"http://localhost:3000/api/employee-master-record?email=sheeng@simple.biz\")"
     ]
   }
 }

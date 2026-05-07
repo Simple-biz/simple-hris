@@ -6,6 +6,7 @@ import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { getEmployeesForAuthorizedServerRoute } from '@/lib/supabase/employees';
 import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
+import { fetchActiveHslDetailsByEmail } from '@/lib/supabase/hsl-agents';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -70,10 +71,28 @@ export async function GET() {
       );
     }
 
+    // Pull the HSL roster once (role-within-HSL + hourly/OT rates) and decorate
+    // the team rows below. Doing this unconditionally is fine — one query against
+    // the active view. For non-HSL employees the map miss leaves the hsl_* fields
+    // undefined; the manager panel hides those columns when no member has them.
+    const { byEmail: hslByEmail } = await fetchActiveHslDetailsByEmail();
+    const decorateWithHsl = (row: EmployeeRow): EmployeeRow => {
+      const w = normEmail(row.work_email ?? null);
+      const p = normEmail(row.personal_email ?? null);
+      const hit = (w && hslByEmail.get(w)) || (p && hslByEmail.get(p)) || null;
+      if (!hit) return { ...row, hsl_role: null, hsl_hourly_rate: null, hsl_ot_rate: null };
+      return {
+        ...row,
+        hsl_role: hit.role,
+        hsl_hourly_rate: hit.hourlyRate,
+        hsl_ot_rate: hit.otRate,
+      };
+    };
+
     if (departments.length > 0) {
-      const rows = employees.filter((e) =>
-        departmentMatchesManagedAssignments(e.department, departments),
-      );
+      const rows = employees
+        .filter((e) => departmentMatchesManagedAssignments(e.department, departments))
+        .map(decorateWithHsl);
       rows.sort(sortRows);
 
       return NextResponse.json({
@@ -93,7 +112,7 @@ export async function GET() {
       });
     }
 
-    const rows = [...employees].sort(sortRows);
+    const rows = [...employees].map(decorateWithHsl).sort(sortRows);
     return NextResponse.json({
       rows,
       scope: 'elevated' as const,

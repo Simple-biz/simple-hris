@@ -101,6 +101,33 @@ async function promoteRatesUploadToCurrent(
   if (setErr) throw new Error(`Failed to mark upload ${newUploadId} current: ${setErr.message}`);
 }
 
+/** Newest-first list of rates upload batches (for the admin CSV imports tab). */
+export async function listRatesUploads(): Promise<
+  {
+    id: string;
+    source_file: string | null;
+    uploaded_at: string;
+    uploaded_by: string | null;
+    row_count: number | null;
+    is_current: boolean;
+  }[]
+> {
+  const supabase = requireServiceRole();
+  const { data, error } = await supabase
+    .from(RATES_UPLOADS_TABLE)
+    .select("id, source_file, uploaded_at, uploaded_by, row_count, is_current")
+    .order("uploaded_at", { ascending: false });
+  if (error) throw new Error(`Could not list rates_uploads: ${error.message}`);
+  return (data ?? []) as {
+    id: string;
+    source_file: string | null;
+    uploaded_at: string;
+    uploaded_by: string | null;
+    row_count: number | null;
+    is_current: boolean;
+  }[];
+}
+
 /** Id of the rates upload currently flagged `is_current`, or null if none. */
 export async function getCurrentRatesUploadId(
   supabase: SupabaseClient,
@@ -223,35 +250,27 @@ export async function replaceEmployeeHourlyRatesFromCsv(
 
   const uploadId = await createPendingRatesUpload(supabase, sourceFile, uniqueEmployees);
 
-  const lookupEmails = new Set<string>();
-  for (const r of finalRows) {
-    lookupEmails.add(r.workEmail);
-    if (r.personalEmail) lookupEmails.add(r.personalEmail);
-  }
+  // Fetch ALL rows with a non-null Work Email and index by lowercased identity
+  // in memory. The previous chunked `.in('"Work Email"', …)` lookup was
+  // case-sensitive, so DB rows whose email had any case variance (legacy
+  // backfill, manual edits) were invisible — those rows then collided with
+  // the unique index when we tried to INSERT their CSV counterparts.
+  // For roster sizes the system targets (≤ a few thousand rows) one full pass
+  // is faster than chunked queries anyway.
   const existingByWorkEmail = new Map<string, { id: unknown }>();
   const existingByPersonalEmail = new Map<string, { id: unknown }>();
-  const LOOKUP_CHUNK = 200;
-  const lookupList = [...lookupEmails];
-  for (let i = 0; i < lookupList.length; i += LOOKUP_CHUNK) {
-    const chunk = lookupList.slice(i, i + LOOKUP_CHUNK);
-    const { data: workData, error: workError } = await supabase
+  {
+    const { data, error } = await supabase
       .from(table)
       .select('id, "Work Email", "Personal Email"')
-      .in('"Work Email"', chunk);
-    if (workError) throw new Error(`Could not read ${table} work-email reconciliation: ${workError.message}`);
-
-    const { data: personalData, error: personalError } = await supabase
-      .from(table)
-      .select('id, "Work Email", "Personal Email"')
-      .in('"Personal Email"', chunk);
-    if (personalError) throw new Error(`Could not read ${table} personal-email reconciliation: ${personalError.message}`);
-
-    const combined = [
-      ...((workData ?? []) as { id: unknown; "Work Email": string | null; "Personal Email": string | null }[]),
-      ...((personalData ?? []) as { id: unknown; "Work Email": string | null; "Personal Email": string | null }[]),
-    ];
-
-    for (const r of combined) {
+      .not('"Work Email"', "is", null)
+      .range(0, 9999);
+    if (error) throw new Error(`Could not read ${table} for reconciliation: ${error.message}`);
+    for (const r of (data ?? []) as {
+      id: unknown;
+      "Work Email": string | null;
+      "Personal Email": string | null;
+    }[]) {
       const workEmail = normalizeEmail(r["Work Email"]);
       const personalEmail = normalizeEmail(r["Personal Email"]);
       if (workEmail) existingByWorkEmail.set(workEmail, { id: r.id });
@@ -259,8 +278,8 @@ export async function replaceEmployeeHourlyRatesFromCsv(
     }
   }
 
-  let inserted = 0;
-  let updated = 0;
+  // Partition into UPDATE-targets and INSERT-payloads.
+  const updateOps: { id: string | number; payload: Record<string, string | null> }[] = [];
   const rowsToInsert: Record<string, string | null>[] = [];
 
   for (const c of finalRows) {
@@ -275,14 +294,31 @@ export async function replaceEmployeeHourlyRatesFromCsv(
       existingByWorkEmail.get(c.workEmail) ??
       (c.personalEmail ? existingByPersonalEmail.get(c.personalEmail) : undefined);
     if (existing) {
-      const { error } = await supabase
-        .from(table)
-        .update({ ...payload, upload_id: uploadId })
-        .eq("id", existing.id as string | number);
-      if (error) throw new Error(`Update failed for ${c.workEmail}: ${error.message}`);
-      updated += 1;
+      updateOps.push({
+        id: existing.id as string | number,
+        payload: { ...payload, upload_id: uploadId },
+      });
     } else {
       rowsToInsert.push({ ...payload, upload_id: uploadId });
+    }
+  }
+
+  // UPDATEs in parallel chunks — each row touches a distinct primary key, so
+  // there's no deadlock risk. Concurrency of 20 keeps things fast without
+  // starving the Supabase connection pool.
+  let inserted = 0;
+  let updated = 0;
+  if (updateOps.length > 0) {
+    const UPDATE_CONCURRENCY = 20;
+    for (let start = 0; start < updateOps.length; start += UPDATE_CONCURRENCY) {
+      const chunk = updateOps.slice(start, start + UPDATE_CONCURRENCY);
+      await Promise.all(
+        chunk.map(async ({ id, payload }) => {
+          const { error } = await supabase.from(table).update(payload).eq("id", id);
+          if (error) throw new Error(`Update failed for id ${String(id)}: ${error.message}`);
+        }),
+      );
+      updated += chunk.length;
     }
   }
 

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { replaceEmployeeHourlyRatesFromCsv } from "@/lib/supabase/rates-upload-db";
+import {
+  listRatesUploads,
+  replaceEmployeeHourlyRatesFromCsv,
+} from "@/lib/supabase/rates-upload-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 const SYSTEM_USER = { name: "Fran M", role: "Senior Admin" } as const;
@@ -11,6 +14,32 @@ function clientIp(req: NextRequest): string | null {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+/**
+ * `GET ?uploads=1` returns archived `rates_uploads` rows (newest first) so the
+ * admin CSV-imports Files tab can list past rates batches.
+ */
+export async function GET(req: NextRequest) {
+  if (new URL(req.url).searchParams.get("uploads") !== "1") {
+    return NextResponse.json(
+      { error: "Unsupported. Use POST to upload, or GET ?uploads=1 to list batches." },
+      { status: 400 },
+    );
+  }
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
+    return NextResponse.json(
+      { uploads: [], error: "SUPABASE_SERVICE_ROLE_KEY is not set — required for rates archive lookup." },
+      { status: 400 },
+    );
+  }
+  try {
+    const uploads = await listRatesUploads();
+    return NextResponse.json({ uploads, error: null });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ uploads: [], error: msg }, { status: 500 });
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {

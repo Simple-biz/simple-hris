@@ -625,36 +625,93 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="w-[220px]">Name</TableHead>
-                    <TableHead>Department</TableHead>
-                    <TableHead className="min-w-[200px]">Work email</TableHead>
-                    <TableHead className="min-w-[200px]">Personal email</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {members.map((m, idx) => (
-                    <TableRow key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}>
-                      <TableCell className="font-medium text-zinc-900 dark:text-zinc-100">
-                        {m.name ?? '—'}
-                      </TableCell>
-                      <TableCell className="text-zinc-600 dark:text-zinc-400">
-                        {m.department ?? '—'}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                        {m.work_email ?? '—'}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                        {m.personal_email ?? '—'}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            (() => {
+              // Show the HSL-derived columns only when at least one team member has
+              // a synced HSL roster entry — non-HSL managers don't get always-blank
+              // columns. The role column and the rate columns are toggled
+              // independently so a sheet that only carries rates (or vice-versa)
+              // still renders cleanly.
+              const showHslRoleCol = members.some(
+                (m) => (m.hsl_role ?? '').trim() !== '',
+              );
+              const showHslRateCol = members.some(
+                (m) => m.hsl_hourly_rate != null || m.hsl_ot_rate != null,
+              );
+              const formatPhp = (v: number | null | undefined): string => {
+                if (v == null) return '—';
+                return `₱${v.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+              };
+              return (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="w-[220px]">Name</TableHead>
+                        <TableHead>Department</TableHead>
+                        {showHslRoleCol && (
+                          <TableHead className="min-w-[180px]">Department/Role</TableHead>
+                        )}
+                        {showHslRateCol && (
+                          <>
+                            <TableHead className="min-w-[110px] text-right">Hourly</TableHead>
+                            <TableHead className="min-w-[110px] text-right">OT</TableHead>
+                          </>
+                        )}
+                        <TableHead className="min-w-[200px]">Work email</TableHead>
+                        <TableHead className="min-w-[200px]">Personal email</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {members.map((m, idx) => (
+                        <TableRow key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}>
+                          <TableCell className="font-medium text-zinc-900 dark:text-zinc-100">
+                            {m.name ?? '—'}
+                          </TableCell>
+                          <TableCell className="text-zinc-600 dark:text-zinc-400">
+                            {m.department ?? '—'}
+                          </TableCell>
+                          {showHslRoleCol && (
+                            <TableCell className="text-zinc-600 dark:text-zinc-400">
+                              {m.hsl_role ? (
+                                <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+                                  {m.hsl_role}
+                                </span>
+                              ) : (
+                                <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                              )}
+                            </TableCell>
+                          )}
+                          {showHslRateCol && (
+                            <>
+                              <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
+                                {m.hsl_hourly_rate != null ? (
+                                  formatPhp(m.hsl_hourly_rate)
+                                ) : (
+                                  <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
+                                {m.hsl_ot_rate != null ? (
+                                  formatPhp(m.hsl_ot_rate)
+                                ) : (
+                                  <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                                )}
+                              </TableCell>
+                            </>
+                          )}
+                          <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                            {m.work_email ?? '—'}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                            {m.personal_email ?? '—'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              );
+            })()
           )}
         </CardContent>
       </Card>

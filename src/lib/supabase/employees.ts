@@ -37,6 +37,17 @@ export type EmployeeRow = {
   /** Google Workspace profile picture URL — populated by NextAuth jwt callback on sign-in
    *  (see src/lib/auth/auth-options.ts). Used as the FIRST avatar source. */
   google_photo_url?: string | null;
+  /** When this employee also appears in the synced HSL roster (`active_hsl_agents`),
+   *  carries their narrower role-within-HSL string (e.g. "Case Manager",
+   *  "Intake Specialist Manager", "Filing Specialist Asst TL").
+   *  Populated server-side by routes that opt in to the HSL join, e.g.
+   *  `/api/manager/department-members`. Other consumers leave it `undefined`. */
+  hsl_role?: string | null;
+  /** HSL-specific hourly rate (₱), pulled from `hsl_team_members.hourly_rate`
+   *  via the `active_hsl_agents` view. Same opt-in surface as `hsl_role`. */
+  hsl_hourly_rate?: number | null;
+  /** HSL-specific overtime rate (₱). */
+  hsl_ot_rate?: number | null;
 };
 
 type RawRow = Record<string, unknown>;

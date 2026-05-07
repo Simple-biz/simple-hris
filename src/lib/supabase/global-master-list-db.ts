@@ -21,6 +21,33 @@ export async function getCurrentMasterListUploadId(
   return id ?? null;
 }
 
+/** Newest-first list of master-list upload batches (for the admin CSV imports tab). */
+export async function listMasterListUploads(): Promise<
+  {
+    id: string;
+    source_file: string | null;
+    uploaded_at: string;
+    uploaded_by: string | null;
+    row_count: number | null;
+    is_current: boolean;
+  }[]
+> {
+  const supabase = requireServiceRole();
+  const { data, error } = await supabase
+    .from(MASTER_LIST_UPLOADS_TABLE)
+    .select("id, source_file, uploaded_at, uploaded_by, row_count, is_current")
+    .order("uploaded_at", { ascending: false });
+  if (error) throw new Error(`Could not list master_list_uploads: ${error.message}`);
+  return (data ?? []) as {
+    id: string;
+    source_file: string | null;
+    uploaded_at: string;
+    uploaded_by: string | null;
+    row_count: number | null;
+    is_current: boolean;
+  }[];
+}
+
 function getMasterTableName(): string {
   return process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE?.trim() || "global_master_list";
 }
@@ -273,6 +300,9 @@ export async function replaceGlobalMasterListFromCsvText(
   inserted: number;
   updated: number;
   rowsMissingPersonalEmail: number;
+  /** Count of rows that shared a `(personal_email, department)` key with another row in the same CSV.
+   *  Last occurrence wins; earlier ones are dropped silently to avoid violating the partial unique index. */
+  duplicatesInCsv: number;
 }> {
   const supabase = requireServiceRole();
   const table = getMasterTableName();
@@ -357,20 +387,28 @@ export async function replaceGlobalMasterListFromCsvText(
 
   const uploadId = await createPendingMasterListUpload(supabase, sourceFile, totalUsable);
 
-  // Fetch existing rows with any matching personal_email. Department is matched
-  // case-insensitively in-memory so we don't need a DB-side LOWER() index.
-  const personalEmails = [...new Set(dedupableRows.map((r) => r.personalEmail))];
+  // Fetch ALL rows with non-null email + department, then index them by the
+  // lowercased identity key. The previous chunked `.in('"Personal Email"', …)`
+  // approach was case-sensitive (PostgREST does exact string equality), so DB
+  // rows with mixed-case emails (legacy backfill, manual edits) were invisible
+  // to the lookup — those rows then hit the partial unique index on
+  // (LOWER("Personal Email"), LOWER("Department")) when we tried to INSERT
+  // their CSV counterparts. Doing the case fold in memory removes the gap.
+  //
+  // For roster sizes the system targets (≤ a few thousand rows) the single
+  // pass is faster than chunked queries anyway. The 0-9999 range matches the
+  // ceiling used by `fetchActiveEmployees`.
   const existingByKey = new Map<
     string,
     { id: unknown; first_seen_upload_id: string | null }
   >();
-  const EMAIL_LOOKUP_CHUNK = 200;
-  for (let i = 0; i < personalEmails.length; i += EMAIL_LOOKUP_CHUNK) {
-    const chunk = personalEmails.slice(i, i + EMAIL_LOOKUP_CHUNK);
+  {
     const { data, error } = await supabase
       .from(table)
       .select('id, "Personal Email", "Department", first_seen_upload_id')
-      .in('"Personal Email"', chunk);
+      .not('"Personal Email"', "is", null)
+      .not('"Department"', "is", null)
+      .range(0, 9999);
     if (error) throw new Error(`Could not read ${table} for reconciliation: ${error.message}`);
     for (const r of (data ?? []) as {
       id: unknown;
@@ -393,24 +431,36 @@ export async function replaceGlobalMasterListFromCsvText(
   let updated = 0;
   const rowsToInsert: Record<string, string | null>[] = [];
 
-  // Dedupable rows: UPDATE when key exists, queue for INSERT otherwise.
-  for (const { row, personalEmail, department } of dedupableRows) {
+  // ── Dedupe within the CSV itself ──
+  // Two rows in the same upload that share `(personal_email, department)` would
+  // both miss `existingByKey` (neither is in the DB yet) and both queue for
+  // INSERT — the second hits the partial unique index on
+  // (LOWER("Personal Email"), LOWER("Department")) and the whole batch fails.
+  // Last occurrence wins (consistent with how the rates ingest uses the latest
+  // Week row). Earlier duplicates are silently dropped; we surface the count.
+  const dedupableByKey = new Map<
+    string,
+    { row: string[]; personalEmail: string; department: string }
+  >();
+  for (const item of dedupableRows) {
+    dedupableByKey.set(composeIdentityKey(item.personalEmail, item.department), item);
+  }
+  const duplicatesInCsv = dedupableRows.length - dedupableByKey.size;
+  const dedupableRowsUnique = Array.from(dedupableByKey.values());
+
+  // ── Partition into UPDATE-targets and INSERT-payloads ──
+  const updateOps: { id: string | number; payload: Record<string, string | null> }[] = [];
+  for (const { row, personalEmail, department } of dedupableRowsUnique) {
     const payload = csvRowToObject(row, insertCols);
     if (payload["Personal Email"]) payload["Personal Email"] = personalEmail;
     if (payload["Department"]) payload["Department"] = department;
 
     const existing = existingByKey.get(composeIdentityKey(personalEmail, department));
     if (existing) {
-      const { error } = await supabase
-        .from(table)
-        .update({ ...payload, last_seen_upload_id: uploadId })
-        .eq("id", existing.id as string | number);
-      if (error) {
-        throw new Error(
-          `Update failed for ${personalEmail} / ${department}: ${error.message}`,
-        );
-      }
-      updated += 1;
+      updateOps.push({
+        id: existing.id as string | number,
+        payload: { ...payload, last_seen_upload_id: uploadId },
+      });
     } else {
       rowsToInsert.push({
         ...payload,
@@ -433,6 +483,28 @@ export async function replaceGlobalMasterListFromCsvText(
     });
   }
 
+  // ── UPDATEs in parallel chunks ──
+  // Sequential per-row updates were taking ~3 min for ~700 rows
+  // (~250ms/round-trip × 700). Each row's update touches a distinct id, so
+  // there's no deadlock risk in running a chunk concurrently. Keep concurrency
+  // modest to avoid Supabase pool starvation; 20 is a comfortable middle.
+  if (updateOps.length > 0) {
+    const UPDATE_CONCURRENCY = 20;
+    for (let start = 0; start < updateOps.length; start += UPDATE_CONCURRENCY) {
+      const chunk = updateOps.slice(start, start + UPDATE_CONCURRENCY);
+      await Promise.all(
+        chunk.map(async ({ id, payload }) => {
+          const { error } = await supabase.from(table).update(payload).eq("id", id);
+          if (error) {
+            throw new Error(`Update failed for id ${String(id)}: ${error.message}`);
+          }
+        }),
+      );
+      updated += chunk.length;
+    }
+  }
+
+  // ── INSERTs in serial batches (already efficient) ──
   if (rowsToInsert.length > 0) {
     const BATCH = 50;
     for (let start = 0; start < rowsToInsert.length; start += BATCH) {
@@ -455,6 +527,7 @@ export async function replaceGlobalMasterListFromCsvText(
     inserted,
     updated,
     rowsMissingPersonalEmail,
+    duplicatesInCsv,
   };
 }
 

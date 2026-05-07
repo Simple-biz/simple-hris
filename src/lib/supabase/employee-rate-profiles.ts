@@ -4,6 +4,7 @@ import {
   createSupabaseServiceRoleClient,
 } from "./server";
 import { isSafeTableName, listPublicTableNames } from "./list-public-tables";
+import { fetchActiveHslDetailsByEmail } from "./hsl-agents";
 
 type RawRow = Record<string, unknown>;
 
@@ -39,6 +40,9 @@ export type EmployeeRateProfileSummary = {
   /** Google Workspace photo URL — populated by NextAuth jwt callback on sign-in. */
   googlePhotoUrl: string | null;
   hasRatesRow: boolean;
+  /** Synced from `active_hsl_agents` ("Department/Role" column) when this employee
+   *  is in the HSL roster. Surfaced as a chip on the Rates card. Null otherwise. */
+  hslRole?: string | null;
 };
 
 export type GetEmployeeRateProfilesResult = {
@@ -187,6 +191,13 @@ function mergeSourcesDeduped(orderedSources: RawRow[]): { key: string; value: un
     for (const [k, v] of Object.entries(row)) {
       const nk = normFieldKey(k);
       if (seen.has(nk)) continue;
+      // Don't let a null / empty-string value "claim" the key from later sources.
+      // Symptom this guards against: rates row has `Department: null`, master row
+      // has `Department: "Accounting Team"`. Without this skip, the rates null
+      // wins and the dept chip disappears from the Rates card. Apply the same
+      // rule to every field — later sources should always be able to fill gaps.
+      if (v == null) continue;
+      if (typeof v === "string" && v.trim() === "") continue;
       seen.add(nk);
       fields.push({ key: k, value: v });
     }
@@ -1125,10 +1136,13 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
   const mergeNotes: string[] = [];
   const currentRatesUploadId = await getCurrentRatesUploadIdForProfiles();
 
-  const [ratesRes, masterRes, idsRes] = await Promise.all([
+  const [ratesRes, masterRes, idsRes, hslRes] = await Promise.all([
     fetchRatesRowsForProfiles(ratesTable, currentRatesUploadId),
     fetchMasterRowsForProfiles(masterTable),
     fetchEmployeeIdRowsForProfiles(),
+    // Pulled in parallel — if the active_hsl_agents view is missing (migration
+    // not yet run), we just skip decoration instead of failing the whole load.
+    fetchActiveHslDetailsByEmail(),
   ]);
 
   if (ratesRes.error) {
@@ -1141,6 +1155,7 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
 
   if (masterRes.error) mergeNotes.push(`Skipped ${masterTable}: ${masterRes.error}`);
   if (idsRes.error) mergeNotes.push(`Skipped employee_ids: ${idsRes.error}`);
+  if (hslRes.error) mergeNotes.push(`Skipped active_hsl_agents: ${hslRes.error}`);
 
   if (currentRatesUploadId) {
     mergeNotes.push(
@@ -1313,6 +1328,19 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
         toStr(getField(masterRow, ["google_photo_url", "Google Photo URL", "google_picture"])) || null,
       hasRatesRow: Object.keys(mergedRates).length > 0,
     });
+  }
+
+  // ── Decorate every summary with their role-within-HSL when the email matches
+  // an active_hsl_agents row. Misses leave hslRole undefined; the Rates card
+  // hides the chip then. Runs over the full profiles array (both branches that
+  // built it above) so we don't have to touch each push site individually.
+  if (hslRes.byEmail.size > 0) {
+    for (const p of profiles) {
+      const w = normEmail(p.workEmail ?? null);
+      const pe = normEmail(p.personalEmail ?? null);
+      const hit = (w && hslRes.byEmail.get(w)) || (pe && hslRes.byEmail.get(pe)) || null;
+      if (hit && hit.role) p.hslRole = hit.role;
+    }
   }
 
   profiles.sort((a, b) =>

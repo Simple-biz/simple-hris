@@ -212,6 +212,12 @@ interface SimpleViewProps {
   pabFilter: 'all' | 'eligible' | 'not-eligible';
   setPabFilter: (v: 'all' | 'eligible' | 'not-eligible') => void;
   onExportCsv: () => void;
+  /** Live status of the dashboard data feeds — drives the hero pill animation. */
+  apiStatus: 'loading' | 'error' | 'live';
+  /** Round-trip ms of the most recent API probe — revealed on pill hover. */
+  apiLatencyMs: number | null;
+  /** Trigger a fresh API ping (used on pill hover) so the MS readout stays current. */
+  onPingApi: () => void;
 }
 
 /** PHP → USD FX rate used only for the informational subtitle under the total payout. */
@@ -277,7 +283,14 @@ function SimpleView({
   pabFilter,
   setPabFilter,
   onExportCsv,
+  apiStatus,
+  apiLatencyMs,
+  onPingApi,
 }: SimpleViewProps) {
+  // Hover state for the API status pill — drives the ping ripple + MS readout reveal.
+  const [pillHovered, setPillHovered] = useState(false);
+  // Bumped every time we trigger a hover-ping; used as a key so the ripple replays.
+  const [pingNonce, setPingNonce] = useState(0);
   const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
 
   const reconcileGaps =
@@ -321,7 +334,7 @@ function SimpleView({
       <div className="mx-auto w-full max-w-[1600px] px-3 pb-6 sm:px-4 md:px-6 lg:px-8 xl:px-10 [@media(max-height:900px)]:pb-4 xl:pb-12">
 
         {/* Hero — branded chip, accent rule, floating orbs in the corners */}
-        <section className="relative mb-5 overflow-hidden rounded-3xl border border-orange-100/80 bg-gradient-to-br from-white via-orange-50/40 to-blue-50/30 p-5 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.25)] [@media(max-height:900px)]:mb-4 [@media(max-height:900px)]:p-4 lg:mb-8 lg:p-7 xl:mb-10 xl:p-8 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15">
+        <section className="relative mb-5 overflow-hidden rounded-3xl border border-orange-100/80 bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 p-5 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] [@media(max-height:900px)]:mb-4 [@media(max-height:900px)]:p-4 lg:mb-8 lg:p-7 xl:mb-10 xl:p-8 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15">
           {/* Decorative orbs — pure dopamine */}
           <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
             <motion.div
@@ -356,11 +369,174 @@ function SimpleView({
             <motion.div
               variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
             >
-              {/* Caption pill */}
-              <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-orange-200/80 bg-white/70 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300">
-                <Activity className="h-3 w-3" />
-                Dashboard · live
-              </div>
+              {/* Caption pill — icon pulses continuously based on API status; hover triggers a ping ripple + reveals MS */}
+              <motion.button
+                type="button"
+                onMouseEnter={() => {
+                  setPillHovered(true);
+                  setPingNonce((n) => n + 1);
+                  onPingApi();
+                }}
+                onMouseLeave={() => setPillHovered(false)}
+                onFocus={() => {
+                  setPillHovered(true);
+                  setPingNonce((n) => n + 1);
+                  onPingApi();
+                }}
+                onBlur={() => setPillHovered(false)}
+                className={cn(
+                  'group relative mb-3 inline-flex cursor-pointer items-center gap-1.5 overflow-visible rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] backdrop-blur-md transition-[colors,box-shadow] duration-300',
+                  apiStatus === 'error'
+                    ? 'border-rose-200/80 bg-stone-50/70 text-rose-700 hover:shadow-[0_0_0_3px_rgba(244,63,94,0.12)] dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300'
+                    : apiStatus === 'loading'
+                      ? 'border-amber-200/80 bg-stone-50/70 text-amber-700 hover:shadow-[0_0_0_3px_rgba(245,158,11,0.15)] dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300'
+                      : 'border-orange-200/80 bg-stone-50/70 text-orange-700 hover:shadow-[0_0_0_3px_rgba(249,115,22,0.15)] dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300',
+                )}
+                animate={apiStatus === 'error' ? { x: [0, -1.5, 1.5, -1.5, 1.5, 0] } : { x: 0 }}
+                transition={
+                  apiStatus === 'error'
+                    ? { duration: 0.45, repeat: Infinity, repeatDelay: 1.4, ease: 'easeInOut' }
+                    : { duration: 0.2 }
+                }
+                aria-live="polite"
+                aria-label={
+                  apiStatus === 'loading'
+                    ? 'Dashboard data is syncing'
+                    : apiStatus === 'error'
+                      ? 'Dashboard data feed is offline'
+                      : `Dashboard is live${apiLatencyMs != null ? `, API responding in ${apiLatencyMs} milliseconds` : ''}`
+                }
+              >
+                {/* Hover ping — single expanding ring that replays each time the user re-enters */}
+                <motion.span
+                  key={pingNonce}
+                  aria-hidden
+                  className={cn(
+                    'pointer-events-none absolute inset-0 rounded-full border-2 opacity-0',
+                    apiStatus === 'error'
+                      ? 'border-rose-400/70 dark:border-rose-400/60'
+                      : apiStatus === 'loading'
+                        ? 'border-amber-400/70 dark:border-amber-400/60'
+                        : 'border-orange-400/80 dark:border-orange-400/60',
+                  )}
+                  initial={{ opacity: 0, scale: 1 }}
+                  animate={pillHovered ? { opacity: [0.7, 0], scale: [1, 1.6] } : { opacity: 0, scale: 1 }}
+                  transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
+                />
+
+                <span className="relative inline-flex h-3 w-3 items-center justify-center">
+                  {/* Halo ring 1 — primary continuous ripple */}
+                  <motion.span
+                    aria-hidden
+                    className={cn(
+                      'absolute inset-[-4px] rounded-full',
+                      apiStatus === 'error'
+                        ? 'bg-rose-400/50 dark:bg-rose-500/45'
+                        : apiStatus === 'loading'
+                          ? 'bg-amber-400/55 dark:bg-amber-500/50'
+                          : 'bg-orange-400/55 dark:bg-orange-500/45',
+                    )}
+                    animate={
+                      apiStatus === 'loading'
+                        ? { opacity: [0, 0.75, 0], scale: [0.6, 1.7, 2.0] }
+                        : apiStatus === 'error'
+                          ? { opacity: [0, 0.4, 0], scale: [0.6, 1.4, 1.6] }
+                          : { opacity: [0, 0.65, 0], scale: [0.55, 1.7, 2.0] }
+                    }
+                    transition={{
+                      duration: apiStatus === 'loading' ? 1.1 : apiStatus === 'error' ? 1.6 : 2.2,
+                      repeat: Infinity,
+                      ease: 'easeOut',
+                    }}
+                  />
+                  {/* Halo ring 2 — offset second ripple for an ECG-radar feel (live + loading only) */}
+                  {apiStatus !== 'error' && (
+                    <motion.span
+                      aria-hidden
+                      className={cn(
+                        'absolute inset-[-4px] rounded-full',
+                        apiStatus === 'loading'
+                          ? 'bg-amber-300/40 dark:bg-amber-400/35'
+                          : 'bg-orange-300/40 dark:bg-orange-400/35',
+                      )}
+                      animate={{ opacity: [0, 0.45, 0], scale: [0.5, 1.9, 2.3] }}
+                      transition={{
+                        duration: apiStatus === 'loading' ? 1.1 : 2.2,
+                        repeat: Infinity,
+                        ease: 'easeOut',
+                        delay: apiStatus === 'loading' ? 0.55 : 1.1,
+                      }}
+                    />
+                  )}
+                  {/*
+                    ECG-style pulse trace — runs left → right along a reversed Activity path.
+                    A faint base trail shows the full waveform; a bright moving dash sweeps
+                    along it via animated strokeDashoffset, like a hospital heart monitor.
+                  */}
+                  <svg
+                    className="relative h-3 w-3"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden
+                  >
+                    <path
+                      d="M2 12h4l3 -9l6 18l3 -9h4"
+                      stroke="currentColor"
+                      strokeOpacity="0.32"
+                      strokeWidth={2.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <motion.path
+                      d="M2 12h4l3 -9l6 18l3 -9h4"
+                      stroke="currentColor"
+                      strokeWidth={2.85}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      pathLength={1}
+                      strokeDasharray="0.26 0.74"
+                      initial={{ strokeDashoffset: 0 }}
+                      animate={{ strokeDashoffset: [0, -1] }}
+                      transition={{
+                        duration: apiStatus === 'loading' ? 0.85 : apiStatus === 'error' ? 2.2 : 1.5,
+                        repeat: Infinity,
+                        ease: 'linear',
+                      }}
+                    />
+                  </svg>
+                </span>
+
+                <span>
+                  Dashboard ·{' '}
+                  {apiStatus === 'loading' ? 'syncing' : apiStatus === 'error' ? 'offline' : 'live'}
+                </span>
+
+                {/* MS readout — animates in when the pill is hovered/focused */}
+                <AnimatePresence initial={false}>
+                  {pillHovered && apiStatus !== 'error' && (
+                    <motion.span
+                      key="ms-readout"
+                      initial={{ width: 0, opacity: 0, marginLeft: 0 }}
+                      animate={{ width: 'auto', opacity: 1, marginLeft: 4 }}
+                      exit={{ width: 0, opacity: 0, marginLeft: 0 }}
+                      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                      className="overflow-hidden whitespace-nowrap"
+                    >
+                      <span
+                        className={cn(
+                          'ml-1 inline-flex items-center gap-1 rounded-full px-1.5 py-px font-mono text-[9.5px] font-bold tabular-nums tracking-normal',
+                          apiStatus === 'loading'
+                            ? 'bg-amber-100/80 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
+                            : 'bg-orange-100/80 text-orange-800 dark:bg-orange-900/40 dark:text-orange-200',
+                        )}
+                      >
+                        <span aria-hidden className="inline-block h-1 w-1 rounded-full bg-current" />
+                        {apiLatencyMs != null ? `${apiLatencyMs}ms` : '—'}
+                      </span>
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </motion.button>
               <p className="mb-2 text-[13px] text-zinc-600 [@media(max-height:900px)]:mb-1 lg:mb-3 dark:text-zinc-400">
                 {greeting}.{' '}
                 <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
@@ -417,7 +593,7 @@ function SimpleView({
               className="flex w-full flex-col gap-2.5 lg:w-auto lg:min-w-[280px]"
             >
               {activePeriod && (
-                <div className="inline-flex items-center gap-2 self-start rounded-xl border border-orange-200/80 bg-white/80 px-3 py-1.5 text-[11.5px] backdrop-blur-md lg:self-end dark:border-orange-900/40 dark:bg-zinc-900/70">
+                <div className="inline-flex items-center gap-2 self-start rounded-xl border border-orange-200/80 bg-stone-50/80 px-3 py-1.5 text-[11.5px] backdrop-blur-md lg:self-end dark:border-orange-900/40 dark:bg-zinc-900/70">
                   <CalendarDays className="h-3.5 w-3.5 text-orange-500 dark:text-orange-400" />
                   <span className="flex flex-col leading-tight">
                     <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
@@ -1178,11 +1354,11 @@ const ATTENTION_PALETTE: Record<AttentionTone, {
   warn: {
     ring: 'border-amber-200/70 hover:border-amber-300/90 dark:border-amber-900/40 dark:hover:border-amber-700/50',
     surface:
-      'bg-gradient-to-br from-amber-50/90 via-orange-50/40 to-white dark:from-amber-950/40 dark:via-orange-950/20 dark:to-zinc-950',
+      'bg-gradient-to-br from-amber-50/85 via-orange-50/35 to-stone-50 dark:from-amber-950/40 dark:via-orange-950/20 dark:to-zinc-950',
     iconTile: 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-md shadow-amber-500/40',
     label: 'text-amber-800/90 dark:text-amber-300',
     valueText: 'text-amber-900 dark:text-amber-100',
-    tag: 'bg-white/80 text-amber-800 ring-1 ring-amber-200/70 dark:bg-zinc-900/70 dark:text-amber-300 dark:ring-amber-900/40',
+    tag: 'bg-stone-50/80 text-amber-800 ring-1 ring-amber-200/70 dark:bg-zinc-900/70 dark:text-amber-300 dark:ring-amber-900/40',
     cta: 'text-amber-800 dark:text-amber-300',
     hoverShadow: 'group-hover:shadow-[0_12px_32px_-12px_rgba(245,158,11,0.35)]',
     blob: 'bg-amber-300/30 dark:bg-amber-500/15',
@@ -1190,11 +1366,11 @@ const ATTENTION_PALETTE: Record<AttentionTone, {
   info: {
     ring: 'border-sky-200/70 hover:border-sky-300/90 dark:border-sky-900/40 dark:hover:border-sky-700/50',
     surface:
-      'bg-gradient-to-br from-sky-50/90 via-blue-50/40 to-white dark:from-sky-950/40 dark:via-blue-950/20 dark:to-zinc-950',
+      'bg-gradient-to-br from-sky-50/85 via-blue-50/35 to-stone-50 dark:from-sky-950/40 dark:via-blue-950/20 dark:to-zinc-950',
     iconTile: 'bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-md shadow-blue-500/40',
     label: 'text-sky-800/90 dark:text-sky-300',
     valueText: 'text-sky-900 dark:text-sky-100',
-    tag: 'bg-white/80 text-sky-800 ring-1 ring-sky-200/70 dark:bg-zinc-900/70 dark:text-sky-300 dark:ring-sky-900/40',
+    tag: 'bg-stone-50/80 text-sky-800 ring-1 ring-sky-200/70 dark:bg-zinc-900/70 dark:text-sky-300 dark:ring-sky-900/40',
     cta: 'text-sky-800 dark:text-sky-300',
     hoverShadow: 'group-hover:shadow-[0_12px_32px_-12px_rgba(59,130,246,0.35)]',
     blob: 'bg-sky-300/30 dark:bg-sky-500/15',
@@ -1202,18 +1378,18 @@ const ATTENTION_PALETTE: Record<AttentionTone, {
   ok: {
     ring: 'border-emerald-200/70 hover:border-emerald-300/90 dark:border-emerald-900/40 dark:hover:border-emerald-700/50',
     surface:
-      'bg-gradient-to-br from-emerald-50/90 via-teal-50/40 to-white dark:from-emerald-950/40 dark:via-teal-950/20 dark:to-zinc-950',
+      'bg-gradient-to-br from-emerald-50/85 via-teal-50/35 to-stone-50 dark:from-emerald-950/40 dark:via-teal-950/20 dark:to-zinc-950',
     iconTile: 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md shadow-emerald-500/40',
     label: 'text-emerald-800/90 dark:text-emerald-300',
     valueText: 'text-emerald-900 dark:text-emerald-100',
-    tag: 'bg-white/80 text-emerald-800 ring-1 ring-emerald-200/70 dark:bg-zinc-900/70 dark:text-emerald-300 dark:ring-emerald-900/40',
+    tag: 'bg-stone-50/80 text-emerald-800 ring-1 ring-emerald-200/70 dark:bg-zinc-900/70 dark:text-emerald-300 dark:ring-emerald-900/40',
     cta: 'text-emerald-800 dark:text-emerald-300',
     hoverShadow: 'group-hover:shadow-[0_12px_32px_-12px_rgba(16,185,129,0.35)]',
     blob: 'bg-emerald-300/30 dark:bg-emerald-500/15',
   },
   neutral: {
     ring: 'border-zinc-200/80 hover:border-zinc-300 dark:border-zinc-800/80 dark:hover:border-zinc-700',
-    surface: 'bg-gradient-to-br from-white to-zinc-50/60 dark:from-zinc-900/60 dark:to-zinc-950',
+    surface: 'bg-gradient-to-br from-stone-50 to-stone-100/60 dark:from-zinc-900/60 dark:to-zinc-950',
     iconTile: 'bg-gradient-to-br from-zinc-700 to-zinc-900 text-white shadow-md shadow-zinc-900/30 dark:from-zinc-100 dark:to-zinc-300 dark:text-zinc-900',
     label: 'text-zinc-600 dark:text-zinc-400',
     valueText: 'text-zinc-900 dark:text-zinc-100',
@@ -1358,7 +1534,7 @@ function HeroStatRow({
   return (
     <div
       className={cn(
-        'flex items-center gap-2.5 rounded-xl border bg-white/70 px-3 py-2 backdrop-blur-md transition-colors',
+        'flex items-center gap-2.5 rounded-xl border bg-stone-50/70 px-3 py-2 backdrop-blur-md transition-colors',
         palette.ring,
         'dark:bg-zinc-900/60',
       )}
@@ -1535,6 +1711,8 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [employeesError, setEmployeesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  /** Round-trip time of the most recent /api/employees probe — drives the hero pill MS readout. */
+  const [apiLatencyMs, setApiLatencyMs] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState<string>('');
   /** Month filter (YYYY-MM). Empty string = All months / no override. */
@@ -1710,6 +1888,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       try {
         const res = await fetch('/api/employees', { cache: 'no-store' });
         if (!res.ok) {
@@ -1720,6 +1899,8 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
           error: string | null;
         };
         if (!cancelled) {
+          const t1 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+          setApiLatencyMs(Math.max(0, Math.round(t1 - t0)));
           setEmployees(json.employees ?? []);
           setEmployeesError(json.error ?? null);
         }
@@ -1735,6 +1916,24 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  /**
+   * Lightweight re-ping (re-issues GET /api/employees just to measure round-trip time).
+   * Wired to the hero pill so hovering / tapping refreshes the MS readout without
+   * re-loading any UI state. Discards the response payload — we only want timing.
+   */
+  const pingApiLatency = React.useCallback(async () => {
+    const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    try {
+      const res = await fetch('/api/employees', { cache: 'no-store' });
+      // Drain the body so the connection closes cleanly; we don't read it.
+      await res.text();
+      const t1 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      setApiLatencyMs(Math.max(0, Math.round(t1 - t0)));
+    } catch {
+      setApiLatencyMs(null);
+    }
   }, []);
 
   // Load source file list once on mount, default to latest
@@ -2416,6 +2615,15 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
               pabFilter={pabFilter}
               setPabFilter={setPabFilter}
               onExportCsv={exportToCsv}
+              apiStatus={
+                employeesError
+                  ? 'error'
+                  : loading || payoutLoading || pabMetrics.loading
+                    ? 'loading'
+                    : 'live'
+              }
+              apiLatencyMs={apiLatencyMs}
+              onPingApi={pingApiLatency}
             />
           </motion.div>
         ) : (

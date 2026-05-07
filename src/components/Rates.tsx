@@ -83,6 +83,9 @@ type EmployeeRateProfileSummary = {
   /** Google Workspace photo URL — populated by NextAuth jwt callback on sign-in. */
   googlePhotoUrl: string | null;
   hasRatesRow: boolean;
+  /** HSL role-within-HSL ("Department/Role" col) when this person is in the
+   *  synced HSL roster. Surfaces as a chip on the card. */
+  hslRole?: string | null;
 };
 
 const DEPARTMENT_OPTIONS = [
@@ -361,6 +364,7 @@ function tableRowFromSummary(p: EmployeeRateProfileSummary) {
     otRate: formatRateDisplay(p.otRate ?? "â€”"),
     suspended: p.suspended,
     hasRatesRow: p.hasRatesRow,
+    hslRole: (p.hslRole ?? "").trim() || null,
   };
 }
 
@@ -1380,13 +1384,23 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                   )}
                                 </td>
                                 <td className="px-3 py-2.5">
-                                  {row.department ? (
-                                    <span className="inline-flex items-center rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
-                                      {row.department}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[11px] text-zinc-400 dark:text-zinc-600">—</span>
-                                  )}
+                                  <div className="flex flex-col items-start gap-1">
+                                    {row.department ? (
+                                      <span className="inline-flex items-center rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
+                                        {row.department}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] text-zinc-400 dark:text-zinc-600">—</span>
+                                    )}
+                                    {row.hslRole && (
+                                      <span
+                                        title="Role within HSL — synced from the HOGAN SMITH AGENT PAY PLAN sheet"
+                                        className="inline-flex items-center rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10.5px] font-medium text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300"
+                                      >
+                                        {row.hslRole}
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="px-3 py-2.5">
                                   <span className="block max-w-[220px] truncate font-mono text-[11.5px] text-zinc-600 dark:text-zinc-400">
@@ -1543,7 +1557,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           )}
                         </div>
 
-                        {/* Chips: employee ID + department + org */}
+                        {/* Chips: employee ID + department + HSL role + org */}
                         <div className="flex flex-wrap gap-1.5">
                           {row.employeeId && (
                             <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 font-mono text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
@@ -1553,6 +1567,14 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           {row.department && (
                             <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
                               {row.department}
+                            </span>
+                          )}
+                          {row.hslRole && (
+                            <span
+                              title="Role within HSL — synced from the HOGAN SMITH AGENT PAY PLAN sheet"
+                              className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300"
+                            >
+                              {row.hslRole}
                             </span>
                           )}
                           {row.organization && row.organization !== "—" && (
