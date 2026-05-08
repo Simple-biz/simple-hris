@@ -23,6 +23,13 @@ import { cn } from '@/lib/utils';
  */
 type VisitType = 'monthly' | 'frequent' | 'special' | '';
 
+/** Parse a free-text input value into a number. Empty / unparseable → 0 so
+ *  partially-typed values don't break running totals while the user is mid-edit. */
+function toNumber(s: string): number {
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export default function OrphanageBudgetForm() {
   const [visitType, setVisitType] = useState<VisitType>('');
 
@@ -147,6 +154,71 @@ function PickTypeHint() {
 }
 
 function MonthlyVisitFields() {
+  // Per-category amounts. Held as strings (the raw <input> value) so an empty
+  // field stays empty and a half-typed `12.` doesn't get clobbered into `12`.
+  // The numeric sum re-parses through `toNumber` below, treating blank/garbage
+  // as 0 so the "Amount" total stays sensible while the user is mid-edit.
+  const [gift, setGift] = useState('');
+  const [lootbag, setLootbag] = useState('');
+  const [cake, setCake] = useState('');
+  const [grocery, setGrocery] = useState('');
+  const [food, setFood] = useState('');
+  const [travel, setTravel] = useState('');
+  const [misc, setMisc] = useState('');
+  const [leftover, setLeftover] = useState('');
+
+  // Snapshotted-on-click calculation rows. All three behave the same way:
+  //   - `null` until the user clicks Calculate the first time.
+  //   - After click → a stale snapshot of the value computed from current inputs.
+  //   - User must click Calculate again to refresh.
+  // Each Calculate handler reads the live input state (not previously
+  // snapshotted values) so the rows stay independent of each other's order.
+  const [gltcTotal, setGltcTotal] = useState<number | null>(null);
+  const [subtotal, setSubtotal] = useState<number | null>(null);
+  const [giftEfficiency, setGiftEfficiency] = useState<number | null>(null);
+
+  // Total for Gifts, Lootbags, and Cakes = gift + lootbag + cake.
+  const calculateGltcTotal = () => {
+    setGltcTotal(toNumber(gift) + toNumber(lootbag) + toNumber(cake));
+  };
+  // Subtotal = same as Amount (sum of all 7 budget items).
+  const calculateSubtotal = () => {
+    setSubtotal(totalAmount);
+  };
+  // Gift Efficiency = (Total for G/L/C ÷ Subtotal) × 100, expressed as a
+  // percentage. Subtotal is treated as the 100% baseline, GLC is the share
+  // of that budget that went to direct giving (gifts, lootbags, cakes). A
+  // higher value means more of the budget reached the kids directly.
+  // Guarded against divide-by-zero when nothing has been entered yet.
+  const calculateGiftEfficiency = () => {
+    const sub = totalAmount;
+    const glc = toNumber(gift) + toNumber(lootbag) + toNumber(cake);
+    setGiftEfficiency(sub > 0 ? (glc / sub) * 100 : 0);
+  };
+
+  // Live sum of the seven budget items. Displays as "" when nothing has been
+  // entered yet (so the placeholder "0.00" shows through), otherwise
+  // "1234.56" with two decimals.
+  const totalAmount =
+    toNumber(gift) +
+    toNumber(lootbag) +
+    toNumber(cake) +
+    toNumber(grocery) +
+    toNumber(food) +
+    toNumber(travel) +
+    toNumber(misc);
+  const anyAmountEntered = [gift, lootbag, cake, grocery, food, travel, misc].some(
+    (v) => v.trim() !== '',
+  );
+  const totalAmountStr = anyAmountEntered ? totalAmount.toFixed(2) : '';
+
+  // Final Amount = Amount − Leftover from prev month. Stays blank (so the
+  // placeholder shows) until the user has entered something into either field.
+  // (Internal variable still named `estimatedTotal*` since the math is identical.)
+  const estimatedTotal = totalAmount - toNumber(leftover);
+  const estimatedTotalStr =
+    anyAmountEntered || leftover.trim() !== '' ? estimatedTotal.toFixed(2) : '';
+
   return (
     <div className="flex flex-col gap-6 rounded-xl border border-pink-100/80 bg-white/60 px-4 py-5 dark:border-pink-950/45 dark:bg-zinc-950/40">
       <SectionHeader
@@ -172,25 +244,25 @@ function MonthlyVisitFields() {
       <FormSection title="Budget items">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FormField label="Gift Amount" required>
-            <CurrencyInput />
+            <CurrencyInput value={gift} onChange={(e) => setGift(e.target.value)} />
           </FormField>
           <FormField label="Lootbag Amount" required>
-            <CurrencyInput />
+            <CurrencyInput value={lootbag} onChange={(e) => setLootbag(e.target.value)} />
           </FormField>
           <FormField label="Cake Amount" required>
-            <CurrencyInput />
+            <CurrencyInput value={cake} onChange={(e) => setCake(e.target.value)} />
           </FormField>
           <FormField label="Grocery Amount" required>
-            <CurrencyInput />
+            <CurrencyInput value={grocery} onChange={(e) => setGrocery(e.target.value)} />
           </FormField>
           <FormField label="Prepared Food Amount" required>
-            <CurrencyInput />
+            <CurrencyInput value={food} onChange={(e) => setFood(e.target.value)} />
           </FormField>
           <FormField label="Travel Amount" required>
-            <CurrencyInput />
+            <CurrencyInput value={travel} onChange={(e) => setTravel(e.target.value)} />
           </FormField>
           <FormField label="Misc. Amount" required>
-            <CurrencyInput />
+            <CurrencyInput value={misc} onChange={(e) => setMisc(e.target.value)} />
           </FormField>
           <div className="lg:col-span-2">
             <FormField label="If misc, please explain">
@@ -206,27 +278,54 @@ function MonthlyVisitFields() {
 
       <FormSection>
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Amount" required>
-            <CurrencyInput />
+          <FormField
+            label="Amount"
+            hint="Auto-summed from Gift through Misc. above"
+            tooltip
+          >
+            <CurrencyInput
+              value={totalAmountStr}
+              readOnly
+              tabIndex={-1}
+              className="bg-zinc-50 dark:bg-zinc-900/50"
+            />
           </FormField>
           <FormField label="Leftover from prev month" required>
-            <CurrencyInput />
+            <CurrencyInput
+              value={leftover}
+              onChange={(e) => setLeftover(e.target.value)}
+            />
           </FormField>
         </div>
       </FormSection>
 
       <FormSection title="Calculations">
         <div className="flex flex-col gap-3 rounded-xl border border-pink-100/80 bg-pink-50/40 px-4 py-3 dark:border-pink-950/45 dark:bg-pink-950/20">
-          <CalculationRow label="Total for Gifts, Lootbags, and Cakes" locked />
-          <CalculationRow label="Subtotal" />
-          <CalculationRow label="Gift Efficiency" locked />
+          <CalculationRow
+            label="Total for Gifts, Lootbags, and Cakes"
+            locked
+            value={gltcTotal}
+            onCalculate={calculateGltcTotal}
+          />
+          <CalculationRow
+            label="Subtotal"
+            value={subtotal}
+            onCalculate={calculateSubtotal}
+          />
+          <CalculationRow
+            label="Gift Efficiency"
+            locked
+            value={giftEfficiency}
+            onCalculate={calculateGiftEfficiency}
+            unit="%"
+          />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Estimated Total">
-            <Input
-              type="text"
-              defaultValue="0.00"
+          <FormField label="Final Amount" hint="Amount − Leftover from prev month" tooltip>
+            <CurrencyInput
+              value={estimatedTotalStr}
               readOnly
+              tabIndex={-1}
               className="bg-zinc-50 dark:bg-zinc-900/50"
             />
           </FormField>
@@ -254,6 +353,15 @@ function MonthlyVisitFields() {
 }
 
 function FrequentTravelersFields() {
+  const [travelTotal, setTravelTotal] = useState('');
+  const [leftover, setLeftover] = useState('');
+
+  const estimatedTotal = toNumber(travelTotal) - toNumber(leftover);
+  const estimatedTotalStr =
+    travelTotal.trim() !== '' || leftover.trim() !== ''
+      ? estimatedTotal.toFixed(2)
+      : '';
+
   return (
     <div className="flex flex-col gap-6 rounded-xl border border-pink-100/80 bg-white/60 px-4 py-5 dark:border-pink-950/45 dark:bg-zinc-950/40">
       <SectionHeader
@@ -278,36 +386,46 @@ function FrequentTravelersFields() {
       <FormSection>
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField label="Total Travel Amount" required>
-            <CurrencyInput />
+            <CurrencyInput
+              value={travelTotal}
+              onChange={(e) => setTravelTotal(e.target.value)}
+            />
           </FormField>
           <FormField label="Leftover from prev month" required>
-            <CurrencyInput />
+            <CurrencyInput
+              value={leftover}
+              onChange={(e) => setLeftover(e.target.value)}
+            />
           </FormField>
         </div>
       </FormSection>
 
       <FormField
-        label="Estimated Total"
-        hint="Auto-calculated from rows above plus leftover"
+        label="Final Amount"
+        hint="Total Travel Amount − Leftover from prev month"
         tooltip
       >
-        <div className="flex items-center gap-2">
-          <Input
-            type="text"
-            defaultValue="0.00"
-            readOnly
-            className="bg-zinc-50 dark:bg-zinc-900/50"
-          />
-          <Button type="button" variant="outline" size="sm" className="shrink-0">
-            Calculate
-          </Button>
-        </div>
+        <CurrencyInput
+          value={estimatedTotalStr}
+          readOnly
+          tabIndex={-1}
+          className="bg-zinc-50 dark:bg-zinc-900/50"
+        />
       </FormField>
     </div>
   );
 }
 
 function SpecialProjectFields() {
+  const [amount, setAmount] = useState('');
+  const [leftover, setLeftover] = useState('');
+
+  const estimatedTotal = toNumber(amount) - toNumber(leftover);
+  const estimatedTotalStr =
+    amount.trim() !== '' || leftover.trim() !== ''
+      ? estimatedTotal.toFixed(2)
+      : '';
+
   return (
     <div className="flex flex-col gap-6 rounded-xl border border-pink-100/80 bg-white/60 px-4 py-5 dark:border-pink-950/45 dark:bg-zinc-950/40">
       <SectionHeader
@@ -326,30 +444,31 @@ function SpecialProjectFields() {
       <FormSection>
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField label="Amount" required>
-            <CurrencyInput />
+            <CurrencyInput
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
           </FormField>
           <FormField label="Leftover from prev month" required>
-            <CurrencyInput />
+            <CurrencyInput
+              value={leftover}
+              onChange={(e) => setLeftover(e.target.value)}
+            />
           </FormField>
         </div>
       </FormSection>
 
       <FormField
-        label="Estimated Total"
-        hint="Amount minus leftover applied as a credit"
+        label="Final Amount"
+        hint="Amount − Leftover from prev month"
         tooltip
       >
-        <div className="flex items-center gap-2">
-          <Input
-            type="text"
-            defaultValue="0.00"
-            readOnly
-            className="bg-zinc-50 dark:bg-zinc-900/50"
-          />
-          <Button type="button" variant="outline" size="sm" className="shrink-0">
-            Calculate
-          </Button>
-        </div>
+        <CurrencyInput
+          value={estimatedTotalStr}
+          readOnly
+          tabIndex={-1}
+          className="bg-zinc-50 dark:bg-zinc-900/50"
+        />
       </FormField>
     </div>
   );
@@ -498,7 +617,24 @@ function CurrencyInput({
   );
 }
 
-function CalculationRow({ label, locked }: { label: string; locked?: boolean }) {
+function CalculationRow({
+  label,
+  locked,
+  value,
+  onCalculate,
+  unit,
+}: {
+  label: string;
+  locked?: boolean;
+  /** Display value. `null` keeps the placeholder "0.00" until first calculation. */
+  value?: number | null;
+  /** Called when the Calculate button is clicked. When omitted the button is
+   *  rendered but inert — useful for rows we haven't wired up yet. */
+  onCalculate?: () => void;
+  /** Optional suffix appended to the display value (e.g. "%" for a ratio). */
+  unit?: string;
+}) {
+  const display = value != null ? `${value.toFixed(2)}${unit ?? ''}` : `0.00${unit ?? ''}`;
   return (
     <div className="flex flex-wrap items-center gap-3">
       {label && (
@@ -512,10 +648,24 @@ function CalculationRow({ label, locked }: { label: string; locked?: boolean }) 
           )}
         </Label>
       )}
-      <span className="font-mono text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
-        0.00
+      <span
+        className={cn(
+          'font-mono text-sm tabular-nums tabular-nums',
+          value != null
+            ? 'text-zinc-900 dark:text-zinc-100'
+            : 'text-zinc-400 dark:text-zinc-600',
+        )}
+      >
+        {display}
       </span>
-      <Button type="button" variant="outline" size="sm" className="h-7 px-3 text-[11px]">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={onCalculate}
+        disabled={!onCalculate}
+        className="h-7 px-3 text-[11px]"
+      >
         Calculate
       </Button>
     </div>

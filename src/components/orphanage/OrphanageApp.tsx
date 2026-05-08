@@ -6,8 +6,10 @@ import { signOut } from 'next-auth/react';
 import { useTheme } from 'next-themes';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  Building2,
   CheckCircle2,
   ClipboardList,
+  FileText,
   HeartHandshake,
   Loader2,
   LogOut,
@@ -43,6 +45,7 @@ import CreateOrphanageStyleDisputeDialog, {
   type EmployeeOption,
 } from '@/components/orphanage/CreateOrphanageStyleDisputeDialog';
 import OrphanageBudgetForm from '@/components/orphanage/OrphanageBudgetForm';
+import OrphanagesPanel from '@/components/orphanage/OrphanagesPanel';
 import {
   fetchHoursByEmployee,
   type HubstaffHoursByEmployee,
@@ -164,6 +167,8 @@ export default function OrphanageApp() {
   const welcomeMsg = WELCOME_MESSAGES[welcomeIdx]!;
 
   const [activeTab, setActiveTab] = useState<'queue' | 'budget' | 's-wall'>('queue');
+  // Sub-tab inside the Orphanage Budget tab — Budget Request form vs Orphanages list.
+  const [budgetSubTab, setBudgetSubTab] = useState<'request' | 'orphanages'>('request');
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   useEffect(() => {
@@ -881,36 +886,80 @@ export default function OrphanageApp() {
                       Orphanage budget
                     </div>
                     <h1 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
-                      Orphanage Budget Request
+                      {budgetSubTab === 'request'
+                        ? 'Orphanage Budget Request'
+                        : 'Orphanages directory'}
                     </h1>
                     <p className="max-w-2xl text-sm leading-relaxed text-pink-100/90">
-                      Submit a request for funds tied to a planned visit. Static form for now —
-                      submit isn&apos;t wired yet.
+                      {budgetSubTab === 'request'
+                        ? 'Submit a request for funds tied to a planned visit. Static form for now — submit isn’t wired yet.'
+                        : 'Track each partner orphanage’s contact info and the leftover budget rolling into the next request.'}
                     </p>
                   </div>
                 </header>
 
-                {/* The form lives in its own component for readability. Wrapped
-                    in a pink-tinged card to match the Dispute queue's surface. */}
-                <Card className="border-pink-100/80 bg-gradient-to-br from-white via-pink-50/30 to-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:from-zinc-950 dark:via-pink-950/12 dark:to-zinc-950 dark:ring-pink-400/10">
-                  <CardHeader className="border-b border-pink-100/60 dark:border-pink-900/40">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-600/25">
-                        <PiggyBank className="h-4 w-4" />
+                {/* Sub-tab nav — pill toggle. Matches the visual language of
+                    the rest of the dashboard's segmented controls. */}
+                <nav
+                  className="inline-flex w-full flex-wrap items-center gap-1 rounded-lg border border-pink-100/80 bg-white/80 p-1 sm:w-fit dark:border-pink-950/45 dark:bg-zinc-950/60"
+                  aria-label="Orphanage Budget sections"
+                >
+                  <BudgetSubTabButton
+                    active={budgetSubTab === 'request'}
+                    onClick={() => setBudgetSubTab('request')}
+                    Icon={FileText}
+                    label="Budget request"
+                  />
+                  <BudgetSubTabButton
+                    active={budgetSubTab === 'orphanages'}
+                    onClick={() => setBudgetSubTab('orphanages')}
+                    Icon={Building2}
+                    label="Orphanages"
+                  />
+                </nav>
+
+                {budgetSubTab === 'request' ? (
+                  <Card className="border-pink-100/80 bg-gradient-to-br from-white via-pink-50/30 to-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:from-zinc-950 dark:via-pink-950/12 dark:to-zinc-950 dark:ring-pink-400/10">
+                    <CardHeader className="border-b border-pink-100/60 dark:border-pink-900/40">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-600/25">
+                          <PiggyBank className="h-4 w-4" />
+                        </div>
+                        <CardTitle className="text-base font-semibold">
+                          Budget request form
+                        </CardTitle>
                       </div>
-                      <CardTitle className="text-base font-semibold">
-                        Budget request form
-                      </CardTitle>
-                    </div>
-                    <p className="mt-1.5 text-xs text-muted-foreground">
-                      Fields mirror the existing paper / external form. Required fields are marked
-                      with a <span className="font-semibold text-rose-500">*</span>.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="pt-5">
-                    <OrphanageBudgetForm />
-                  </CardContent>
-                </Card>
+                      <p className="mt-1.5 text-xs text-muted-foreground">
+                        Fields mirror the existing paper / external form. Required fields are marked
+                        with a <span className="font-semibold text-rose-500">*</span>.
+                      </p>
+                    </CardHeader>
+                    <CardContent className="pt-5">
+                      <OrphanageBudgetForm />
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <Card className="border-pink-100/80 bg-gradient-to-br from-white via-pink-50/30 to-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:from-zinc-950 dark:via-pink-950/12 dark:to-zinc-950 dark:ring-pink-400/10">
+                    <CardHeader className="border-b border-pink-100/60 dark:border-pink-900/40">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-600/25">
+                          <Building2 className="h-4 w-4" />
+                        </div>
+                        <CardTitle className="text-base font-semibold">
+                          Partner orphanages
+                        </CardTitle>
+                      </div>
+                      <p className="mt-1.5 text-xs text-muted-foreground">
+                        Static directory for now — edits to the Leftover Budget field stay in this
+                        tab and reset on reload. Wired storage will come once HR confirms where
+                        this list should live.
+                      </p>
+                    </CardHeader>
+                    <CardContent className="pt-5">
+                      <OrphanagesPanel />
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             </motion.div>
           )}
@@ -1000,6 +1049,35 @@ export default function OrphanageApp() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function BudgetSubTabButton({
+  active,
+  onClick,
+  Icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  Icon: ComponentType<{ className?: string }>;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors',
+        active
+          ? 'bg-gradient-to-r from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-600/25'
+          : 'text-zinc-600 hover:bg-pink-50 hover:text-pink-900 dark:text-zinc-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
   );
 }
 
