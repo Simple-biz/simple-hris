@@ -41,6 +41,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
+import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
+import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import CreateOrphanageStyleDisputeDialog, {
   type EmployeeOption,
 } from '@/components/orphanage/CreateOrphanageStyleDisputeDialog';
@@ -363,6 +365,15 @@ export default function OrphanageApp() {
     .split(' ')
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');
+  const sidebarInitials =
+    titleName
+      .split(' ')
+      .map((w) => w[0] ?? '')
+      .join('')
+      .toUpperCase()
+      .slice(0, 2) || (viewerEmail || '?').slice(0, 2).toUpperCase();
+  const { profilePhotoUrl: orphanagePhotoUrl, googlePhotoUrl: orphanageGooglePhotoUrl } =
+    useViewerProfilePhoto(viewerEmail);
 
   return (
     <div className="flex h-dvh max-h-dvh overflow-hidden bg-white text-zinc-900 dark:bg-[#0d1117] dark:text-zinc-100">
@@ -472,9 +483,14 @@ export default function OrphanageApp() {
         {/* User card + sign out */}
         <div className="border-t border-pink-100/60 p-4 dark:border-pink-950/40">
           <div className="flex items-center gap-2.5 rounded-md border border-pink-100/70 bg-gradient-to-br from-white to-pink-50/60 px-2.5 py-2 dark:border-pink-950/40 dark:from-zinc-950 dark:to-pink-950/20">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-pink-600 to-rose-900 text-[11px] font-semibold text-white shadow-sm shadow-pink-600/25">
-              {(viewerEmail ?? '?').slice(0, 2).toUpperCase()}
-            </div>
+            <EmployeeAvatar
+              photoUrl={orphanagePhotoUrl}
+              googlePhotoUrl={orphanageGooglePhotoUrl}
+              email={viewerEmail}
+              initials={sidebarInitials}
+              className="h-7 w-7 text-[11px]"
+              pixelSize={56}
+            />
             <div className="min-w-0 flex-1">
               <div className="truncate text-[13px] font-medium leading-tight text-zinc-900 dark:text-zinc-100">
                 {titleName}

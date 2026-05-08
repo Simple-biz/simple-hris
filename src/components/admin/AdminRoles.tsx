@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
+  AtSign,
   Briefcase,
   Building2,
   Check,
@@ -10,6 +11,7 @@ import {
   Crown,
   Eye,
   Loader2,
+  Mail,
   Plus,
   Search,
   ShieldCheck,
@@ -143,6 +145,12 @@ export default function AdminRoles() {
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptAssignments, setDeptAssignments] = useState<DepartmentManagerRow[]>([]);
   const [deptMutating, setDeptMutating] = useState<string | null>(null);
+  // Set of lowercased emails that aren't in master list / rates / Hubstaff —
+  // either added manually here or surfaced from existing role assignments
+  // pointing at off-roster addresses (founders, bots, contractors, etc.).
+  const [customEmails, setCustomEmails] = useState<Set<string>>(new Set());
+  const [customInputOpen, setCustomInputOpen] = useState(false);
+  const [customInput, setCustomInput] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -220,8 +228,28 @@ export default function AdminRoles() {
           } as EmployeeRow);
         }
 
+        // Surface every email that already has a role assignment but isn't in
+        // master / rates / Hubstaff. Lets admins keep managing permissions for
+        // off-roster addresses (service accounts, founders, contractors, etc.)
+        // without ghosting them from the UI on reload.
+        const customSet = new Set<string>();
+        for (const a of rolesJson.rows ?? []) {
+          const k = (a.work_email ?? '').toLowerCase();
+          if (!k || merged.has(k)) continue;
+          customSet.add(k);
+          merged.set(k, {
+            name: null,
+            work_email: a.work_email,
+            personal_email: null,
+            department: null,
+            start_date: null,
+            employee_id: null,
+          } as EmployeeRow);
+        }
+
         setEmployees(Array.from(merged.values()));
         setAllAssignments(rolesJson.rows ?? []);
+        setCustomEmails(customSet);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Failed to load');
       } finally {
@@ -386,6 +414,51 @@ export default function AdminRoles() {
     setAllAssignments(json.rows ?? []);
   }
 
+  /** Adds an off-roster email as a synthetic row + auto-selects it so the
+   *  admin can immediately grant roles. If the email already exists in the
+   *  directory we just select that real row instead. */
+  function handleAddCustomEmail() {
+    const raw = customInput.trim().toLowerCase();
+    if (!raw || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+      toast.error('Enter a valid email address.');
+      return;
+    }
+    const existing = employees.find(
+      (e) =>
+        (e.work_email ?? '').toLowerCase() === raw ||
+        (e.personal_email ?? '').toLowerCase() === raw,
+    );
+    if (existing) {
+      setSelected(existing);
+      setSearch('');
+      setPage(1);
+      setCustomInput('');
+      setCustomInputOpen(false);
+      toast.info(`${raw} is already in the directory — selected.`);
+      return;
+    }
+    const newRow: EmployeeRow = {
+      name: null,
+      work_email: raw,
+      personal_email: null,
+      department: null,
+      start_date: null,
+      employee_id: null,
+    };
+    setEmployees((prev) => [...prev, newRow]);
+    setCustomEmails((prev) => {
+      const next = new Set(prev);
+      next.add(raw);
+      return next;
+    });
+    setSelected(newRow);
+    setSearch('');
+    setPage(1);
+    setCustomInput('');
+    setCustomInputOpen(false);
+    toast.success(`Added ${raw}. Grant roles on the right.`);
+  }
+
   async function toggleRole(role: RoleKey) {
     const email = employeeIdentityEmail(selected);
     if (!email) {
@@ -482,12 +555,79 @@ export default function AdminRoles() {
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         <Card className="flex h-full min-h-0 flex-col overflow-hidden border-zinc-200/90 shadow-sm dark:border-zinc-800/80">
           <CardHeader className="shrink-0 space-y-3 border-b border-zinc-100 pb-4 dark:border-zinc-800/80">
-            <div className="flex items-center justify-between gap-2">
-              <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">People</CardTitle>
-              <Badge variant="outline" className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
-                {filtered.length} shown
-              </Badge>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-base font-semibold text-zinc-900 dark:text-white">People</CardTitle>
+                <Badge variant="outline" className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
+                  {filtered.length} shown
+                </Badge>
+                {customEmails.size > 0 && (
+                  <Badge
+                    variant="outline"
+                    className="gap-1 border-orange-300/80 bg-orange-50 font-mono text-[10px] text-orange-800 dark:border-orange-700/60 dark:bg-orange-950/40 dark:text-orange-200"
+                  >
+                    <AtSign className="h-2.5 w-2.5" aria-hidden />
+                    {customEmails.size} custom
+                  </Badge>
+                )}
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant={customInputOpen ? 'secondary' : 'outline'}
+                onClick={() => {
+                  setCustomInputOpen((v) => !v);
+                  setCustomInput('');
+                }}
+                className="h-8 gap-1.5"
+                title="Grant roles to an email that isn't in the master list (e.g. service accounts, contractors)"
+              >
+                {customInputOpen ? (
+                  <>
+                    <X className="h-3.5 w-3.5" aria-hidden />
+                    Cancel
+                  </>
+                ) : (
+                  <>
+                    <AtSign className="h-3.5 w-3.5" aria-hidden />
+                    Add by email
+                  </>
+                )}
+              </Button>
             </div>
+
+            {customInputOpen && (
+              <div className="flex flex-col gap-2 rounded-xl border border-orange-200/80 bg-orange-50/60 p-3 sm:flex-row sm:items-center dark:border-orange-700/40 dark:bg-orange-950/20">
+                <Mail
+                  className="hidden shrink-0 text-orange-500 dark:text-orange-400 sm:block"
+                  aria-hidden
+                />
+                <Input
+                  autoFocus
+                  type="email"
+                  value={customInput}
+                  onChange={(e) => setCustomInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddCustomEmail();
+                    }
+                  }}
+                  placeholder="bot@simple.biz, contractor@external.com"
+                  className="h-9 flex-1 rounded-lg border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950/50"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleAddCustomEmail}
+                  disabled={!customInput.trim()}
+                  className="h-9 gap-1 bg-orange-600 text-white hover:bg-orange-500 disabled:opacity-50 dark:bg-orange-600 dark:hover:bg-orange-500"
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden />
+                  Add to list
+                </Button>
+              </div>
+            )}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative min-w-0 flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -542,6 +682,9 @@ export default function AdminRoles() {
               {pageSlice.map((e, i) => {
                 const assignedRoles = assignmentsForEmployee(e, allAssignments);
                 const isSel = selected === e;
+                const isCustom = customEmails.has(
+                  (e.work_email ?? '').toLowerCase(),
+                );
                 return (
                   <li key={`${employeeIdentityEmail(e) || e.name}-${pageStart + i}`}>
                     <button
@@ -559,15 +702,31 @@ export default function AdminRoles() {
                           'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold',
                           isSel
                             ? 'bg-orange-500 text-white shadow-sm'
-                            : 'bg-gradient-to-br from-zinc-100 to-zinc-200/80 text-zinc-700 dark:from-zinc-800 dark:to-zinc-900 dark:text-zinc-200',
+                            : isCustom
+                              ? 'bg-orange-50/70 text-orange-700 ring-2 ring-orange-300/60 dark:bg-orange-950/30 dark:text-orange-300 dark:ring-orange-700/45'
+                              : 'bg-gradient-to-br from-zinc-100 to-zinc-200/80 text-zinc-700 dark:from-zinc-800 dark:to-zinc-900 dark:text-zinc-200',
                         )}
                       >
-                        {initialsFromEmployee(e)}
+                        {isCustom && !isSel ? (
+                          <AtSign className="h-4 w-4" aria-hidden />
+                        ) : (
+                          initialsFromEmployee(e)
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
-                          {e.name || employeeIdentityEmail(e) || '—'}
-                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
+                            {e.name || employeeIdentityEmail(e) || '—'}
+                          </p>
+                          {isCustom && (
+                            <span
+                              className="shrink-0 rounded-md border border-orange-300/80 bg-orange-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wider text-orange-800 dark:border-orange-700/60 dark:bg-orange-950/50 dark:text-orange-300"
+                              title="Off-roster — granted via Add by email"
+                            >
+                              Custom
+                            </span>
+                          )}
+                        </div>
                         <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
                           {e.work_email || e.personal_email || 'No email'}
                         </p>
@@ -627,9 +786,19 @@ export default function AdminRoles() {
                     {initialsFromEmployee(selected)}
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
-                      {selected.name || identity || '—'}
-                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
+                        {selected.name || identity || '—'}
+                      </p>
+                      {customEmails.has(identity.toLowerCase()) && (
+                        <span
+                          className="shrink-0 rounded-md border border-orange-300/80 bg-orange-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wider text-orange-800 dark:border-orange-700/60 dark:bg-orange-950/50 dark:text-orange-300"
+                          title="Off-roster — granted via Add by email. Not in master list."
+                        >
+                          Custom
+                        </span>
+                      )}
+                    </div>
                     <p className="truncate font-mono text-[11px] text-zinc-500">{identity || 'No email on file'}</p>
                   </div>
                 </div>
@@ -649,7 +818,9 @@ export default function AdminRoles() {
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Select a person</p>
                   <p className="max-w-xs text-xs text-zinc-500 dark:text-zinc-500">
-                    Pick someone from the list to grant or revoke roles. Use search to narrow the directory.
+                    Pick someone from the list to grant or revoke roles, or click{' '}
+                    <span className="font-semibold text-orange-600 dark:text-orange-400">Add by email</span>{' '}
+                    to grant access to a service account or off-roster address.
                   </p>
                 </div>
               </div>

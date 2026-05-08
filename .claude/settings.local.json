@@ -77,7 +77,9 @@
       "Bash(git reset *)",
       "Bash(git rm *)",
       "Bash(git commit *)",
-      "Bash(powershell *)"
+      "Bash(powershell *)",
+      "Bash(npx --no-install tsc --noEmit)",
+      "Bash(dir src\\\\\\\\components\\\\\\\\ui)"
     ]
   }
 }

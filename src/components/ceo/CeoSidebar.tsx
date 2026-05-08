@@ -11,6 +11,8 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
+import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 
 export type CeoTab = 'overview' | 'announcements' | 's-wall';
 
@@ -31,6 +33,7 @@ export default function CeoSidebar({
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => { setMounted(true); }, []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
+  const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(viewerEmail);
 
   const displayName = viewerEmail?.includes('@')
     ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ')
@@ -39,6 +42,12 @@ export default function CeoSidebar({
     .split(' ')
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');
+  const initials = titleName
+    .split(' ')
+    .map((w) => w[0] ?? '')
+    .join('')
+    .toUpperCase()
+    .slice(0, 2) || (viewerEmail || '?').slice(0, 2).toUpperCase();
 
   const navBtn = (
     id: CeoTab,
@@ -141,9 +150,14 @@ export default function CeoSidebar({
 
       <div className="mt-auto border-t border-yellow-100/60 p-5 dark:border-yellow-950/40">
         <div className="flex items-center gap-2.5 rounded-md border border-yellow-100/70 bg-gradient-to-br from-white to-yellow-50/60 px-2.5 py-2 dark:border-yellow-950/40 dark:from-zinc-950 dark:to-yellow-950/10">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-yellow-500 to-amber-600 text-[11px] font-semibold text-white shadow-sm shadow-yellow-600/25">
-            {(viewerEmail || '?').slice(0, 2).toUpperCase()}
-          </div>
+          <EmployeeAvatar
+            photoUrl={profilePhotoUrl}
+            googlePhotoUrl={googlePhotoUrl}
+            email={viewerEmail}
+            initials={initials}
+            className="h-7 w-7 text-[11px]"
+            pixelSize={56}
+          />
           <div className="min-w-0 flex-1">
             <div className="truncate text-[13px] font-medium leading-tight text-[#18181b] dark:text-zinc-100">
               {titleName}

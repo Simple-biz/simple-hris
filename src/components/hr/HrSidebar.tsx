@@ -5,16 +5,14 @@ import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
-  CalendarDays,
-  ClipboardCheck,
-  Calculator,
   LayoutDashboard,
+  LogIn,
   LogOut,
-  Megaphone,
   Moon,
   MoreHorizontal,
   Newspaper,
   Sun,
+  UserMinus,
   Users,
 } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
@@ -26,38 +24,30 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 
-export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'announcements' | 's-wall' | 'hsl-bonus';
+export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 's-wall';
 
-interface ManagerSidebarProps {
-  activeTab: ManagerTab;
-  setActiveTab: (tab: ManagerTab) => void;
+interface HrSidebarProps {
+  activeTab: HrTab;
+  setActiveTab: (tab: HrTab) => void;
   mobileOpen: boolean;
   viewerEmail: string | null;
-  pendingApprovals: number;
-  pendingLeaves?: number;
 }
 
-export default function ManagerSidebar({
+export default function HrSidebar({
   activeTab,
   setActiveTab,
   mobileOpen,
   viewerEmail,
-  pendingApprovals,
-  pendingLeaves = 0,
-}: ManagerSidebarProps) {
+}: HrSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
-
+  React.useEffect(() => { setMounted(true); }, []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(viewerEmail);
 
   const displayName = viewerEmail?.includes('@')
     ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ')
-    : viewerEmail || 'Manager';
+    : viewerEmail || 'HR';
   const titleName = displayName
     .split(' ')
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
@@ -70,10 +60,9 @@ export default function ManagerSidebar({
     .slice(0, 2) || (viewerEmail || '?').slice(0, 2).toUpperCase();
 
   const navBtn = (
-    id: ManagerTab,
+    id: HrTab,
     label: string,
     Icon: React.ComponentType<{ className?: string }>,
-    badge?: React.ReactNode,
   ) => (
     <button
       key={id}
@@ -82,61 +71,43 @@ export default function ManagerSidebar({
       className={cn(
         'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
         activeTab === id
-          ? 'bg-gradient-to-r from-blue-600 to-blue-800 font-medium text-white shadow-sm shadow-blue-600/25'
-          : 'text-[#3f3f46] hover:bg-blue-50 hover:text-blue-900 dark:text-zinc-300 dark:hover:bg-blue-950/40 dark:hover:text-blue-100',
+          ? 'bg-gradient-to-r from-emerald-500 to-teal-700 font-medium text-white shadow-sm shadow-emerald-600/25'
+          : 'text-[#3f3f46] hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
       )}
     >
       <Icon
         className={cn(
           'h-[15px] w-[15px] shrink-0',
-          activeTab === id
-            ? 'text-white/85'
-            : 'text-[#a1a1aa] dark:text-zinc-500',
+          activeTab === id ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500',
         )}
       />
       <span className="truncate text-left">{label}</span>
-      {badge}
     </button>
   );
-
-  const countBadge = (n: number, active: boolean) => {
-    if (n <= 0) return null;
-    return (
-      <span
-        className={cn(
-          'ml-auto rounded-full px-1.5 py-px text-[10.5px] font-semibold tabular-nums',
-          active
-            ? 'bg-white/20 text-white'
-            : 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
-        )}
-      >
-        {n}
-      </span>
-    );
-  };
 
   return (
     <aside
       className={cn(
-        'flex h-dvh w-[220px] max-w-[min(100vw,220px)] shrink-0 flex-col border-r border-blue-100/70 bg-gradient-to-b from-white via-blue-50/30 to-white shadow-xl dark:border-blue-950/40 dark:from-black dark:via-blue-950/20 dark:to-black md:max-w-none md:shadow-none',
+        'flex h-dvh w-[220px] max-w-[min(100vw,220px)] shrink-0 flex-col border-r border-emerald-100/70 bg-gradient-to-b from-white via-emerald-50/30 to-white shadow-xl dark:border-emerald-950/40 dark:from-black dark:via-emerald-950/15 dark:to-black md:max-w-none md:shadow-none',
         'fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-out md:static md:z-auto md:translate-x-0',
         mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
       )}
-      id="manager-sidebar-nav"
+      id="hr-sidebar-nav"
       role="navigation"
-      aria-label="Manager navigation"
+      aria-label="HR navigation"
     >
       <div className="flex flex-1 flex-col px-5 pb-4 pt-7">
+        {/* Brand */}
         <div className="mb-8 flex items-center gap-2.5 px-1">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-gradient-to-br from-blue-600 to-black text-sm font-bold tracking-[-0.02em] text-white shadow-sm shadow-blue-600/30">
-            s
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-gradient-to-br from-emerald-500 to-teal-700 text-sm font-bold tracking-[-0.02em] text-white shadow-sm shadow-emerald-600/30">
+            <Users className="h-4 w-4" />
           </div>
           <div className="flex min-w-0 flex-col leading-tight">
-            <span className="bg-gradient-to-r from-blue-700 to-zinc-900 bg-clip-text text-[13.5px] font-semibold tracking-[-0.01em] text-transparent dark:from-blue-300 dark:to-white">
+            <span className="bg-gradient-to-r from-emerald-700 to-zinc-900 bg-clip-text text-[13.5px] font-semibold tracking-[-0.01em] text-transparent dark:from-emerald-300 dark:to-white">
               simple·hris
             </span>
-            <span className="mt-0.5 text-[10.5px] tracking-[0.02em] text-blue-700/70 dark:text-blue-400/70">
-              Manager
+            <span className="mt-0.5 text-[10.5px] tracking-[0.02em] text-emerald-700/70 dark:text-emerald-400/70">
+              HR
             </span>
           </div>
         </div>
@@ -147,20 +118,8 @@ export default function ManagerSidebar({
           </p>
           <nav className="flex flex-col gap-px">
             {navBtn('overview', 'Overview', LayoutDashboard)}
-            {navBtn(
-              'time-adjustments',
-              'Time adjustments',
-              ClipboardCheck,
-              countBadge(pendingApprovals, activeTab === 'time-adjustments'),
-            )}
-            {navBtn(
-              'leaves',
-              'Leaves',
-              CalendarDays,
-              countBadge(pendingLeaves, activeTab === 'leaves'),
-            )}
-            {navBtn('team', 'My team', Users)}
-            {navBtn('announcements', 'Announcements', Megaphone)}
+            {navBtn('onboarding', 'Onboarding', LogIn)}
+            {navBtn('offboarding', 'Offboarding', UserMinus)}
             <button
               key="s-wall"
               type="button"
@@ -182,21 +141,12 @@ export default function ManagerSidebar({
             </button>
           </nav>
 
-          <div className="my-5 mx-2.5 h-px bg-gradient-to-r from-transparent via-blue-200/60 to-transparent dark:via-blue-900/40" />
-
-          <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
-            Bonuses
-          </p>
-          <nav className="flex flex-col gap-px">
-            {navBtn('hsl-bonus', 'KPI Calculator', Calculator)}
-          </nav>
-
-          <div className="mt-6 border-t border-blue-100/60 pt-4 dark:border-blue-950/40">
-            <ViewSwitcher email={viewerEmail} currentView="manager" />
+          <div className="mt-6 border-t border-emerald-100/60 pt-4 dark:border-emerald-950/40">
+            <ViewSwitcher email={viewerEmail} currentView="hr" />
             <button
               type="button"
               onClick={() => withViewTransition(() => setTheme(isDark ? 'light' : 'dark'))}
-              className="mb-2 mt-3 flex w-full items-center justify-between rounded-md border border-blue-100/70 bg-gradient-to-br from-white to-blue-50/60 px-3 py-2 text-left transition-colors hover:from-blue-50 hover:to-blue-100/60 dark:border-blue-950/40 dark:from-zinc-950 dark:to-blue-950/20 dark:hover:from-blue-950/30 dark:hover:to-blue-950/40"
+              className="mb-2 mt-3 flex w-full items-center justify-between rounded-md border border-emerald-100/70 bg-gradient-to-br from-white to-emerald-50/60 px-3 py-2 text-left transition-colors hover:from-emerald-50 hover:to-emerald-100/60 dark:border-emerald-950/40 dark:from-zinc-950 dark:to-emerald-950/15 dark:hover:from-emerald-950/25 dark:hover:to-emerald-950/35"
               aria-label="Toggle dark mode"
             >
               <div className="flex items-center gap-2 text-xs font-medium text-[#3f3f46] dark:text-zinc-300">
@@ -209,8 +159,8 @@ export default function ManagerSidebar({
         </ScrollArea>
       </div>
 
-      <div className="mt-auto border-t border-blue-100/60 p-5 dark:border-blue-950/40">
-        <div className="flex items-center gap-2.5 rounded-md border border-blue-100/70 bg-gradient-to-br from-white to-blue-50/60 px-2.5 py-2 dark:border-blue-950/40 dark:from-zinc-950 dark:to-blue-950/20">
+      <div className="mt-auto border-t border-emerald-100/60 p-5 dark:border-emerald-950/40">
+        <div className="flex items-center gap-2.5 rounded-md border border-emerald-100/70 bg-gradient-to-br from-white to-emerald-50/60 px-2.5 py-2 dark:border-emerald-950/40 dark:from-zinc-950 dark:to-emerald-950/15">
           <EmployeeAvatar
             photoUrl={profilePhotoUrl}
             googlePhotoUrl={googlePhotoUrl}
@@ -223,21 +173,17 @@ export default function ManagerSidebar({
             <div className="truncate text-[13px] font-medium leading-tight text-[#18181b] dark:text-zinc-100">
               {titleName}
             </div>
-            <div className="mt-px truncate text-[11px] leading-tight text-blue-700/70 dark:text-blue-400/70">
-              Manager
+            <div className="mt-px truncate text-[11px] leading-tight text-emerald-700/70 dark:text-emerald-400/70">
+              HR
             </div>
           </div>
-          <MoreHorizontal className="h-4 w-4 shrink-0 cursor-pointer text-blue-400/70 dark:text-blue-500/70" aria-hidden />
+          <MoreHorizontal className="h-4 w-4 shrink-0 cursor-pointer text-emerald-400/70" aria-hidden />
         </div>
         <Button
           variant="ghost"
           className="mt-3 w-full justify-start gap-3 text-[#71717a] hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-500 dark:hover:text-red-400"
           onClick={() => {
-            try {
-              sessionStorage.removeItem(SESSION_EMAIL_KEY);
-            } catch {
-              /* ignore */
-            }
+            try { sessionStorage.removeItem(SESSION_EMAIL_KEY); } catch { /* ignore */ }
             void signOut({ callbackUrl: '/login' });
           }}
         >

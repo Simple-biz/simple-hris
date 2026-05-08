@@ -24,6 +24,8 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
+import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { PROCESSORS, type ProcessorId } from './mock-queue';
 
 const PROCESSOR_ICONS: Record<ProcessorId, React.ComponentType<{ className?: string }>> = {
@@ -61,6 +63,7 @@ export default function PayrollClerkSidebar({
   }, []);
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
+  const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(viewerEmail);
 
   const displayName = viewerEmail?.includes('@')
     ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ')
@@ -69,6 +72,12 @@ export default function PayrollClerkSidebar({
     .split(' ')
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');
+  const initials = titleName
+    .split(' ')
+    .map((w) => w[0] ?? '')
+    .join('')
+    .toUpperCase()
+    .slice(0, 2) || (viewerEmail || '?').slice(0, 2).toUpperCase();
 
   const navBtn = (
     id: string,
@@ -206,9 +215,14 @@ export default function PayrollClerkSidebar({
 
       <div className="mt-auto border-t border-[#ececec] p-5 dark:border-zinc-800">
         <div className="flex items-center gap-2.5 rounded-md border border-[#ececec] bg-[#fafaf8] px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#18181b] text-[11px] font-semibold text-white dark:bg-zinc-200 dark:text-zinc-900">
-            {(viewerEmail || '?').slice(0, 2).toUpperCase()}
-          </div>
+          <EmployeeAvatar
+            photoUrl={profilePhotoUrl}
+            googlePhotoUrl={googlePhotoUrl}
+            email={viewerEmail}
+            initials={initials}
+            className="h-7 w-7 text-[11px]"
+            pixelSize={56}
+          />
           <div className="min-w-0 flex-1">
             <div className="truncate text-[13px] font-medium leading-tight text-[#18181b] dark:text-zinc-100">
               {titleName}
