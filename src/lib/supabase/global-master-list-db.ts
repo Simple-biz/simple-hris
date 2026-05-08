@@ -294,6 +294,7 @@ async function promoteMasterListUploadToCurrent(
 export async function replaceGlobalMasterListFromCsvText(
   csvText: string,
   sourceFile: string,
+  options: { clearOffboarded?: boolean } = {},
 ): Promise<{
   rowCount: number;
   uploadId: string;
@@ -303,7 +304,10 @@ export async function replaceGlobalMasterListFromCsvText(
   /** Count of rows that shared a `(personal_email, department)` key with another row in the same CSV.
    *  Last occurrence wins; earlier ones are dropped silently to avoid violating the partial unique index. */
   duplicatesInCsv: number;
+  /** How many previously off-boarded rows were re-activated because clearOffboarded=true. */
+  reonboarded: number;
 }> {
+  const { clearOffboarded = false } = options;
   const supabase = requireServiceRole();
   const table = getMasterTableName();
 
@@ -400,12 +404,12 @@ export async function replaceGlobalMasterListFromCsvText(
   // ceiling used by `fetchActiveEmployees`.
   const existingByKey = new Map<
     string,
-    { id: unknown; first_seen_upload_id: string | null }
+    { id: unknown; first_seen_upload_id: string | null; off_boarded_at: string | null }
   >();
   {
     const { data, error } = await supabase
       .from(table)
-      .select('id, "Personal Email", "Department", first_seen_upload_id')
+      .select('id, "Personal Email", "Department", first_seen_upload_id, off_boarded_at')
       .not('"Personal Email"', "is", null)
       .not('"Department"', "is", null)
       .range(0, 9999);
@@ -415,6 +419,7 @@ export async function replaceGlobalMasterListFromCsvText(
       "Personal Email": string | null;
       "Department": string | null;
       first_seen_upload_id: string | null;
+      off_boarded_at: string | null;
     }[]) {
       const pe = normalizeEmail(r["Personal Email"]);
       const dep = normalizeDepartment(r["Department"]);
@@ -422,6 +427,7 @@ export async function replaceGlobalMasterListFromCsvText(
         existingByKey.set(composeIdentityKey(pe, dep), {
           id: r.id,
           first_seen_upload_id: r.first_seen_upload_id,
+          off_boarded_at: r.off_boarded_at ?? null,
         });
       }
     }
@@ -429,6 +435,7 @@ export async function replaceGlobalMasterListFromCsvText(
 
   let inserted = 0;
   let updated = 0;
+  let reonboarded = 0;
   const rowsToInsert: Record<string, string | null>[] = [];
 
   // ── Dedupe within the CSV itself ──
@@ -457,9 +464,21 @@ export async function replaceGlobalMasterListFromCsvText(
 
     const existing = existingByKey.get(composeIdentityKey(personalEmail, department));
     if (existing) {
+      const isOffboarded = !!existing.off_boarded_at;
+      if (clearOffboarded && isOffboarded) reonboarded += 1;
+      const updatePayload: Record<string, string | null> = {
+        ...payload,
+        last_seen_upload_id: uploadId,
+      };
+      if (clearOffboarded && isOffboarded) {
+        updatePayload["off_boarded_at"] = null;
+        updatePayload["off_boarded_reason"] = null;
+        updatePayload["off_boarded_by"] = null;
+        updatePayload["off_boarded_note"] = null;
+      }
       updateOps.push({
         id: existing.id as string | number,
-        payload: { ...payload, last_seen_upload_id: uploadId },
+        payload: updatePayload,
       });
     } else {
       rowsToInsert.push({
@@ -528,6 +547,7 @@ export async function replaceGlobalMasterListFromCsvText(
     updated,
     rowsMissingPersonalEmail,
     duplicatesInCsv,
+    reonboarded,
   };
 }
 

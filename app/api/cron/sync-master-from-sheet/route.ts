@@ -41,6 +41,19 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
     );
   }
 
+  // clearOffboarded=true re-activates anyone in the sheet who was previously offboarded.
+  // Passed as a query param (?clearOffboarded=true) or in the JSON body.
+  let clearOffboarded = false;
+  const url = new URL(req.url);
+  if (url.searchParams.get('clearOffboarded') === 'true') {
+    clearOffboarded = true;
+  } else if (req.method === 'POST') {
+    try {
+      const body = (await req.clone().json()) as { clearOffboarded?: boolean };
+      if (body?.clearOffboarded === true) clearOffboarded = true;
+    } catch { /* no body or non-JSON — ignore */ }
+  }
+
   const startedAt = new Date();
   try {
     const fetched = await fetchMasterSheetAsCsv();
@@ -50,7 +63,7 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
     const stamp = startedAt.toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
     const sourceLabel = `google-sheet:${sheetId.slice(0, 12)}…@${stamp}`;
 
-    const result = await replaceGlobalMasterListFromCsvText(csvText, sourceLabel);
+    const result = await replaceGlobalMasterListFromCsvText(csvText, sourceLabel, { clearOffboarded });
 
     // Diagnostic — let the dev terminal show the full picture of where rows went.
     const orphanInserts = Math.max(0, result.inserted - 0); // not isolatable from result alone
@@ -92,9 +105,11 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
         rows: result.rowCount,
         inserted: result.inserted,
         updated: result.updated,
+        reonboarded: result.reonboarded,
         rows_missing_personal_email: result.rowsMissingPersonalEmail,
         duplicates_in_csv: result.duplicatesInCsv,
         upload_id: result.uploadId,
+        clear_offboarded: clearOffboarded,
       },
       ip_address: clientIp(req),
     });

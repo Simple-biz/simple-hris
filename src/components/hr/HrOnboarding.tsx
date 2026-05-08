@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import React from 'react';
 import AddPersonDialog from './AddPersonDialog';
 import {
   Dialog,
@@ -36,7 +37,6 @@ import type {
   HrPendingEmployeeRow,
   HrPendingStatus,
 } from '@/lib/supabase/hr-pending-employees';
-import type { EmployeeRow } from '@/lib/supabase/employees';
 
 type TabFilter = 'pending' | 'ready' | 'promoted' | 'cancelled' | 'all';
 
@@ -72,8 +72,6 @@ function formatDate(iso: string | null): string {
 export default function HrOnboarding() {
   const [pending, setPending] = useState<HrPendingEmployeeRow[]>([]);
   const [pendingLoading, setPendingLoading] = useState(true);
-  const [roster, setRoster] = useState<EmployeeRow[]>([]);
-  const [rosterLoading, setRosterLoading] = useState(true);
 
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<TabFilter>('pending');
@@ -100,28 +98,9 @@ export default function HrOnboarding() {
     }
   }, []);
 
-  const fetchRoster = useCallback(async () => {
-    setRosterLoading(true);
-    try {
-      const res = await fetch('/api/employees', { cache: 'no-store' });
-      const json = (await res.json()) as {
-        employees?: EmployeeRow[];
-        error?: string;
-      };
-      if (json.error) throw new Error(json.error);
-      setRoster(json.employees ?? []);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load roster');
-      setRoster([]);
-    } finally {
-      setRosterLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void fetchPending();
-    void fetchRoster();
-  }, [fetchPending, fetchRoster]);
+  }, [fetchPending]);
 
   const filteredPending = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -138,16 +117,6 @@ export default function HrOnboarding() {
         .some((s) => s!.toLowerCase().includes(q));
     });
   }, [pending, search, tab]);
-
-  const filteredRoster = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return roster;
-    return roster.filter((r) =>
-      [r.name, r.work_email, r.personal_email, r.department, r.employee_id]
-        .filter(Boolean)
-        .some((s) => s!.toLowerCase().includes(q)),
-    );
-  }, [roster, search]);
 
   const counts = useMemo(() => {
     const c = {
@@ -176,7 +145,7 @@ export default function HrOnboarding() {
       toast.success(`${row.name} added to the master list`, {
         description: 'Now visible across Payroll, Manager, and Orphanage views.',
       });
-      await Promise.all([fetchPending(), fetchRoster()]);
+      await fetchPending();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to promote');
     } finally {
@@ -256,16 +225,13 @@ export default function HrOnboarding() {
               variant="outline"
               size="sm"
               className="border-white/35 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 hover:text-white"
-              onClick={() => {
-                void fetchPending();
-                void fetchRoster();
-              }}
-              disabled={pendingLoading || rosterLoading}
+              onClick={() => void fetchPending()}
+              disabled={pendingLoading}
             >
               <RefreshCw
                 className={cn(
                   'mr-1.5 h-3.5 w-3.5',
-                  (pendingLoading || rosterLoading) && 'animate-spin',
+                  pendingLoading && 'animate-spin',
                 )}
               />
               Refresh
@@ -275,7 +241,7 @@ export default function HrOnboarding() {
       </header>
 
       {/* Stat tiles */}
-      <section className="grid gap-3 sm:grid-cols-4" aria-label="Pending hire counts">
+      <section className="grid gap-3 sm:grid-cols-3" aria-label="Pending hire counts">
         <StatTile
           label="Awaiting work email"
           value={counts.pending}
@@ -299,14 +265,6 @@ export default function HrOnboarding() {
           accent="sky"
           onClick={() => setTab('promoted')}
           active={tab === 'promoted'}
-        />
-        <StatTile
-          label="Active roster"
-          value={roster.length}
-          icon={Users}
-          accent="teal"
-          onClick={() => setTab('all')}
-          active={tab === 'all'}
         />
       </section>
 
@@ -500,82 +458,6 @@ export default function HrOnboarding() {
         </CardContent>
       </Card>
 
-      {/* Active roster card */}
-      <Card className="border-emerald-100/80 bg-gradient-to-br from-white via-emerald-50/20 to-white shadow-sm dark:border-emerald-950/55 dark:from-zinc-950 dark:via-emerald-950/8 dark:to-zinc-950">
-        <CardHeader className="flex flex-col gap-1 border-b border-emerald-100/60 pb-4 dark:border-emerald-900/40">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-teal-500 to-emerald-700 text-white shadow-sm shadow-emerald-600/25">
-              <Users className="h-4 w-4" />
-            </div>
-            <CardTitle className="text-base font-semibold">
-              Active roster
-            </CardTitle>
-            <Badge variant="outline" className="ml-auto text-[10px]">
-              {filteredRoster.length} of {roster.length}
-            </Badge>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Live view of <code className="rounded bg-zinc-100 px-1 py-px text-[10.5px] dark:bg-zinc-800">active_employees</code> — same data Payroll, Manager, and Orphanage read.
-          </p>
-        </CardHeader>
-        <CardContent className="pt-4">
-          {rosterLoading ? (
-            <div className="flex items-center justify-center py-10 text-zinc-500">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading roster…
-            </div>
-          ) : filteredRoster.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-emerald-200/80 bg-white/70 py-8 text-center text-sm text-zinc-500 dark:border-emerald-900/50 dark:bg-zinc-950/40">
-              {roster.length === 0
-                ? 'No active employees on file. Run a master list import or promote pending hires above.'
-                : 'No roster rows match your search.'}
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
-              <table className="w-full min-w-[680px] text-left text-sm">
-                <thead className="sticky top-0 z-[1] bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Employee ID</th>
-                    <th className="px-4 py-3 font-semibold">Name</th>
-                    <th className="px-4 py-3 font-semibold">Department</th>
-                    <th className="px-4 py-3 font-semibold">Work email</th>
-                    <th className="px-4 py-3 font-semibold">Start</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-emerald-100/70 bg-white/85 dark:divide-emerald-900/35 dark:bg-zinc-950/40">
-                  {filteredRoster.slice(0, 200).map((r, i) => (
-                    <tr
-                      key={`${r.work_email ?? r.personal_email ?? 'row'}-${i}`}
-                      className="align-top hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20"
-                    >
-                      <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">
-                        {r.employee_id ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-zinc-900 dark:text-zinc-100">
-                        {r.name ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">
-                        {r.department ?? '—'}
-                      </td>
-                      <td className="break-all px-4 py-2.5 font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                        {r.work_email ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
-                        {r.start_date ?? '—'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {filteredRoster.length > 200 && (
-                <div className="border-t border-emerald-100/60 px-4 py-2 text-center text-[11px] text-zinc-500 dark:border-emerald-900/40 dark:text-zinc-500">
-                  Showing first 200 of {filteredRoster.length} — refine the search to narrow.
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Add Person dialog */}
       <AddPersonDialog
         open={addOpen}
@@ -627,6 +509,209 @@ export default function HrOnboarding() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+const DEPT_COLORS = [
+  '#10b981','#0d9488','#0891b2','#7c3aed','#db2777',
+  '#ea580c','#ca8a04','#4f46e5','#16a34a','#be185d',
+  '#0369a1','#6d28d9','#b45309','#047857','#9d174d',
+];
+
+function PendingDeptDonut({ data }: { data: HrPendingEmployeeRow[] }) {
+  const [hovered, setHovered] = useState<string | null>(null);
+
+  const sliceData = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of data) {
+      const d = (r.department ?? '—').trim() || '—';
+      map.set(d, (map.get(d) ?? 0) + 1);
+    }
+    return [...map.entries()]
+      .map(([dept, count]) => ({ dept, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [data]);
+
+  const total = sliceData.reduce((s, d) => s + d.count, 0);
+  const SIZE = 130; const cx = SIZE / 2; const cy = SIZE / 2;
+  const outerR = 56; const innerR = 33;
+
+  function polar(deg: number, r: number) {
+    const rad = ((deg - 90) * Math.PI) / 180;
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  }
+
+  function slicePath(s: number, e: number) {
+    if (e - s >= 359.99) {
+      const t = polar(0, outerR); const b = polar(180, outerR);
+      const it = polar(0, innerR); const ib = polar(180, innerR);
+      return `M ${t.x} ${t.y} A ${outerR} ${outerR} 0 1 1 ${b.x} ${b.y} A ${outerR} ${outerR} 0 1 1 ${t.x} ${t.y} M ${it.x} ${it.y} A ${innerR} ${innerR} 0 1 0 ${ib.x} ${ib.y} A ${innerR} ${innerR} 0 1 0 ${it.x} ${it.y} Z`;
+    }
+    const large = e - s > 180 ? 1 : 0;
+    const s1 = polar(s, outerR); const e1 = polar(e, outerR);
+    const s2 = polar(e, innerR); const e2 = polar(s, innerR);
+    return `M ${s1.x} ${s1.y} A ${outerR} ${outerR} 0 ${large} 1 ${e1.x} ${e1.y} L ${s2.x} ${s2.y} A ${innerR} ${innerR} 0 ${large} 0 ${e2.x} ${e2.y} Z`;
+  }
+
+  let cum = 0;
+  const slices = sliceData.map((d, i) => {
+    const start = cum;
+    cum += total > 0 ? (d.count / total) * 360 : 0;
+    return { ...d, start, end: cum, color: DEPT_COLORS[i % DEPT_COLORS.length]! };
+  });
+
+  const hovSlice = slices.find((s) => s.dept === hovered);
+
+  if (total === 0) return (
+    <div className="flex h-[130px] w-[130px] items-center justify-center rounded-full border-2 border-dashed border-zinc-200 dark:border-zinc-700">
+      <span className="text-[10px] text-zinc-400">No data</span>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ overflow: 'visible' }}>
+        {slices.map((s, i) => (
+          <motion.path
+            key={s.dept}
+            d={slicePath(s.start, s.end)}
+            fill={s.color}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: hovered && hovered !== s.dept ? 0.28 : 1 }}
+            transition={{ duration: 0.2, delay: hovered ? 0 : i * 0.04 }}
+            onMouseEnter={() => setHovered(s.dept)}
+            onMouseLeave={() => setHovered(null)}
+            style={{ cursor: 'default' }}
+          />
+        ))}
+        <text x={cx} y={cy - 4} textAnchor="middle" fontSize="15" fontWeight="700" fill="#18181b">{hovSlice ? hovSlice.count : total}</text>
+        <text x={cx} y={cy + 9} textAnchor="middle" fontSize="7.5" fill="#a1a1aa">{hovSlice ? hovSlice.dept.slice(0, 11) : 'pending'}</text>
+      </svg>
+      <div className="w-[160px] space-y-0.5">
+        {slices.map((s) => (
+          <div
+            key={s.dept}
+            className={cn('flex items-center gap-1.5 rounded px-1 py-0.5 text-[10px] transition-colors', hovered === s.dept ? 'bg-zinc-100 dark:bg-zinc-800' : '')}
+            onMouseEnter={() => setHovered(s.dept)}
+            onMouseLeave={() => setHovered(null)}
+          >
+            <span className="h-1.5 w-1.5 shrink-0 rounded-sm" style={{ background: s.color }} />
+            <span className="min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400">{s.dept}</span>
+            <span className="shrink-0 tabular-nums font-medium text-zinc-700 dark:text-zinc-300">{s.count}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const PIPELINE_SLICES = [
+  { key: 'pending'   as TabFilter, label: 'Awaiting email', color: '#f59e0b' },
+  { key: 'ready'     as TabFilter, label: 'Ready',          color: '#10b981' },
+  { key: 'promoted'  as TabFilter, label: 'Promoted',       color: '#0ea5e9' },
+  { key: 'cancelled' as TabFilter, label: 'Cancelled',      color: '#a1a1aa' },
+];
+
+function PipelinePieChart({
+  counts,
+  onSliceClick,
+  activeTab,
+}: {
+  counts: { pending: number; ready: number; promoted: number; cancelled: number };
+  onSliceClick: (tab: TabFilter) => void;
+  activeTab: TabFilter;
+}) {
+  const [hovered, setHovered] = useState<TabFilter | null>(null);
+  const SIZE = 150; const cx = SIZE / 2; const cy = SIZE / 2;
+  const outerR = 64; const innerR = 38;
+
+  const total = counts.pending + counts.ready + counts.promoted + counts.cancelled;
+
+  function polar(deg: number, r: number) {
+    const rad = ((deg - 90) * Math.PI) / 180;
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  }
+
+  function slicePath(s: number, e: number) {
+    if (e - s >= 359.99) {
+      const t = polar(0, outerR); const b = polar(180, outerR);
+      const it = polar(0, innerR); const ib = polar(180, innerR);
+      return `M ${t.x} ${t.y} A ${outerR} ${outerR} 0 1 1 ${b.x} ${b.y} A ${outerR} ${outerR} 0 1 1 ${t.x} ${t.y} M ${it.x} ${it.y} A ${innerR} ${innerR} 0 1 0 ${ib.x} ${ib.y} A ${innerR} ${innerR} 0 1 0 ${it.x} ${it.y} Z`;
+    }
+    const large = e - s > 180 ? 1 : 0;
+    const s1 = polar(s, outerR); const e1 = polar(e, outerR);
+    const s2 = polar(e, innerR); const e2 = polar(s, innerR);
+    return `M ${s1.x} ${s1.y} A ${outerR} ${outerR} 0 ${large} 1 ${e1.x} ${e1.y} L ${s2.x} ${s2.y} A ${innerR} ${innerR} 0 ${large} 0 ${e2.x} ${e2.y} Z`;
+  }
+
+  let cum = 0;
+  const slices = PIPELINE_SLICES.map((s) => {
+    const count = counts[s.key as keyof typeof counts] ?? 0;
+    const start = cum;
+    cum += total > 0 ? (count / total) * 360 : 0;
+    return { ...s, count, start, end: cum };
+  }).filter((s) => s.count > 0);
+
+  const active = hovered ?? (activeTab !== 'all' ? activeTab : null);
+  const activeSlice = slices.find((s) => s.key === active);
+
+  if (total === 0) {
+    return (
+      <div className="flex flex-col items-center gap-1 py-4">
+        <div className="flex h-[150px] w-[150px] items-center justify-center rounded-full border-4 border-dashed border-zinc-200 dark:border-zinc-700">
+          <span className="text-[11px] text-zinc-400">No data</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-2.5">
+      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ overflow: 'visible' }}>
+        {slices.map((s, i) => (
+          <motion.path
+            key={s.key}
+            d={slicePath(s.start, s.end)}
+            fill={s.color}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: active && active !== s.key ? 0.28 : 1 }}
+            transition={{ duration: 0.2, delay: hovered ? 0 : i * 0.04 }}
+            onMouseEnter={() => setHovered(s.key)}
+            onMouseLeave={() => setHovered(null)}
+            onClick={() => onSliceClick(s.key)}
+            style={{ cursor: 'pointer' }}
+          />
+        ))}
+        <text x={cx} y={cy - 5} textAnchor="middle" fontSize="17" fontWeight="700" fill="#18181b">
+          {activeSlice ? activeSlice.count : total}
+        </text>
+        <text x={cx} y={cy + 10} textAnchor="middle" fontSize="8.5" fill="#a1a1aa">
+          {activeSlice ? activeSlice.label.slice(0, 12) : 'total'}
+        </text>
+      </svg>
+      <div className="w-full space-y-0.5 px-2">
+        {PIPELINE_SLICES.map((s) => {
+          const count = counts[s.key as keyof typeof counts] ?? 0;
+          return (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => onSliceClick(s.key)}
+              onMouseEnter={() => setHovered(s.key)}
+              onMouseLeave={() => setHovered(null)}
+              className={cn(
+                'flex w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] transition-colors',
+                active === s.key ? 'bg-zinc-100 dark:bg-zinc-800' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50',
+              )}
+            >
+              <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: s.color }} />
+              <span className="min-w-0 flex-1 truncate text-left text-zinc-600 dark:text-zinc-400">{s.label}</span>
+              <span className="shrink-0 tabular-nums font-medium text-zinc-800 dark:text-zinc-200">{count}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -135,6 +135,90 @@ function Donut({
   );
 }
 
+const MIX_COLORS = [
+  '#f97316', '#0d9488', '#7c3aed', '#0891b2', '#db2777',
+  '#10b981', '#ca8a04', '#4f46e5', '#16a34a', '#be185d',
+  '#ea580c', '#0369a1', '#6d28d9', '#b45309', '#15803d',
+  '#1d4ed8', '#7e22ce', '#c2410c', '#047857', '#9d174d',
+];
+
+type MixRow = { dept: string; count: number; pct: number };
+
+function DeptMixPieChart({ rows, total }: { rows: MixRow[]; total: number }) {
+  const [hovered, setHovered] = useState<string | null>(null);
+  const SIZE = 180;
+  const cx = SIZE / 2; const cy = SIZE / 2;
+  const outerR = 78; const innerR = 44;
+
+  function polar(deg: number, r: number) {
+    const rad = ((deg - 90) * Math.PI) / 180;
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  }
+
+  function slicePath(s: number, e: number) {
+    if (e - s >= 359.99) {
+      const t = polar(0, outerR); const b = polar(180, outerR);
+      const it = polar(0, innerR); const ib = polar(180, innerR);
+      return `M ${t.x} ${t.y} A ${outerR} ${outerR} 0 1 1 ${b.x} ${b.y} A ${outerR} ${outerR} 0 1 1 ${t.x} ${t.y} M ${it.x} ${it.y} A ${innerR} ${innerR} 0 1 0 ${ib.x} ${ib.y} A ${innerR} ${innerR} 0 1 0 ${it.x} ${it.y} Z`;
+    }
+    const large = e - s > 180 ? 1 : 0;
+    const s1 = polar(s, outerR); const e1 = polar(e, outerR);
+    const s2 = polar(e, innerR); const e2 = polar(s, innerR);
+    return `M ${s1.x} ${s1.y} A ${outerR} ${outerR} 0 ${large} 1 ${e1.x} ${e1.y} L ${s2.x} ${s2.y} A ${innerR} ${innerR} 0 ${large} 0 ${e2.x} ${e2.y} Z`;
+  }
+
+  let cum = 0;
+  const slices = rows.map((r, i) => {
+    const start = cum; cum += (r.count / total) * 360;
+    return { ...r, start, end: cum, color: MIX_COLORS[i % MIX_COLORS.length]! };
+  });
+
+  const hov = slices.find((s) => s.dept === hovered);
+
+  if (total === 0) return <p className="py-2 text-xs text-zinc-400">No employees loaded.</p>;
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ overflow: 'visible' }}>
+        {slices.map((s, i) => (
+          <motion.path
+            key={s.dept}
+            d={slicePath(s.start, s.end)}
+            fill={s.color}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: hovered && hovered !== s.dept ? 0.28 : 1 }}
+            transition={{ duration: 0.22, delay: hovered ? 0 : i * 0.025 }}
+            onMouseEnter={() => setHovered(s.dept)}
+            onMouseLeave={() => setHovered(null)}
+            style={{ cursor: 'pointer' }}
+          />
+        ))}
+        <text x={cx} y={cy - 5} textAnchor="middle" fontSize="18" fontWeight="700" fill="#18181b">
+          {hov ? hov.count : total}
+        </text>
+        <text x={cx} y={cy + 10} textAnchor="middle" fontSize="9" fill="#a1a1aa">
+          {hov ? hov.dept.slice(0, 13) : 'employees'}
+        </text>
+      </svg>
+      <div className="max-h-[12rem] w-full overflow-y-auto space-y-0.5 pr-0.5">
+        {slices.map((s) => (
+          <div
+            key={s.dept}
+            className={`flex cursor-default items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] transition-colors ${hovered === s.dept ? 'bg-zinc-100 dark:bg-zinc-800' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'}`}
+            onMouseEnter={() => setHovered(s.dept)}
+            onMouseLeave={() => setHovered(null)}
+          >
+            <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: s.color }} />
+            <span className="min-w-0 flex-1 truncate text-zinc-600 dark:text-zinc-400">{s.dept}</span>
+            <span className="shrink-0 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{s.count}</span>
+            <span className="shrink-0 text-[10px] text-zinc-400">{s.pct.toFixed(0)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Match payroll emails to master rows (personal or work email). */
 function buildMasterEmailSet(list: EmployeeRow[]): Set<string> {
   const s = new Set<string>();
@@ -3223,33 +3307,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
               </Badge>
             </CardHeader>
             <CardContent className="pb-3">
-              {departmentMix.rows.length === 0 ? (
-                <p className="py-2 text-xs text-zinc-400">No employees loaded.</p>
-              ) : (
-                <div className="max-h-[18rem] space-y-1.5 overflow-y-auto pr-1.5 [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]">
-                  {departmentMix.rows.map((row) => (
-                    <div key={row.dept} className="space-y-0.5">
-                      <div className="flex items-center justify-between text-[12px]">
-                        <span className="truncate text-zinc-700 dark:text-zinc-300" title={row.dept}>
-                          {row.dept}
-                        </span>
-                        <span className="font-mono tabular-nums text-zinc-500 dark:text-zinc-400">
-                          {row.count}
-                          <span className="ml-1 text-[10px] text-zinc-400">
-                            {row.pct.toFixed(0)}%
-                          </span>
-                        </span>
-                      </div>
-                      <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                        <div
-                          className="h-full bg-orange-400/70 transition-all duration-500 dark:bg-blue-500/70"
-                          style={{ width: `${Math.max(2, row.pct)}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <DeptMixPieChart rows={departmentMix.rows} total={departmentMix.total} />
             </CardContent>
           </Card>
 

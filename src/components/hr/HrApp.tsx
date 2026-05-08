@@ -1,16 +1,34 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
-import { LogIn, Menu, Sparkles, UserMinus, Users } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  Building2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Menu,
+  RefreshCw,
+  Search,
+  Sparkles,
+  TrendingUp,
+  UserMinus,
+  Users,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Toaster } from '@/components/ui/sonner';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
+import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
+import HrOffboarding from './HrOffboarding';
 import SWall from '@/components/swall/SWall';
+import type { EmployeeRow } from '@/lib/supabase/employees';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -128,7 +146,7 @@ export default function HrApp() {
             >
               {activeTab === 'overview' && <HrOverview viewerEmail={viewerEmail} />}
               {activeTab === 'onboarding' && <HrOnboarding />}
-              {activeTab === 'offboarding' && <HrPlaceholder kind="offboarding" />}
+              {activeTab === 'offboarding' && <HrOffboarding />}
               {activeTab === 's-wall' && <HrSwallTab viewerEmail={viewerEmail} />}
             </motion.div>
           </AnimatePresence>
@@ -243,67 +261,201 @@ function HrOverview({ viewerEmail }: { viewerEmail: string | null }) {
         </div>
       </header>
 
-      {/* Placeholder content area */}
-      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-emerald-200/60 bg-emerald-50/30 py-14 text-center dark:border-emerald-900/30 dark:bg-emerald-950/15">
-        <Users className="h-8 w-8 text-emerald-400/60 dark:text-emerald-600/60" />
-        <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-          People operations coming soon
-        </p>
-        <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
-          Onboarding checklists, offboarding flows, employee directory, and lifecycle metrics will appear here.
-        </p>
-      </div>
+      <OverviewBody />
     </div>
   );
 }
 
-function HrPlaceholder({ kind }: { kind: 'onboarding' | 'offboarding' }) {
-  const meta =
-    kind === 'onboarding'
-      ? {
-          Icon: LogIn,
-          title: 'Onboarding',
-          subtitle: 'Welcome new hires from offer signed to day one.',
-          body: "Checklists, IT provisioning, document collection, first-week schedule — everything that turns a signed offer into a productive teammate.",
-        }
-      : {
-          Icon: UserMinus,
-          title: 'Offboarding',
-          subtitle: 'Wrap up cleanly when people move on.',
-          body: "Equipment return, access revocation, final-pay coordination, exit interview — handled with care so the door stays open.",
-        };
-  const { Icon, title, subtitle, body } = meta;
+function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function tenure(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const start = new Date(iso);
+  if (Number.isNaN(start.getTime())) return '—';
+  const now = new Date();
+  let years = now.getFullYear() - start.getFullYear();
+  let months = now.getMonth() - start.getMonth();
+  if (months < 0) { years -= 1; months += 12; }
+  if (years > 0 && months > 0) return `${years}y ${months}m`;
+  if (years > 0) return `${years}y`;
+  if (months > 0) return `${months}mo`;
+  const days = Math.floor((now.getTime() - start.getTime()) / 86400000);
+  return days <= 0 ? 'New' : `${days}d`;
+}
+
+// ─── Overview body ────────────────────────────────────────────────────────────
+
+type DeptStat = { department: string; count: number };
+
+
+const PAGE_SIZE = 10;
+
+function OverviewBody() {
+  const [roster, setRoster] = useState<EmployeeRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+
+  const fetchRoster = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/employees', { cache: 'no-store' });
+      const json = (await res.json()) as { employees?: EmployeeRow[]; error?: string };
+      if (json.error) throw new Error(json.error);
+      setRoster(json.employees ?? []);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load roster');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void fetchRoster(); }, [fetchRoster]);
+
+  const deptStats: DeptStat[] = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of roster) {
+      const d = r.department ?? 'Unknown';
+      map.set(d, (map.get(d) ?? 0) + 1);
+    }
+    return Array.from(map.entries())
+      .map(([department, count]) => ({ department, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [roster]);
+
+  const filtered = useMemo(() => {
+    setPage(0);
+    const q = search.trim().toLowerCase();
+    if (!q) return roster;
+    return roster.filter((r) =>
+      [r.name, r.work_email, r.department, r.employee_id]
+        .filter(Boolean)
+        .some((s) => s!.toLowerCase().includes(q)),
+    );
+  }, [roster, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+
   return (
-    <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
-      <header className="relative overflow-hidden rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-500 via-teal-600 to-zinc-900 px-5 py-7 text-white shadow-lg shadow-emerald-600/20 dark:border-emerald-900/50 dark:from-emerald-600 dark:via-teal-900 dark:to-black sm:px-7">
-        <div className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10 blur-3xl" aria-hidden />
-        <div className="absolute -bottom-12 left-8 h-32 w-32 rounded-full bg-teal-300/20 blur-2xl" aria-hidden />
-        <div className="relative flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-emerald-100/90">
-            <Icon className="h-3 w-3 shrink-0" />
-            {title}
+    <>
+      {/* KPI row */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        {[
+          { label: 'Active employees', value: roster.length, sub: 'on the master list',      icon: Users,     grad: 'from-emerald-500 to-teal-700' },
+          { label: 'Departments',      value: deptStats.length, sub: 'with active headcount', icon: Building2, grad: 'from-teal-500 to-emerald-700' },
+          { label: 'Largest dept',     value: deptStats[0]?.department ?? '—', sub: `${deptStats[0]?.count ?? 0} people`, icon: TrendingUp, grad: 'from-sky-500 to-sky-700' },
+        ].map(({ label, value, sub, icon: Icon, grad }) => (
+          <div key={label} className="flex items-center gap-3 rounded-xl border border-zinc-100 bg-white px-4 py-3.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white shadow', grad)}>
+              <Icon className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">{label}</p>
+              <p className={cn('mt-0.5 truncate font-bold tabular-nums text-zinc-900 dark:text-zinc-100', typeof value === 'number' ? 'text-2xl' : 'text-base leading-tight')}>
+                {loading ? <span className="inline-block h-5 w-12 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" /> : String(value)}
+              </p>
+              <p className="text-[10px] text-zinc-400 dark:text-zinc-500">{sub}</p>
+            </div>
           </div>
-          <h1 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
-            {subtitle}
-          </h1>
-          <p className="max-w-2xl text-sm leading-relaxed text-emerald-100/85">
-            {body}
-          </p>
-        </div>
-      </header>
-
-      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-emerald-200/60 bg-emerald-50/30 py-14 text-center dark:border-emerald-900/30 dark:bg-emerald-950/15">
-        <Icon className="h-8 w-8 text-emerald-400/60 dark:text-emerald-600/60" />
-        <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-          {title} workflow coming soon
-        </p>
-        <p className="max-w-sm text-xs text-zinc-400 dark:text-zinc-600">
-          We&apos;ll build this out next — for now this tab is just a placeholder so you can see where {title.toLowerCase()} will live.
-        </p>
+        ))}
       </div>
-    </div>
+
+      {/* Roster */}
+      <Card className="border-zinc-100 shadow-sm dark:border-zinc-800">
+          <CardHeader className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-sm font-semibold">Active roster</CardTitle>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  {loading ? 'Loading…' : `${filtered.length} of ${roster.length}`}
+                </p>
+              </div>
+              <div className="relative w-52 shrink-0">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search…"
+                  className="h-8 border-zinc-200 pl-8 text-xs dark:border-zinc-700"
+                />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="flex items-center justify-center py-12 text-zinc-400">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+              </div>
+            ) : filtered.length === 0 ? (
+              <p className="py-10 text-center text-xs text-zinc-400">
+                {roster.length === 0 ? 'No active employees. Run a master list import.' : 'No rows match.'}
+              </p>
+            ) : (
+              <>
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-zinc-100 bg-zinc-50/90 text-[11px] font-semibold text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/90 dark:text-zinc-400">
+                    <tr>
+                      <th className="px-4 py-2.5">Name</th>
+                      <th className="px-4 py-2.5">Dept</th>
+                      <th className="px-4 py-2.5">Work email</th>
+                      <th className="px-4 py-2.5">Personal email</th>
+                      <th className="px-4 py-2.5">Location</th>
+                      <th className="px-4 py-2.5">Start date</th>
+                      <th className="px-4 py-2.5">Tenure</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-50 dark:divide-zinc-800/60">
+                    {pageRows.map((r, i) => (
+                      <tr key={`${r.work_email ?? r.personal_email ?? i}`} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/30">
+                        <td className="px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">{r.name ?? '—'}</td>
+                        <td className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.department ?? '—'}</td>
+                        <td className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.work_email ?? '—'}</td>
+                        <td className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.personal_email ?? '—'}</td>
+                        <td className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.city ?? '—'}</td>
+                        <td className="px-4 py-2 text-zinc-400">{fmtDate(r.start_date)}</td>
+                        <td className="px-4 py-2 tabular-nums text-zinc-400">{tenure(r.start_date)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800">
+                  <p className="text-[11px] text-zinc-400">
+                    {filtered.length === 0 ? '0' : `${safePage * PAGE_SIZE + 1}–${Math.min((safePage + 1) * PAGE_SIZE, filtered.length)}`} of {filtered.length}
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage(0)}>
+                      <ChevronLeft className="h-3 w-3" /><ChevronLeft className="h-3 w-3 -ml-2" />
+                    </Button>
+                    <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+                      <ChevronLeft className="h-3 w-3" />
+                    </Button>
+                    <span className="min-w-[4rem] text-center text-[11px] text-zinc-500">
+                      {safePage + 1} / {totalPages}
+                    </span>
+                    <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}>
+                      <ChevronRight className="h-3 w-3" />
+                    </Button>
+                    <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage(totalPages - 1)}>
+                      <ChevronRight className="h-3 w-3" /><ChevronRight className="h-3 w-3 -ml-2" />
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+      </Card>
+    </>
   );
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
 
 function HrSwallTab({ viewerEmail }: { viewerEmail: string | null }) {
   return (

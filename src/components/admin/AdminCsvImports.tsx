@@ -118,6 +118,7 @@ interface MasterSheetSyncResponse {
   rowCount?: number;
   inserted?: number;
   updated?: number;
+  reonboarded?: number;
   rowsMissingPersonalEmail?: number;
   duplicatesInCsv?: number;
   uploadId?: string;
@@ -211,6 +212,7 @@ export default function AdminCsvImports() {
   // ── Which upload card is currently "selected" — drives the batches list
   // shown at the bottom of the Upload tab. Click any card to switch.
   const [selectedSource, setSelectedSource] = useState<UploadKey>('hubstaff');
+  const [masterSyncClearOffboarded, setMasterSyncClearOffboarded] = useState(false);
 
   // ── Hubstaff uploads list (for "Uploaded batches" + Files tab)
   const [uploads, setUploads] = useState<HubstaffUploadMeta[]>([]);
@@ -444,7 +446,11 @@ export default function AdminCsvImports() {
     const synthFileName = 'Google Sheet · master list';
     setResult('master', { kind: 'uploading', fileName: synthFileName });
     try {
-      const res = await fetch('/api/cron/sync-master-from-sheet', { method: 'POST' });
+      const res = await fetch('/api/cron/sync-master-from-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clearOffboarded: masterSyncClearOffboarded }),
+      });
       const json = (await res.json()) as MasterSheetSyncResponse;
       if (!res.ok || !json.success) {
         const message = json.error ?? res.statusText ?? 'Google Sheet sync failed';
@@ -458,6 +464,9 @@ export default function AdminCsvImports() {
       const sublines = [
         `${(json.inserted ?? 0).toLocaleString()} new · ${(json.updated ?? 0).toLocaleString()} updated`,
       ];
+      if ((json.reonboarded ?? 0) > 0) {
+        sublines.push(`${json.reonboarded} off-boarded employees restored to active roster`);
+      }
       if ((json.rowsMissingPersonalEmail ?? 0) > 0) {
         sublines.push(`${json.rowsMissingPersonalEmail} rows missing personal email (orphan)`);
       }
@@ -482,7 +491,7 @@ export default function AdminCsvImports() {
       setResult('master', { kind: 'error', fileName: synthFileName, message });
       toast.error('Master list sync failed', { description: message });
     }
-  }, [setResult, loadMasterUploads]);
+  }, [setResult, loadMasterUploads, masterSyncClearOffboarded]);
 
   /**
    * Pull payroll rates from the configured Google Sheet (env-driven service account).
@@ -832,6 +841,8 @@ export default function AdminCsvImports() {
               onRatesPick={() => ratesInputRef.current?.click()}
               onHubstaffPick={() => hubstaffInputRef.current?.click()}
               onMasterSheetSync={handleMasterSheetSync}
+              masterSyncClearOffboarded={masterSyncClearOffboarded}
+              onMasterSyncClearOffboardedChange={setMasterSyncClearOffboarded}
               onRatesSheetSync={handleRatesSheetSync}
               onHslSheetSync={handleHslSheetSync}
               selectedSource={selectedSource}
@@ -1062,6 +1073,8 @@ interface UploadTabProps {
   onRatesPick: () => void;
   onHubstaffPick: () => void;
   onMasterSheetSync: () => void | Promise<void>;
+  masterSyncClearOffboarded: boolean;
+  onMasterSyncClearOffboardedChange: (v: boolean) => void;
   onRatesSheetSync: () => void | Promise<void>;
   onHslSheetSync: () => void | Promise<void>;
   /** Which card is "selected" — drives the batches list rendered below. */
@@ -1093,6 +1106,8 @@ function UploadTab(props: UploadTabProps) {
     onDeleteRequest,
     onInspect,
     onMasterSheetSync,
+    masterSyncClearOffboarded,
+    onMasterSyncClearOffboardedChange,
     onRatesSheetSync,
     onHslSheetSync,
     selectedSource,
@@ -1111,39 +1126,53 @@ function UploadTab(props: UploadTabProps) {
           on xl+ so the row stays one wide; folds back to 2-col mid-screen and
           single-col on mobile. */}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <UploadCard
-          tone="emerald"
-          captionLabel="Global master list"
-          title="Employee roster CSV"
-          Icon={Users}
-          description={
-            <>
-              The <span className="font-medium">MASTERLIST</span> sheet only — rows{' '}
-              <span className="font-medium">1–2</span> must contain{' '}
-              <span className="font-mono">MASTERLIST</span>; row{' '}
-              <span className="font-medium">3</span> is headers; row{' '}
-              <span className="font-medium">4+</span> is data.
-            </>
-          }
-          footnote={
-            <>
-              Upserts <span className="font-mono">global_master_list</span> on{' '}
-              <span className="font-mono">(personal_email, department)</span>. History preserved via{' '}
-              <span className="font-mono">master_list_uploads</span>.
-            </>
-          }
-          buttonLabel="Choose master list CSV"
-          onPick={props.onMasterPick}
-          uploading={results.master.kind === 'uploading'}
-          result={results.master}
-          secondaryAction={{
-            label: 'Sync from Google Sheet',
-            Icon: Cloud,
-            onClick: () => void onMasterSheetSync(),
-          }}
-          selected={selectedSource === 'master'}
-          onSelect={() => onSelectSource('master')}
-        />
+        <div className="flex flex-col gap-2">
+          <UploadCard
+            tone="emerald"
+            captionLabel="Global master list"
+            title="Employee roster CSV"
+            Icon={Users}
+            description={
+              <>
+                The <span className="font-medium">MASTERLIST</span> sheet only — rows{' '}
+                <span className="font-medium">1–2</span> must contain{' '}
+                <span className="font-mono">MASTERLIST</span>; row{' '}
+                <span className="font-medium">3</span> is headers; row{' '}
+                <span className="font-medium">4+</span> is data.
+              </>
+            }
+            footnote={
+              <>
+                Upserts <span className="font-mono">global_master_list</span> on{' '}
+                <span className="font-mono">(personal_email, department)</span>. History preserved via{' '}
+                <span className="font-mono">master_list_uploads</span>.
+              </>
+            }
+            buttonLabel="Choose master list CSV"
+            onPick={props.onMasterPick}
+            uploading={results.master.kind === 'uploading'}
+            result={results.master}
+            secondaryAction={{
+              label: 'Sync from Google Sheet',
+              Icon: Cloud,
+              onClick: () => void onMasterSheetSync(),
+            }}
+            selected={selectedSource === 'master'}
+            onSelect={() => onSelectSource('master')}
+          />
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-emerald-200/70 bg-emerald-50/60 px-3 py-2 text-xs text-zinc-700 transition-colors hover:bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-zinc-300 dark:hover:bg-emerald-950/30">
+            <input
+              type="checkbox"
+              checked={masterSyncClearOffboarded}
+              onChange={(e) => onMasterSyncClearOffboardedChange(e.target.checked)}
+              className="h-3.5 w-3.5 accent-emerald-600"
+            />
+            <span>
+              <span className="font-medium">Restore off-boarded</span>
+              {' '}— re-activate anyone in the sheet who was previously off-boarded
+            </span>
+          </label>
+        </div>
 
         <UploadCard
           tone="sky"
