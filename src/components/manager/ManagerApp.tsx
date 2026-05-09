@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -602,21 +602,46 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
   const [ratesHidden, setRatesHidden] = useState(true);
   const [selectedMember, setSelectedMember] = useState<EmployeeRow | null>(null);
   const [page, setPage] = useState(1);
+  const [deptFilter, setDeptFilter] = useState<string>('all');
   const showHslRateCol = members.some(
     (m) => m.hsl_hourly_rate != null || m.hsl_ot_rate != null,
   );
 
-  const totalPages = Math.max(1, Math.ceil(members.length / TEAM_PAGE_SIZE));
+  // Unique department list for the filter dropdown — sorted, blanks stripped.
+  const deptOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of members) {
+      const d = (m.department ?? '').trim();
+      if (d) set.add(d);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [members]);
+
+  const filteredMembers = useMemo(() => {
+    if (deptFilter === 'all') return members;
+    return members.filter(
+      (m) => (m.department ?? '').trim().toLowerCase() === deptFilter.toLowerCase(),
+    );
+  }, [members, deptFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredMembers.length / TEAM_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * TEAM_PAGE_SIZE;
-  const pageEnd = Math.min(pageStart + TEAM_PAGE_SIZE, members.length);
-  const pageSlice = members.slice(pageStart, pageEnd);
+  const pageEnd = Math.min(pageStart + TEAM_PAGE_SIZE, filteredMembers.length);
+  const pageSlice = filteredMembers.slice(pageStart, pageEnd);
 
   // Snap back to page 1 if the roster changes (filter/refresh shrinks it under the
   // current page). Cheap to run; no need to memo.
   useEffect(() => {
     setPage(1);
-  }, [members.length, teamGate.kind]);
+  }, [filteredMembers.length, teamGate.kind]);
+
+  // Snap filter back to "all" if the active selection is no longer in the list.
+  useEffect(() => {
+    if (deptFilter !== 'all' && !deptOptions.some((d) => d.toLowerCase() === deptFilter.toLowerCase())) {
+      setDeptFilter('all');
+    }
+  }, [deptOptions, deptFilter]);
 
   if (teamGate.kind === 'loading') {
     return (
@@ -736,6 +761,48 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
         </p>
       </header>
 
+      {/* Department filter — appears only when at least 2 unique depts are visible. */}
+      {!unassigned && deptOptions.length >= 2 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <label
+            htmlFor="team-dept-filter"
+            className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
+          >
+            Department
+          </label>
+          <select
+            id="team-dept-filter"
+            value={deptFilter}
+            onChange={(e) => setDeptFilter(e.target.value)}
+            className="h-8 min-w-[180px] rounded-md border border-blue-200 bg-white px-2 text-xs text-zinc-800 shadow-sm transition-colors hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-blue-900/50 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-blue-800 dark:focus:border-blue-700 dark:focus:ring-blue-900/50"
+          >
+            <option value="all">All ({members.length})</option>
+            {deptOptions.map((d) => {
+              const count = members.filter(
+                (m) => (m.department ?? '').trim().toLowerCase() === d.toLowerCase(),
+              ).length;
+              return (
+                <option key={d} value={d}>
+                  {d} ({count})
+                </option>
+              );
+            })}
+          </select>
+          {deptFilter !== 'all' && (
+            <button
+              type="button"
+              onClick={() => setDeptFilter('all')}
+              className="text-[11px] font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Clear
+            </button>
+          )}
+          <span className="ml-auto font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+            Showing {filteredMembers.length} of {members.length}
+          </span>
+        </div>
+      )}
+
       <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15 dark:ring-blue-400/10">
         <CardContent className="p-0 sm:p-0">
           {unassigned ? (
@@ -749,15 +816,25 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
                 permissions (Department managers).
               </p>
             </div>
-          ) : members.length === 0 ? (
+          ) : filteredMembers.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/25">
                 <Users className="h-6 w-6" />
               </div>
-              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">No employees in scope</p>
+              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+                {members.length === 0 ? 'No employees in scope' : 'No employees match this filter'}
+              </p>
               <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">
-                No rows in the active master list matched{' '}
-                {scoped ? 'your departments' : 'the roster query'} (department names must line up with HR).
+                {members.length === 0 ? (
+                  <>
+                    No rows in the active master list matched{' '}
+                    {scoped ? 'your departments' : 'the roster query'} (department names must line up with HR).
+                  </>
+                ) : (
+                  <>
+                    Try clearing the department filter to see the full team.
+                  </>
+                )}
               </p>
             </div>
           ) : (
@@ -951,7 +1028,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
                   </div>
 
                   {/* Pagination footer */}
-                  {members.length > TEAM_PAGE_SIZE && (
+                  {filteredMembers.length > TEAM_PAGE_SIZE && (
                     <div className="flex flex-col items-center justify-between gap-2 border-t border-blue-100/70 bg-white/60 px-4 py-3 text-xs text-zinc-600 dark:border-blue-950/50 dark:bg-zinc-950/40 dark:text-zinc-400 sm:flex-row">
                       <span className="tabular-nums">
                         Showing{' '}
@@ -960,7 +1037,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
                         </span>{' '}
                         of{' '}
                         <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                          {members.length}
+                          {filteredMembers.length}
                         </span>
                       </span>
                       <div className="flex items-center gap-1.5">

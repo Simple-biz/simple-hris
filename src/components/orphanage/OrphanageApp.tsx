@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ClipboardList,
   FileText,
+  Gift,
   HeartHandshake,
   History as HistoryIcon,
   Loader2,
@@ -47,6 +48,7 @@ import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import CreateOrphanageStyleDisputeDialog, {
   type EmployeeOption,
 } from '@/components/orphanage/CreateOrphanageStyleDisputeDialog';
+import GiftTracker from '@/components/orphanage/GiftTracker';
 import OrphanageBudgetForm from '@/components/orphanage/OrphanageBudgetForm';
 import OrphanageBudgetHistory from '@/components/orphanage/OrphanageBudgetHistory';
 import OrphanagesPanel from '@/components/orphanage/OrphanagesPanel';
@@ -171,7 +173,7 @@ export default function OrphanageApp() {
   const welcomeMsg = WELCOME_MESSAGES[welcomeIdx]!;
 
   const [activeTab, setActiveTab] = useState<
-    'queue' | 'budget' | 'budget-history' | 's-wall'
+    'queue' | 'budget' | 'budget-history' | 'gift-tracker' | 's-wall'
   >('queue');
   // Sub-tab inside the Orphanage Budget tab — Budget Request form vs Orphanages list.
   const [budgetSubTab, setBudgetSubTab] = useState<'request' | 'orphanages'>('request');
@@ -447,6 +449,19 @@ export default function OrphanageApp() {
               >
                 <PiggyBank className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'budget' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <span className="truncate text-left">Orphanage Budget</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setActiveTab('gift-tracker'); setMobileNavOpen(false); }}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+                  activeTab === 'gift-tracker'
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-700 font-medium text-white shadow-sm shadow-pink-600/25'
+                    : 'text-[#3f3f46] hover:bg-pink-50 hover:text-pink-900 dark:text-zinc-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
+                )}
+              >
+                <Gift className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'gift-tracker' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
+                <span className="truncate text-left">Gift Tracker</span>
               </button>
               <button
                 type="button"
@@ -1011,6 +1026,18 @@ export default function OrphanageApp() {
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <OrphanageBudgetHistory viewerEmail={viewerEmail} />
               </div>
+            </motion.div>
+          )}
+          {activeTab === 'gift-tracker' && (
+            <motion.div
+              key="gift-tracker"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <GiftTracker viewerEmail={viewerEmail} />
             </motion.div>
           )}
           {activeTab === 's-wall' && (

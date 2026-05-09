@@ -79,7 +79,8 @@
       "Bash(git commit *)",
       "Bash(powershell *)",
       "Bash(npx --no-install tsc --noEmit)",
-      "Bash(dir src\\\\\\\\components\\\\\\\\ui)"
+      "Bash(dir src\\\\\\\\components\\\\\\\\ui)",
+      "Bash(npx eslint *)"
     ]
   }
 }

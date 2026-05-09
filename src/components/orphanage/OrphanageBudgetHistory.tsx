@@ -8,11 +8,13 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  Gift,
   HeartHandshake,
   History as HistoryIcon,
   PiggyBank,
   Plane,
   RefreshCw,
+  Truck,
   XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,6 +24,7 @@ import type {
   OrphanageBudgetRequestStatus,
   OrphanageBudgetRequestVisitType,
 } from '@/lib/supabase/orphanage-budget-requests';
+import type { GiftPaymentRow, GiftPaymentStatus } from '@/lib/supabase/gift-payments';
 
 interface AuditTrailEntry {
   id: string;
@@ -145,9 +148,12 @@ function actionMeta(action: string): {
 }
 
 export default function OrphanageBudgetHistory({ viewerEmail }: OrphanageBudgetHistoryProps) {
+  const [source, setSource] = useState<'budgets' | 'gifts'>('budgets');
   const [scope, setScope] = useState<'mine' | 'all'>('mine');
   const [statusFilter, setStatusFilter] = useState<OrphanageBudgetRequestStatus | 'all'>('all');
+  const [giftStatusFilter, setGiftStatusFilter] = useState<GiftPaymentStatus | 'all'>('all');
   const [rows, setRows] = useState<RowWithAudit[]>([]);
+  const [giftRows, setGiftRows] = useState<GiftPaymentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -159,17 +165,28 @@ export default function OrphanageBudgetHistory({ viewerEmail }: OrphanageBudgetH
       else setRefreshing(true);
       setError(null);
       try {
-        const params = new URLSearchParams();
-        if (scope === 'mine' && viewerEmail) {
-          params.set('email', viewerEmail);
+        if (source === 'budgets') {
+          const params = new URLSearchParams();
+          if (scope === 'mine' && viewerEmail) {
+            params.set('email', viewerEmail);
+          }
+          params.set('with_audit', '1');
+          const res = await fetch(`/api/orphanage-budget-requests?${params.toString()}`, {
+            cache: 'no-store',
+          });
+          const json = (await res.json()) as { rows?: RowWithAudit[]; error?: string | null };
+          if (json.error) setError(json.error);
+          setRows(json.rows ?? []);
+        } else {
+          const params = new URLSearchParams();
+          if (scope === 'mine' && viewerEmail) {
+            params.set('email', viewerEmail);
+          }
+          const res = await fetch(`/api/gift-payments?${params.toString()}`, { cache: 'no-store' });
+          const json = (await res.json()) as { rows?: GiftPaymentRow[]; error?: string | null };
+          if (json.error) setError(json.error);
+          setGiftRows(json.rows ?? []);
         }
-        params.set('with_audit', '1');
-        const res = await fetch(`/api/orphanage-budget-requests?${params.toString()}`, {
-          cache: 'no-store',
-        });
-        const json = (await res.json()) as { rows?: RowWithAudit[]; error?: string | null };
-        if (json.error) setError(json.error);
-        setRows(json.rows ?? []);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load history');
       } finally {
@@ -177,7 +194,7 @@ export default function OrphanageBudgetHistory({ viewerEmail }: OrphanageBudgetH
         else setRefreshing(false);
       }
     };
-  }, [scope, viewerEmail]);
+  }, [source, scope, viewerEmail]);
 
   useEffect(() => {
     void fetchRows(true);
@@ -186,6 +203,42 @@ export default function OrphanageBudgetHistory({ viewerEmail }: OrphanageBudgetH
   const filteredRows = useMemo(() => {
     return rows.filter((r) => statusFilter === 'all' || r.status === statusFilter);
   }, [rows, statusFilter]);
+
+  const filteredGiftRows = useMemo(() => {
+    return giftRows.filter((r) => giftStatusFilter === 'all' || r.status === giftStatusFilter);
+  }, [giftRows, giftStatusFilter]);
+
+  const giftStats = useMemo(() => {
+    let pending = 0;
+    let sent = 0;
+    let paid = 0;
+    let cancelled = 0;
+    let paidTotalUsd = 0;
+    let pendingTotalUsd = 0;
+    for (const r of giftRows) {
+      if (r.status === 'pending') {
+        pending += 1;
+        pendingTotalUsd += Number(r.total_usd ?? 0);
+      } else if (r.status === 'sent') {
+        sent += 1;
+        pendingTotalUsd += Number(r.total_usd ?? 0);
+      } else if (r.status === 'paid') {
+        paid += 1;
+        paidTotalUsd += Number(r.total_usd ?? 0);
+      } else if (r.status === 'cancelled') {
+        cancelled += 1;
+      }
+    }
+    return {
+      pending,
+      sent,
+      paid,
+      cancelled,
+      paidTotalUsd,
+      pendingTotalUsd,
+      total: giftRows.length,
+    };
+  }, [giftRows]);
 
   const stats = useMemo(() => {
     let pending = 0;
@@ -220,16 +273,25 @@ export default function OrphanageBudgetHistory({ viewerEmail }: OrphanageBudgetH
       <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/90 px-5 py-3 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/90">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-            Budget Requests · History
+            {source === 'budgets' ? 'Budget Requests · History' : 'Gift Payments · History'}
           </p>
           <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-            {scope === 'mine' ? 'My requests' : 'All requests'}
+            {scope === 'mine'
+              ? source === 'budgets'
+                ? 'My requests'
+                : 'My gift payments'
+              : source === 'budgets'
+                ? 'All requests'
+                : 'All gift payments'}
             <span className="ml-2 font-mono text-xs font-normal text-zinc-500">
-              {stats.total} {stats.total === 1 ? 'request' : 'requests'}
+              {source === 'budgets'
+                ? `${stats.total} ${stats.total === 1 ? 'request' : 'requests'}`
+                : `${giftStats.total} ${giftStats.total === 1 ? 'payment' : 'payments'}`}
             </span>
           </h2>
         </div>
         <div className="flex items-center gap-2">
+          <SourcePillToggle value={source} onChange={setSource} />
           <ScopePillToggle value={scope} onChange={setScope} />
           <Button
             size="sm"
@@ -245,63 +307,380 @@ export default function OrphanageBudgetHistory({ viewerEmail }: OrphanageBudgetH
       </div>
 
       <div className="flex flex-col gap-4 px-4 py-5 sm:px-6">
-        {/* Stats */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <StatTile label="Pending" value={String(stats.pending)} hint={formatPhp(stats.pendingTotal)} tone="amber" />
-          <StatTile label="Approved" value={String(stats.approved)} hint={formatPhp(stats.approvedTotal)} tone="emerald" />
-          <StatTile label="Rejected" value={String(stats.rejected)} hint="Closed out" tone="rose" />
-          <StatTile label="Total" value={String(stats.total)} hint="all-time" tone="zinc" />
-        </div>
+        {source === 'budgets' ? (
+          <>
+            {/* Stats */}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <StatTile label="Pending" value={String(stats.pending)} hint={formatPhp(stats.pendingTotal)} tone="amber" />
+              <StatTile label="Approved" value={String(stats.approved)} hint={formatPhp(stats.approvedTotal)} tone="emerald" />
+              <StatTile label="Rejected" value={String(stats.rejected)} hint="Closed out" tone="rose" />
+              <StatTile label="Total" value={String(stats.total)} hint="all-time" tone="zinc" />
+            </div>
 
-        {/* Filter chips */}
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-pink-100/80 bg-white px-3 py-2 shadow-sm dark:border-pink-950/45 dark:bg-zinc-950/40">
-          <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
-            Filter
-          </span>
-          <FilterChip
-            label="All"
-            active={statusFilter === 'all'}
-            onClick={() => setStatusFilter('all')}
-          />
-          {(['pending', 'approved', 'rejected'] as OrphanageBudgetRequestStatus[]).map((s) => {
-            const palette = STATUS_PALETTE[s];
-            return (
+            {/* Filter chips */}
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-pink-100/80 bg-white px-3 py-2 shadow-sm dark:border-pink-950/45 dark:bg-zinc-950/40">
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+                Filter
+              </span>
               <FilterChip
-                key={s}
-                label={palette.label}
-                active={statusFilter === s}
-                onClick={() => setStatusFilter(s)}
+                label="All"
+                active={statusFilter === 'all'}
+                onClick={() => setStatusFilter('all')}
               />
-            );
-          })}
-        </div>
+              {(['pending', 'approved', 'rejected'] as OrphanageBudgetRequestStatus[]).map((s) => {
+                const palette = STATUS_PALETTE[s];
+                return (
+                  <FilterChip
+                    key={s}
+                    label={palette.label}
+                    active={statusFilter === s}
+                    onClick={() => setStatusFilter(s)}
+                  />
+                );
+              })}
+            </div>
 
-        {/* Body */}
-        {loading ? (
-          <HistorySkeleton />
-        ) : error ? (
-          <div className="rounded-xl border border-rose-200/80 bg-rose-50/60 px-4 py-6 text-center text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300">
-            {error}
-          </div>
-        ) : filteredRows.length === 0 ? (
-          <EmptyState scope={scope} hasRows={rows.length > 0} />
+            {/* Body */}
+            {loading ? (
+              <HistorySkeleton />
+            ) : error ? (
+              <div className="rounded-xl border border-rose-200/80 bg-rose-50/60 px-4 py-6 text-center text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300">
+                {error}
+              </div>
+            ) : filteredRows.length === 0 ? (
+              <EmptyState scope={scope} hasRows={rows.length > 0} />
+            ) : (
+              <ul className="flex flex-col gap-2.5">
+                <AnimatePresence initial={false}>
+                  {filteredRows.map((row, idx) => (
+                    <RequestCard
+                      key={row.id}
+                      row={row}
+                      index={idx}
+                      expanded={expandedId === row.id}
+                      onToggle={() => setExpandedId(expandedId === row.id ? null : row.id)}
+                    />
+                  ))}
+                </AnimatePresence>
+              </ul>
+            )}
+          </>
         ) : (
-          <ul className="flex flex-col gap-2.5">
-            <AnimatePresence initial={false}>
-              {filteredRows.map((row, idx) => (
-                <RequestCard
-                  key={row.id}
-                  row={row}
-                  index={idx}
-                  expanded={expandedId === row.id}
-                  onToggle={() => setExpandedId(expandedId === row.id ? null : row.id)}
+          <>
+            {/* Gift stats */}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <StatTile label="Pending" value={String(giftStats.pending + giftStats.sent)} hint={`$${giftStats.pendingTotalUsd.toFixed(2)} owed`} tone="amber" />
+              <StatTile label="Paid" value={String(giftStats.paid)} hint={`$${giftStats.paidTotalUsd.toFixed(2)} sent`} tone="emerald" />
+              <StatTile label="Cancelled" value={String(giftStats.cancelled)} hint="Closed out" tone="rose" />
+              <StatTile label="Total" value={String(giftStats.total)} hint="all-time" tone="zinc" />
+            </div>
+
+            {/* Gift filter chips */}
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-pink-100/80 bg-white px-3 py-2 shadow-sm dark:border-pink-950/45 dark:bg-zinc-950/40">
+              <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+                Filter
+              </span>
+              <FilterChip
+                label="All"
+                active={giftStatusFilter === 'all'}
+                onClick={() => setGiftStatusFilter('all')}
+              />
+              {(['pending', 'sent', 'paid', 'cancelled'] as GiftPaymentStatus[]).map((s) => (
+                <FilterChip
+                  key={s}
+                  label={s.charAt(0).toUpperCase() + s.slice(1)}
+                  active={giftStatusFilter === s}
+                  onClick={() => setGiftStatusFilter(s)}
                 />
               ))}
-            </AnimatePresence>
-          </ul>
+            </div>
+
+            {loading ? (
+              <HistorySkeleton />
+            ) : error ? (
+              <div className="rounded-xl border border-rose-200/80 bg-rose-50/60 px-4 py-6 text-center text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300">
+                {error}
+              </div>
+            ) : filteredGiftRows.length === 0 ? (
+              <GiftEmptyState scope={scope} hasRows={giftRows.length > 0} />
+            ) : (
+              <ul className="flex flex-col gap-2.5">
+                <AnimatePresence initial={false}>
+                  {filteredGiftRows.map((row, idx) => (
+                    <GiftPaymentCard
+                      key={row.id}
+                      row={row}
+                      index={idx}
+                      expanded={expandedId === row.id}
+                      onToggle={() => setExpandedId(expandedId === row.id ? null : row.id)}
+                    />
+                  ))}
+                </AnimatePresence>
+              </ul>
+            )}
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+function SourcePillToggle({
+  value,
+  onChange,
+}: {
+  value: 'budgets' | 'gifts';
+  onChange: (v: 'budgets' | 'gifts') => void;
+}) {
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      {(['budgets', 'gifts'] as const).map((opt) => {
+        const selected = value === opt;
+        const Icon = opt === 'budgets' ? PiggyBank : Gift;
+        return (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onChange(opt)}
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+              selected
+                ? 'bg-gradient-to-r from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-500/25'
+                : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200',
+            )}
+            aria-pressed={selected}
+          >
+            <Icon className="h-3 w-3" />
+            {opt === 'budgets' ? 'Budgets' : 'Gifts'}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const GIFT_STATUS_PALETTE: Record<
+  GiftPaymentStatus,
+  { label: string; bg: string; text: string; ring: string; Icon: typeof CheckCircle2 }
+> = {
+  pending: {
+    label: 'Pending',
+    bg: 'bg-amber-100 dark:bg-amber-950/40',
+    text: 'text-amber-800 dark:text-amber-300',
+    ring: 'ring-amber-300/60 dark:ring-amber-700/40',
+    Icon: Clock,
+  },
+  sent: {
+    label: 'Sent',
+    bg: 'bg-sky-100 dark:bg-sky-950/40',
+    text: 'text-sky-800 dark:text-sky-300',
+    ring: 'ring-sky-300/60 dark:ring-sky-700/40',
+    Icon: Truck,
+  },
+  paid: {
+    label: 'Paid',
+    bg: 'bg-emerald-100 dark:bg-emerald-950/40',
+    text: 'text-emerald-800 dark:text-emerald-300',
+    ring: 'ring-emerald-300/60 dark:ring-emerald-700/40',
+    Icon: CheckCircle2,
+  },
+  cancelled: {
+    label: 'Cancelled',
+    bg: 'bg-rose-100 dark:bg-rose-950/40',
+    text: 'text-rose-800 dark:text-rose-300',
+    ring: 'ring-rose-300/60 dark:ring-rose-700/40',
+    Icon: XCircle,
+  },
+};
+
+function GiftEmptyState({ scope, hasRows }: { scope: 'mine' | 'all'; hasRows: boolean }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-pink-200/80 bg-pink-50/30 px-4 py-12 text-center dark:border-pink-900/50 dark:bg-pink-950/15">
+      <Gift className="h-6 w-6 text-pink-400" />
+      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
+        {hasRows
+          ? 'No gift payments match the current filter'
+          : scope === 'mine'
+            ? 'No gift payments logged yet'
+            : 'No gift payments on file'}
+      </p>
+      <p className="max-w-md text-[11.5px] text-zinc-500 dark:text-zinc-400">
+        {hasRows
+          ? 'Loosen the status filter to see more.'
+          : 'Use the Gift Tracker → Payments tab to log a vendor batch.'}
+      </p>
+    </div>
+  );
+}
+
+function GiftPaymentCard({
+  row,
+  index,
+  expanded,
+  onToggle,
+}: {
+  row: GiftPaymentRow;
+  index: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const palette = GIFT_STATUS_PALETTE[row.status];
+  const StatusIcon = palette.Icon;
+  const itemsTotal = row.items.reduce((s, it) => s + Number(it.quantity ?? 0) * Number(it.unit_price ?? 0), 0);
+  const grandTotalPhp = itemsTotal + Number(row.shipping_fee ?? 0);
+
+  return (
+    <motion.li
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: 0.2,
+        delay: Math.min(index * 0.018, 0.18),
+        ease: [0.22, 1, 0.36, 1],
+      }}
+      className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm transition-colors hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-950/60 dark:hover:border-zinc-700"
+      style={{ borderLeft: '3px solid #ec4899' }}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-50/60 dark:hover:bg-zinc-900/40"
+      >
+        <span
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white shadow-sm"
+          style={{ backgroundColor: '#ec4899' }}
+        >
+          <Gift className="h-4 w-4" />
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[13px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+              {row.vendor?.name || 'Untitled vendor'}
+            </span>
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider ring-1 ring-inset',
+                palette.bg,
+                palette.text,
+                palette.ring,
+              )}
+            >
+              <StatusIcon className="h-2.5 w-2.5" />
+              {palette.label}
+            </span>
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <span className="truncate">{row.period_label || '—'}</span>
+            {row.batch_label ? (
+              <>
+                <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                <span className="truncate">{row.batch_label}</span>
+              </>
+            ) : null}
+            {row.staff ? (
+              <>
+                <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                <span>{row.staff}</span>
+              </>
+            ) : null}
+            <span className="text-zinc-300 dark:text-zinc-700">·</span>
+            <span>logged {formatRelative(row.created_at)}</span>
+          </div>
+        </div>
+
+        <div className="text-right">
+          <div className="font-mono text-sm font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+            ${Number(row.total_usd ?? 0).toFixed(2)}
+          </div>
+          <div className="font-mono text-[9px] uppercase tracking-wider text-zinc-500">
+            usd sent
+          </div>
+        </div>
+
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 shrink-0 text-zinc-400 transition-transform duration-200',
+            expanded && 'rotate-180',
+          )}
+        />
+      </button>
+
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="gift-details"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden border-t border-zinc-200 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-950/40"
+          >
+            <div className="grid gap-4 px-4 py-4 sm:grid-cols-2">
+              <section className="flex flex-col gap-2.5">
+                <h4 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                  Payment details
+                </h4>
+                <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1.5 text-[12px]">
+                  <DetailRow label="Vendor" value={row.vendor?.name || '—'} />
+                  <DetailRow label="Period" value={row.period_label || '—'} />
+                  <DetailRow label="Batches" value={row.batch_label || '—'} />
+                  <DetailRow label="Items total" value={formatPhp(itemsTotal)} mono />
+                  <DetailRow label="Shipping" value={formatPhp(Number(row.shipping_fee ?? 0))} mono />
+                  <DetailRow label="Grand total" value={formatPhp(grandTotalPhp)} mono emphasis />
+                  <DetailRow
+                    label="USD sent"
+                    value={`$${Number(row.total_usd ?? 0).toFixed(2)}`}
+                    mono
+                  />
+                  <DetailRow label="Ordered by" value={row.ordered_by || '—'} />
+                  <DetailRow label="Staff" value={row.staff || '—'} />
+                  <DetailRow label="Transaction ID" value={row.transaction_id || '—'} mono />
+                  <DetailRow label="Date sent" value={row.date_sent ? formatDate(row.date_sent) : '—'} />
+                  <DetailRow label="Arrival" value={row.arrival_date ? formatDate(row.arrival_date) : '—'} />
+                  <DetailRow label="Our bank" value={row.our_bank || '—'} />
+                </dl>
+                {row.notes ? (
+                  <div className="mt-1 rounded-md border border-pink-100/80 bg-pink-50/40 px-3 py-2 text-[11.5px] leading-relaxed text-zinc-600 dark:border-pink-900/40 dark:bg-pink-950/15 dark:text-zinc-400">
+                    {row.notes}
+                  </div>
+                ) : null}
+              </section>
+
+              <section className="flex flex-col gap-2.5">
+                <h4 className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                  Line items ({row.items.length})
+                </h4>
+                {row.items.length === 0 ? (
+                  <p className="rounded-md border border-dashed border-zinc-200 bg-white/60 px-3 py-2 text-[11.5px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950/40">
+                    No items recorded.
+                  </p>
+                ) : (
+                  <ul className="overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800">
+                    {row.items.map((it) => (
+                      <li
+                        key={it.id}
+                        className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-1.5 text-[11.5px] last:border-b-0 dark:border-zinc-800/60"
+                      >
+                        <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-300">
+                          {it.name || 'Untitled'}
+                        </span>
+                        <span className="shrink-0 font-mono tabular-nums text-zinc-500">
+                          {it.quantity} × {formatPhp(Number(it.unit_price ?? 0))} ={' '}
+                          <span className="font-semibold text-zinc-700 dark:text-zinc-300">
+                            {formatPhp(Number(it.quantity ?? 0) * Number(it.unit_price ?? 0))}
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.li>
   );
 }
 
