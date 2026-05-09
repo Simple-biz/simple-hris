@@ -11,6 +11,7 @@ import {
   ClipboardList,
   FileText,
   HeartHandshake,
+  History as HistoryIcon,
   Loader2,
   LogOut,
   Menu,
@@ -47,6 +48,7 @@ import CreateOrphanageStyleDisputeDialog, {
   type EmployeeOption,
 } from '@/components/orphanage/CreateOrphanageStyleDisputeDialog';
 import OrphanageBudgetForm from '@/components/orphanage/OrphanageBudgetForm';
+import OrphanageBudgetHistory from '@/components/orphanage/OrphanageBudgetHistory';
 import OrphanagesPanel from '@/components/orphanage/OrphanagesPanel';
 import {
   fetchHoursByEmployee,
@@ -168,7 +170,9 @@ export default function OrphanageApp() {
   }, []);
   const welcomeMsg = WELCOME_MESSAGES[welcomeIdx]!;
 
-  const [activeTab, setActiveTab] = useState<'queue' | 'budget' | 's-wall'>('queue');
+  const [activeTab, setActiveTab] = useState<
+    'queue' | 'budget' | 'budget-history' | 's-wall'
+  >('queue');
   // Sub-tab inside the Orphanage Budget tab — Budget Request form vs Orphanages list.
   const [budgetSubTab, setBudgetSubTab] = useState<'request' | 'orphanages'>('request');
 
@@ -443,6 +447,19 @@ export default function OrphanageApp() {
               >
                 <PiggyBank className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'budget' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <span className="truncate text-left">Orphanage Budget</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setActiveTab('budget-history'); setMobileNavOpen(false); }}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+                  activeTab === 'budget-history'
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-700 font-medium text-white shadow-sm shadow-pink-600/25'
+                    : 'text-[#3f3f46] hover:bg-pink-50 hover:text-pink-900 dark:text-zinc-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
+                )}
+              >
+                <HistoryIcon className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'budget-history' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
+                <span className="truncate text-left">Budget History</span>
               </button>
               <button
                 type="button"
@@ -951,7 +968,10 @@ export default function OrphanageApp() {
                       </p>
                     </CardHeader>
                     <CardContent className="pt-5">
-                      <OrphanageBudgetForm />
+                      <OrphanageBudgetForm
+                        viewerEmail={viewerEmail}
+                        onSubmitted={() => setActiveTab('budget-history')}
+                      />
                     </CardContent>
                   </Card>
                 ) : (
@@ -976,6 +996,20 @@ export default function OrphanageApp() {
                     </CardContent>
                   </Card>
                 )}
+              </div>
+            </motion.div>
+          )}
+          {activeTab === 'budget-history' && (
+            <motion.div
+              key="budget-history"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <OrphanageBudgetHistory viewerEmail={viewerEmail} />
               </div>
             </motion.div>
           )}
