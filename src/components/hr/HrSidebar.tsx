@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
+  CalendarDays,
   LayoutDashboard,
   LogIn,
   LogOut,
@@ -24,7 +25,7 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 
-export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 's-wall';
+export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 's-wall';
 
 interface HrSidebarProps {
   activeTab: HrTab;
@@ -120,6 +121,7 @@ export default function HrSidebar({
             {navBtn('overview', 'Overview', LayoutDashboard)}
             {navBtn('onboarding', 'Onboarding', LogIn)}
             {navBtn('offboarding', 'Offboarding', UserMinus)}
+            {navBtn('leaves', 'Leave Requests', CalendarDays)}
             <button
               key="s-wall"
               type="button"

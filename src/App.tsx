@@ -12,7 +12,6 @@ import Rates from './components/Rates';
 import PayrollWizard from './components/PayrollWizard';
 import { Toaster } from '@/components/ui/sonner';
 import SystemSettings from './components/SystemSettings';
-import LeaveRequestsPanel from './components/LeaveRequestsPanel';
 import PabDisputeQueue from './components/payroll/PabDisputeQueue';
 import PayrollDispatch from './components/payroll-clerk/PayrollDispatch';
 import { normEmail } from '@/lib/email/norm-email';
@@ -144,8 +143,6 @@ export default function App() {
         return <PabDisputeQueue />;
       case 'settings':
         return <SystemSettings />;
-      case 'leave-requests':
-        return <LeaveRequestsPanel />;
       case 'announcements':
         return (
           <AccountingAnnouncementsTab

@@ -23,6 +23,7 @@ import {
   Users,
   RefreshCw,
   Clock,
+  Heart,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -401,6 +402,14 @@ const COMMON_BONUSES: { id: string; label: string; amount: number }[] = [
   { id: 'perfect_attendance', label: 'Perfect Attendance Bonus', amount: 5000 },
 ];
 
+/**
+ * Special bonus id whose amount is **per-employee** rather than a flat dept-wide
+ * amount. The amount comes from the latest ready/locked SSD Medical Records KPI
+ * sheet (`hsl_bonus_entries.calculated_bonus`). Surfaces on the Hogan Smith Law
+ * tab; only members of the SSD Medical Records team are eligible.
+ */
+const KPI_BONUS_ID = 'kpi_bonus';
+
 const DEPARTMENTS: {
   key: string;
   name: string;
@@ -427,9 +436,11 @@ const DEPARTMENTS: {
   {
     key: 'hogan_smith_law',
     name: 'Hogan Smith Law',
+    // The KPI Bonus amount is sourced from `hsl_bonus_entries` per employee
+    // (latest ready/locked SSD Medical Records week). The `amount: 0` here is
+    // a sentinel; the actual value is read from `ssdKpiAmounts[email]`.
     bonuses: [
-      { id: 'hsl_case',       label: 'Case Resolution Bonus',       amount: 3000 },
-      { id: 'hsl_compliance', label: 'Compliance Achievement Award', amount: 2500 },
+      { id: KPI_BONUS_ID, label: 'KPI Bonus', amount: 0 },
     ],
   },
   { key: 'smm',              name: 'Social Media',       bonuses: [] },
@@ -827,8 +838,9 @@ const steps = [
   },
   { id: 2, label: 'Initial Calculation', icon: DollarSign, description: 'Hubstaff hours × employee_hourly_rates → Initial Pay' },
   { id: 3, label: 'Additions', icon: Calculator, description: 'Apply bonuses and adjustments' },
-  { id: 4, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
-  { id: 5, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
+  { id: 4, label: 'Orphanage', icon: Heart, description: 'Approved orphanage visits and the hours/wages they cover' },
+  { id: 5, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
+  { id: 6, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
 ];
 
 export default function PayrollWizard() {
@@ -930,6 +942,21 @@ export default function PayrollWizard() {
   const [hourlyRatesLoading, setHourlyRatesLoading] = useState(false);
   const [hourlyRatesError, setHourlyRatesError] = useState<string | null>(null);
 
+  // ── Orphanage step (id=4): all orphanage_visit + ceo_visitation disputes
+  // inside the active PAB month range. Fetched lazily when the user lands on
+  // the step; keyed by `pabMonthRange` so changing the month re-fetches.
+  const [orphanageRows, setOrphanageRows] = useState<{
+    work_email: string;
+    dispute_date: string;
+    reason: string;
+    status: string;
+    override_hours: number | null;
+    explanation: string | null;
+  }[]>([]);
+  const [orphanageLoading, setOrphanageLoading] = useState(false);
+  const [orphanageError, setOrphanageError] = useState<string | null>(null);
+  const [orphanageSearch, setOrphanageSearch] = useState('');
+
   /** USD → PHP (PHP per $1). Saved in app_settings `usd_to_php_rate`; default is the official ₱100,000 ÷ 10⁵ rate. */
   const [usdToPhpRate, setUsdToPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
   const [usdToPhpInput, setUsdToPhpInput] = useState<string>(String(OFFICIAL_USD_TO_PHP_RATE));
@@ -974,6 +1001,94 @@ export default function PayrollWizard() {
   const [employeeMetrics, setEmployeeMetrics] = useState<Record<string, Record<string, number>>>({});
   /** Department-level numeric metrics: deptKey → { metric → value }. Used for pool calculations (QC, HR). */
   const [deptMetrics, setDeptMetrics] = useState<Record<string, Record<string, number>>>({});
+
+  /**
+   * SSD Medical Records KPI Bonus pull. Sourced from the latest `ready` or
+   * `locked` SSD weekly entries in `hsl_bonus_entries`. Only employees in
+   * `hsl_team_members` with `dept_key='ssd_medical_records'` are eligible.
+   * Powers the Hogan Smith Law tab's KPI Bonus column.
+   */
+  const [ssdMemberEmails, setSsdMemberEmails] = useState<Set<string>>(new Set());
+  const [ssdKpiAmounts, setSsdKpiAmounts] = useState<Record<string, number>>({});
+  const [ssdKpiPeriod, setSsdKpiPeriod] = useState<{
+    period_start: string;
+    period_end: string;
+    status: 'ready' | 'locked';
+  } | null>(null);
+  const [ssdKpiLoading, setSsdKpiLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSsdKpiLoading(true);
+    (async () => {
+      try {
+        const [membersRes, statusRes] = await Promise.all([
+          fetch('/api/hsl-bonus/team-members?dept=ssd_medical_records', { cache: 'no-store' }),
+          fetch('/api/hsl-bonus/period-status?dept=ssd_medical_records', { cache: 'no-store' }),
+        ]);
+        const membersJson = (await membersRes.json()) as {
+          rows?: { email: string }[];
+        };
+        const statusJson = (await statusRes.json()) as {
+          rows?: { period_start: string; period_end: string; status: 'draft' | 'ready' | 'locked' }[];
+        };
+        if (cancelled) return;
+
+        const memberSet = new Set<string>();
+        for (const m of membersJson.rows ?? []) {
+          if (m.email) memberSet.add(m.email.toLowerCase());
+        }
+        setSsdMemberEmails(memberSet);
+
+        // Pick the latest ready/locked period — prefer locked over ready when
+        // they tie on date (locked is the harder commit).
+        const periods = (statusJson.rows ?? []).filter(
+          (p) => p.status === 'ready' || p.status === 'locked',
+        );
+        if (periods.length === 0) {
+          setSsdKpiPeriod(null);
+          setSsdKpiAmounts({});
+          return;
+        }
+        periods.sort((a, b) => {
+          if (a.period_start !== b.period_start) {
+            return b.period_start.localeCompare(a.period_start);
+          }
+          // Same date: locked beats ready
+          return a.status === 'locked' ? -1 : b.status === 'locked' ? 1 : 0;
+        });
+        const latest = periods[0]!;
+        setSsdKpiPeriod({
+          period_start: latest.period_start,
+          period_end: latest.period_end,
+          status: latest.status as 'ready' | 'locked',
+        });
+
+        const entriesRes = await fetch(
+          `/api/hsl-bonus/entries?dept=ssd_medical_records&period_start=${latest.period_start}`,
+          { cache: 'no-store' },
+        );
+        const entriesJson = (await entriesRes.json()) as {
+          rows?: { employee_email: string; calculated_bonus: number }[];
+        };
+        if (cancelled) return;
+        const amounts: Record<string, number> = {};
+        for (const e of entriesJson.rows ?? []) {
+          if (e.employee_email) {
+            amounts[e.employee_email.toLowerCase()] = Math.round(e.calculated_bonus ?? 0);
+          }
+        }
+        setSsdKpiAmounts(amounts);
+      } catch {
+        // Silent — empty state is fine; the column will show "no week ready".
+      } finally {
+        if (!cancelled) setSsdKpiLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ── Overtime settings from System Settings ──────────────────────────────────
   const [otGlobalSuspended, setOtGlobalSuspended] = useState(false);
@@ -1428,6 +1543,45 @@ export default function PayrollWizard() {
     pabPeriodSettings.activeMonthResolved,
     pabPeriodSettings.activeRange,
   ]);
+
+  // Load orphanage disputes (orphanage_visit + ceo_visitation) for the active
+  // PAB range when the user lands on step 4. Re-fetches if the range changes.
+  useEffect(() => {
+    if (currentStep !== 4 || !pabMonthRange) return;
+    const ctrl = new AbortController();
+    setOrphanageLoading(true);
+    setOrphanageError(null);
+    const params = new URLSearchParams({
+      from: pabMonthRange.start.toLocaleDateString('en-CA'),
+      to: pabMonthRange.end.toLocaleDateString('en-CA'),
+      _: String(Date.now()),
+    });
+    fetch(`/api/pab-disputes/orphanage-overlap?${params}`, {
+      cache: 'no-store',
+      signal: ctrl.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as {
+          rows?: {
+            work_email: string;
+            dispute_date: string;
+            reason: string;
+            status: string;
+            override_hours: number | null;
+            explanation: string | null;
+          }[];
+        };
+        setOrphanageRows(json.rows ?? []);
+      })
+      .catch((e) => {
+        if ((e as { name?: string })?.name === 'AbortError') return;
+        setOrphanageError(e instanceof Error ? e.message : 'Failed to load orphanage disputes');
+        setOrphanageRows([]);
+      })
+      .finally(() => setOrphanageLoading(false));
+    return () => ctrl.abort();
+  }, [currentStep, pabMonthRange]);
 
   /**
    * HSL payroll weeks run Mon–Sun, so the effective PAB end is extended to the
@@ -1946,7 +2100,14 @@ export default function PayrollWizard() {
           const toggles = employeeBonuses[emp.email] ?? {};
           let total = 0;
           for (const db of dept.bonuses) {
-            if (toggles[db.id]) total += db.amount;
+            if (!toggles[db.id]) continue;
+            // KPI Bonus: per-employee amount from the latest SSD KPI sheet.
+            // Non-SSD members resolve to 0, so toggling is a no-op.
+            if (db.id === KPI_BONUS_ID) {
+              total += ssdKpiAmounts[emp.email.toLowerCase()] ?? 0;
+            } else {
+              total += db.amount;
+            }
           }
           result[emp.email] = (result[emp.email] ?? 0) + total;
         }
@@ -1965,7 +2126,7 @@ export default function PayrollWizard() {
     }
 
     return result;
-  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics]);
+  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, ssdKpiAmounts]);
 
   /** Enriched dispatch rows shared by Preview Paystubs + Confirm & Dispatch. */
   const dispatchData = useMemo(() => {
@@ -4711,17 +4872,45 @@ export default function PayrollWizard() {
                     </CardHeader>
                     <CardContent className="space-y-3 pb-4">
                       {activeDept.bonuses.map(bonus => {
+                        // KPI Bonus: only SSD members are eligible. Apply All
+                        // restricts the bulk action to that subset.
+                        const eligibleEmails = bonus.id === KPI_BONUS_ID
+                          ? deptEmployees
+                              .filter(e => ssdMemberEmails.has(e.email.toLowerCase()))
+                              .map(e => e.email)
+                          : deptEmployees.map(e => e.email);
                         const allChecked =
-                          deptEmployees.length > 0 &&
-                          deptEmployees.every(e => employeeBonuses[e.email]?.[bonus.id]);
+                          eligibleEmails.length > 0 &&
+                          eligibleEmails.every(em => employeeBonuses[em]?.[bonus.id]);
+                        const ssdReady = bonus.id === KPI_BONUS_ID && ssdKpiPeriod != null;
                         return (
                           <div key={bonus.id} className="flex items-center justify-between gap-3">
                             <div className="min-w-0 flex-1">
-                              <div className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
-                                {bonus.label}
+                              <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-zinc-800 dark:text-zinc-200">
+                                <span className="truncate">{bonus.label}</span>
+                                {bonus.id === KPI_BONUS_ID && (
+                                  <span className="rounded bg-emerald-100 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                                    SSD only
+                                  </span>
+                                )}
                               </div>
                               <div className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">
-                                {formatPHP(bonus.amount)}
+                                {bonus.id === KPI_BONUS_ID ? (
+                                  ssdReady ? (
+                                    <>
+                                      wk of {ssdKpiPeriod!.period_start}
+                                      <span className="ml-1 font-normal text-zinc-500">
+                                        · {eligibleEmails.length} eligible
+                                      </span>
+                                    </>
+                                  ) : ssdKpiLoading ? (
+                                    <span className="text-zinc-400">loading…</span>
+                                  ) : (
+                                    <span className="text-amber-600 dark:text-amber-400">no KPI ready yet</span>
+                                  )
+                                ) : (
+                                  formatPHP(bonus.amount)
+                                )}
                               </div>
                             </div>
                             <Button
@@ -4734,13 +4923,13 @@ export default function PayrollWizard() {
                                   ? 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400'
                                   : 'border-zinc-200 text-zinc-600 hover:border-violet-300 hover:text-violet-600 dark:border-zinc-700 dark:text-zinc-400',
                               )}
-                              disabled={deptEmployees.length === 0}
+                              disabled={eligibleEmails.length === 0}
                               onClick={() =>
                                 applyBonusToAllInDept(
                                   bonus.id,
                                   activeDeptTab,
                                   !allChecked,
-                                  deptEmployees.map(e => e.email),
+                                  eligibleEmails,
                                 )
                               }
                             >
@@ -4890,10 +5079,30 @@ export default function PayrollWizard() {
                             {!FORMULA_DEPT_KEYS.has(activeDeptTab) && activeDept.bonuses.map(b => (
                               <TableHead
                                 key={b.id}
-                                className="min-w-[68px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400"
+                                className={cn(
+                                  'px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400',
+                                  b.id === KPI_BONUS_ID ? 'min-w-[96px]' : 'min-w-[68px]',
+                                )}
                               >
-                                <span className="line-clamp-2">{b.label}</span><br />
-                                <span className="font-mono font-bold">{formatPHP(b.amount)}</span>
+                                {b.id === KPI_BONUS_ID ? (
+                                  <>
+                                    <span className="line-clamp-2">{b.label}</span>
+                                    <br />
+                                    <span className="font-mono text-[8px] font-normal text-zinc-500 dark:text-zinc-400">
+                                      {ssdKpiPeriod
+                                        ? `wk ${ssdKpiPeriod.period_start.slice(5)} · ${ssdKpiPeriod.status}`
+                                        : ssdKpiLoading
+                                          ? 'loading…'
+                                          : 'no KPI ready'}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="line-clamp-2">{b.label}</span>
+                                    <br />
+                                    <span className="font-mono font-bold">{formatPHP(b.amount)}</span>
+                                  </>
+                                )}
                               </TableHead>
                             ))}
                             <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
@@ -5337,15 +5546,60 @@ export default function PayrollWizard() {
                                   );
                                 })()}
                                 {/* Toggle-based dept bonus switches */}
-                                {!FORMULA_DEPT_KEYS.has(activeDeptTab) && activeDept.bonuses.map(bonus => (
-                                  <TableCell key={bonus.id} className="px-1 py-1.5 text-center">
-                                    <Switch
-                                      checked={employeeBonuses[emp.email]?.[bonus.id] ?? false}
-                                      onCheckedChange={v => toggleEmployeeBonus(emp.email, bonus.id, v)}
-                                      className="data-[state=checked]:bg-indigo-600"
-                                    />
-                                  </TableCell>
-                                ))}
+                                {!FORMULA_DEPT_KEYS.has(activeDeptTab) && activeDept.bonuses.map(bonus => {
+                                  if (bonus.id === KPI_BONUS_ID) {
+                                    const lc = emp.email.toLowerCase();
+                                    const isSSD = ssdMemberEmails.has(lc);
+                                    const amount = ssdKpiAmounts[lc] ?? 0;
+                                    if (!isSSD) {
+                                      return (
+                                        <TableCell
+                                          key={bonus.id}
+                                          className="px-1 py-1.5 text-center"
+                                          title="Not in SSD Medical Records team — KPI Bonus only applies to SSD"
+                                        >
+                                          <span className="font-mono text-[10px] text-zinc-300 dark:text-zinc-700">—</span>
+                                        </TableCell>
+                                      );
+                                    }
+                                    return (
+                                      <TableCell key={bonus.id} className="px-1 py-1.5 text-center">
+                                        <div className="flex flex-col items-center gap-0.5">
+                                          <Switch
+                                            checked={employeeBonuses[emp.email]?.[bonus.id] ?? false}
+                                            onCheckedChange={v => toggleEmployeeBonus(emp.email, bonus.id, v)}
+                                            className="data-[state=checked]:bg-indigo-600"
+                                            disabled={amount === 0}
+                                          />
+                                          <span
+                                            className={cn(
+                                              'font-mono text-[9px] tabular-nums',
+                                              amount > 0
+                                                ? 'text-emerald-600 dark:text-emerald-400'
+                                                : 'text-zinc-400 dark:text-zinc-600',
+                                            )}
+                                            title={
+                                              amount === 0
+                                                ? 'No KPI score recorded for this employee in the current week'
+                                                : `KPI calculated bonus`
+                                            }
+                                          >
+                                            {amount > 0 ? formatPHP(amount) : '₱0'}
+                                          </span>
+                                        </div>
+                                      </TableCell>
+                                    );
+                                  }
+                                  return (
+                                    <TableCell key={bonus.id} className="px-1 py-1.5 text-center">
+                                      <Switch
+                                        checked={employeeBonuses[emp.email]?.[bonus.id] ?? false}
+                                        onCheckedChange={v => toggleEmployeeBonus(emp.email, bonus.id, v)}
+                                        className="data-[state=checked]:bg-indigo-600"
+                                      />
+                                    </TableCell>
+                                  );
+                                })}
                                 <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-bold">
                                   {isRecalcPending ? (
                                     <span className="inline-block h-3 w-12 animate-pulse rounded bg-emerald-200/60 dark:bg-emerald-900/40" />
@@ -5435,6 +5689,299 @@ export default function PayrollWizard() {
         );
       }
       case 4: {
+        // ──────────── Orphanage step ────────────
+        // Two sections:
+        //   1. Approved orphanage visits in the active PAB month range.
+        //   2. Per-employee summary of orphanage hours and the wages those
+        //      hours represent (override_hours × regularRate from rates).
+        const isApprovedOrphanage = (s: string) =>
+          s === 'accounting_approved' || s === 'approved';
+
+        const orphanageQuery = orphanageSearch.trim().toLowerCase();
+        const rateByEmail = new Map<string, number>();
+        const nameByEmailOrph = new Map<string, string>();
+        for (const r of effectiveCalcResults) {
+          const em = (r.email ?? '').trim().toLowerCase();
+          if (!em) continue;
+          if (r.regularRate != null) rateByEmail.set(em, r.regularRate);
+          if (r.name) nameByEmailOrph.set(em, r.name);
+        }
+
+        // Section 1 rows — every dispute in the range, with a normalized email key.
+        const orphanageVisitRows = orphanageRows
+          .map((row) => {
+            const em = (row.work_email ?? '').trim().toLowerCase();
+            return {
+              ...row,
+              email: em,
+              name: nameByEmailOrph.get(em) ?? '—',
+              isApproved: isApprovedOrphanage(row.status),
+            };
+          })
+          .filter((r) => {
+            if (!orphanageQuery) return true;
+            return (
+              r.email.includes(orphanageQuery) ||
+              r.name.toLowerCase().includes(orphanageQuery) ||
+              r.dispute_date.includes(orphanageQuery)
+            );
+          })
+          .sort((a, b) =>
+            a.dispute_date.localeCompare(b.dispute_date) ||
+            (a.name || '').localeCompare(b.name || ''),
+          );
+
+        // Section 2 rows — aggregate approved hours per employee, multiply by rate.
+        type WageRow = {
+          email: string;
+          name: string;
+          visitCount: number;
+          totalHours: number;
+          regularRate: number | null;
+          wages: number | null;
+        };
+        const wageMap = new Map<string, WageRow>();
+        for (const r of orphanageVisitRows) {
+          if (!r.isApproved) continue;
+          const em = r.email;
+          if (!em) continue;
+          const hours = r.override_hours ?? 8;
+          const existing = wageMap.get(em);
+          if (existing) {
+            existing.visitCount += 1;
+            existing.totalHours += hours;
+            existing.wages =
+              existing.regularRate != null ? existing.totalHours * existing.regularRate : null;
+          } else {
+            const rate = rateByEmail.get(em) ?? null;
+            wageMap.set(em, {
+              email: em,
+              name: r.name,
+              visitCount: 1,
+              totalHours: hours,
+              regularRate: rate,
+              wages: rate != null ? hours * rate : null,
+            });
+          }
+        }
+        const orphanageWageRows = Array.from(wageMap.values()).sort((a, b) =>
+          (a.name || '').localeCompare(b.name || ''),
+        );
+        const totalOrphanageHours = orphanageWageRows.reduce((s, r) => s + r.totalHours, 0);
+        const totalOrphanageWages = orphanageWageRows.reduce(
+          (s, r) => s + (r.wages ?? 0),
+          0,
+        );
+        const totalApprovedVisits = orphanageVisitRows.filter((r) => r.isApproved).length;
+        const totalPendingVisits = orphanageVisitRows.length - totalApprovedVisits;
+
+        const monthLabelOrph = pabMonthRange
+          ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
+          : 'Active PAB month';
+
+        return (
+          <div className="flex min-w-0 flex-col gap-5">
+            {/* Header banner */}
+            <div className="flex flex-col gap-1 rounded-2xl border border-rose-200/70 bg-gradient-to-br from-rose-50 via-white to-pink-50/40 p-5 shadow-sm dark:border-rose-900/40 dark:from-rose-950/30 dark:via-zinc-950 dark:to-rose-950/15">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-700 dark:text-rose-300">
+                <Heart className="h-3.5 w-3.5" /> Orphanage · {monthLabelOrph}
+              </div>
+              <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                Approved orphanage visits and the wages they cover
+              </h2>
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                Visits with status <span className="font-mono">accounting_approved</span> or{' '}
+                <span className="font-mono">approved</span> are paid as worked time.
+                Hours fall back to <span className="font-mono">8</span> when no override is set.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+                <span className="rounded-full border border-emerald-300/70 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  {totalApprovedVisits} approved
+                </span>
+                {totalPendingVisits > 0 && (
+                  <span className="rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-0.5 font-medium text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+                    {totalPendingVisits} pending / denied
+                  </span>
+                )}
+                <span className="text-zinc-500 dark:text-zinc-400">
+                  {totalOrphanageHours.toFixed(1)} hrs · {formatPHP(totalOrphanageWages)} wages
+                </span>
+              </div>
+            </div>
+
+            {/* Search */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="relative w-full max-w-sm">
+                <Input
+                  value={orphanageSearch}
+                  onChange={(e) => setOrphanageSearch(e.target.value)}
+                  placeholder="Search by name, email, or date…"
+                  className="h-9 pl-3 text-sm"
+                />
+              </div>
+              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
+                {orphanageVisitRows.length} of {orphanageRows.length} visits
+              </span>
+            </div>
+
+            {/* Section 1 — Orphanage visits list */}
+            <Card className="border-rose-100/80 dark:border-rose-950/50">
+              <CardHeader className="border-b border-rose-100/60 pb-3 dark:border-rose-900/30">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                  <CalendarDays className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                  Orphanage visits
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {orphanageLoading ? (
+                  <div className="flex items-center justify-center py-10 text-zinc-500">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+                  </div>
+                ) : orphanageError ? (
+                  <p className="p-6 text-center text-xs text-rose-600 dark:text-rose-400">
+                    {orphanageError}
+                  </p>
+                ) : orphanageVisitRows.length === 0 ? (
+                  <p className="p-8 text-center text-xs text-zinc-400">
+                    No orphanage visits recorded for this period.
+                  </p>
+                ) : (
+                  <div className="max-h-[420px] overflow-y-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 z-[1] border-b border-rose-100 bg-rose-50/80 text-[11px] font-semibold uppercase tracking-wider text-rose-700 backdrop-blur dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300">
+                        <tr>
+                          <th className="px-4 py-2.5">Date</th>
+                          <th className="px-4 py-2.5">Employee</th>
+                          <th className="px-4 py-2.5">Email</th>
+                          <th className="px-4 py-2.5">Reason</th>
+                          <th className="px-4 py-2.5 text-right">Hours</th>
+                          <th className="px-4 py-2.5">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-rose-50 dark:divide-rose-950/30">
+                        {orphanageVisitRows.map((r, i) => (
+                          <tr
+                            key={`${r.email}-${r.dispute_date}-${i}`}
+                            className={cn(
+                              'transition-colors hover:bg-rose-50/40 dark:hover:bg-rose-950/15',
+                              !r.isApproved && 'opacity-60',
+                            )}
+                          >
+                            <td className="px-4 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
+                              {r.dispute_date}
+                            </td>
+                            <td className="px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">
+                              {r.name}
+                            </td>
+                            <td className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">
+                              {r.email}
+                            </td>
+                            <td className="px-4 py-2 text-zinc-500 dark:text-zinc-400">
+                              {r.reason === 'orphanage_visit' ? 'Orphanage' : r.reason === 'ceo_visitation' ? 'CEO visitation' : r.reason}
+                            </td>
+                            <td className="px-4 py-2 text-right font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
+                              {(r.override_hours ?? 8).toFixed(1)}
+                            </td>
+                            <td className="px-4 py-2">
+                              <span
+                                className={cn(
+                                  'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium',
+                                  r.isApproved
+                                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                                    : 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
+                                )}
+                              >
+                                {r.status.replace(/_/g, ' ')}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Section 2 — Hours and wages summary */}
+            <Card className="border-rose-100/80 dark:border-rose-950/50">
+              <CardHeader className="border-b border-rose-100/60 pb-3 dark:border-rose-900/30">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                  <DollarSign className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                  Orphanage hours & wages
+                </CardTitle>
+                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Approved visits only · wages = total hours × employee&apos;s regular rate.
+                </p>
+              </CardHeader>
+              <CardContent className="p-0">
+                {orphanageWageRows.length === 0 ? (
+                  <p className="p-8 text-center text-xs text-zinc-400">
+                    No approved orphanage visits → no wages to compute.
+                  </p>
+                ) : (
+                  <div className="max-h-[420px] overflow-y-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 z-[1] border-b border-rose-100 bg-rose-50/80 text-[11px] font-semibold uppercase tracking-wider text-rose-700 backdrop-blur dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300">
+                        <tr>
+                          <th className="px-4 py-2.5">Employee</th>
+                          <th className="px-4 py-2.5">Email</th>
+                          <th className="px-4 py-2.5 text-right">Visits</th>
+                          <th className="px-4 py-2.5 text-right">Hours</th>
+                          <th className="px-4 py-2.5 text-right">Reg rate</th>
+                          <th className="px-4 py-2.5 text-right">Wages</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-rose-50 dark:divide-rose-950/30">
+                        {orphanageWageRows.map((r) => (
+                          <tr
+                            key={r.email}
+                            className="transition-colors hover:bg-rose-50/40 dark:hover:bg-rose-950/15"
+                          >
+                            <td className="px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">
+                              {r.name}
+                            </td>
+                            <td className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">
+                              {r.email}
+                            </td>
+                            <td className="px-4 py-2 text-right font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
+                              {r.visitCount}
+                            </td>
+                            <td className="px-4 py-2 text-right font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
+                              {r.totalHours.toFixed(1)}
+                            </td>
+                            <td className="px-4 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
+                              {r.regularRate != null ? formatPHP(r.regularRate) : <span className="text-amber-600 dark:text-amber-400">no rate</span>}
+                            </td>
+                            <td className="px-4 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white">
+                              {r.wages != null ? formatPHP(r.wages) : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="border-t-2 border-rose-200/60 bg-rose-50/40 dark:border-rose-800/40 dark:bg-rose-950/30">
+                        <tr>
+                          <td className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300" colSpan={3}>
+                            Total
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold tabular-nums text-zinc-900 dark:text-white">
+                            {totalOrphanageHours.toFixed(1)}
+                          </td>
+                          <td />
+                          <td className="px-4 py-2.5 text-right font-mono font-bold tabular-nums text-zinc-900 dark:text-white">
+                            {formatPHP(totalOrphanageWages)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        );
+      }
+      case 5: {
         const finalPayRows = effectiveCalcResults
           .map(r => ({
             ...r,
@@ -5696,7 +6243,7 @@ export default function PayrollWizard() {
           </div>
         );
       }
-      case 5:
+      case 6:
         return (
           <div
             className={cn(

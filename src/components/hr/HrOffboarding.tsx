@@ -1,8 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
 import {
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Loader2,
   RefreshCw,
@@ -32,6 +35,7 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import DeptFilter from './DeptFilter';
 
 type HistoryRow = {
   id: string;
@@ -47,12 +51,24 @@ type HistoryRow = {
 };
 
 const REASON_LABELS: Record<string, string> = {
+  // Canonical (dashboard-set) reason keys.
   resigned: 'Resigned',
   end_of_contract: 'End of contract',
   performance: 'Performance',
   attendance: 'Attendance',
   time_manipulation: 'Time manipulation',
   other: 'Other',
+  // Reasons that arrive from the Offboarded Google Sheet sync. Stored verbatim
+  // so the column-as-typed in the sheet is preserved (no enum-shoehorning).
+  Resigned: 'Resigned',
+  Attendance: 'Attendance',
+  Productivity: 'Productivity',
+  'Policy Violation': 'Policy violation',
+  'Declined Offer': 'Declined offer',
+  NCNS: 'No call, no show',
+  'Need to Rescind': 'Need to rescind',
+  'Need to Reschedule': 'Need to reschedule',
+  sheet_sync: 'From Offboarded sheet',
 };
 
 type OffboardReason =
@@ -72,15 +88,57 @@ const REASON_OPTIONS: { value: OffboardReason; label: string }[] = [
   { value: 'other', label: 'Other (note required)' },
 ];
 
+const PAGE_SIZE = 10;
+
+function PaginationBar({
+  page, totalPages, setPage, total, filtered,
+}: {
+  page: number; totalPages: number;
+  setPage: React.Dispatch<React.SetStateAction<number>>;
+  total: number; filtered: number;
+}) {
+  return (
+    <div className="flex items-center justify-between border-t border-emerald-100/60 px-4 py-2.5 dark:border-emerald-900/40">
+      <p className="text-[11px] text-zinc-400">
+        {filtered === 0 ? '0' : `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, filtered)}`} of {filtered}
+        {filtered < total && <span className="text-zinc-300 dark:text-zinc-600"> (filtered from {total})</span>}
+      </p>
+      <div className="flex items-center gap-1">
+        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === 0} onClick={() => setPage(0)}>
+          <ChevronLeft className="h-3 w-3" /><ChevronLeft className="h-3 w-3 -ml-2" />
+        </Button>
+        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+          <ChevronLeft className="h-3 w-3" />
+        </Button>
+        <span className="min-w-[4rem] text-center text-[11px] text-zinc-500">{page + 1} / {totalPages}</span>
+        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>
+          <ChevronRight className="h-3 w-3" />
+        </Button>
+        <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages - 1} onClick={() => setPage(totalPages - 1)}>
+          <ChevronRight className="h-3 w-3" /><ChevronRight className="h-3 w-3 -ml-2" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+type OffboardTab = 'active' | 'offboarded';
+
 export default function HrOffboarding() {
+  const [activeTab, setActiveTab] = useState<OffboardTab>('active');
+
   const [roster, setRoster] = useState<EmployeeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [rosterDept, setRosterDept] = useState('');
+  const [rosterPage, setRosterPage] = useState(0);
   const [target, setTarget] = useState<EmployeeRow | null>(null);
 
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historySearch, setHistorySearch] = useState('');
+  const [historyDept, setHistoryDept] = useState('');
+  const [historyPage, setHistoryPage] = useState(0);
   const [restoring, setRestoring] = useState<string | null>(null);
 
   const fetchRoster = useCallback(async () => {
@@ -143,24 +201,50 @@ export default function HrOffboarding() {
   }, [fetchRoster, fetchHistory]);
 
   const filtered = useMemo(() => {
+    setRosterPage(0);
     const q = search.trim().toLowerCase();
-    if (!q) return roster;
-    return roster.filter((r) =>
-      [r.name, r.work_email, r.personal_email, r.department, r.employee_id]
+    return roster.filter((r) => {
+      if (rosterDept && (r.department ?? '').trim() !== rosterDept) return false;
+      if (!q) return true;
+      return [r.name, r.work_email, r.personal_email, r.department, r.employee_id]
         .filter(Boolean)
-        .some((s) => s!.toLowerCase().includes(q)),
-    );
-  }, [roster, search]);
+        .some((s) => s!.toLowerCase().includes(q));
+    });
+  }, [roster, search, rosterDept]);
 
   const filteredHistory = useMemo(() => {
+    setHistoryPage(0);
     const q = historySearch.trim().toLowerCase();
-    if (!q) return history;
-    return history.filter((r) =>
-      [r.Name, r['Work Email'], r.Department, r.off_boarded_reason, r.off_boarded_by]
+    return history.filter((r) => {
+      if (historyDept && (r.Department ?? '').trim() !== historyDept) return false;
+      if (!q) return true;
+      return [r.Name, r['Work Email'], r.Department, r.off_boarded_reason, r.off_boarded_by]
         .filter(Boolean)
-        .some((s) => s!.toLowerCase().includes(q)),
-    );
-  }, [history, historySearch]);
+        .some((s) => s!.toLowerCase().includes(q));
+    });
+  }, [history, historySearch, historyDept]);
+
+  const rosterTotalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safeRosterPage = Math.min(rosterPage, rosterTotalPages - 1);
+  const rosterPageRows = filtered.slice(safeRosterPage * PAGE_SIZE, (safeRosterPage + 1) * PAGE_SIZE);
+
+  const historyTotalPages = Math.max(1, Math.ceil(filteredHistory.length / PAGE_SIZE));
+  const safeHistoryPage = Math.min(historyPage, historyTotalPages - 1);
+  const historyPageRows = filteredHistory.slice(safeHistoryPage * PAGE_SIZE, (safeHistoryPage + 1) * PAGE_SIZE);
+
+  // Dedupe by Personal Email so the tab badge / subline reflect unique people,
+  // not raw rows. global_master_list keys on (personal_email, department), so
+  // someone with dual-department assignments would otherwise inflate the count.
+  function uniquePeople<T extends { 'Personal Email': string | null }>(rows: T[]): number {
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const k = (r['Personal Email'] ?? '').trim().toLowerCase();
+      if (k) seen.add(k);
+    }
+    return seen.size;
+  }
+  const historyUniqueTotal = uniquePeople(history);
+  const historyUniqueFiltered = uniquePeople(filteredHistory);
 
   return (
     <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
@@ -190,272 +274,231 @@ export default function HrOffboarding() {
         </div>
       </header>
 
-      {/* Roster card */}
+      {/* Main card with tabs */}
       <Card className="border-emerald-100/80 bg-gradient-to-br from-white via-emerald-50/30 to-white shadow-md ring-1 ring-emerald-500/8 dark:border-emerald-950/55 dark:from-zinc-950 dark:via-emerald-950/12 dark:to-zinc-950 dark:ring-emerald-400/10">
-        <CardHeader className="flex flex-col gap-2 border-b border-emerald-100/60 pb-4 dark:border-emerald-900/40">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25">
-                <UserX className="h-4 w-4" />
-              </div>
-              <div>
-                <CardTitle className="text-base font-semibold">
+        <CardHeader className="flex flex-col gap-3 border-b border-emerald-100/60 pb-4 dark:border-emerald-900/40">
+          {/* Tab switcher + search + refresh */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            {/* Tabs */}
+            <div className="flex items-center gap-1 rounded-lg border border-emerald-100/80 bg-emerald-50/60 p-1 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+              <button
+                type="button"
+                onClick={() => setActiveTab('active')}
+                className={cn(
+                  'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  activeTab === 'active' ? 'text-white' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                )}
+              >
+                {activeTab === 'active' && (
+                  <motion.span
+                    layoutId="offboardTabPill"
+                    className="absolute inset-0 rounded-md bg-gradient-to-r from-emerald-500 to-teal-700 shadow-sm"
+                    transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                  />
+                )}
+                <span className="relative flex items-center gap-1.5">
+                  <UserX className="h-3.5 w-3.5" />
                   Active employees
-                </CardTitle>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {loading
-                    ? 'Loading roster…'
-                    : `${filtered.length} of ${roster.length} shown`}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="relative w-full sm:w-72">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search name, email, dept…"
-                  className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900"
-                />
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void fetchRoster()}
-                disabled={loading}
-                className="shrink-0"
+                  <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] tabular-nums', activeTab === 'active' ? 'bg-white/20' : 'bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300')}>
+                    {roster.length}
+                  </span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('offboarded')}
+                className={cn(
+                  'relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  activeTab === 'offboarded' ? 'text-white' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                )}
               >
-                <RefreshCw
-                  className={cn(
-                    'h-3.5 w-3.5',
-                    loading && 'animate-spin',
-                  )}
-                />
-              </Button>
+                {activeTab === 'offboarded' && (
+                  <motion.span
+                    layoutId="offboardTabPill"
+                    className="absolute inset-0 rounded-md bg-gradient-to-r from-rose-500 to-rose-700 shadow-sm"
+                    transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                  />
+                )}
+                <span className="relative flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5" />
+                  Offboarded
+                  <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] tabular-nums', activeTab === 'offboarded' ? 'bg-white/20' : 'bg-zinc-200/80 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300')}>
+                    {historyUniqueTotal}
+                  </span>
+                </span>
+              </button>
             </div>
+
+            {/* Search + refresh */}
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0, x: 8 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -8 }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                className="flex items-center gap-2"
+              >
+                {activeTab === 'active' ? (
+                  <>
+                    <div className="relative w-full sm:w-64">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                      <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, email…" className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900" />
+                    </div>
+                    <DeptFilter rows={roster} getDept={(r) => r.department} value={rosterDept} onChange={setRosterDept} />
+                    <Button variant="outline" size="sm" onClick={() => void fetchRoster()} disabled={loading} className="shrink-0">
+                      <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <div className="relative w-full sm:w-56">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                      <Input value={historySearch} onChange={(e) => setHistorySearch(e.target.value)} placeholder="Search name, reason…" className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900" />
+                    </div>
+                    <DeptFilter rows={history} getDept={(r) => r.Department} value={historyDept} onChange={setHistoryDept} />
+                    <Button variant="outline" size="sm" onClick={() => void fetchHistory()} disabled={historyLoading} className="shrink-0">
+                      <RefreshCw className={cn('h-3.5 w-3.5', historyLoading && 'animate-spin')} />
+                    </Button>
+                  </>
+                )}
+              </motion.div>
+            </AnimatePresence>
           </div>
+
+          {/* Sub-label */}
+          <p className="text-xs text-muted-foreground">
+            {activeTab === 'active'
+              ? loading ? 'Loading roster…' : `${filtered.length} of ${roster.length} shown`
+              : historyLoading ? 'Loading…' : `${historyUniqueFiltered} of ${historyUniqueTotal} off-boarded`}
+          </p>
         </CardHeader>
 
         <CardContent className="pt-4">
-          {loading ? (
-            <div className="flex items-center justify-center py-10 text-zinc-500">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Loading…
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-emerald-200/80 bg-white/70 py-10 text-center dark:border-emerald-900/50 dark:bg-zinc-950/40">
-              <UserX className="h-8 w-8 text-emerald-400/60" />
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                {roster.length === 0
-                  ? 'No active employees on file.'
-                  : 'No rows match your search.'}
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
-              <table className="w-full min-w-[720px] text-left text-sm">
-                <thead className="sticky top-0 z-[1] bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Employee ID</th>
-                    <th className="px-4 py-3 font-semibold">Name</th>
-                    <th className="px-4 py-3 font-semibold">Department</th>
-                    <th className="px-4 py-3 font-semibold">Work email</th>
-                    <th className="px-4 py-3 font-semibold">Start</th>
-                    <th className="px-4 py-3 font-semibold text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-emerald-100/70 bg-white/85 dark:divide-emerald-900/35 dark:bg-zinc-950/40">
-                  {filtered.slice(0, 200).map((r, i) => (
-                    <tr
-                      key={`${r.work_email ?? r.personal_email ?? i}-${i}`}
-                      className="align-middle hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20"
-                    >
-                      <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">
-                        {r.employee_id ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-zinc-900 dark:text-zinc-100">
-                        {r.name ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">
-                        {r.department ?? '—'}
-                      </td>
-                      <td className="break-all px-4 py-2.5 font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                        {r.work_email ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
-                        {r.start_date ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setTarget(r)}
-                          disabled={!r.work_email}
-                          className="h-7 gap-1 border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 disabled:opacity-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                          title={
-                            r.work_email
-                              ? `Off-board ${r.name ?? r.work_email}`
-                              : 'No work email — cannot off-board'
-                          }
-                        >
-                          <UserMinus className="h-3 w-3" />
-                          Offboard
-                        </Button>
-                      </td>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            >
+          {activeTab === 'active' ? (
+            /* ── Active employees ── */
+            loading ? (
+              <div className="flex items-center justify-center py-10 text-zinc-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-emerald-200/80 bg-white/70 py-10 text-center dark:border-emerald-900/50 dark:bg-zinc-950/40">
+                <UserX className="h-8 w-8 text-emerald-400/60" />
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  {roster.length === 0 ? 'No active employees on file.' : 'No rows match your search.'}
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
+                <table className="w-full min-w-[720px] text-left text-sm">
+                  <thead className="sticky top-0 z-[1] bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Employee ID</th>
+                      <th className="px-4 py-3 font-semibold">Name</th>
+                      <th className="px-4 py-3 font-semibold">Department</th>
+                      <th className="px-4 py-3 font-semibold">Work email</th>
+                      <th className="px-4 py-3 font-semibold">Start</th>
+                      <th className="px-4 py-3 font-semibold text-right">Action</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-              {filtered.length > 200 && (
-                <div className="border-t border-emerald-100/60 px-4 py-2 text-center text-[11px] text-zinc-500 dark:border-emerald-900/40 dark:text-zinc-500">
-                  Showing first 200 of {filtered.length} — refine the search to narrow.
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Offboard history card */}
-      <Card className="border-emerald-100/80 bg-gradient-to-br from-white via-emerald-50/30 to-white shadow-md ring-1 ring-emerald-500/8 dark:border-emerald-950/55 dark:from-zinc-950 dark:via-emerald-950/12 dark:to-zinc-950 dark:ring-emerald-400/10">
-        <CardHeader className="flex flex-col gap-2 border-b border-emerald-100/60 pb-4 dark:border-emerald-900/40">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-zinc-500 to-zinc-700 text-white shadow-sm shadow-zinc-600/25">
-                <Clock className="h-4 w-4" />
-              </div>
-              <div>
-                <CardTitle className="text-base font-semibold">
-                  Offboard history
-                </CardTitle>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {historyLoading
-                    ? 'Loading…'
-                    : `${filteredHistory.length} of ${history.length} off-boarded`}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="relative w-full sm:w-64">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                <Input
-                  value={historySearch}
-                  onChange={(e) => setHistorySearch(e.target.value)}
-                  placeholder="Search name, reason…"
-                  className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900"
-                />
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void fetchHistory()}
-                disabled={historyLoading}
-                className="shrink-0"
-              >
-                <RefreshCw className={cn('h-3.5 w-3.5', historyLoading && 'animate-spin')} />
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-
-        <CardContent className="pt-4">
-          {historyLoading ? (
-            <div className="flex items-center justify-center py-10 text-zinc-500">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Loading…
-            </div>
-          ) : filteredHistory.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-emerald-200/80 bg-white/70 py-10 text-center dark:border-emerald-900/50 dark:bg-zinc-950/40">
-              <Clock className="h-8 w-8 text-zinc-300 dark:text-zinc-600" />
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {history.length === 0 ? 'No off-boarded employees yet.' : 'No rows match your search.'}
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
-              <table className="w-full min-w-[800px] text-left text-sm">
-                <thead className="sticky top-0 z-[1] bg-gradient-to-r from-zinc-50 via-white to-zinc-50/80 text-xs text-zinc-600 dark:from-zinc-900/70 dark:via-zinc-950 dark:to-zinc-900/50 dark:text-zinc-400">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Name</th>
-                    <th className="px-4 py-3 font-semibold">Work email</th>
-                    <th className="px-4 py-3 font-semibold">Department</th>
-                    <th className="px-4 py-3 font-semibold">Reason</th>
-                    <th className="px-4 py-3 font-semibold">Off-boarded</th>
-                    <th className="px-4 py-3 font-semibold">By</th>
-                    <th className="px-4 py-3 font-semibold text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100/80 bg-white/85 dark:divide-zinc-800/50 dark:bg-zinc-950/40">
-                  {filteredHistory.slice(0, 200).map((r) => {
-                    const email = r['Work Email'] ?? '';
-                    const isRestoring = restoring === email;
-                    return (
-                      <tr
-                        key={r.id}
-                        className="align-middle hover:bg-zinc-50/60 dark:hover:bg-zinc-900/30"
-                      >
-                        <td className="px-4 py-2.5 font-medium text-zinc-900 dark:text-zinc-100">
-                          {r.Name ?? '—'}
-                        </td>
-                        <td className="break-all px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">
-                          {email || '—'}
-                        </td>
-                        <td className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">
-                          {r.Department ?? '—'}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          {r.off_boarded_reason ? (
-                            <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
-                              {REASON_LABELS[r.off_boarded_reason] ?? r.off_boarded_reason}
-                            </span>
-                          ) : '—'}
-                          {r.off_boarded_note && (
-                            <p className="mt-0.5 max-w-[180px] truncate text-[11px] text-zinc-500" title={r.off_boarded_note}>
-                              {r.off_boarded_note}
-                            </p>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
-                          {r.off_boarded_at
-                            ? new Date(r.off_boarded_at).toLocaleDateString('en-PH', {
-                                year: 'numeric',
-                                month: 'short',
-                                day: 'numeric',
-                              })
-                            : '—'}
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-xs text-zinc-500 dark:text-zinc-500">
-                          {r.off_boarded_by ?? '—'}
-                        </td>
+                  </thead>
+                  <tbody className="divide-y divide-emerald-100/70 bg-white/85 dark:divide-emerald-900/35 dark:bg-zinc-950/40">
+                    {rosterPageRows.map((r, i) => (
+                      <tr key={`${r.work_email ?? r.personal_email ?? i}`} className="align-middle hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20">
+                        <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{r.employee_id ?? '—'}</td>
+                        <td className="px-4 py-2.5 text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</td>
+                        <td className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
+                        <td className="break-all px-4 py-2.5 font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.work_email ?? '—'}</td>
+                        <td className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">{r.start_date ?? '—'}</td>
                         <td className="px-4 py-2.5 text-right">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void handleRestore(r)}
-                            disabled={isRestoring || !email}
-                            className="h-7 gap-1 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
-                          >
-                            {isRestoring ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <RotateCcw className="h-3 w-3" />
-                            )}
-                            Restore
+                          <Button size="sm" variant="outline" onClick={() => setTarget(r)} disabled={!r.work_email}
+                            className="h-7 gap-1 border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 disabled:opacity-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                            title={r.work_email ? `Off-board ${r.name ?? r.work_email}` : 'No work email — cannot off-board'}>
+                            <UserMinus className="h-3 w-3" /> Offboard
                           </Button>
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {filteredHistory.length > 200 && (
-                <div className="border-t border-zinc-100/60 px-4 py-2 text-center text-[11px] text-zinc-500 dark:border-zinc-800/40 dark:text-zinc-500">
-                  Showing first 200 of {filteredHistory.length} — refine the search to narrow.
-                </div>
-              )}
-            </div>
+                    ))}
+                  </tbody>
+                </table>
+                <PaginationBar page={safeRosterPage} totalPages={rosterTotalPages} setPage={setRosterPage} total={roster.length} filtered={filtered.length} />
+              </div>
+            )
+          ) : (
+            /* ── Offboarded ── */
+            historyLoading ? (
+              <div className="flex items-center justify-center py-10 text-zinc-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+              </div>
+            ) : filteredHistory.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-emerald-200/80 bg-white/70 py-10 text-center dark:border-emerald-900/50 dark:bg-zinc-950/40">
+                <Clock className="h-8 w-8 text-zinc-300 dark:text-zinc-600" />
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {history.length === 0 ? 'No off-boarded employees yet.' : 'No rows match your search.'}
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
+                <table className="w-full min-w-[800px] text-left text-sm">
+                  <thead className="sticky top-0 z-[1] bg-gradient-to-r from-zinc-50 via-white to-zinc-50/80 text-xs text-zinc-600 dark:from-zinc-900/70 dark:via-zinc-950 dark:to-zinc-900/50 dark:text-zinc-400">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Name</th>
+                      <th className="px-4 py-3 font-semibold">Work email</th>
+                      <th className="px-4 py-3 font-semibold">Department</th>
+                      <th className="px-4 py-3 font-semibold">Reason</th>
+                      <th className="px-4 py-3 font-semibold">Off-boarded</th>
+                      <th className="px-4 py-3 font-semibold">By</th>
+                      <th className="px-4 py-3 font-semibold text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100/80 bg-white/85 dark:divide-zinc-800/50 dark:bg-zinc-950/40">
+                    {historyPageRows.map((r) => {
+                      const email = r['Work Email'] ?? '';
+                      const isRestoring = restoring === email;
+                      return (
+                        <tr key={r.id} className="align-middle hover:bg-zinc-50/60 dark:hover:bg-zinc-900/30">
+                          <td className="px-4 py-2.5 font-medium text-zinc-900 dark:text-zinc-100">{r.Name ?? '—'}</td>
+                          <td className="break-all px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{email || '—'}</td>
+                          <td className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.Department ?? '—'}</td>
+                          <td className="px-4 py-2.5">
+                            {r.off_boarded_reason ? (
+                              <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
+                                {REASON_LABELS[r.off_boarded_reason] ?? r.off_boarded_reason}
+                              </span>
+                            ) : '—'}
+                            {r.off_boarded_note && (
+                              <p className="mt-0.5 max-w-[180px] truncate text-[11px] text-zinc-500" title={r.off_boarded_note}>{r.off_boarded_note}</p>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
+                            {r.off_boarded_at ? new Date(r.off_boarded_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—'}
+                          </td>
+                          <td className="px-4 py-2.5 font-mono text-xs text-zinc-500 dark:text-zinc-500">{r.off_boarded_by ?? '—'}</td>
+                          <td className="px-4 py-2.5 text-right">
+                            <Button size="sm" variant="outline" onClick={() => void handleRestore(r)} disabled={isRestoring || !email}
+                              className="h-7 gap-1 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30">
+                              {isRestoring ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                              Restore
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <PaginationBar page={safeHistoryPage} totalPages={historyTotalPages} setPage={setHistoryPage} total={history.length} filtered={filteredHistory.length} />
+              </div>
+            )
           )}
+            </motion.div>
+          </AnimatePresence>
         </CardContent>
       </Card>
 

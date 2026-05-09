@@ -125,6 +125,20 @@ interface MasterSheetSyncResponse {
   error?: string;
 }
 
+interface OffboardedSheetSyncResponse {
+  success?: boolean;
+  tabName?: string;
+  dataRows?: number;
+  parsedRows?: number;
+  rowsMissingPersonalEmail?: number;
+  matched?: number;
+  updated?: number;
+  skippedAlreadyOffboarded?: number;
+  notFound?: number;
+  unmatchedEmails?: string[];
+  error?: string;
+}
+
 interface HubstaffSourceFilesResponse {
   files?: string[];
   uploads?: HubstaffUploadMeta[];
@@ -494,6 +508,43 @@ export default function AdminCsvImports() {
   }, [setResult, loadMasterUploads, masterSyncClearOffboarded]);
 
   /**
+   * Pull the "Offboarded" tab of the master Google Sheet and stamp matching
+   * `global_master_list` rows as off-boarded (matched on Personal Email).
+   * Already off-boarded rows are skipped to preserve manual HR edits.
+   */
+  const [offboardedSyncRunning, setOffboardedSyncRunning] = useState(false);
+  const handleOffboardedSheetSync = useCallback(async () => {
+    setOffboardedSyncRunning(true);
+    try {
+      const res = await fetch('/api/cron/sync-offboarded-from-sheet', { method: 'POST' });
+      const json = (await res.json()) as OffboardedSheetSyncResponse;
+      if (!res.ok || !json.success) {
+        const message = json.error ?? res.statusText ?? 'Offboarded sync failed';
+        toast.error('Offboarded sync failed', { description: message });
+        return;
+      }
+      const updated = json.updated ?? 0;
+      const skipped = json.skippedAlreadyOffboarded ?? 0;
+      const notFound = json.notFound ?? 0;
+      const sublines: string[] = [];
+      if (skipped > 0) sublines.push(`${skipped} already off-boarded — skipped`);
+      if (notFound > 0) sublines.push(`${notFound} not found in master list`);
+      if ((json.rowsMissingPersonalEmail ?? 0) > 0) {
+        sublines.push(`${json.rowsMissingPersonalEmail} sheet rows missing Personal Email`);
+      }
+      toast.success(`${updated} marked off-boarded`, {
+        description: sublines.length > 0 ? sublines.join(' · ') : `from "${json.tabName ?? 'Offboarded'}" sheet`,
+      });
+      await loadMasterUploads();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('Offboarded sync failed', { description: message });
+    } finally {
+      setOffboardedSyncRunning(false);
+    }
+  }, [loadMasterUploads]);
+
+  /**
    * Pull payroll rates from the configured Google Sheet (env-driven service account).
    * Goes through the same `replaceEmployeeHourlyRatesFromCsv` pipeline as a CSV upload,
    * so it lands in `employee_hourly_rates` + an archive row in `rates_uploads`.
@@ -843,6 +894,8 @@ export default function AdminCsvImports() {
               onMasterSheetSync={handleMasterSheetSync}
               masterSyncClearOffboarded={masterSyncClearOffboarded}
               onMasterSyncClearOffboardedChange={setMasterSyncClearOffboarded}
+              onOffboardedSheetSync={handleOffboardedSheetSync}
+              offboardedSyncRunning={offboardedSyncRunning}
               onRatesSheetSync={handleRatesSheetSync}
               onHslSheetSync={handleHslSheetSync}
               selectedSource={selectedSource}
@@ -1075,6 +1128,8 @@ interface UploadTabProps {
   onMasterSheetSync: () => void | Promise<void>;
   masterSyncClearOffboarded: boolean;
   onMasterSyncClearOffboardedChange: (v: boolean) => void;
+  onOffboardedSheetSync: () => void | Promise<void>;
+  offboardedSyncRunning: boolean;
   onRatesSheetSync: () => void | Promise<void>;
   onHslSheetSync: () => void | Promise<void>;
   /** Which card is "selected" — drives the batches list rendered below. */
@@ -1108,6 +1163,8 @@ function UploadTab(props: UploadTabProps) {
     onMasterSheetSync,
     masterSyncClearOffboarded,
     onMasterSyncClearOffboardedChange,
+    onOffboardedSheetSync,
+    offboardedSyncRunning,
     onRatesSheetSync,
     onHslSheetSync,
     selectedSource,
@@ -1172,6 +1229,22 @@ function UploadTab(props: UploadTabProps) {
               {' '}— re-activate anyone in the sheet who was previously off-boarded
             </span>
           </label>
+
+          {/* Offboarded sheet sync — separate button: pulls the "Offboarded" tab and
+              stamps matching rows in global_master_list with off_boarded_* fields. */}
+          <button
+            type="button"
+            onClick={() => void onOffboardedSheetSync()}
+            disabled={offboardedSyncRunning}
+            className="flex items-center justify-center gap-2 rounded-lg border border-rose-200/80 bg-rose-50/60 px-3 py-2 text-xs font-medium text-rose-800 transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-900/50 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
+          >
+            {offboardedSyncRunning ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Cloud className="h-3.5 w-3.5" />
+            )}
+            <span>Sync Offboarded sheet → mark as off-boarded</span>
+          </button>
         </div>
 
         <UploadCard

@@ -6,7 +6,6 @@ export const ACCOUNTING_TAB_IDS = [
   'payroll-wizard',
   'hogan-suite',
   'payment-dispatch',
-  'leave-requests',
   'disputes',
   'announcements',
   's-wall',

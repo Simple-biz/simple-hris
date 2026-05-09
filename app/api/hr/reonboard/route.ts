@@ -3,6 +3,7 @@ import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
 } from "@/lib/supabase/server";
+import { deleteOffboardedSheetByWorkEmail } from "@/lib/supabase/global-master-list-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
 
@@ -45,6 +46,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Supabase not configured" }, { status: 500 });
   }
 
+  // 1. Clear master list off_boarded_* so the person reappears in
+  //    active_employees and every downstream dashboard.
   const { data, error } = await supabase
     .from(MASTER_TABLE)
     .update({
@@ -62,7 +65,20 @@ export async function POST(req: Request) {
   }
 
   const rows = data ?? [];
-  if (rows.length === 0) {
+
+  // 2. Delete from offboarded_sheet so the row also disappears from the HR
+  //    Offboarded tab. Independent of (1) — the person may have been added via
+  //    the sheet sync without a corresponding active master-list row.
+  let sheetRowsDeleted = 0;
+  try {
+    sheetRowsDeleted = await deleteOffboardedSheetByWorkEmail(work_email);
+  } catch (e) {
+    // Don't fail the whole request — master list is the load-bearing source of
+    // truth for active/inactive. Log + continue.
+    console.error("[POST /api/hr/reonboard] offboarded_sheet delete failed:", e);
+  }
+
+  if (rows.length === 0 && sheetRowsDeleted === 0) {
     return NextResponse.json(
       { error: "No off-boarded rows found for that email." },
       { status: 404 },
@@ -75,8 +91,16 @@ export async function POST(req: Request) {
     action: "hr.employee.reonboarded",
     resource: MASTER_TABLE,
     resource_id: work_email,
-    details: { target_email: work_email, rows_updated: rows.length },
+    details: {
+      target_email: work_email,
+      rows_updated: rows.length,
+      sheet_rows_deleted: sheetRowsDeleted,
+    },
   });
 
-  return NextResponse.json({ success: true, rows_updated: rows.length });
+  return NextResponse.json({
+    success: true,
+    rows_updated: rows.length,
+    sheet_rows_deleted: sheetRowsDeleted,
+  });
 }

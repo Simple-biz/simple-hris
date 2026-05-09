@@ -575,3 +575,293 @@ export async function countMasterAndRatesRows(): Promise<{
     ratesError: r.error?.message ?? null,
   };
 }
+
+/** Shape consumed by `applyOffboardedFromSheetRows`. Mirror of `OffboardedSheetRow`
+ *  in `src/lib/google-sheets/fetch-offboarded-sheet.ts` — kept structurally
+ *  identical so the route can pass through the parsed sheet rows directly. */
+export interface OffboardedRowInput {
+  personal_email: string;
+  work_email?: string | null;
+  name?: string | null;
+  department?: string | null;
+  off_boarded_at: string | null;
+  off_boarded_reason: string | null;
+  off_boarded_note: string | null;
+  off_boarded_by: string | null;
+}
+
+/**
+ * Marks rows in `global_master_list` as off-boarded based on parsed rows from the
+ * "Offboarded" tab of the master Google Sheet. Match key: lowercased Personal Email.
+ *
+ * Behavior (from current product decisions):
+ *   • Already off-boarded rows are skipped — preserves manual HR edits made via
+ *     the Offboarding dashboard. Counted in `skippedAlreadyOffboarded`.
+ *   • `off_boarded_at` = sheet date if parseable, else NOW().
+ *   • `off_boarded_reason` defaults to 'sheet_sync' if the sheet didn't include one.
+ *   • `off_boarded_by` defaults to 'GSheets Sync' if the sheet didn't include one.
+ *   • Rows in the sheet whose Personal Email isn't in `global_master_list` are
+ *     reported in `unmatchedEmails` (capped to the first 50 to keep audit logs sane).
+ *
+ * Does NOT delete or insert master-list rows — only updates the off_boarded_*
+ * columns on existing rows. Add a row via the master-list sync first.
+ */
+export async function applyOffboardedFromSheetRows(rows: OffboardedRowInput[]): Promise<{
+  matched: number;
+  updated: number;
+  skippedAlreadyOffboarded: number;
+  notFound: number;
+  unmatchedEmails: string[];
+}> {
+  const supabase = requireServiceRole();
+  const table = getMasterTableName();
+
+  if (rows.length === 0) {
+    return { matched: 0, updated: 0, skippedAlreadyOffboarded: 0, notFound: 0, unmatchedEmails: [] };
+  }
+
+  // Paginate past Supabase's default 1000-row max — global_master_list can be
+  // several thousand rows (active + offboarded), and a single `.range()` call
+  // gets capped server-side regardless of the requested ceiling.
+  const PAGE = 1000;
+  const allRows: {
+    id: string | number;
+    "Personal Email": string | null;
+    off_boarded_at: string | null;
+  }[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('id, "Personal Email", off_boarded_at')
+      .not('"Personal Email"', "is", null)
+      .order("id", { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (error) throw new Error(`Could not read ${table}: ${error.message}`);
+    const batch = (data ?? []) as typeof allRows;
+    allRows.push(...batch);
+    if (batch.length < PAGE) break;
+    if (offset > 100000) break;
+  }
+
+  const byEmail = new Map<
+    string,
+    { id: string | number; off_boarded_at: string | null }[]
+  >();
+  for (const r of allRows) {
+    const pe = (r["Personal Email"] ?? "").trim().toLowerCase();
+    if (!pe) continue;
+    const list = byEmail.get(pe) ?? [];
+    list.push({ id: r.id, off_boarded_at: r.off_boarded_at });
+    byEmail.set(pe, list);
+  }
+
+  let matched = 0;
+  let updated = 0;
+  let skippedAlreadyOffboarded = 0;
+  let notFound = 0;
+  const unmatchedEmails: string[] = [];
+
+  for (const sheetRow of rows) {
+    const targets = byEmail.get(sheetRow.personal_email);
+    if (!targets || targets.length === 0) {
+      notFound += 1;
+      if (unmatchedEmails.length < 50) unmatchedEmails.push(sheetRow.personal_email);
+      continue;
+    }
+    matched += targets.length;
+
+    const stamp = sheetRow.off_boarded_at ?? new Date().toISOString();
+    const reason = sheetRow.off_boarded_reason ?? "sheet_sync";
+    const by = sheetRow.off_boarded_by ?? "GSheets Sync";
+    const note = sheetRow.off_boarded_note ?? null;
+
+    for (const tgt of targets) {
+      if (tgt.off_boarded_at) {
+        skippedAlreadyOffboarded += 1;
+        continue;
+      }
+      const { error: updErr } = await supabase
+        .from(table)
+        .update({
+          off_boarded_at: stamp,
+          off_boarded_reason: reason,
+          off_boarded_by: by,
+          off_boarded_note: note,
+        })
+        .eq("id", tgt.id);
+      if (updErr) {
+        console.error(
+          `[applyOffboardedFromSheetRows] update failed for id=${tgt.id}:`,
+          updErr.message,
+        );
+        continue;
+      }
+      updated += 1;
+    }
+  }
+
+  return { matched, updated, skippedAlreadyOffboarded, notFound, unmatchedEmails };
+}
+
+/**
+ * Replaces the contents of the `offboarded_sheet` table with a fresh snapshot
+ * from the parsed Offboarded sheet rows. The HR Offboarded tab reads from this
+ * table (decoupled from global_master_list).
+ *
+ * Behavior: TRUNCATE-equivalent (DELETE all) + INSERT all. We deliberately don't
+ * upsert per-row because the sheet IS the source of truth — anyone removed from
+ * the sheet should disappear from the tab on the next sync.
+ */
+export async function replaceOffboardedSheetSnapshot(rows: OffboardedRowInput[]): Promise<{
+  inserted: number;
+  cleared: number;
+}> {
+  const supabase = requireServiceRole();
+
+  // Clear existing snapshot. `.gt('id', 0)` satisfies the supabase-js requirement
+  // that DELETE always have a filter.
+  const { count: prevCount, error: countErr } = await supabase
+    .from("offboarded_sheet")
+    .select("id", { count: "exact", head: true });
+  if (countErr) {
+    throw new Error(`Could not count offboarded_sheet: ${countErr.message}`);
+  }
+
+  const { error: delErr } = await supabase
+    .from("offboarded_sheet")
+    .delete()
+    .gt("id", 0);
+  if (delErr) {
+    throw new Error(`Could not clear offboarded_sheet: ${delErr.message}`);
+  }
+
+  if (rows.length === 0) {
+    return { inserted: 0, cleared: prevCount ?? 0 };
+  }
+
+  const payload = rows.map((r) => ({
+    personal_email: r.personal_email,
+    work_email: r.work_email ?? null,
+    name: r.name ?? null,
+    department: r.department ?? null,
+    start_date: null,
+    off_boarded_at: r.off_boarded_at,
+    off_boarded_reason: r.off_boarded_reason,
+    off_boarded_note: r.off_boarded_note,
+    off_boarded_by: r.off_boarded_by,
+  }));
+
+  // Insert in 500-row chunks. Supabase / PostgREST will silently truncate / fail
+  // on very large bulk inserts (payload size + db.max-rows limits), which is
+  // why a 3000-row sheet can land as ~970 rows when sent as a single .insert().
+  const CHUNK = 500;
+  let inserted = 0;
+  for (let i = 0; i < payload.length; i += CHUNK) {
+    const slice = payload.slice(i, i + CHUNK);
+    const { error: insErr } = await supabase.from("offboarded_sheet").insert(slice);
+    if (insErr) {
+      throw new Error(
+        `Could not insert into offboarded_sheet (chunk ${i}-${i + slice.length}): ${insErr.message}`,
+      );
+    }
+    inserted += slice.length;
+  }
+
+  return { inserted, cleared: prevCount ?? 0 };
+}
+
+/** Read all rows from the offboarded_sheet table — newest off-board first.
+ *  Paginates manually because Supabase's default `db.max-rows` is 1000, so a
+ *  3000+ row sheet won't come back in a single request even with `.range()`.
+ *
+ *  Enriches each row's `department` from `global_master_list` keyed on
+ *  Personal Email (the Offboarded sheet doesn't have a Department column, so
+ *  the synced rows have null department; the master list does). Skipped if
+ *  the row already has a non-empty department from the sheet itself. */
+export async function listOffboardedSheetRows(): Promise<{
+  id: number;
+  personal_email: string;
+  work_email: string | null;
+  name: string | null;
+  department: string | null;
+  start_date: string | null;
+  off_boarded_at: string | null;
+  off_boarded_reason: string | null;
+  off_boarded_note: string | null;
+  off_boarded_by: string | null;
+  synced_at: string;
+}[]> {
+  const supabase = requireServiceRole();
+  const table = getMasterTableName();
+  const PAGE = 1000;
+
+  // 1. Pull offboarded_sheet rows (paginated — default max-rows is 1000).
+  const all: Record<string, unknown>[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await supabase
+      .from("offboarded_sheet")
+      .select("*")
+      .order("off_boarded_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + PAGE - 1);
+    if (error) throw new Error(`Could not list offboarded_sheet: ${error.message}`);
+    const batch = data ?? [];
+    all.push(...batch);
+    if (batch.length < PAGE) break;
+    if (offset > 100000) break;
+  }
+
+  // 2. Build a personal_email_lc → department map from global_master_list.
+  //    Sheet has no Department column → master list is the only source. Pick
+  //    the first department alphabetically when an email has multiple
+  //    assignments, so the column is at least stable run-to-run.
+  const deptByEmail = new Map<string, string>();
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('"Personal Email", "Department"')
+      .not('"Personal Email"', "is", null)
+      .not('"Department"', "is", null)
+      .order("id", { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (error) throw new Error(`Could not read ${table} for dept lookup: ${error.message}`);
+    const batch = (data ?? []) as { "Personal Email": string | null; "Department": string | null }[];
+    for (const r of batch) {
+      const pe = (r["Personal Email"] ?? "").trim().toLowerCase();
+      const dept = (r["Department"] ?? "").trim();
+      if (!pe || !dept) continue;
+      const existing = deptByEmail.get(pe);
+      if (!existing || dept.localeCompare(existing) < 0) {
+        deptByEmail.set(pe, dept);
+      }
+    }
+    if (batch.length < PAGE) break;
+    if (offset > 100000) break;
+  }
+
+  // 3. Fill in department for any row whose sheet-side dept is empty.
+  for (const r of all) {
+    const existing = ((r.department as string | null) ?? "").trim();
+    if (existing) continue;
+    const pe = ((r.personal_email as string | null) ?? "").trim().toLowerCase();
+    const dept = pe ? deptByEmail.get(pe) : undefined;
+    if (dept) r.department = dept;
+  }
+
+  return all as never;
+}
+
+/** Delete a row from offboarded_sheet by work_email (case-insensitive). Returns
+ *  the number of rows deleted. Used by the Restore flow. */
+export async function deleteOffboardedSheetByWorkEmail(workEmail: string): Promise<number> {
+  const supabase = requireServiceRole();
+  const target = workEmail.trim().toLowerCase();
+  if (!target) return 0;
+  const { data, error } = await supabase
+    .from("offboarded_sheet")
+    .delete()
+    .ilike("work_email", target)
+    .select("id");
+  if (error) throw new Error(`Could not delete from offboarded_sheet: ${error.message}`);
+  return (data ?? []).length;
+}

@@ -95,6 +95,7 @@ export async function insertPaymentDispatch(
 
 export async function listPaymentDispatches(params: {
   cycleId?: string | null;
+  recipientEmail?: string;
 } = {}): Promise<{ rows: PaymentDispatchRow[]; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return { rows: [], error: "Supabase client unavailable" };
@@ -107,6 +108,10 @@ export async function listPaymentDispatches(params: {
   if (params.cycleId !== undefined) {
     if (params.cycleId === null) q = q.is("cycle_id", null);
     else q = q.eq("cycle_id", params.cycleId);
+  }
+
+  if (params.recipientEmail) {
+    q = q.eq("recipient_email", params.recipientEmail.trim().toLowerCase());
   }
 
   const { data, error } = await q;

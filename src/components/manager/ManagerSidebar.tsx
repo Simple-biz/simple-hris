@@ -8,6 +8,7 @@ import {
   CalendarDays,
   ClipboardCheck,
   Calculator,
+  History,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -26,7 +27,7 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 
-export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'announcements' | 's-wall' | 'hsl-bonus';
+export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'announcements' | 's-wall' | 'hsl-bonus' | 'bonus-history';
 
 interface ManagerSidebarProps {
   activeTab: ManagerTab;
@@ -189,6 +190,7 @@ export default function ManagerSidebar({
           </p>
           <nav className="flex flex-col gap-px">
             {navBtn('hsl-bonus', 'KPI Calculator', Calculator)}
+            {navBtn('bonus-history', 'Bonus History', History)}
           </nav>
 
           <div className="mt-6 border-t border-blue-100/60 pt-4 dark:border-blue-950/40">

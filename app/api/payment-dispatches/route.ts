@@ -15,7 +15,9 @@ interface PostBody extends Omit<InsertPaymentDispatchInput, "created_by"> {}
 export async function GET(req: NextRequest) {
   const cycleIdRaw = req.nextUrl.searchParams.get("cycle_id");
   const cycleId = cycleIdRaw === "" ? undefined : cycleIdRaw ?? undefined;
-  const { rows, error } = await listPaymentDispatches({ cycleId });
+  const emailRaw = req.nextUrl.searchParams.get("email");
+  const recipientEmail = emailRaw?.trim() ? emailRaw.trim() : undefined;
+  const { rows, error } = await listPaymentDispatches({ cycleId, recipientEmail });
   return NextResponse.json({ rows, error });
 }
 

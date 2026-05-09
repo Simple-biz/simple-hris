@@ -2,8 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ChevronLeft, ChevronRight, Download, Lock, RefreshCw,
-  Save, Search, Unlock, Users,
+  CheckCircle2, ChevronLeft, ChevronRight, Download, Eye,
+  Lock, RefreshCw, Save, Search, Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -13,10 +13,11 @@ import {
   KpiData, SubTeamName, TeamSplitRule, TieredRule,
   calcBonus, calcTeamSplitShare, canAccessHslDept, formatPeso,
 } from '@/lib/hsl-bonus/schema';
+import HslBonusReadyPreview from './HslBonusReadyPreview';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface EntryRow {
+export interface EntryRow {
   id?: string;
   employee_email: string;
   employee_name: string;
@@ -25,7 +26,7 @@ interface EntryRow {
   calculated_bonus: number;
 }
 
-interface SubTeamState {
+export interface SubTeamState {
   pct: string;
   records: string;
 }
@@ -40,7 +41,7 @@ interface DeptState {
 
 type AllDeptState = Record<HslDeptKey, DeptState>;
 
-const DEFAULT_SUB_TEAMS: Record<SubTeamName, SubTeamState> = {
+export const DEFAULT_SUB_TEAMS: Record<SubTeamName, SubTeamState> = {
   BLUE: { pct: '', records: '' },
   GREEN: { pct: '', records: '' },
   YELLOW: { pct: '', records: '' },
@@ -49,7 +50,7 @@ const DEFAULT_SUB_TEAMS: Record<SubTeamName, SubTeamState> = {
   RED: { pct: '', records: '' },
 };
 
-interface SubTeamPalette {
+export interface SubTeamPalette {
   ring:       string;  // outer ring colour
   headerBg:   string;  // top strip
   headerText: string;
@@ -58,7 +59,7 @@ interface SubTeamPalette {
   dotOn:      string;  // filled tier dot
 }
 
-const SUB_TEAM_PALETTE: Record<SubTeamName, SubTeamPalette> = {
+export const SUB_TEAM_PALETTE: Record<SubTeamName, SubTeamPalette> = {
   BLUE: {
     ring:       'ring-blue-400/60 dark:ring-blue-500/50',
     headerBg:   'bg-gradient-to-r from-blue-500 to-blue-600 dark:from-blue-600 dark:to-blue-700',
@@ -109,10 +110,19 @@ const SUB_TEAM_PALETTE: Record<SubTeamName, SubTeamPalette> = {
   },
 };
 
+/** Monday-of-week containing `d`, formatted as YYYY-MM-DD in *local* time.
+ *  HSL departments work Mon–Sun, so weeks pivot on Monday. We avoid
+ *  `toISOString()` here because it converts to UTC and can shift the date
+ *  back a day for late-evening UTC+ users. */
 function isoWeekStart(d: Date): string {
-  const day = new Date(d);
-  day.setDate(day.getDate() - day.getDay());
-  return day.toISOString().slice(0, 10);
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dow = day.getDay(); // 0=Sun … 6=Sat
+  const daysBack = dow === 0 ? 6 : dow - 1; // Sunday is 6 back, otherwise dow-1
+  day.setDate(day.getDate() - daysBack);
+  const yyyy = day.getFullYear();
+  const mm = String(day.getMonth() + 1).padStart(2, '0');
+  const dd = String(day.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function isoMonthStart(d: Date): string {
@@ -132,6 +142,39 @@ function isoMonthEnd(start: string): string {
 
 function periodEnd(dept: DeptConfig, start: string): string {
   return dept.cadence === 'weekly' ? isoWeekEnd(start) : isoMonthEnd(start);
+}
+
+/**
+ * Per-employee bonus recompute for SSD Medical Records (team_split rule).
+ * `calcBonus` skips team_split rules because the share depends on team-level
+ * pct/records held in `subTeams` state, not on `kpi_data`. This computes the
+ * share and writes it into each entry's `calculated_bonus` so dept totals,
+ * the View modal, and persisted `hsl_bonus_entries.calculated_bonus` (read by
+ * PayrollWizard) all reflect reality.
+ *
+ * Returns a new entries array; pass-through if not SSD.
+ */
+export function recomputeSsdEntries(
+  deptKey: HslDeptKey,
+  entries: EntryRow[],
+  subTeams: Record<SubTeamName, SubTeamState>,
+): EntryRow[] {
+  if (deptKey !== 'ssd_medical_records') return entries;
+  const rule = HSL_DEPTS.ssd_medical_records.rules[0] as TeamSplitRule;
+  const memberCounts: Record<string, number> = {};
+  for (const e of entries) {
+    const st = String(e.kpi_data.sub_team ?? '');
+    if (st) memberCounts[st] = (memberCounts[st] ?? 0) + 1;
+  }
+  return entries.map((e) => {
+    const st = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
+    if (!st) return e.calculated_bonus === 0 ? e : { ...e, calculated_bonus: 0 };
+    const sub = subTeams[st];
+    const pct = parseFloat(sub.pct) || 0;
+    const records = parseInt(sub.records, 10) || 0;
+    const share = calcTeamSplitShare(pct, records, memberCounts[st] ?? 0, rule);
+    return e.calculated_bonus === share ? e : { ...e, calculated_bonus: share };
+  });
 }
 
 function periodLabel(dept: DeptConfig, start: string): string {
@@ -194,6 +237,10 @@ export default function HslBonusCalculator({
   });
 
   const [loadingDepts, setLoadingDepts] = useState<Set<HslDeptKey>>(new Set());
+  /** Which dept's preview modal is open (null = closed). Mounted at the parent so
+   *  it overlays the page rather than nesting inside a single dept block. */
+  const [viewingDept, setViewingDept] = useState<HslDeptKey | null>(null);
+  const [reopenSubmitting, setReopenSubmitting] = useState(false);
 
   function periodStart(dept: DeptConfig): string {
     return dept.cadence === 'weekly' ? weekStart : monthStart;
@@ -267,11 +314,19 @@ export default function HslBonusCalculator({
         });
       });
 
-      const entries = Array.from(byEmail.values()).sort((a, b) =>
+      const sortedEntries = Array.from(byEmail.values()).sort((a, b) =>
         a.employee_name.localeCompare(b.employee_name),
       );
       const status: BonusStatus = statusJson.rows?.[0]?.status ?? 'draft';
-      setDept(key, { entries, status, dirty: false });
+      // After load, recompute SSD per-employee shares so the dept total +
+      // table read from the right values (DB persists 0 for legacy entries).
+      setDeptState((prev) => {
+        const recomputed = recomputeSsdEntries(key, sortedEntries, prev[key]!.subTeams);
+        return {
+          ...prev,
+          [key]: { ...prev[key]!, entries: recomputed, status, dirty: false },
+        };
+      });
     } catch {
       // silent — table may be empty on first use
     } finally {
@@ -327,12 +382,9 @@ export default function HslBonusCalculator({
     }
   }
 
-  async function advanceStatus(key: HslDeptKey) {
-    const d = deptState[key]!;
+  async function setStatus(key: HslDeptKey, next: BonusStatus): Promise<boolean> {
     const dept = HSL_DEPTS[key];
     const start = periodStart(dept);
-    const next: BonusStatus = d.status === 'draft' ? 'ready' : d.status === 'ready' ? 'locked' : 'draft';
-
     try {
       const res = await fetch('/api/hsl-bonus/period-status', {
         method: 'POST',
@@ -349,9 +401,41 @@ export default function HslBonusCalculator({
       const json = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(json.error ?? 'Status update failed');
       setDept(key, { status: next });
-      toast.success(`${dept.name} → ${next.toUpperCase()}`);
+      return true;
     } catch (e) {
-      toast.error('Status update failed', { description: e instanceof Error ? e.message : String(e) });
+      toast.error('Status update failed', {
+        description: e instanceof Error ? e.message : String(e),
+      });
+      return false;
+    }
+  }
+
+  async function markReady(key: HslDeptKey) {
+    const d = deptState[key]!;
+    if (d.dirty) {
+      toast.error('Save your changes first', {
+        description: 'Click Save before marking the period Ready.',
+      });
+      return;
+    }
+    const ok = await setStatus(key, 'ready');
+    if (ok) {
+      toast.success(`${HSL_DEPTS[key].name} marked ready`, {
+        description: 'Visible to Accounting · PayrollWizard.',
+      });
+      setViewingDept(key);
+    }
+  }
+
+  async function reopenToDraft(key: HslDeptKey) {
+    setReopenSubmitting(true);
+    const ok = await setStatus(key, 'draft');
+    setReopenSubmitting(false);
+    if (ok) {
+      toast.success(`${HSL_DEPTS[key].name} reopened`, {
+        description: 'Back to draft — make edits and Mark Ready when done.',
+      });
+      setViewingDept(null);
     }
   }
 
@@ -464,32 +548,62 @@ export default function HslBonusCalculator({
             loading={loadingDepts.has(key)}
             periodStartStr={periodStart(HSL_DEPTS[key])}
             onKpiChange={(email, kpiKey, val) => {
-              const entry = deptState[key]!.entries.find((e) => e.employee_email === email);
-              if (!entry) return;
-              const newKpi = { ...entry.kpi_data, [kpiKey]: val };
-              const bonus = calcBonus(newKpi, HSL_DEPTS[key], entry.is_manager);
-              patchEntry(key, email, { kpi_data: newKpi, calculated_bonus: bonus });
+              setDeptState((prev) => {
+                const d = prev[key]!;
+                const next = d.entries.map((e) => {
+                  if (e.employee_email !== email) return e;
+                  const newKpi = { ...e.kpi_data, [kpiKey]: val };
+                  return {
+                    ...e,
+                    kpi_data: newKpi,
+                    calculated_bonus: calcBonus(newKpi, HSL_DEPTS[key], e.is_manager),
+                  };
+                });
+                // For SSD, sub_team changes affect every team member's share —
+                // the per-member denominator just changed. Recompute the whole list.
+                const finalEntries = recomputeSsdEntries(key, next, d.subTeams);
+                return { ...prev, [key]: { ...d, entries: finalEntries, dirty: true } };
+              });
             }}
             onToggleManager={(email) => {
-              const entry = deptState[key]!.entries.find((e) => e.employee_email === email);
-              if (!entry) return;
-              const newIsManager = !entry.is_manager;
-              const bonus = calcBonus(entry.kpi_data, HSL_DEPTS[key], newIsManager);
-              patchEntry(key, email, { is_manager: newIsManager, calculated_bonus: bonus });
+              setDeptState((prev) => {
+                const d = prev[key]!;
+                const next = d.entries.map((e) => {
+                  if (e.employee_email !== email) return e;
+                  const newIsManager = !e.is_manager;
+                  return {
+                    ...e,
+                    is_manager: newIsManager,
+                    calculated_bonus: calcBonus(e.kpi_data, HSL_DEPTS[key], newIsManager),
+                  };
+                });
+                // Re-share for SSD — toggling someone's manager flag doesn't
+                // change the team_split share but we re-run the recompute so
+                // calculated_bonus stays canonical (it was reset by calcBonus=0).
+                const finalEntries = recomputeSsdEntries(key, next, d.subTeams);
+                return { ...prev, [key]: { ...d, entries: finalEntries, dirty: true } };
+              });
             }}
             onSave={() => void saveDept(key)}
-            onAdvanceStatus={() => void advanceStatus(key)}
+            onMarkReady={() => void markReady(key)}
+            onView={() => setViewingDept(key)}
             onSubTeamChange={(subTeam, field, val) => {
               setDeptState((prev) => {
                 const d = prev[key]!;
+                const newSubTeams = {
+                  ...d.subTeams,
+                  [subTeam]: { ...d.subTeams[subTeam], [field]: val },
+                };
+                // Pct/records changed → recompute per-employee shares so dept
+                // total and the persisted `calculated_bonus` reflect the new score.
+                const newEntries = recomputeSsdEntries(key, d.entries, newSubTeams);
                 return {
                   ...prev,
                   [key]: {
-                    ...d, dirty: true,
-                    subTeams: {
-                      ...d.subTeams,
-                      [subTeam]: { ...d.subTeams[subTeam], [field]: val },
-                    },
+                    ...d,
+                    dirty: true,
+                    subTeams: newSubTeams,
+                    entries: newEntries,
                   },
                 };
               });
@@ -498,6 +612,27 @@ export default function HslBonusCalculator({
           />
         ))}
       </div>
+
+      {/* Read-only preview modal — opens on View button click. Reopen flips the
+          period back to draft so the manager can edit again. */}
+      <HslBonusReadyPreview
+        open={viewingDept !== null}
+        dept={viewingDept ? HSL_DEPTS[viewingDept] : null}
+        status={
+          viewingDept && deptState[viewingDept]!.status !== 'draft'
+            ? (deptState[viewingDept]!.status as 'ready' | 'locked')
+            : 'ready'
+        }
+        periodLabel={
+          viewingDept
+            ? periodLabel(HSL_DEPTS[viewingDept], periodStart(HSL_DEPTS[viewingDept]))
+            : ''
+        }
+        entries={viewingDept ? deptState[viewingDept]!.entries : []}
+        reopenSubmitting={reopenSubmitting}
+        onReopen={() => viewingDept && void reopenToDraft(viewingDept)}
+        onClose={() => setViewingDept(null)}
+      />
     </div>
   );
 }
@@ -512,7 +647,8 @@ interface DeptBlockProps {
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   onToggleManager: (email: string) => void;
   onSave: () => void;
-  onAdvanceStatus: () => void;
+  onMarkReady: () => void;
+  onView: () => void;
   onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records', val: string) => void;
   ssdShareForTeam?: (subTeam: SubTeamName, memberCount: number) => number;
 }
@@ -522,7 +658,7 @@ const DEPT_PAGE_SIZE = 10;
 function DeptBlock({
   deptKey, state, loading, periodStartStr,
   onKpiChange, onToggleManager,
-  onSave, onAdvanceStatus, onSubTeamChange, ssdShareForTeam,
+  onSave, onMarkReady, onView, onSubTeamChange, ssdShareForTeam,
 }: DeptBlockProps) {
   const dept = HSL_DEPTS[deptKey];
   const deptTotal = state.entries.reduce((s, e) => s + e.calculated_bonus, 0);
@@ -558,12 +694,6 @@ function DeptBlock({
     draft:  'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200',
     ready:  'bg-amber-200 text-amber-900 dark:bg-amber-700/80 dark:text-amber-100',
     locked: 'bg-emerald-200 text-emerald-900 dark:bg-emerald-800/80 dark:text-emerald-100',
-  };
-
-  const statusNext: Record<BonusStatus, string> = {
-    draft: 'Mark Ready',
-    ready: 'Lock',
-    locked: 'Reopen',
   };
 
   return (
@@ -681,16 +811,6 @@ function DeptBlock({
           </div>
         )}
 
-        {isTeamSplit && ssdShareForTeam && (
-          <SsdSubTeamGrid
-            subTeams={state.subTeams}
-            isLocked={isLocked}
-            onSubTeamChange={onSubTeamChange}
-            ssdShareForTeam={ssdShareForTeam}
-            subTeamMemberCount={subTeamMemberCount}
-          />
-        )}
-
         {tieredRule && (
           <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/30">
             <span className="font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">
@@ -718,23 +838,64 @@ function DeptBlock({
           />
         )}
 
-        {isTeamSplit && !dept.noKpi && (
-          <SsdEmployeeTable
-            entries={pagedEntries}
-            allEntries={state.entries}
+        {/* SSD: side-by-side at lg+ — sub-team scoring boxes (left), employee
+            chip picker (right). `items-stretch` (default for grid) + the inner
+            `h-full auto-rows-fr` on SsdSubTeamGrid keeps both columns and the
+            6 boxes vertically aligned with the employee list. */}
+        {isTeamSplit && ssdShareForTeam && !dept.noKpi && (
+          <div className="grid items-stretch gap-4 lg:grid-cols-2">
+            <div className="flex min-w-0 flex-col">
+              <SsdSubTeamGrid
+                subTeams={state.subTeams}
+                isLocked={isLocked}
+                onSubTeamChange={onSubTeamChange}
+                ssdShareForTeam={ssdShareForTeam}
+                subTeamMemberCount={subTeamMemberCount}
+              />
+            </div>
+            <div className="flex min-w-0 flex-col">
+              <SsdEmployeeTable
+                entries={pagedEntries}
+                allEntries={state.entries}
+                isLocked={isLocked}
+                ssdShareForTeam={ssdShareForTeam}
+                onSubTeamAssign={(email, subTeam) =>
+                  onKpiChange(email, 'sub_team', subTeam as unknown as number)
+                }
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Fallback for any team_split dept that has no KPI inputs (none today) */}
+        {isTeamSplit && ssdShareForTeam && dept.noKpi && (
+          <SsdSubTeamGrid
+            subTeams={state.subTeams}
             isLocked={isLocked}
-            ssdShareForTeam={ssdShareForTeam!}
-            onSubTeamAssign={(email, subTeam) => onKpiChange(email, 'sub_team', subTeam as unknown as number)}
+            onSubTeamChange={onSubTeamChange}
+            ssdShareForTeam={ssdShareForTeam}
+            subTeamMemberCount={subTeamMemberCount}
           />
         )}
 
-        {/* Action bar */}
+        {/* Action bar — Save / Mark Ready (draft) → View (ready/locked). */}
         <div className="flex items-center gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           <span className="font-mono text-[10px] text-zinc-500">
-            {state.dirty && !isLocked ? 'Unsaved changes' : ' '}
+            {state.status === 'draft' && state.dirty && 'Unsaved changes'}
+            {state.status === 'draft' && !state.dirty && state.entries.length > 0 && 'Saved · ready to mark'}
+            {state.status === 'ready' && (
+              <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400">
+                <CheckCircle2 className="h-3 w-3" /> Sent to Accounting
+              </span>
+            )}
+            {state.status === 'locked' && (
+              <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                <Lock className="h-3 w-3" /> Locked for the period
+              </span>
+            )}
           </span>
           <div className="ml-auto flex gap-2">
-            {state.dirty && !isLocked && (
+            {state.status === 'draft' && state.dirty && (
               <Button
                 size="sm"
                 variant="outline"
@@ -746,18 +907,39 @@ function DeptBlock({
                 {state.saving ? 'Saving…' : 'Save'}
               </Button>
             )}
-            <Button
-              size="sm"
-              className={cn('h-7 gap-1.5 text-xs text-white', {
-                'bg-amber-600 hover:bg-amber-500':   state.status === 'draft',
-                'bg-emerald-600 hover:bg-emerald-500': state.status === 'ready',
-                'bg-zinc-600 hover:bg-zinc-500':     state.status === 'locked',
-              })}
-              onClick={onAdvanceStatus}
-            >
-              {state.status === 'locked' ? <Unlock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-              {statusNext[state.status]}
-            </Button>
+            {state.status === 'draft' && (
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 bg-amber-600 text-xs text-white hover:bg-amber-500 disabled:opacity-50"
+                disabled={state.dirty || state.saving || state.entries.length === 0}
+                title={
+                  state.dirty
+                    ? 'Save your changes before marking ready'
+                    : state.entries.length === 0
+                      ? 'No employees to mark ready'
+                      : 'Send these scores to Accounting · PayrollWizard'
+                }
+                onClick={onMarkReady}
+              >
+                <CheckCircle2 className="h-3 w-3" />
+                Mark Ready
+              </Button>
+            )}
+            {(state.status === 'ready' || state.status === 'locked') && (
+              <Button
+                size="sm"
+                className={cn(
+                  'h-7 gap-1.5 text-xs text-white',
+                  state.status === 'ready'
+                    ? 'bg-amber-600 hover:bg-amber-500'
+                    : 'bg-emerald-600 hover:bg-emerald-500',
+                )}
+                onClick={onView}
+              >
+                <Eye className="h-3 w-3" />
+                View
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -776,7 +958,7 @@ interface KpiTableProps {
   onToggleManager: (email: string) => void;
 }
 
-function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onToggleManager }: KpiTableProps) {
+export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onToggleManager }: KpiTableProps) {
   const rules = dept.rules.filter((r) => r.type !== 'team_split');
 
   return (
@@ -877,10 +1059,10 @@ interface SsdSubTeamGridProps {
   subTeamMemberCount: (subTeam: SubTeamName) => number;
 }
 
-function SsdSubTeamGrid({ subTeams, isLocked, onSubTeamChange, ssdShareForTeam, subTeamMemberCount }: SsdSubTeamGridProps) {
+export function SsdSubTeamGrid({ subTeams, isLocked, onSubTeamChange, ssdShareForTeam, subTeamMemberCount }: SsdSubTeamGridProps) {
   const SUB_TEAM_NAMES: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid h-full auto-rows-fr gap-3 sm:grid-cols-2">
       {SUB_TEAM_NAMES.map((name) => {
         const st = subTeams[name];
         const members = subTeamMemberCount(name);
@@ -996,9 +1178,68 @@ interface SsdEmployeeTableProps {
   onSubTeamAssign: (email: string, subTeam: SubTeamName | '') => void;
 }
 
-function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTeam, onSubTeamAssign }: SsdEmployeeTableProps) {
+/** Colored sub-team chip picker. Replaces the native <select> — clicking a chip
+ *  assigns that sub-team. Selected chip uses the sub-team's gradient header
+ *  palette so the row's affiliation is visible at a glance. */
+export function SubTeamChips({
+  value,
+  onChange,
+  isLocked,
+}: {
+  value: SubTeamName | '';
+  onChange: (v: SubTeamName | '') => void;
+  isLocked: boolean;
+}) {
   const SUB_TEAM_NAMES: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
+  return (
+    <div className="inline-flex flex-wrap items-center gap-1">
+      <button
+        type="button"
+        disabled={isLocked}
+        onClick={() => onChange('')}
+        className={cn(
+          'rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider transition-colors',
+          value === ''
+            ? 'bg-zinc-200 text-zinc-700 ring-1 ring-zinc-300 dark:bg-zinc-700 dark:text-zinc-200 dark:ring-zinc-600'
+            : 'text-zinc-400 hover:text-zinc-700 dark:text-zinc-500 dark:hover:text-zinc-300',
+          isLocked && 'cursor-not-allowed opacity-60',
+        )}
+      >
+        none
+      </button>
+      {SUB_TEAM_NAMES.map((name) => {
+        const palette = SUB_TEAM_PALETTE[name];
+        const selected = value === name;
+        return (
+          <button
+            key={name}
+            type="button"
+            disabled={isLocked}
+            onClick={() => onChange(name)}
+            title={`Assign to ${name}`}
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all',
+              selected
+                ? `${palette.headerBg} ${palette.headerText} shadow-sm`
+                : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-800 dark:bg-zinc-900 dark:text-zinc-500 dark:ring-zinc-800 dark:hover:text-zinc-300',
+              isLocked && 'cursor-not-allowed opacity-60',
+            )}
+          >
+            <span
+              className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                selected ? 'bg-white/85' : palette.dotOn,
+              )}
+            />
+            {name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
+export function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTeam, onSubTeamAssign }: SsdEmployeeTableProps) {
   // Member counts must reflect every entry in the dept, not just the current page
   const memberCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1010,8 +1251,8 @@ function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTeam, onSu
   }, [allEntries]);
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <table className="w-full min-w-[400px] text-xs">
+    <div className="h-full overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <table className="w-full min-w-[560px] text-xs">
         <thead>
           <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
             <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Employee</th>
@@ -1031,25 +1272,33 @@ function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTeam, onSu
             const subTeam = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
             const memberCount = subTeam ? (memberCounts[subTeam] ?? 0) : 0;
             const share = subTeam ? ssdShareForTeam(subTeam, memberCount) : 0;
+            const palette = subTeam ? SUB_TEAM_PALETTE[subTeam] : null;
             return (
-              <tr key={e.employee_email} className="border-b border-zinc-100 hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40">
+              <tr
+                key={e.employee_email}
+                className={cn(
+                  'border-b border-zinc-100 transition-colors hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40',
+                  palette && palette.bodyBg,
+                )}
+              >
                 <td className="px-3 py-2">
                   <div className="font-medium text-zinc-900 dark:text-zinc-100">{e.employee_name}</div>
                   <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
                 </td>
                 <td className="px-2 py-2">
-                  <select
-                    className="rounded border border-zinc-300 bg-white px-1.5 py-0.5 font-mono text-[10px] text-zinc-900 outline-none focus:border-blue-400 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:focus:border-zinc-500"
+                  <SubTeamChips
                     value={subTeam}
-                    disabled={isLocked}
-                    onChange={(ev) => onSubTeamAssign(e.employee_email, ev.target.value as SubTeamName | '')}
-                  >
-                    <option value="">— none —</option>
-                    {SUB_TEAM_NAMES.map((n) => <option key={n} value={n}>{n}</option>)}
-                  </select>
+                    isLocked={isLocked}
+                    onChange={(v) => onSubTeamAssign(e.employee_email, v)}
+                  />
                 </td>
-                <td className="px-3 py-2 text-right font-mono font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                  {formatPeso(share)}
+                <td
+                  className={cn(
+                    'px-3 py-2 text-right font-mono font-bold tabular-nums',
+                    palette ? palette.accent : 'text-zinc-300 dark:text-zinc-700',
+                  )}
+                >
+                  {subTeam ? formatPeso(share) : '—'}
                 </td>
               </tr>
             );

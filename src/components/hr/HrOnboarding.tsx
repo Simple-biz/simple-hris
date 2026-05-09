@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import React from 'react';
 import AddPersonDialog from './AddPersonDialog';
+import DeptFilter from './DeptFilter';
 import {
   Dialog,
   DialogContent,
@@ -74,6 +75,7 @@ export default function HrOnboarding() {
   const [pendingLoading, setPendingLoading] = useState(true);
 
   const [search, setSearch] = useState('');
+  const [dept, setDept] = useState('');
   const [tab, setTab] = useState<TabFilter>('pending');
   const [addOpen, setAddOpen] = useState(false);
   const [setEmailFor, setSetEmailFor] = useState<HrPendingEmployeeRow | null>(null);
@@ -111,12 +113,13 @@ export default function HrOnboarding() {
         if (tab === 'promoted' && r.status !== 'promoted') return false;
         if (tab === 'cancelled' && r.status !== 'cancelled') return false;
       }
+      if (dept && (r.department ?? '').trim() !== dept) return false;
       if (!q) return true;
       return [r.name, r.personal_email, r.work_email, r.department, r.source]
         .filter(Boolean)
         .some((s) => s!.toLowerCase().includes(q));
     });
-  }, [pending, search, tab]);
+  }, [pending, search, tab, dept]);
 
   const counts = useMemo(() => {
     const c = {
@@ -285,14 +288,17 @@ export default function HrOnboarding() {
                 New hires staged from this dashboard. Promote a row to copy it into the master list.
               </p>
             </div>
-            <div className="relative w-full sm:max-w-xs">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name, email, dept…"
-                className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900"
-              />
+            <div className="flex items-center gap-2">
+              <DeptFilter rows={pending} getDept={(r) => r.department} value={dept} onChange={setDept} />
+              <div className="relative w-full sm:w-60">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search name, email…"
+                  className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900"
+                />
+              </div>
             </div>
           </div>
 

@@ -27,8 +27,10 @@ import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
 import HrOffboarding from './HrOffboarding';
+import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
 import SWall from '@/components/swall/SWall';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import DeptFilter from './DeptFilter';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -147,6 +149,7 @@ export default function HrApp() {
               {activeTab === 'overview' && <HrOverview viewerEmail={viewerEmail} />}
               {activeTab === 'onboarding' && <HrOnboarding />}
               {activeTab === 'offboarding' && <HrOffboarding />}
+              {activeTab === 'leaves' && <LeaveRequestsPanel />}
               {activeTab === 's-wall' && <HrSwallTab viewerEmail={viewerEmail} />}
             </motion.div>
           </AnimatePresence>
@@ -299,6 +302,7 @@ function OverviewBody() {
   const [roster, setRoster] = useState<EmployeeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [dept, setDept] = useState('');
   const [page, setPage] = useState(0);
 
   const fetchRoster = useCallback(async () => {
@@ -331,13 +335,14 @@ function OverviewBody() {
   const filtered = useMemo(() => {
     setPage(0);
     const q = search.trim().toLowerCase();
-    if (!q) return roster;
-    return roster.filter((r) =>
-      [r.name, r.work_email, r.department, r.employee_id]
+    return roster.filter((r) => {
+      if (dept && (r.department ?? '').trim() !== dept) return false;
+      if (!q) return true;
+      return [r.name, r.work_email, r.department, r.employee_id]
         .filter(Boolean)
-        .some((s) => s!.toLowerCase().includes(q)),
-    );
-  }, [roster, search]);
+        .some((s) => s!.toLowerCase().includes(q));
+    });
+  }, [roster, search, dept]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -377,14 +382,17 @@ function OverviewBody() {
                   {loading ? 'Loading…' : `${filtered.length} of ${roster.length}`}
                 </p>
               </div>
-              <div className="relative w-52 shrink-0">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search…"
-                  className="h-8 border-zinc-200 pl-8 text-xs dark:border-zinc-700"
-                />
+              <div className="flex items-center gap-2">
+                <DeptFilter rows={roster} getDept={(r) => r.department} value={dept} onChange={setDept} />
+                <div className="relative w-44 shrink-0">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                  <Input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search…"
+                    className="h-9 border-zinc-200 pl-8 text-xs dark:border-zinc-700"
+                  />
+                </div>
               </div>
             </div>
           </CardHeader>

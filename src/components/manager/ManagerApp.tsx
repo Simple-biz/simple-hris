@@ -7,11 +7,16 @@ import {
   AlertTriangle,
   Camera,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   Clock,
+  Eye,
+  EyeOff,
   Inbox,
   Menu,
   Sparkles,
+  UserRound,
   Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -36,6 +41,8 @@ import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
 import SWall from '@/components/swall/SWall';
 import HslBonusCalculator from '@/components/manager/HslBonusCalculator';
+import ManagerBonusHistory from '@/components/manager/ManagerBonusHistory';
+import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
 
 /** How `/api/manager/department-members` scoped the roster for this session (server-driven). */
 type ManagerTeamGate =
@@ -285,6 +292,13 @@ export default function ManagerApp() {
                   isElevated={teamGate.kind === 'elevated'}
                 />
               )}
+              {activeTab === 'bonus-history' && (
+                <ManagerBonusHistory
+                  viewerEmail={viewerEmail}
+                  managedDepts={teamGate.kind === 'department' ? teamGate.departments : []}
+                  isElevated={teamGate.kind === 'elevated'}
+                />
+              )}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -526,9 +540,83 @@ interface TeamPanelProps {
   teamGate: ManagerTeamGate;
 }
 
+function AnimatedRate({
+  value,
+  hidden,
+  formatPhp,
+}: {
+  value: number | null | undefined;
+  hidden: boolean;
+  formatPhp: (v: number | null | undefined) => string;
+}) {
+  // opacity + translate only — `filter: blur` is GPU-expensive on mid-tier mobile
+  // and stutters when many rows toggle at once. Translate alone reads as a swap.
+  const transition = { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const };
+  return (
+    <span className="inline-block transform-gpu">
+      <AnimatePresence mode="wait" initial={false}>
+        {hidden ? (
+          <motion.span
+            key="hidden"
+            initial={{ opacity: 0, y: -3 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 3 }}
+            transition={transition}
+            className="inline-block select-none tracking-widest text-zinc-400 dark:text-zinc-600"
+          >
+            ••••••
+          </motion.span>
+        ) : value != null ? (
+          <motion.span
+            key="shown"
+            initial={{ opacity: 0, y: -3 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 3 }}
+            transition={transition}
+            className="inline-block"
+          >
+            {formatPhp(value)}
+          </motion.span>
+        ) : (
+          <motion.span
+            key="empty"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.14 }}
+            className="inline-block text-zinc-300 dark:text-zinc-700"
+          >
+            —
+          </motion.span>
+        )}
+      </AnimatePresence>
+    </span>
+  );
+}
+
+const TEAM_PAGE_SIZE = 15;
+
 function TeamPanel({ members, teamGate }: TeamPanelProps) {
   const unassigned = teamGate.kind === 'department' && teamGate.departments.length === 0;
   const scoped = teamGate.kind === 'department' && teamGate.departments.length > 0;
+  const [ratesHidden, setRatesHidden] = useState(true);
+  const [selectedMember, setSelectedMember] = useState<EmployeeRow | null>(null);
+  const [page, setPage] = useState(1);
+  const showHslRateCol = members.some(
+    (m) => m.hsl_hourly_rate != null || m.hsl_ot_rate != null,
+  );
+
+  const totalPages = Math.max(1, Math.ceil(members.length / TEAM_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * TEAM_PAGE_SIZE;
+  const pageEnd = Math.min(pageStart + TEAM_PAGE_SIZE, members.length);
+  const pageSlice = members.slice(pageStart, pageEnd);
+
+  // Snap back to page 1 if the roster changes (filter/refresh shrinks it under the
+  // current page). Cheap to run; no need to memo.
+  useEffect(() => {
+    setPage(1);
+  }, [members.length, teamGate.kind]);
 
   if (teamGate.kind === 'loading') {
     return (
@@ -572,9 +660,57 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
   return (
     <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <header className="flex flex-col gap-1">
-        <h2 className="bg-gradient-to-r from-blue-700 via-zinc-900 to-zinc-900 bg-clip-text text-xl font-bold tracking-tight text-transparent dark:from-blue-400 dark:via-white dark:to-white">
-          My team
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="bg-gradient-to-r from-blue-700 via-zinc-900 to-zinc-900 bg-clip-text text-xl font-bold tracking-tight text-transparent dark:from-blue-400 dark:via-white dark:to-white">
+            My team
+          </h2>
+          {showHslRateCol && members.length > 0 && (
+            <motion.div whileTap={{ scale: 0.96 }} transition={{ duration: 0.12 }}>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setRatesHidden((v) => !v)}
+                className="h-7 gap-1.5 overflow-hidden border-blue-200 text-xs text-blue-700 transition-colors hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                aria-pressed={!ratesHidden}
+                title={ratesHidden ? 'Show hourly and OT rates' : 'Hide hourly and OT rates'}
+              >
+                <span className="relative inline-flex h-3.5 w-3.5 items-center justify-center">
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.span
+                      key={ratesHidden ? 'eye' : 'eye-off'}
+                      initial={{ rotate: -45, scale: 0.6, opacity: 0 }}
+                      animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                      exit={{ rotate: 45, scale: 0.6, opacity: 0 }}
+                      transition={{ duration: 0.16, ease: 'easeOut' }}
+                      className="absolute inline-flex"
+                    >
+                      {ratesHidden ? (
+                        <Eye className="h-3.5 w-3.5" />
+                      ) : (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      )}
+                    </motion.span>
+                  </AnimatePresence>
+                </span>
+                <span className="relative block h-4 w-[68px] overflow-hidden text-left">
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.span
+                      key={ratesHidden ? 'show' : 'hide'}
+                      initial={{ y: 8, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      exit={{ y: -8, opacity: 0 }}
+                      transition={{ duration: 0.18, ease: 'easeOut' }}
+                      className="absolute inset-0"
+                    >
+                      {ratesHidden ? 'Show rates' : 'Hide rates'}
+                    </motion.span>
+                  </AnimatePresence>
+                </span>
+              </Button>
+            </motion.div>
+          )}
+        </div>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
           {unassigned ? (
             <>
@@ -634,87 +770,242 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
               const showHslRoleCol = members.some(
                 (m) => (m.hsl_role ?? '').trim() !== '',
               );
-              const showHslRateCol = members.some(
-                (m) => m.hsl_hourly_rate != null || m.hsl_ot_rate != null,
-              );
               const formatPhp = (v: number | null | undefined): string => {
                 if (v == null) return '—';
                 return `₱${v.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
               };
               return (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead className="w-[220px]">Name</TableHead>
-                        <TableHead>Department</TableHead>
-                        {showHslRoleCol && (
-                          <TableHead className="min-w-[180px]">Department/Role</TableHead>
-                        )}
-                        {showHslRateCol && (
-                          <>
-                            <TableHead className="min-w-[110px] text-right">Hourly</TableHead>
-                            <TableHead className="min-w-[110px] text-right">OT</TableHead>
-                          </>
-                        )}
-                        <TableHead className="min-w-[200px]">Work email</TableHead>
-                        <TableHead className="min-w-[200px]">Personal email</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {members.map((m, idx) => (
-                        <TableRow key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}>
-                          <TableCell className="font-medium text-zinc-900 dark:text-zinc-100">
-                            {m.name ?? '—'}
-                          </TableCell>
-                          <TableCell className="text-zinc-600 dark:text-zinc-400">
-                            {m.department ?? '—'}
-                          </TableCell>
+                <>
+                  {/* Desktop / tablet: table */}
+                  <div className="hidden overflow-x-auto md:block">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="hover:bg-transparent">
+                          <TableHead className="w-[220px]">Name</TableHead>
+                          <TableHead>Department</TableHead>
                           {showHslRoleCol && (
-                            <TableCell className="text-zinc-600 dark:text-zinc-400">
-                              {m.hsl_role ? (
-                                <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
-                                  {m.hsl_role}
-                                </span>
-                              ) : (
-                                <span className="text-zinc-300 dark:text-zinc-700">—</span>
-                              )}
-                            </TableCell>
+                            <TableHead className="min-w-[180px]">Department/Role</TableHead>
                           )}
                           {showHslRateCol && (
                             <>
-                              <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
-                                {m.hsl_hourly_rate != null ? (
-                                  formatPhp(m.hsl_hourly_rate)
-                                ) : (
-                                  <span className="text-zinc-300 dark:text-zinc-700">—</span>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
-                                {m.hsl_ot_rate != null ? (
-                                  formatPhp(m.hsl_ot_rate)
-                                ) : (
-                                  <span className="text-zinc-300 dark:text-zinc-700">—</span>
-                                )}
-                              </TableCell>
+                              <TableHead className="min-w-[110px] text-right">Hourly</TableHead>
+                              <TableHead className="min-w-[110px] text-right">OT</TableHead>
                             </>
                           )}
-                          <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                            {m.work_email ?? '—'}
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                            {m.personal_email ?? '—'}
-                          </TableCell>
+                          <TableHead className="min-w-[200px]">Work email</TableHead>
+                          <TableHead className="min-w-[200px]">Personal email</TableHead>
+                          <TableHead className="w-[80px] text-right">Actions</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                      </TableHeader>
+                      <TableBody>
+                        {pageSlice.map((m, idx) => (
+                          <TableRow key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}>
+                            <TableCell className="font-medium text-zinc-900 dark:text-zinc-100">
+                              {m.name ?? '—'}
+                            </TableCell>
+                            <TableCell className="text-zinc-600 dark:text-zinc-400">
+                              {m.department ?? '—'}
+                            </TableCell>
+                            {showHslRoleCol && (
+                              <TableCell className="text-zinc-600 dark:text-zinc-400">
+                                {m.hsl_role ? (
+                                  <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+                                    {m.hsl_role}
+                                  </span>
+                                ) : (
+                                  <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                                )}
+                              </TableCell>
+                            )}
+                            {showHslRateCol && (
+                              <>
+                                <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
+                                  <AnimatedRate
+                                    value={m.hsl_hourly_rate}
+                                    hidden={ratesHidden}
+                                    formatPhp={formatPhp}
+                                  />
+                                </TableCell>
+                                <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
+                                  <AnimatedRate
+                                    value={m.hsl_ot_rate}
+                                    hidden={ratesHidden}
+                                    formatPhp={formatPhp}
+                                  />
+                                </TableCell>
+                              </>
+                            )}
+                            <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                              {m.work_email ?? '—'}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+                              {m.personal_email ?? '—'}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setSelectedMember(m)}
+                                className="h-7 gap-1.5 border-blue-200 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                                title="View profile and payment history"
+                              >
+                                <UserRound className="h-3.5 w-3.5" />
+                                View
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Mobile: stacked cards */}
+                  <div className="flex flex-col gap-2.5 p-3 md:hidden">
+                    {pageSlice.map((m, idx) => (
+                      <motion.div
+                        key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          duration: 0.22,
+                          delay: Math.min(idx * 0.025, 0.18),
+                          ease: 'easeOut',
+                        }}
+                        className="rounded-xl border border-blue-100/70 bg-white/95 p-3 shadow-sm ring-1 ring-blue-500/5 dark:border-blue-950/50 dark:bg-zinc-950/80 dark:ring-blue-400/10"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                              {m.name ?? '—'}
+                            </div>
+                            <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                              {m.department ?? '—'}
+                            </div>
+                          </div>
+                          {m.hsl_role && (
+                            <span className="shrink-0 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+                              {m.hsl_role}
+                            </span>
+                          )}
+                        </div>
+
+                        {showHslRateCol && (
+                          <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-zinc-100 bg-gradient-to-br from-zinc-50 to-blue-50/40 px-3 py-2 dark:border-zinc-800 dark:from-zinc-900/60 dark:to-blue-950/20">
+                            <div className="flex flex-col gap-0.5">
+                              <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                Hourly
+                              </div>
+                              <div className="font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
+                                <AnimatedRate
+                                  value={m.hsl_hourly_rate}
+                                  hidden={ratesHidden}
+                                  formatPhp={formatPhp}
+                                />
+                              </div>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                OT
+                              </div>
+                              <div className="font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
+                                <AnimatedRate
+                                  value={m.hsl_ot_rate}
+                                  hidden={ratesHidden}
+                                  formatPhp={formatPhp}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        <dl className="mt-3 grid gap-1 text-[11px]">
+                          <div className="flex items-baseline gap-1.5">
+                            <dt className="shrink-0 text-zinc-500 dark:text-zinc-400">Work</dt>
+                            <dd className="truncate font-mono text-zinc-700 dark:text-zinc-300">
+                              {m.work_email ?? '—'}
+                            </dd>
+                          </div>
+                          <div className="flex items-baseline gap-1.5">
+                            <dt className="shrink-0 text-zinc-500 dark:text-zinc-400">Personal</dt>
+                            <dd className="truncate font-mono text-zinc-700 dark:text-zinc-300">
+                              {m.personal_email ?? '—'}
+                            </dd>
+                          </div>
+                        </dl>
+
+                        <div className="mt-3 flex justify-end">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setSelectedMember(m)}
+                            className="h-7 gap-1.5 border-blue-200 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                          >
+                            <UserRound className="h-3.5 w-3.5" />
+                            View
+                          </Button>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  {/* Pagination footer */}
+                  {members.length > TEAM_PAGE_SIZE && (
+                    <div className="flex flex-col items-center justify-between gap-2 border-t border-blue-100/70 bg-white/60 px-4 py-3 text-xs text-zinc-600 dark:border-blue-950/50 dark:bg-zinc-950/40 dark:text-zinc-400 sm:flex-row">
+                      <span className="tabular-nums">
+                        Showing{' '}
+                        <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                          {pageStart + 1}–{pageEnd}
+                        </span>{' '}
+                        of{' '}
+                        <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                          {members.length}
+                        </span>
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={currentPage <= 1}
+                          onClick={() => setPage((p) => Math.max(1, p - 1))}
+                          className="h-7 gap-1 border-blue-200 px-2 text-xs text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                          aria-label="Previous page"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                          Prev
+                        </Button>
+                        <span className="rounded-md border border-zinc-200 bg-white px-2 py-1 font-mono tabular-nums text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+                          {currentPage} / {totalPages}
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={currentPage >= totalPages}
+                          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                          className="h-7 gap-1 border-blue-200 px-2 text-xs text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                          aria-label="Next page"
+                        >
+                          Next
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </>
               );
             })()
           )}
         </CardContent>
       </Card>
+
+      <ManagerMemberDialog
+        member={selectedMember}
+        ratesHidden={ratesHidden}
+        onClose={() => setSelectedMember(null)}
+      />
     </div>
   );
 }

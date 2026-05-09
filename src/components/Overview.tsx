@@ -765,8 +765,8 @@ function SimpleView({
                 orphanage visits
               </>
             }
-            cta="Open requests"
-            onClick={onNavigate ? () => onNavigate('leave-requests') : undefined}
+            cta="Open in HR"
+            onClick={() => { window.location.href = '/hr'; }}
           />
         </section>
 
@@ -3368,7 +3368,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
                   {(pendingLeaves ?? 0) > 0 && (
                     <button
                       type="button"
-                      onClick={() => onNavigate?.('leave-requests')}
+                      onClick={() => { window.location.href = '/hr'; }}
                       className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
                     >
                       <span className="mt-1 inline-flex h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" />
