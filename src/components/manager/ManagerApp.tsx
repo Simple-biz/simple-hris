@@ -15,6 +15,7 @@ import {
   EyeOff,
   Inbox,
   Menu,
+  Search,
   Sparkles,
   UserRound,
   Users,
@@ -603,6 +604,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
   const [selectedMember, setSelectedMember] = useState<EmployeeRow | null>(null);
   const [page, setPage] = useState(1);
   const [deptFilter, setDeptFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const showHslRateCol = members.some(
     (m) => m.hsl_hourly_rate != null || m.hsl_ot_rate != null,
   );
@@ -618,11 +620,30 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
   }, [members]);
 
   const filteredMembers = useMemo(() => {
-    if (deptFilter === 'all') return members;
-    return members.filter(
-      (m) => (m.department ?? '').trim().toLowerCase() === deptFilter.toLowerCase(),
-    );
-  }, [members, deptFilter]);
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    return members.filter((m) => {
+      const departmentMatches =
+        deptFilter === 'all' ||
+        (m.department ?? '').trim().toLowerCase() === deptFilter.toLowerCase();
+
+      if (!departmentMatches) return false;
+      if (!normalizedQuery) return true;
+
+      const searchable = [
+        m.name,
+        m.department,
+        m.hsl_role,
+        m.work_email,
+        m.personal_email,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return searchable.includes(normalizedQuery);
+    });
+  }, [members, deptFilter, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filteredMembers.length / TEAM_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -761,37 +782,60 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
         </p>
       </header>
 
-      {/* Department filter — appears only when at least 2 unique depts are visible. */}
-      {!unassigned && deptOptions.length >= 2 && (
+      {!unassigned && (
         <div className="flex flex-wrap items-center gap-2">
           <label
-            htmlFor="team-dept-filter"
+            htmlFor="team-search"
             className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
           >
-            Department
+            Search
           </label>
-          <select
-            id="team-dept-filter"
-            value={deptFilter}
-            onChange={(e) => setDeptFilter(e.target.value)}
-            className="h-8 min-w-[180px] rounded-md border border-blue-200 bg-white px-2 text-xs text-zinc-800 shadow-sm transition-colors hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-blue-900/50 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-blue-800 dark:focus:border-blue-700 dark:focus:ring-blue-900/50"
-          >
-            <option value="all">All ({members.length})</option>
-            {deptOptions.map((d) => {
-              const count = members.filter(
-                (m) => (m.department ?? '').trim().toLowerCase() === d.toLowerCase(),
-              ).length;
-              return (
-                <option key={d} value={d}>
-                  {d} ({count})
-                </option>
-              );
-            })}
-          </select>
-          {deptFilter !== 'all' && (
+          <div className="relative min-w-[220px] flex-1 sm:max-w-[340px]">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <input
+              id="team-search"
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Name or email"
+              className="h-8 w-full rounded-md border border-blue-200 bg-white pl-8 pr-2 text-xs text-zinc-800 shadow-sm transition-colors hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-blue-900/50 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-blue-800 dark:focus:border-blue-700 dark:focus:ring-blue-900/50"
+            />
+          </div>
+          {deptOptions.length >= 2 && (
+            <>
+              <label
+                htmlFor="team-dept-filter"
+                className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
+              >
+                Department
+              </label>
+              <select
+                id="team-dept-filter"
+                value={deptFilter}
+                onChange={(e) => setDeptFilter(e.target.value)}
+                className="h-8 min-w-[180px] rounded-md border border-blue-200 bg-white px-2 text-xs text-zinc-800 shadow-sm transition-colors hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-blue-900/50 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-blue-800 dark:focus:border-blue-700 dark:focus:ring-blue-900/50"
+              >
+                <option value="all">All ({members.length})</option>
+                {deptOptions.map((d) => {
+                  const count = members.filter(
+                    (m) => (m.department ?? '').trim().toLowerCase() === d.toLowerCase(),
+                  ).length;
+                  return (
+                    <option key={d} value={d}>
+                      {d} ({count})
+                    </option>
+                  );
+                })}
+              </select>
+            </>
+          )}
+          {(deptFilter !== 'all' || searchQuery.trim() !== '') && (
             <button
               type="button"
-              onClick={() => setDeptFilter('all')}
+              onClick={() => {
+                setDeptFilter('all');
+                setSearchQuery('');
+              }}
               className="text-[11px] font-medium text-blue-600 hover:underline dark:text-blue-400"
             >
               Clear
@@ -832,7 +876,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
                   </>
                 ) : (
                   <>
-                    Try clearing the department filter to see the full team.
+                    Try clearing the active filters to see the full team.
                   </>
                 )}
               </p>

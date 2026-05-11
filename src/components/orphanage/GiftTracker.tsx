@@ -25,6 +25,17 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { GiftTrackerNote } from '@/lib/supabase/gift-tracker-notes';
+import type { EmployeeGiftShippingRow } from '@/lib/supabase/employee-gift-shipping';
+import type { GiftCatalogItem, GiftAnniversaryTier, GiftCatalogPayload } from '@/lib/supabase/gift-catalog';
+import { CheckCircle2, XCircle, Truck, Lock, Tag, Pencil, Trash2, Undo2 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 
 type GiftStatus = 'overdue' | 'red' | 'orange' | 'green' | 'far';
 
@@ -144,22 +155,52 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [draftNotes, setDraftNotes] = useState<Map<string, string>>(new Map());
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  /** All shipping submissions, grouped by lowercase personal_email. */
+  const [shippingByEmail, setShippingByEmail] = useState<Map<string, EmployeeGiftShippingRow[]>>(
+    new Map(),
+  );
+  /** Row id currently being approved/rejected (for spinner state). */
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+  /** Gift catalog items (PHP) — provide the actual price when auto-deriving the gift. */
+  const [giftCatalogItems, setGiftCatalogItems] = useState<GiftCatalogItem[]>([]);
+  /** Anniversary tiers — the per-milestone mapping (6mo→Tshirt, 12mo→Tumbler, …). */
+  const [giftCatalogAnnivs, setGiftCatalogAnnivs] = useState<GiftAnniversaryTier[]>([]);
+  /** Row being edited by the orphanage manager (shipping fields). Null = closed. */
+  const [editDraft, setEditDraft] = useState<{
+    row: EmployeeGiftShippingRow;
+    emailKey: string;
+    location: string;
+    contact: string;
+    notes: string;
+    saving: boolean;
+  } | null>(null);
+  /** Row id currently being deleted (spinner state). */
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [pageDir, setPageDir] = useState<1 | -1>(1);
   const PAGE_SIZE = 10;
-  const [subTab, setSubTab] = useState<'roster' | 'catalog' | 'payments'>('roster');
+  const [subTab, setSubTab] = useState<'roster' | 'submissions' | 'catalog' | 'payments'>('roster');
+  /** Submissions sub-tab filter: which statuses to show. */
+  const [submissionsFilter, setSubmissionsFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
+  const [submissionsSearch, setSubmissionsSearch] = useState('');
 
   const today = useMemo(() => new Date(), []);
 
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [empRes, notesRes] = await Promise.all([
+      const [empRes, notesRes, shipRes, catRes] = await Promise.all([
         fetch('/api/employees', { cache: 'no-store' }),
         fetch('/api/gift-tracker-notes', { cache: 'no-store' }),
+        fetch('/api/employee-gift-shipping', { cache: 'no-store' }),
+        fetch('/api/gift-catalog', { cache: 'no-store' }),
       ]);
+      const catJson = (await catRes.json()) as { catalog?: GiftCatalogPayload; error?: string };
+      setGiftCatalogItems(catJson.catalog?.items ?? []);
+      setGiftCatalogAnnivs(catJson.catalog?.anniversaries ?? []);
       const empJson = (await empRes.json()) as { employees?: EmployeeRow[]; error?: string };
       const notesJson = (await notesRes.json()) as { notes?: GiftTrackerNote[]; error?: string };
+      const shipJson = (await shipRes.json()) as { rows?: EmployeeGiftShippingRow[]; error?: string };
       if (empJson.error) throw new Error(empJson.error);
       setEmployees(empJson.employees ?? []);
       const map = new Map<string, GiftTrackerNote>();
@@ -167,6 +208,16 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         map.set(n.personal_email.toLowerCase(), n);
       }
       setNotesByEmail(map);
+      const shipMap = new Map<string, EmployeeGiftShippingRow[]>();
+      for (const r of shipJson.rows ?? []) {
+        const key = r.personal_email.toLowerCase();
+        const arr = shipMap.get(key) ?? [];
+        arr.push(r);
+        shipMap.set(key, arr);
+      }
+      // Sort each employee's submissions by milestone_index ascending.
+      for (const arr of shipMap.values()) arr.sort((a, b) => a.milestone_index - b.milestone_index);
+      setShippingByEmail(shipMap);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not load Gift Tracker');
     } finally {
@@ -304,6 +355,223 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
     [noteValue, notesByEmail, viewerEmail],
   );
 
+  /**
+   * Reject inline (prompt for an optional note). Approval is a separate flow
+   * because the approver also has to pick a gift + confirm its PHP price.
+   */
+  const rejectShipping = useCallback(
+    async (rowId: string, emailKey: string) => {
+      const note =
+        (window.prompt('Reason for rejection (optional, shown to the employee):') ?? '').trim() ||
+        null;
+      setDecidingId(rowId);
+      try {
+        const res = await fetch(`/api/employee-gift-shipping/${rowId}/decide`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: 'rejected',
+            decided_by: viewerEmail,
+            decision_note: note,
+          }),
+        });
+        const json = (await res.json()) as { row?: EmployeeGiftShippingRow; error?: string };
+        if (!res.ok || json.error || !json.row) throw new Error(json.error ?? 'Failed');
+        setShippingByEmail((prev) => {
+          const next = new Map(prev);
+          const arr = (next.get(emailKey) ?? []).map((r) => (r.id === json.row!.id ? json.row! : r));
+          next.set(emailKey, arr);
+          return next;
+        });
+        toast.success('Submission rejected.');
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not update submission');
+      } finally {
+        setDecidingId(null);
+      }
+    },
+    [viewerEmail],
+  );
+
+  /**
+   * Auto-derive the gift for a given milestone:
+   *  milestone_index 1 → 0.5 years, 2 → 1, 3 → 1.5, etc.
+   *  Look up the anniversary tier for that year, then find the matching item
+   *  in the catalog by name. Returns the catalog item id + name + PHP price.
+   *  Falls back to the anniversary's `gift` string with price 0 when no
+   *  matching catalog item exists.
+   */
+  const deriveGiftForMilestone = useCallback(
+    (milestoneIndex: number): { itemId: string | null; name: string; pricePhp: number } | null => {
+      const year = milestoneIndex * 0.5;
+      const tier = giftCatalogAnnivs.find((a) => Math.abs(a.year - year) < 0.01);
+      const giftName = tier?.gift?.trim() ?? '';
+      if (!giftName) return null;
+
+      const target = giftName.toLowerCase();
+      let match = giftCatalogItems.find((i) => i.item.trim().toLowerCase() === target);
+      if (!match) {
+        const firstWord = target.split(/[\s&]+/)[0];
+        if (firstWord) {
+          match = giftCatalogItems.find((i) => i.item.trim().toLowerCase() === firstWord);
+        }
+      }
+      return {
+        itemId: match?.id ?? null,
+        name: match?.item ?? giftName,
+        pricePhp: match?.price_php ?? 0,
+      };
+    },
+    [giftCatalogAnnivs, giftCatalogItems],
+  );
+
+  /** Approve with the auto-derived gift. No dialog, no manual picking. */
+  const approveShipping = useCallback(
+    async (rowId: string, milestoneIndex: number, emailKey: string) => {
+      const gift = deriveGiftForMilestone(milestoneIndex);
+      if (!gift) {
+        toast.error(
+          'No catalog mapping for this milestone yet. Add it in Gift Tracker → Catalog first.',
+        );
+        return;
+      }
+      setDecidingId(rowId);
+      try {
+        const res = await fetch(`/api/employee-gift-shipping/${rowId}/decide`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: 'approved',
+            decided_by: viewerEmail,
+            decision_note: null,
+            gift_catalog_item_id: gift.itemId,
+            gift_name: gift.name,
+            gift_price_php: gift.pricePhp,
+          }),
+        });
+        const json = (await res.json()) as { row?: EmployeeGiftShippingRow; error?: string };
+        if (!res.ok || json.error || !json.row) throw new Error(json.error ?? 'Failed');
+        const updated = json.row;
+        setShippingByEmail((prev) => {
+          const next = new Map(prev);
+          const arr = (next.get(emailKey) ?? []).map((r) =>
+            r.id === updated.id ? updated : r,
+          );
+          next.set(emailKey, arr);
+          return next;
+        });
+        toast.success(
+          `Approved — ${gift.name} (₱${gift.pricePhp.toLocaleString()}) sent to Accounting.`,
+        );
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not approve submission');
+      } finally {
+        setDecidingId(null);
+      }
+    },
+    [deriveGiftForMilestone, viewerEmail],
+  );
+
+  /** Open the edit-shipping dialog for an orphanage-side correction. */
+  const openEditDialog = useCallback(
+    (row: EmployeeGiftShippingRow, emailKey: string) => {
+      setEditDraft({
+        row,
+        emailKey,
+        location: row.preferred_delivery_location,
+        contact: row.active_contact_number,
+        notes: row.notes,
+        saving: false,
+      });
+    },
+    [],
+  );
+
+  const submitEditDialog = useCallback(async () => {
+    if (!editDraft) return;
+    setEditDraft((d) => (d ? { ...d, saving: true } : d));
+    try {
+      const res = await fetch(`/api/employee-gift-shipping/${editDraft.row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          edited_by: viewerEmail,
+          preferred_delivery_location: editDraft.location.trim(),
+          active_contact_number: editDraft.contact.trim(),
+          notes: editDraft.notes.trim(),
+        }),
+      });
+      const json = (await res.json()) as { row?: EmployeeGiftShippingRow; error?: string };
+      if (!res.ok || json.error || !json.row) throw new Error(json.error ?? 'Failed');
+      const updated = json.row;
+      const emailKey = editDraft.emailKey;
+      setShippingByEmail((prev) => {
+        const next = new Map(prev);
+        const arr = (next.get(emailKey) ?? []).map((r) => (r.id === updated.id ? updated : r));
+        next.set(emailKey, arr);
+        return next;
+      });
+      toast.success('Shipping details updated.');
+      setEditDraft(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update');
+      setEditDraft((d) => (d ? { ...d, saving: false } : d));
+    }
+  }, [editDraft, viewerEmail]);
+
+  /** Delete a submission with confirm. */
+  const deleteShipping = useCallback(
+    async (rowId: string, emailKey: string, milestoneLabel: string) => {
+      if (
+        !window.confirm(
+          `Delete the ${milestoneLabel} submission? The employee can resubmit if they're still inside the milestone window. This cannot be undone.`,
+        )
+      ) {
+        return;
+      }
+      setDeletingId(rowId);
+      try {
+        const res = await fetch(`/api/employee-gift-shipping/${rowId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deleted_by: viewerEmail }),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok || json.error) throw new Error(json.error ?? 'Failed');
+        setShippingByEmail((prev) => {
+          const next = new Map(prev);
+          const arr = (next.get(emailKey) ?? []).filter((r) => r.id !== rowId);
+          if (arr.length === 0) next.delete(emailKey);
+          else next.set(emailKey, arr);
+          return next;
+        });
+        toast.success('Submission deleted.');
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not delete');
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [viewerEmail],
+  );
+
+  /** Single entry point passed down to RowItem / SubmissionsPanel. */
+  const decideShipping = useCallback(
+    (rowId: string, status: 'approved' | 'rejected', emailKey: string) => {
+      if (status === 'rejected') {
+        void rejectShipping(rowId, emailKey);
+        return;
+      }
+      const candidate = shippingByEmail.get(emailKey)?.find((r) => r.id === rowId);
+      if (!candidate) {
+        toast.error('Could not locate submission. Refresh and retry.');
+        return;
+      }
+      void approveShipping(rowId, candidate.milestone_index, emailKey);
+    },
+    [approveShipping, rejectShipping, shippingByEmail],
+  );
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -364,6 +632,19 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             label="Roster"
           />
           <SubTabButton
+            active={subTab === 'submissions'}
+            onClick={() => setSubTab('submissions')}
+            Icon={Truck}
+            label="Submissions"
+            badge={
+              // Pending count surfaces here so the team knows when action is needed.
+              Array.from(shippingByEmail.values()).reduce(
+                (n, arr) => n + arr.filter((r) => r.status === 'pending').length,
+                0,
+              ) || undefined
+            }
+          />
+          <SubTabButton
             active={subTab === 'catalog'}
             onClick={() => setSubTab('catalog')}
             Icon={Package}
@@ -397,6 +678,30 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           >
             <GiftPayments viewerEmail={viewerEmail} />
+          </motion.div>
+        ) : subTab === 'submissions' ? (
+          <motion.div
+            key="submissions"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <SubmissionsPanel
+              shippingByEmail={shippingByEmail}
+              rowsByEmail={new Map(rows.map((r) => [r.key, r]))}
+              filter={submissionsFilter}
+              setFilter={setSubmissionsFilter}
+              search={submissionsSearch}
+              setSearch={setSubmissionsSearch}
+              decidingId={decidingId}
+              deletingId={deletingId}
+              onDecide={(id, status, emailKey) => void decideShipping(id, status, emailKey)}
+              onEdit={(row, emailKey) => openEditDialog(row, emailKey)}
+              onDelete={(row, emailKey) =>
+                void deleteShipping(row.id, emailKey, `${row.milestone_index * 6}-month`)
+              }
+            />
           </motion.div>
         ) : (
         <motion.div
@@ -518,6 +823,14 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                           }
                           onNoteSave={() => void saveNote(row)}
                           updatedAt={notesByEmail.get(row.key)?.updated_at ?? null}
+                          shippingRows={shippingByEmail.get(row.key) ?? []}
+                          onDecideShipping={(id, status) => void decideShipping(id, status, row.key)}
+                          decidingId={decidingId}
+                          deletingId={deletingId}
+                          onEditShipping={(sub) => openEditDialog(sub, row.key)}
+                          onDeleteShipping={(sub) =>
+                            void deleteShipping(sub.id, row.key, `${sub.milestone_index * 6}-month`)
+                          }
                         />
                       );
                     })}
@@ -560,6 +873,94 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
         )}
         </AnimatePresence>
       </div>
+
+      {/* Edit shipping details dialog (orphanage-side correction) */}
+      <Dialog
+        open={!!editDraft}
+        onOpenChange={(v) => !v && !editDraft?.saving && setEditDraft(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit shipping details</DialogTitle>
+            <DialogDescription>
+              Make corrections on the employee&apos;s behalf. The gift assignment and
+              approval status are not changed by this edit.
+            </DialogDescription>
+          </DialogHeader>
+          {editDraft && (
+            <div className="grid gap-3">
+              <div className="rounded-md border border-pink-100 bg-pink-50/40 px-3 py-2 text-[11px] dark:border-pink-900/40 dark:bg-pink-950/15">
+                <div className="font-mono text-zinc-600 dark:text-zinc-400">
+                  {editDraft.row.personal_email}
+                </div>
+                <div className="font-semibold text-zinc-800 dark:text-zinc-200">
+                  {editDraft.row.milestone_index * 6}-month gift · #
+                  {editDraft.row.milestone_index}
+                </div>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="edit-loc" className="text-xs font-medium">
+                  Preferred delivery location
+                </Label>
+                <Input
+                  id="edit-loc"
+                  value={editDraft.location}
+                  onChange={(e) =>
+                    setEditDraft((d) => (d ? { ...d, location: e.target.value } : d))
+                  }
+                  disabled={editDraft.saving}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="edit-phone" className="text-xs font-medium">
+                  Active contact number
+                </Label>
+                <Input
+                  id="edit-phone"
+                  value={editDraft.contact}
+                  onChange={(e) =>
+                    setEditDraft((d) => (d ? { ...d, contact: e.target.value } : d))
+                  }
+                  disabled={editDraft.saving}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="edit-notes" className="text-xs font-medium">
+                  Notes
+                </Label>
+                <textarea
+                  id="edit-notes"
+                  value={editDraft.notes}
+                  onChange={(e) =>
+                    setEditDraft((d) => (d ? { ...d, notes: e.target.value } : d))
+                  }
+                  disabled={editDraft.saving}
+                  className="min-h-[72px] w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm shadow-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-pink-400/40 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-950"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  variant="outline"
+                  onClick={() => setEditDraft(null)}
+                  disabled={editDraft.saving}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => void submitEditDialog()}
+                  disabled={editDraft.saving}
+                  className="bg-pink-600 text-white hover:bg-pink-700"
+                >
+                  {editDraft.saving && (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  )}
+                  Save changes
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }
@@ -569,11 +970,13 @@ function SubTabButton({
   onClick,
   Icon,
   label,
+  badge,
 }: {
   active: boolean;
   onClick: () => void;
   Icon: React.ComponentType<{ className?: string }>;
   label: string;
+  badge?: number;
 }) {
   return (
     <button
@@ -589,6 +992,18 @@ function SubTabButton({
     >
       <Icon className="h-3.5 w-3.5" />
       {label}
+      {badge !== undefined && badge > 0 && (
+        <span
+          className={cn(
+            'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
+            active
+              ? 'bg-white text-pink-700'
+              : 'bg-pink-600 text-white',
+          )}
+        >
+          {badge}
+        </span>
+      )}
     </button>
   );
 }
@@ -603,6 +1018,12 @@ function RowItem({
   onNoteChange,
   onNoteSave,
   updatedAt,
+  shippingRows,
+  onDecideShipping,
+  decidingId,
+  deletingId,
+  onEditShipping,
+  onDeleteShipping,
 }: {
   row: Row;
   isOpen: boolean;
@@ -613,6 +1034,12 @@ function RowItem({
   onNoteChange: (v: string) => void;
   onNoteSave: () => void;
   updatedAt: string | null;
+  shippingRows: EmployeeGiftShippingRow[];
+  onDecideShipping: (id: string, status: 'approved' | 'rejected') => void;
+  decidingId: string | null;
+  deletingId: string | null;
+  onEditShipping: (sub: EmployeeGiftShippingRow) => void;
+  onDeleteShipping: (sub: EmployeeGiftShippingRow) => void;
 }) {
   return (
     <>
@@ -684,7 +1111,7 @@ function RowItem({
                 transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
                 className="overflow-hidden"
               >
-                <div className="grid gap-5 px-5 py-5 lg:grid-cols-2">
+                <div className="grid gap-5 px-5 py-5 lg:grid-cols-3">
                   {/* History */}
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-pink-700 dark:text-pink-300">
@@ -759,6 +1186,158 @@ function RowItem({
                       </Button>
                     </div>
                   </div>
+
+                  {/* Shipping submissions */}
+                  <div className="flex flex-col gap-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-pink-700 dark:text-pink-300">
+                      <Truck className="h-3.5 w-3.5" />
+                      Shipping submissions
+                    </div>
+                    {shippingRows.length === 0 ? (
+                      <p className="rounded-md border border-dashed border-pink-200 bg-white/60 px-3 py-3 text-xs text-zinc-500 dark:border-pink-900/50 dark:bg-zinc-950/40">
+                        No shipping details submitted yet. Employees fill these out
+                        starting 30 days before each milestone.
+                      </p>
+                    ) : (
+                      <ul className="flex flex-col gap-2">
+                        {shippingRows.map((s) => {
+                          const isDeciding = decidingId === s.id;
+                          const isDeleting = deletingId === s.id;
+                          const isLocked = s.status === 'approved';
+                          return (
+                            <li
+                              key={s.id}
+                              className="rounded-md border border-pink-100 bg-white/85 p-2.5 text-xs shadow-sm dark:border-pink-900/50 dark:bg-zinc-950/55"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                                  {s.milestone_index * 6}-month · #{s.milestone_index}
+                                </span>
+                                {s.status === 'approved' ? (
+                                  <Badge className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-700 dark:text-emerald-300">
+                                    <Lock className="mr-1 h-2.5 w-2.5" /> Approved
+                                  </Badge>
+                                ) : s.status === 'rejected' ? (
+                                  <Badge className="border-rose-500/30 bg-rose-500/10 text-[10px] text-rose-700 dark:text-rose-300">
+                                    Rejected
+                                  </Badge>
+                                ) : (
+                                  <Badge className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-300">
+                                    Pending
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="mt-1.5 grid gap-0.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+                                <div>
+                                  <span className="font-semibold text-zinc-700 dark:text-zinc-300">Address:</span>{' '}
+                                  {s.preferred_delivery_location || <span className="italic text-zinc-400">—</span>}
+                                </div>
+                                <div>
+                                  <span className="font-semibold text-zinc-700 dark:text-zinc-300">Phone:</span>{' '}
+                                  {s.active_contact_number || <span className="italic text-zinc-400">—</span>}
+                                </div>
+                                {s.notes && (
+                                  <div>
+                                    <span className="font-semibold text-zinc-700 dark:text-zinc-300">Notes:</span>{' '}
+                                    {s.notes}
+                                  </div>
+                                )}
+                                {s.decision_note && (
+                                  <div className="mt-1 italic text-zinc-500 dark:text-zinc-500">
+                                    Reviewer note: {s.decision_note}
+                                  </div>
+                                )}
+                                {s.status === 'approved' && s.gift_name && (
+                                  <div className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-emerald-300/60 bg-emerald-50/80 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200">
+                                    <Tag className="h-2.5 w-2.5" />
+                                    {s.gift_name}
+                                    {s.gift_price_php != null && (
+                                      <span className="font-mono tabular-nums">
+                                        · ₱{s.gift_price_php.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+                                {!isLocked && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                                      disabled={isDeciding || isDeleting}
+                                      onClick={() => onDecideShipping(s.id, 'rejected')}
+                                    >
+                                      {isDeciding ? (
+                                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <Undo2 className="mr-1 h-3 w-3" />
+                                      )}
+                                      Return
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      className="h-7 bg-emerald-600 text-white hover:bg-emerald-700"
+                                      disabled={isDeciding || isDeleting}
+                                      onClick={() => onDecideShipping(s.id, 'approved')}
+                                    >
+                                      {isDeciding ? (
+                                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <CheckCircle2 className="mr-1 h-3 w-3" />
+                                      )}
+                                      Approve & lock
+                                    </Button>
+                                  </>
+                                )}
+                                {isLocked && !s.gift_name && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 border-pink-300 text-pink-700 hover:bg-pink-50 dark:border-pink-900/50 dark:text-pink-300 dark:hover:bg-pink-950/30"
+                                    disabled={isDeciding || isDeleting}
+                                    onClick={() => onDecideShipping(s.id, 'approved')}
+                                  >
+                                    {isDeciding ? (
+                                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Tag className="mr-1 h-3 w-3" />
+                                    )}
+                                    Apply gift
+                                  </Button>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                                  disabled={isDeciding || isDeleting}
+                                  onClick={() => onEditShipping(s)}
+                                >
+                                  <Pencil className="mr-1 h-3 w-3" />
+                                  Edit
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                                  disabled={isDeciding || isDeleting}
+                                  onClick={() => onDeleteShipping(s)}
+                                >
+                                  {isDeleting ? (
+                                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="mr-1 h-3 w-3" />
+                                  )}
+                                  Delete
+                                </Button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
                 </div>
               </motion.div>
             </td>
@@ -807,6 +1386,341 @@ function StatTile({
         </div>
         <div className="mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{hint}</div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Submissions sub-tab — flat list of every employee shipping submission
+ * across all milestones, with status filter + search + inline approve/reject.
+ * Approved rows are visible but read-only (form is locked on the employee side).
+ */
+function SubmissionsPanel({
+  shippingByEmail,
+  rowsByEmail,
+  filter,
+  setFilter,
+  search,
+  setSearch,
+  decidingId,
+  deletingId,
+  onDecide,
+  onEdit,
+  onDelete,
+}: {
+  shippingByEmail: Map<string, EmployeeGiftShippingRow[]>;
+  rowsByEmail: Map<string, Row>;
+  filter: 'pending' | 'approved' | 'rejected' | 'all';
+  setFilter: (f: 'pending' | 'approved' | 'rejected' | 'all') => void;
+  search: string;
+  setSearch: (s: string) => void;
+  decidingId: string | null;
+  deletingId: string | null;
+  onDecide: (id: string, status: 'approved' | 'rejected', emailKey: string) => void;
+  onEdit: (row: EmployeeGiftShippingRow, emailKey: string) => void;
+  onDelete: (row: EmployeeGiftShippingRow, emailKey: string) => void;
+}) {
+  // Flatten every employee's submissions into one array, annotated with the
+  // employee display name + department for quick filtering.
+  const all = useMemo(() => {
+    const out: {
+      sub: EmployeeGiftShippingRow;
+      emailKey: string;
+      name: string;
+      department: string | null;
+    }[] = [];
+    for (const [emailKey, subs] of shippingByEmail) {
+      const ref = rowsByEmail.get(emailKey);
+      const name = ref?.name ?? emailKey;
+      const department = ref?.department ?? null;
+      for (const sub of subs) out.push({ sub, emailKey, name, department });
+    }
+    // Pending first, then by updated_at desc within each bucket.
+    const rank = (s: EmployeeGiftShippingRow['status']) =>
+      s === 'pending' ? 0 : s === 'rejected' ? 1 : 2;
+    return out.sort((a, b) => {
+      const r = rank(a.sub.status) - rank(b.sub.status);
+      if (r !== 0) return r;
+      return b.sub.updated_at.localeCompare(a.sub.updated_at);
+    });
+  }, [shippingByEmail, rowsByEmail]);
+
+  const filtered = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return all.filter((item) => {
+      if (filter !== 'all' && item.sub.status !== filter) return false;
+      if (!needle) return true;
+      return [
+        item.name,
+        item.emailKey,
+        item.department ?? '',
+        item.sub.preferred_delivery_location,
+        item.sub.active_contact_number,
+        item.sub.notes,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(needle);
+    });
+  }, [all, filter, search]);
+
+  const counts = useMemo(() => {
+    const c = { pending: 0, approved: 0, rejected: 0, all: all.length };
+    for (const item of all) c[item.sub.status] += 1;
+    return c;
+  }, [all]);
+
+  const filters: { key: typeof filter; label: string; count: number; tone: string }[] = [
+    { key: 'pending',  label: 'Pending',  count: counts.pending,  tone: 'amber' },
+    { key: 'approved', label: 'Approved', count: counts.approved, tone: 'emerald' },
+    { key: 'rejected', label: 'Rejected', count: counts.rejected, tone: 'rose' },
+    { key: 'all',      label: 'All',      count: counts.all,      tone: 'pink' },
+  ];
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Filter pills + search */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {filters.map((f) => {
+            const active = filter === f.key;
+            const toneActive: Record<string, string> = {
+              amber: 'border-amber-500/40 bg-amber-500/15 text-amber-800 dark:text-amber-200',
+              emerald: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200',
+              rose: 'border-rose-500/40 bg-rose-500/15 text-rose-800 dark:text-rose-200',
+              pink: 'border-pink-500/40 bg-pink-500/15 text-pink-800 dark:text-pink-200',
+            };
+            return (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setFilter(f.key)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                  active
+                    ? toneActive[f.tone]
+                    : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/60',
+                )}
+              >
+                {f.label}
+                <span
+                  className={cn(
+                    'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                    active ? 'bg-white/70 text-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100' : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400',
+                  )}
+                >
+                  {f.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="relative w-full max-w-sm">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name, email, address…"
+            className="h-9 pl-8 text-sm"
+          />
+        </div>
+      </div>
+
+      {/* List */}
+      <Card className="overflow-hidden ring-1 ring-pink-200/60 dark:ring-pink-900/40">
+        <CardContent className="p-0">
+          {filtered.length === 0 ? (
+            <p className="px-6 py-14 text-center text-sm text-zinc-500 dark:text-zinc-400">
+              {all.length === 0
+                ? 'No submissions yet. Employees fill these out 30 days before each milestone.'
+                : `No ${filter === 'all' ? '' : filter} submissions match your search.`}
+            </p>
+          ) : (
+            <ul className="divide-y divide-pink-100/70 dark:divide-pink-900/35">
+              {filtered.map(({ sub, emailKey, name, department }) => {
+                const isDeciding = decidingId === sub.id;
+                const isDeleting = deletingId === sub.id;
+                const isLocked = sub.status === 'approved';
+                return (
+                  <li key={sub.id} className="grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,auto)] sm:items-start">
+                    {/* Employee + milestone */}
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-semibold text-zinc-900 dark:text-zinc-100">{name}</span>
+                        {sub.status === 'approved' ? (
+                          <Badge className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-700 dark:text-emerald-300">
+                            <Lock className="mr-1 h-2.5 w-2.5" /> Approved
+                          </Badge>
+                        ) : sub.status === 'rejected' ? (
+                          <Badge className="border-rose-500/30 bg-rose-500/10 text-[10px] text-rose-700 dark:text-rose-300">
+                            Rejected
+                          </Badge>
+                        ) : (
+                          <Badge className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-700 dark:text-amber-300">
+                            Pending
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-400 break-all">{emailKey}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                        <span className="rounded-full bg-pink-600/10 px-2 py-0.5 font-semibold text-pink-700 dark:text-pink-300">
+                          {sub.milestone_index * 6}-month gift · #{sub.milestone_index}
+                        </span>
+                        <span className="text-zinc-500 dark:text-zinc-400">
+                          {new Date(sub.milestone_date).toLocaleDateString(undefined, {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                          })}
+                        </span>
+                        {department && (
+                          <span className="text-pink-600/80 dark:text-pink-400/80">{department}</span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-[10.5px] text-zinc-400 dark:text-zinc-500">
+                        Submitted {new Date(sub.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+                        {sub.updated_at !== sub.created_at && (
+                          <> · last edited {new Date(sub.updated_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}</>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Shipping payload */}
+                    <div className="min-w-0 rounded-lg border border-pink-100 bg-pink-50/40 px-3 py-2 text-xs dark:border-pink-900/40 dark:bg-pink-950/15">
+                      <div className="grid gap-1">
+                        <div>
+                          <span className="font-semibold text-zinc-700 dark:text-zinc-300">Address:</span>{' '}
+                          <span className="text-zinc-700 dark:text-zinc-300">
+                            {sub.preferred_delivery_location || <span className="italic text-zinc-400">—</span>}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-zinc-700 dark:text-zinc-300">Phone:</span>{' '}
+                          <span className="text-zinc-700 dark:text-zinc-300">
+                            {sub.active_contact_number || <span className="italic text-zinc-400">—</span>}
+                          </span>
+                        </div>
+                        {sub.notes && (
+                          <div>
+                            <span className="font-semibold text-zinc-700 dark:text-zinc-300">Notes:</span>{' '}
+                            <span className="text-zinc-600 dark:text-zinc-400">{sub.notes}</span>
+                          </div>
+                        )}
+                        {sub.decision_note && (
+                          <div className="mt-0.5 italic text-zinc-500 dark:text-zinc-500">
+                            Reviewer note: {sub.decision_note}
+                          </div>
+                        )}
+                        {sub.status === 'approved' && sub.gift_name && (
+                          <div className="mt-1 inline-flex items-center gap-1.5 rounded-md border border-emerald-300/60 bg-emerald-50/80 px-2 py-1 text-[11px] font-semibold text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200">
+                            <Tag className="h-3 w-3" />
+                            {sub.gift_name}
+                            {sub.gift_price_php != null && (
+                              <span className="font-mono tabular-nums">
+                                · ₱{sub.gift_price_php.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {sub.status === 'approved' && sub.decided_at && (
+                          <div className="mt-0.5 text-[10.5px] text-emerald-700/80 dark:text-emerald-300/80">
+                            Approved {new Date(sub.decided_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+                            {sub.decided_by && <> by {sub.decided_by}</>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      {!isLocked ? (
+                        <>
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                              disabled={isDeciding || isDeleting}
+                              onClick={() => onDecide(sub.id, 'rejected', emailKey)}
+                            >
+                              {isDeciding ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <Undo2 className="mr-1 h-3 w-3" />
+                              )}
+                              Return to employee
+                            </Button>
+                            <Button
+                              size="sm"
+                              className="h-8 bg-emerald-600 text-white hover:bg-emerald-700"
+                              disabled={isDeciding || isDeleting}
+                              onClick={() => onDecide(sub.id, 'approved', emailKey)}
+                            >
+                              {isDeciding ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <CheckCircle2 className="mr-1 h-3 w-3" />
+                              )}
+                              Approve &amp; lock
+                            </Button>
+                          </div>
+                        </>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+                          <Lock className="h-3 w-3" /> Locked
+                        </span>
+                      )}
+                      {/* Edit / Delete / Apply-gift — available regardless of status. */}
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {isLocked && !sub.gift_name && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 border-pink-300 text-pink-700 hover:bg-pink-50 dark:border-pink-900/50 dark:text-pink-300 dark:hover:bg-pink-950/30"
+                            disabled={isDeciding || isDeleting}
+                            onClick={() => onDecide(sub.id, 'approved', emailKey)}
+                          >
+                            {isDeciding ? (
+                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                            ) : (
+                              <Tag className="mr-1 h-3 w-3" />
+                            )}
+                            Apply gift
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                          disabled={isDeciding || isDeleting}
+                          onClick={() => onEdit(sub, emailKey)}
+                        >
+                          <Pencil className="mr-1 h-3 w-3" />
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                          disabled={isDeciding || isDeleting}
+                          onClick={() => onDelete(sub, emailKey)}
+                        >
+                          {isDeleting ? (
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="mr-1 h-3 w-3" />
+                          )}
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

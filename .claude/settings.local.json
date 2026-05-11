@@ -80,7 +80,10 @@
       "Bash(powershell *)",
       "Bash(npx --no-install tsc --noEmit)",
       "Bash(dir src\\\\\\\\components\\\\\\\\ui)",
-      "Bash(npx eslint *)"
+      "Bash(npx eslint *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Filter \"*.tsx\" -Recurse)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(findstr /I \"accounting gift payroll wage\")"
     ]
   }
 }

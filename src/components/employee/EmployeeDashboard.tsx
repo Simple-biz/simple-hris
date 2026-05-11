@@ -61,6 +61,9 @@ import {
   isOrphanageStyleReason,
 } from '@/lib/supabase/pab-day-disputes';
 import HiddenValue from './HiddenValue';
+import GiftShippingCard, { type GiftShippingState } from './GiftShippingCard';
+import { Gift } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -334,6 +337,23 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
   const [myDisputes, setMyDisputes] = useState<import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow[]>([]);
   /** Mobile: PAB rules, bonus status, and pay numbers live in this sheet (charts stay on the main view). */
   const [mobileHelpOpen, setMobileHelpOpen] = useState(false);
+  /** Master-list profile fields used to prefill the gift-shipping form. */
+  const [profileForShipping, setProfileForShipping] = useState<{
+    name: string | null;
+    personalEmail: string | null;
+    workEmail: string | null;
+    department: string | null;
+  }>({ name: null, personalEmail: null, workEmail: null, department: null });
+
+  /** Gift-shipping dialog control — both the inline card CTA and the header
+   *  bell icon flip this flag. */
+  const [giftDialogOpen, setGiftDialogOpen] = useState(false);
+  /** State summary emitted by GiftShippingCard so the bell can show a badge. */
+  const [giftState, setGiftState] = useState<GiftShippingState>({
+    status: 'none',
+    milestoneMonths: null,
+    needsAction: false,
+  });
 
   // Fetch the employee's master row once to get their start_date
   // (used to gate Tech Bonus on the 30-day-of-service requirement).
@@ -344,6 +364,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
         const res = await fetch('/api/employees', { cache: 'no-store' });
         const json = (await res.json()) as {
           employees?: {
+            name?: string | null;
             work_email?: string | null;
             personal_email?: string | null;
             start_date?: string | null;
@@ -362,6 +383,12 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
           const pe = normEmail(me.personal_email ?? '');
           if (we) aliases.add(we);
           if (pe) aliases.add(pe);
+          setProfileForShipping({
+            name: me.name ?? null,
+            personalEmail: pe ?? we ?? null,
+            workEmail: we ?? null,
+            department: me.department ?? null,
+          });
         }
         setAliasEmails([...aliases]);
         if (!me?.start_date) {
@@ -1500,6 +1527,21 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
         </div>
       </header>
 
+      {/* Gift Tracker — 6-month milestone shipping form notification.
+          Externally controlled so the header bell icon can also open the modal. */}
+      <GiftShippingCard
+        personalEmail={profileForShipping.personalEmail ?? email}
+        startDate={employeeStartDate}
+        prefill={{
+          name: profileForShipping.name,
+          workEmail: profileForShipping.workEmail,
+          department: profileForShipping.department,
+        }}
+        dialogOpen={giftDialogOpen}
+        onDialogOpenChange={setGiftDialogOpen}
+        onStateChange={setGiftState}
+      />
+
       {/* Header — editorial: eyebrow + display title + source picker; lg actions on the right */}
       <header className="flex shrink-0 flex-col gap-3 border-b border-zinc-200/70 pb-2.5 dark:border-zinc-800/70 lg:flex-row lg:items-end lg:justify-between lg:gap-6 lg:pb-3">
         <div className="min-w-0 flex-1">
@@ -1523,6 +1565,12 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
             </div>
             {/* Mobile-only action buttons */}
             <div className="flex shrink-0 items-center gap-1.5 lg:hidden">
+              {giftState.status !== 'none' && (
+                <GiftBellButton
+                  state={giftState}
+                  onClick={() => setGiftDialogOpen(true)}
+                />
+              )}
               <Button
                 type="button"
                 variant="outline"
@@ -1582,6 +1630,9 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
         </div>
         {/* Right column — actions only (status badges now live in the data ribbon) */}
         <div className="hidden shrink-0 items-center gap-2 lg:flex">
+          {giftState.status !== 'none' && (
+            <GiftBellButton state={giftState} onClick={() => setGiftDialogOpen(true)} />
+          )}
           <Button
             type="button"
             variant="outline"
@@ -2335,5 +2386,61 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
       </Dialog>
 
     </div>
+  );
+}
+
+/**
+ * Bell-style icon button shown in the dashboard header. Renders a tiny pink
+ * (or amber, when rejected) badge dot whenever an action is pending. Click
+ * opens the gift-shipping modal directly.
+ */
+function GiftBellButton({
+  state,
+  onClick,
+}: {
+  state: GiftShippingState;
+  onClick: () => void;
+}) {
+  const tooltip = (() => {
+    if (state.status === 'approved')
+      return `${state.milestoneMonths}-month gift — approved`;
+    if (state.status === 'rejected')
+      return `${state.milestoneMonths}-month gift — needs revisions`;
+    if (state.status === 'pending')
+      return `${state.milestoneMonths}-month gift — pending review`;
+    if (state.status === 'unsubmitted')
+      return `${state.milestoneMonths}-month gift — confirm shipping details`;
+    return 'Gift shipping';
+  })();
+  const badgeTone = state.status === 'rejected' ? 'bg-amber-500' : 'bg-pink-500';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={tooltip}
+      aria-label={tooltip}
+      className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-pink-600 shadow-sm transition hover:border-pink-300 hover:bg-pink-50 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-pink-300 dark:hover:border-pink-900/60 dark:hover:bg-pink-950/30"
+    >
+      <Gift className="size-4.5" aria-hidden />
+      {state.needsAction && (
+        <>
+          <span
+            className={cn(
+              'pointer-events-none absolute right-1 top-1 inline-flex h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-zinc-900',
+              badgeTone,
+            )}
+            aria-hidden
+          />
+          {/* Soft ping ring to draw the eye when action is needed. */}
+          <span
+            className={cn(
+              'pointer-events-none absolute right-1 top-1 inline-flex h-2.5 w-2.5 animate-ping rounded-full opacity-75',
+              badgeTone,
+            )}
+            aria-hidden
+          />
+        </>
+      )}
+    </button>
   );
 }

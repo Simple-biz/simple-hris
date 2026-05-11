@@ -26,7 +26,6 @@ import {
   PAB_BONUS_PHP,
   TECH_BONUS_PHP,
   computeEmployeeBonus,
-  computePabEligibleEmails,
   getHslAdjustedEnd,
   hasThirtyDaysFromStart,
   isFinalPabWeek as gateIsFinalPabWeek,
@@ -34,6 +33,8 @@ import {
   pabMonthFromWeekStart,
 } from '@/lib/payroll/dispatch-bonuses';
 import {
+  buildPabCalendarWeeks,
+  checkHslPabEligibility,
   columnsAreAllCanonical,
   getPabMonthRange,
   parseColDate,
@@ -143,21 +144,6 @@ function parseLocalIso(raw: string | null | undefined): Date | null {
   return null;
 }
 
-const HUBSTAFF_EMAIL_KEYS = ['Email', 'email', 'Work Email', 'work_email', 'user_email'] as const;
-
-function rowEmailNorm(row: Record<string, unknown>): string | null {
-  for (const k of HUBSTAFF_EMAIL_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(row, k)) {
-      const v = row[k];
-      if (v != null) {
-        const n = normEmail(String(v));
-        if (n) return n;
-      }
-    }
-  }
-  return null;
-}
-
 function mondayOfWeekContaining(d: Date): Date {
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const dow = x.getDay();
@@ -171,11 +157,27 @@ interface HubstaffRowFetchResult {
   error: string | null;
 }
 
-async function fetchAllHubstaffRows(): Promise<HubstaffRowFetchResult> {
+/**
+ * Fetches only the rows belonging to this employee from hubstaff_hours, filtering
+ * at the DB level. The Email column uses a capital E per the Hubstaff CSV upload
+ * mapping (see HUBSTAFF_LEADING_COLS in hubstaff-hours-db.ts). Replaces the old
+ * full-table paginated scan that fetched every employee's rows just to filter client-side.
+ */
+async function fetchHubstaffRowsForEmail(
+  emailNorms: Set<string>,
+): Promise<HubstaffRowFetchResult> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) return { rows: [], error: 'Supabase client unavailable' };
   const table =
     process.env.NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE?.trim() || 'hubstaff_hours';
+
+  const emails = [...emailNorms].filter(Boolean);
+  if (emails.length === 0) return { rows: [], error: null };
+
+  // PostgREST OR filter on the "Email" column (capital E, per Hubstaff CSV mapping).
+  // e.g. "Email".eq.user@example.com,"Email".eq.alias@example.com
+  const orFilter = emails.map((e) => `"Email".eq.${e}`).join(',');
+
   const PAGE = 1000;
   const out: Record<string, unknown>[] = [];
   let from = 0;
@@ -183,13 +185,14 @@ async function fetchAllHubstaffRows(): Promise<HubstaffRowFetchResult> {
     const { data, error } = await supabase
       .from(table)
       .select('*')
+      .or(orFilter)
       .range(from, from + PAGE - 1);
     if (error) return { rows: [], error: error.message };
     const page = (data ?? []) as Record<string, unknown>[];
     out.push(...page);
     if (page.length < PAGE) break;
     from += PAGE;
-    if (from > 100000) break;
+    if (from > 10_000) break; // one employee won't have >10k rows
   }
   return { rows: out, error: null };
 }
@@ -255,6 +258,10 @@ export interface MemberMonthlyPayWeek {
   isTechBonusWeek: boolean;
   isPabEligible: boolean;
   hasThirtyDays: boolean;
+  /** False when today is still inside the PAB period — month not yet complete. */
+  pabMonthComplete: boolean;
+  /** False when today is before this week's salary date (period Monday + 8 days). */
+  techSalaryReached: boolean;
   pabBonusPHP: number;
   techBonusPHP: number;
   weekTotalPayPHP: number | null;
@@ -325,52 +332,40 @@ function buildHoursByDateKey(
   return map;
 }
 
-/** All Hubstaff rows whose source_file's date range overlaps the supplied range. */
-function rowsInRange(
-  rows: Record<string, unknown>[],
-  rangeStart: Date,
-  rangeEnd: Date,
-): Record<string, unknown>[] {
-  // Conservative: include everything. The PAB eligibility check itself
-  // tolerates rows outside its window — it just looks at the date columns
-  // it cares about. Avoiding the per-row range parse keeps the code small.
-  void rangeStart;
-  void rangeEnd;
-  return rows;
-}
-
 export async function computeMemberMonthlyPay(args: {
   email: string;
   year: number;
   month: number; // 0-indexed
 }): Promise<{ data: MemberMonthlyPay | null; error: string | null }> {
-  const emailNorm = normEmail(args.email);
-  if (!emailNorm) return { data: null, error: 'Invalid email' };
+  const emailNormMaybe = normEmail(args.email);
+  if (!emailNormMaybe) return { data: null, error: 'Invalid email' };
+  const emailNorm: string = emailNormMaybe;
 
   const monthStart = new Date(args.year, args.month, 1);
   const monthEnd = new Date(args.year, args.month + 1, 0);
 
-  // Fetch everything in parallel.
-  const [hsRes, rates, pabOverridesValue, masterMin] = await Promise.all([
-    fetchAllHubstaffRows(),
+  // Step 1: Fetch master + rates + PAB overrides in parallel. We need the master
+  // row first to know this employee's alias emails before querying Hubstaff.
+  const [masterMin, rates, pabOverridesValue] = await Promise.all([
+    fetchMasterRowsForEmail(new Set([emailNorm])),
     getEmployeeHourlyRatesRows(),
     getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
-    fetchMasterRowsForEmail(new Set([emailNorm])),
   ]);
-
-  if (hsRes.error) return { data: null, error: hsRes.error };
 
   const masterRow = masterMin.row;
   const hslEmails = masterMin.allHsl;
   const startDate = parseLocalIso(masterRow?.start_date ?? null);
 
-  // Build the alias set: this employee's emails (work + personal) — used for
-  // matching Hubstaff rows back to them.
+  // Build the alias set: this employee's emails (work + personal).
   const aliasNorms = new Set<string>([emailNorm]);
   const we = normEmail(masterRow?.work_email ?? null);
   const pe = normEmail(masterRow?.personal_email ?? null);
   if (we) aliasNorms.add(we);
   if (pe) aliasNorms.add(pe);
+
+  // Step 2: Fetch only this employee's Hubstaff rows (server-side filtered by email).
+  const hsRes = await fetchHubstaffRowsForEmail(aliasNorms);
+  if (hsRes.error) return { data: null, error: hsRes.error };
 
   // Find this employee's rate row (lookup by either email).
   const rateRow = (rates.rows ?? []).find((r) => {
@@ -382,15 +377,9 @@ export async function computeMemberMonthlyPay(args: {
   const otRate = rateRow ? parseRateText(rateRow.ot_rate) : null;
   const hasRates = regularRate != null || otRate != null;
 
-  // Filter Hubstaff rows down to this employee.
-  const myRows = hsRes.rows.filter((r) => {
-    const em = rowEmailNorm(r);
-    return em != null && aliasNorms.has(em);
-  });
-
   // Per-day seconds map covering every row (any month). We slice per-week
   // below to compute pay.
-  const hoursByDateKey = buildHoursByDateKey(myRows);
+  const hoursByDateKey = buildHoursByDateKey(hsRes.rows);
 
   // ── Enumerate pay weeks (Mon-Sun) overlapping the viewed month.
   const firstWeekMon = mondayOfWeekContaining(monthStart);
@@ -411,7 +400,7 @@ export async function computeMemberMonthlyPay(args: {
   const overrides = parsePabPeriodOverrides(pabOverridesValue);
   const pabEligByMonthKey = new Map<string, boolean>();
 
-  async function computeEligibilityForPabMonth(year: number, month: number): Promise<boolean> {
+  function computeEligibilityForPabMonth(year: number, month: number): boolean {
     const key = yearMonthKey(year, month);
     if (pabEligByMonthKey.has(key)) return pabEligByMonthKey.get(key)!;
     const overrideEntry = overrides.get(key);
@@ -420,39 +409,24 @@ export async function computeMemberMonthlyPay(args: {
       : getPabMonthRange(year, month);
     const hslAdjustedEnd = getHslAdjustedEnd(pabRange.end);
 
-    // Run computePabEligibleEmails on the merged Hubstaff data covering the
-    // PAB range — but we only need rows for this employee + we need them in a
-    // shape with ISO-date columns, so resolve canonical first.
-    const merged: Record<string, unknown> = {};
-    const candidateRows = rowsInRange(myRows, pabRange.start, hslAdjustedEnd);
-    let mergedEmail: string | null = null;
-    for (const row of candidateRows) {
-      const em = rowEmailNorm(row);
-      if (em == null || !aliasNorms.has(em)) continue;
-      mergedEmail = em;
-      const sourceFile =
-        typeof row['source_file'] === 'string' ? (row['source_file'] as string) : '';
-      const cols = Object.keys(row);
-      const needsResolve = sourceFile && columnsAreAllCanonical(cols);
-      const resolved = needsResolve ? resolveCanonicalColumnsToIso(row, sourceFile) : row;
-      for (const [k, v] of Object.entries(resolved)) {
-        if (v != null && String(v).trim() !== '') merged[k] = v;
-      }
+    // Use the same hoursByDateKey that powers the calendar (max-per-day across
+    // all uploads). This guarantees the PAB check is consistent with what the
+    // manager can see — a red day on the calendar always fails PAB here too.
+    const isHsl = hslEmails.has(emailNorm);
+    let passes: boolean;
+    if (isHsl) {
+      passes = checkHslPabEligibility(pabRange.start, hslAdjustedEnd, hoursByDateKey);
+    } else {
+      const weeks = buildPabCalendarWeeks(pabRange.start, pabRange.end, hoursByDateKey);
+      const flat = weeks.flat();
+      passes = flat.length > 0 && flat.every((d) => d.passes);
     }
-    if (mergedEmail) {
-      // Re-stamp the canonical Email key so computePabEligibleEmails can find it.
-      merged['Email'] = mergedEmail;
-    }
-    const eligible = computePabEligibleEmails({
-      rows: mergedEmail ? [merged] : [],
-      pabRange,
-      hslAdjustedEnd,
-      hslEmails,
-    });
-    const isElig = mergedEmail != null && eligible.has(mergedEmail);
-    pabEligByMonthKey.set(key, isElig);
-    return isElig;
+    pabEligByMonthKey.set(key, passes);
+    return passes;
   }
+
+  const todayRaw = new Date();
+  const todayMid = new Date(todayRaw.getFullYear(), todayRaw.getMonth(), todayRaw.getDate());
 
   const weeks: MemberMonthlyPayWeek[] = [];
   let totalSec = 0;
@@ -489,24 +463,23 @@ export async function computeMemberMonthlyPay(args: {
     let weekWeekendReg = 0;
     let weekWeekendOt = 0;
     let usedThisWeek = 0;
+    // Only process in-month days — adjacent-month days in straddling weeks must NOT
+    // consume the 40h regular cap for this month (matches My Hours behaviour).
     for (const cell of dayCells) {
-      if (cell.seconds <= 0) continue;
+      if (!cell.inMonth || cell.seconds <= 0) continue;
       const remaining = Math.max(0, REGULAR_WEEK_CAP_SEC - usedThisWeek);
       const dayReg = Math.min(cell.seconds, remaining);
       const dayOt = cell.seconds - dayReg;
       const isWeekend = cell.date.getDay() === 0 || cell.date.getDay() === 6;
-      // Only credit toward the viewed month's totals when the day is in-month.
-      if (cell.inMonth) {
-        weekTotalSec += cell.seconds;
-        regSec += dayReg;
-        weekOtSec += dayOt;
-        if (isWeekend) {
-          weekWeekendTotal += cell.seconds;
-          weekWeekendReg += dayReg;
-          weekWeekendOt += dayOt;
-        }
-      }
+      weekTotalSec += cell.seconds;
+      regSec += dayReg;
+      weekOtSec += dayOt;
       usedThisWeek += cell.seconds;
+      if (isWeekend) {
+        weekWeekendTotal += cell.seconds;
+        weekWeekendReg += dayReg;
+        weekWeekendOt += dayOt;
+      }
     }
 
     const regularPayPHP =
@@ -532,22 +505,37 @@ export async function computeMemberMonthlyPay(args: {
 
     // Bonus gates.
     const pabMonth = pabMonthFromWeekStart(weekMon);
+    // Only count PAB for weeks that belong to the viewed month's PAB period.
+    // A straddling week like March 30–April 5 belongs to March's PAB (its Monday
+    // is in March) and must not fire March's bonus inside the April view.
+    const pabBelongsToViewedMonth =
+      pabMonth.year === args.year && pabMonth.month === args.month;
     const overrideEntry = overrides.get(yearMonthKey(pabMonth.year, pabMonth.month));
     const pabRange = overrideEntry
       ? { start: overrideEntry.start, end: overrideEntry.end }
       : getPabMonthRange(pabMonth.year, pabMonth.month);
-    const isFinalPab = gateIsFinalPabWeek(weekSun, pabRange.end);
+    // PAB only counts after the period has fully closed (today is strictly after end day).
+    const pabEndMid = new Date(
+      pabRange.end.getFullYear(),
+      pabRange.end.getMonth(),
+      pabRange.end.getDate(),
+    );
+    const pabMonthComplete = todayMid.getTime() > pabEndMid.getTime();
+    const isFinalPab = pabBelongsToViewedMonth && gateIsFinalPabWeek(weekSun, pabRange.end);
     const isTechWeek = gateIsTechBonusWeek(weekMon);
-    const isPabElig = isFinalPab
-      ? await computeEligibilityForPabMonth(pabMonth.year, pabMonth.month)
+    // Tech bonus only counts once the salary date (period Monday + 8 days) has arrived.
+    const salaryDate = new Date(weekMon.getFullYear(), weekMon.getMonth(), weekMon.getDate() + 8);
+    const techSalaryReached = todayMid.getTime() >= salaryDate.getTime();
+    const isPabElig = isFinalPab && pabMonthComplete
+      ? computeEligibilityForPabMonth(pabMonth.year, pabMonth.month)
       : false;
     const has30 = startDate ? hasThirtyDaysFromStart(weekMon, startDate) : false;
 
     const bonus = computeEmployeeBonus({
       hasRates,
-      isFinalPabWeek: isFinalPab,
+      isFinalPabWeek: isFinalPab && pabMonthComplete,
       isPabEligible: isPabElig,
-      isTechBonusWeek: isTechWeek,
+      isTechBonusWeek: isTechWeek && techSalaryReached,
       hasThirtyDays: has30,
     });
 
@@ -575,6 +563,8 @@ export async function computeMemberMonthlyPay(args: {
       isTechBonusWeek: isTechWeek,
       isPabEligible: isPabElig,
       hasThirtyDays: has30,
+      pabMonthComplete,
+      techSalaryReached,
       pabBonusPHP: bonus.pabBonusPHP,
       techBonusPHP: bonus.techBonusPHP,
       weekTotalPayPHP: weekTotalPay,

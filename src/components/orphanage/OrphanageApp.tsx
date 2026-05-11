@@ -13,7 +13,9 @@ import {
   Gift,
   HeartHandshake,
   History as HistoryIcon,
+  LayoutDashboard,
   Loader2,
+  Truck,
   LogOut,
   Menu,
   Moon,
@@ -173,8 +175,8 @@ export default function OrphanageApp() {
   const welcomeMsg = WELCOME_MESSAGES[welcomeIdx]!;
 
   const [activeTab, setActiveTab] = useState<
-    'queue' | 'budget' | 'budget-history' | 'gift-tracker' | 's-wall'
-  >('queue');
+    'overview' | 'queue' | 'budget' | 'budget-history' | 'gift-tracker' | 's-wall'
+  >('overview');
   // Sub-tab inside the Orphanage Budget tab — Budget Request form vs Orphanages list.
   const [budgetSubTab, setBudgetSubTab] = useState<'request' | 'orphanages'>('request');
 
@@ -426,6 +428,19 @@ export default function OrphanageApp() {
             <nav className="flex flex-col gap-px">
               <button
                 type="button"
+                onClick={() => { setActiveTab('overview'); setMobileNavOpen(false); }}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+                  activeTab === 'overview'
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-700 font-medium text-white shadow-sm shadow-pink-600/25'
+                    : 'text-[#3f3f46] hover:bg-pink-50 hover:text-pink-900 dark:text-zinc-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
+                )}
+              >
+                <LayoutDashboard className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'overview' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
+                <span className="truncate text-left">Overview</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => { setActiveTab('queue'); setMobileNavOpen(false); }}
                 className={cn(
                   'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
@@ -580,6 +595,23 @@ export default function OrphanageApp() {
         />
 
         <AnimatePresence mode="wait" initial={false}>
+          {activeTab === 'overview' && (
+        <motion.div
+          key="overview"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        >
+          <OrphanageOverview
+            greeting={greeting}
+            disputeQueueCount={rows.length}
+            verifiedCount={verifiedRows.length}
+            onJumpTo={(tab) => setActiveTab(tab)}
+          />
+        </motion.div>
+          )}
           {activeTab === 'queue' && (
         <motion.div
           key="queue"
@@ -1193,6 +1225,379 @@ function OrphanStatTile({ label, value, hint, icon: Icon, accent }: OrphanStatTi
         </div>
         <div className="mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{hint}</div>
       </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+//  Overview tab — at-a-glance summary of every other tab.
+//  Pulls live counts from /api/employee-gift-shipping, /api/orphanage-budget-requests,
+//  /api/employees (for milestone math) and uses the disputes already loaded
+//  by the parent. Stat tiles route to the relevant tab on click.
+// ────────────────────────────────────────────────────────────────────────────
+
+type OverviewTab =
+  | 'overview'
+  | 'queue'
+  | 'budget'
+  | 'budget-history'
+  | 'gift-tracker'
+  | 's-wall';
+
+function OrphanageOverview({
+  greeting,
+  disputeQueueCount,
+  verifiedCount,
+  onJumpTo,
+}: {
+  greeting: string;
+  disputeQueueCount: number;
+  verifiedCount: number;
+  onJumpTo: (tab: OverviewTab) => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [shippingPending, setShippingPending] = useState(0);
+  const [shippingApprovedThisMonth, setShippingApprovedThisMonth] = useState(0);
+  const [tenureGiftsSpendPhp, setTenureGiftsSpendPhp] = useState(0);
+  const [budgetPending, setBudgetPending] = useState(0);
+  const [budgetSpendPhp, setBudgetSpendPhp] = useState(0);
+  const [upcomingMilestones, setUpcomingMilestones] = useState<{
+    name: string;
+    email: string;
+    months: number;
+    date: Date;
+    daysUntil: number;
+  }[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+
+    // Active month bounds (calendar month — close enough for a top-of-page tile).
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).getTime();
+
+    const inMonth = (iso: string | null | undefined): boolean => {
+      if (!iso) return false;
+      const t = new Date(iso).getTime();
+      return Number.isFinite(t) && t >= monthStart && t <= monthEnd;
+    };
+
+    void (async () => {
+      try {
+        const [shipRes, budgetRes, empRes] = await Promise.all([
+          fetch('/api/employee-gift-shipping', { cache: 'no-store' }),
+          fetch('/api/orphanage-budget-requests', { cache: 'no-store' }),
+          fetch('/api/employees', { cache: 'no-store' }),
+        ]);
+        const shipJson = (await shipRes.json()) as {
+          rows?: {
+            status: string;
+            decided_at: string | null;
+            gift_price_php: number | null;
+          }[];
+        };
+        const budgetJson = (await budgetRes.json()) as {
+          rows?: { status: string; submitted_at: string; final_amount: number }[];
+        };
+        const empJson = (await empRes.json()) as {
+          employees?: {
+            name?: string | null;
+            personal_email?: string | null;
+            work_email?: string | null;
+            start_date?: string | null;
+          }[];
+        };
+        if (cancelled) return;
+
+        // Shipping submissions
+        const shipRows = shipJson.rows ?? [];
+        setShippingPending(shipRows.filter((r) => r.status === 'pending').length);
+        const approvedThisMonth = shipRows.filter(
+          (r) => r.status === 'approved' && inMonth(r.decided_at),
+        );
+        setShippingApprovedThisMonth(approvedThisMonth.length);
+        setTenureGiftsSpendPhp(
+          approvedThisMonth.reduce(
+            (s, r) => s + (Number.isFinite(r.gift_price_php ?? 0) ? Number(r.gift_price_php ?? 0) : 0),
+            0,
+          ),
+        );
+
+        // Budget requests
+        const budgetRows = budgetJson.rows ?? [];
+        setBudgetPending(budgetRows.filter((r) => r.status === 'pending').length);
+        setBudgetSpendPhp(
+          budgetRows
+            .filter((r) => r.status === 'approved' && inMonth(r.submitted_at))
+            .reduce((s, r) => s + (Number.isFinite(r.final_amount) ? r.final_amount : 0), 0),
+        );
+
+        // Upcoming milestones in the next 30 days.
+        const today = new Date();
+        const startOfToday = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          today.getDate(),
+        ).getTime();
+        const items: typeof upcomingMilestones = [];
+        for (const e of empJson.employees ?? []) {
+          const raw = (e.start_date ?? '').trim();
+          if (!raw) continue;
+          const startDate = new Date(raw);
+          if (Number.isNaN(startDate.getTime())) continue;
+          // Walk milestones until we pass 30 days from today.
+          for (let i = 1; i <= 60; i += 1) {
+            const d = new Date(startDate);
+            d.setMonth(d.getMonth() + i * 6);
+            const ms = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+            const daysUntil = Math.round((ms - startOfToday) / 86_400_000);
+            if (daysUntil > 30) break; // stop scanning — future milestones too far away
+            if (daysUntil < 0) continue; // past milestones — skip
+            items.push({
+              name: e.name ?? e.personal_email ?? e.work_email ?? '—',
+              email: (e.personal_email ?? e.work_email ?? '').toLowerCase(),
+              months: i * 6,
+              date: d,
+              daysUntil,
+            });
+            break; // one upcoming per employee is enough for the overview
+          }
+        }
+        items.sort((a, b) => a.daysUntil - b.daysUntil);
+        setUpcomingMilestones(items.slice(0, 8));
+      } catch {
+        // ignore — leave defaults
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const totalSpendPhp = budgetSpendPhp + tenureGiftsSpendPhp;
+  const formatPhp = (n: number) =>
+    `₱${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  return (
+    <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
+      {/* Hero banner (matches the existing tab heroes) */}
+      <header className="relative overflow-hidden rounded-2xl border border-pink-100/90 bg-gradient-to-br from-pink-600 via-rose-600 to-zinc-900 px-5 py-7 text-white shadow-lg shadow-pink-600/20 dark:border-pink-900/50 dark:from-pink-700 dark:via-rose-900 dark:to-black sm:px-7">
+        <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/15 blur-3xl" aria-hidden />
+        <div className="pointer-events-none absolute -bottom-12 left-8 h-32 w-32 rounded-full bg-rose-300/25 blur-2xl" aria-hidden />
+        <div className="relative flex flex-col gap-2">
+          <div className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-pink-100/95">
+            <LayoutDashboard className="h-3 w-3 shrink-0" />
+            Overview
+          </div>
+          <h1 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
+            Good to see you, {greeting}.
+          </h1>
+          <p className="max-w-2xl text-sm leading-relaxed text-pink-100/85">
+            What needs your attention today across the Orphanage workspace.
+          </p>
+        </div>
+      </header>
+
+      {/* Action tiles — clickable, route to the relevant tab */}
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Pending actions">
+        <button
+          type="button"
+          onClick={() => onJumpTo('queue')}
+          className="text-left transition-transform hover:-translate-y-0.5"
+        >
+          <OrphanStatTile
+            label="Dispute queue"
+            value={loading ? '…' : disputeQueueCount}
+            hint={
+              disputeQueueCount === 0
+                ? 'Queue is clear'
+                : `${disputeQueueCount} needs verify or deny`
+            }
+            icon={HeartHandshake}
+            accent="pink"
+          />
+        </button>
+        <button
+          type="button"
+          onClick={() => onJumpTo('gift-tracker')}
+          className="text-left transition-transform hover:-translate-y-0.5"
+        >
+          <OrphanStatTile
+            label="Shipping submissions"
+            value={loading ? '…' : shippingPending}
+            hint={
+              shippingPending === 0
+                ? 'All caught up'
+                : `${shippingPending} awaiting your review`
+            }
+            icon={Truck}
+            accent="rose-deep"
+          />
+        </button>
+        <button
+          type="button"
+          onClick={() => onJumpTo('budget-history')}
+          className="text-left transition-transform hover:-translate-y-0.5"
+        >
+          <OrphanStatTile
+            label="Budget requests"
+            value={loading ? '…' : budgetPending}
+            hint={
+              budgetPending === 0
+                ? 'No pending requests'
+                : `${budgetPending} awaiting approval`
+            }
+            icon={PiggyBank}
+            accent="pink"
+          />
+        </button>
+        <button
+          type="button"
+          onClick={() => onJumpTo('gift-tracker')}
+          className="text-left transition-transform hover:-translate-y-0.5"
+        >
+          <OrphanStatTile
+            label="Approved gifts this month"
+            value={loading ? '…' : shippingApprovedThisMonth}
+            hint={`Tenure-gift spend: ${formatPhp(tenureGiftsSpendPhp)}`}
+            icon={Gift}
+            accent="mono"
+          />
+        </button>
+      </section>
+
+      {/* Lower row — monthly spend summary + upcoming milestones */}
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]" aria-label="Monthly digest">
+        {/* Monthly spend card */}
+        <Card className="overflow-hidden border-pink-100/80 bg-gradient-to-br from-white via-pink-50/30 to-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:from-zinc-950 dark:via-pink-950/12 dark:to-zinc-950 dark:ring-pink-400/10">
+          <CardHeader className="border-b border-pink-100/60 pb-3 dark:border-pink-900/40">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+              <PiggyBank className="h-4 w-4 text-pink-600 dark:text-pink-400" />
+              This month&apos;s spend
+            </CardTitle>
+            <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+              Approved budget requests + tenure gifts in {new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}.
+            </p>
+          </CardHeader>
+          <CardContent className="px-5 py-5">
+            <div className="bg-gradient-to-br from-zinc-900 via-rose-900 to-zinc-800 bg-clip-text text-3xl font-bold tabular-nums text-transparent dark:from-white dark:via-pink-200 dark:to-zinc-200 sm:text-4xl">
+              {loading ? '…' : formatPhp(totalSpendPhp)}
+            </div>
+            <div className="mt-3 grid gap-1.5 text-xs">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-zinc-600 dark:text-zinc-400">Budget requests</span>
+                <span className="font-mono tabular-nums font-medium text-zinc-800 dark:text-zinc-200">
+                  {formatPhp(budgetSpendPhp)}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-zinc-600 dark:text-zinc-400">
+                  Tenure gifts ({shippingApprovedThisMonth})
+                </span>
+                <span className="font-mono tabular-nums font-medium text-zinc-800 dark:text-zinc-200">
+                  {formatPhp(tenureGiftsSpendPhp)}
+                </span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Upcoming milestones */}
+        <Card className="overflow-hidden border-pink-100/80 bg-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:bg-zinc-950 dark:ring-pink-400/10">
+          <CardHeader className="border-b border-pink-100/60 pb-3 dark:border-pink-900/40">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+              <Gift className="h-4 w-4 text-pink-600 dark:text-pink-400" />
+              Upcoming gift milestones · next 30 days
+            </CardTitle>
+            <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+              Employees about to hit a 6-month tenure anniversary.
+            </p>
+          </CardHeader>
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="flex items-center justify-center py-10 text-zinc-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+              </div>
+            ) : upcomingMilestones.length === 0 ? (
+              <p className="px-5 py-8 text-center text-xs text-zinc-400">
+                No milestones in the next 30 days.
+              </p>
+            ) : (
+              <ul className="max-h-[260px] divide-y divide-pink-100/70 overflow-y-auto dark:divide-pink-900/35">
+                {upcomingMilestones.map((m) => (
+                  <li key={`${m.email}-${m.months}`} className="flex items-center justify-between gap-3 px-5 py-2.5">
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-zinc-800 dark:text-zinc-200">{m.name}</div>
+                      <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{m.email}</div>
+                    </div>
+                    <div className="text-right text-xs">
+                      <div className="font-semibold text-pink-700 dark:text-pink-300">
+                        {m.months}-month
+                      </div>
+                      <div className="text-[10.5px] text-zinc-500 dark:text-zinc-500">
+                        {m.daysUntil === 0
+                          ? 'Today'
+                          : m.daysUntil === 1
+                            ? 'Tomorrow'
+                            : `In ${m.daysUntil} days`}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Receipt log + S-Wall quick jumps */}
+      <section className="grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => onJumpTo('queue')}
+          className="group flex items-center justify-between gap-4 rounded-xl border border-pink-100/80 bg-white/90 px-4 py-3.5 shadow-sm ring-1 ring-pink-500/5 transition hover:border-pink-300 hover:shadow-md hover:shadow-pink-500/10 dark:border-pink-950/50 dark:bg-zinc-950/75"
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-rose-500 to-pink-700 text-white shadow-md">
+              <ClipboardList className="h-4.5 w-4.5" />
+            </div>
+            <div className="min-w-0 text-left">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-pink-600/85 dark:text-pink-400/85">
+                Receipt log
+              </div>
+              <div className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                {verifiedCount} processed dispute{verifiedCount === 1 ? '' : 's'}
+              </div>
+            </div>
+          </div>
+          <span className="text-xs text-zinc-400 group-hover:text-pink-500 dark:text-zinc-500">→</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onJumpTo('s-wall')}
+          className="group flex items-center justify-between gap-4 rounded-xl border border-violet-100/80 bg-white/90 px-4 py-3.5 shadow-sm ring-1 ring-violet-500/5 transition hover:border-violet-300 hover:shadow-md hover:shadow-violet-500/10 dark:border-violet-950/50 dark:bg-zinc-950/75"
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-700 text-white shadow-md">
+              <Newspaper className="h-4.5 w-4.5" />
+            </div>
+            <div className="min-w-0 text-left">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-violet-600/85 dark:text-violet-400/85">
+                Simple Wall
+              </div>
+              <div className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                Company-wide social feed
+              </div>
+            </div>
+          </div>
+          <span className="text-xs text-zinc-400 group-hover:text-violet-500 dark:text-zinc-500">→</span>
+        </button>
+      </section>
     </div>
   );
 }

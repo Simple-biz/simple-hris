@@ -170,6 +170,8 @@ type MemberMonthlyPaySummary = {
     isTechBonusWeek: boolean;
     isPabEligible: boolean;
     hasThirtyDays: boolean;
+    pabMonthComplete: boolean;
+    techSalaryReached: boolean;
     pabBonusPHP: number;
     techBonusPHP: number;
   }[];
@@ -313,6 +315,9 @@ export default function ManagerMemberHoursMini({
       return;
     }
     let cancelled = false;
+    // Clear previous month/server snapshot immediately so we never render stale
+    // bonus/pay values while a different month is loading.
+    setServerPay(null);
     setServerPayLoading(true);
     const params = new URLSearchParams({
       email: lookupEmail,
@@ -596,7 +601,7 @@ export default function ManagerMemberHoursMini({
             transition={SLIDE_TRANSITION}
             className="transform-gpu"
           >
-            {loading || (serverPayLoading && !serverPay) ? (
+            {loading || serverPayLoading ? (
               <PaySummarySkeleton />
             ) : !monthPay.hasHours ? (
               <p className="py-3 text-center text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -678,9 +683,11 @@ export default function ManagerMemberHoursMini({
                           reason={
                             !pabWeek
                               ? 'No final PAB week falls in this month'
-                              : !pabWeek.isPabEligible
-                                ? 'Not eligible — perfect-attendance check failed'
-                                : null
+                              : !pabWeek.pabMonthComplete
+                                ? 'Month in progress — PAB finalizes at month end'
+                                : !pabWeek.isPabEligible
+                                  ? 'Not eligible — perfect-attendance check failed'
+                                  : null
                           }
                         />
                         <BonusRow
@@ -689,11 +696,13 @@ export default function ManagerMemberHoursMini({
                           reason={
                             !techWeek
                               ? 'No 3rd-week salary date falls in this month'
-                              : !sp.startDate
-                                ? 'Not eligible — no start date on file'
-                                : !techWeek.hasThirtyDays
-                                  ? `Not eligible — under 30 days of service (started ${sp.startDate})`
-                                  : null
+                              : !techWeek.techSalaryReached
+                                ? 'Pending — salary date not yet reached'
+                                : !sp.startDate
+                                  ? 'Not eligible — no start date on file'
+                                  : !techWeek.hasThirtyDays
+                                    ? `Not eligible — under 30 days of service (started ${sp.startDate})`
+                                    : null
                           }
                         />
                         {!hasRate && (

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useMemo, useTransition } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useTransition, useCallback } from 'react';
+import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Check,
@@ -24,6 +25,7 @@ import {
   RefreshCw,
   Clock,
   Heart,
+  Gift,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -957,6 +959,54 @@ export default function PayrollWizard() {
   const [orphanageError, setOrphanageError] = useState<string | null>(null);
   const [orphanageSearch, setOrphanageSearch] = useState('');
 
+  // ── Approved orphanage budget requests for the active PAB month. Amounts are
+  // already in PHP (final_amount). Filtered client-side by submitted_at.
+  const [budgetRequestRows, setBudgetRequestRows] = useState<{
+    id: string;
+    submitter_email: string;
+    submitted_at: string;
+    visit_type: string;
+    mission_trip: boolean;
+    final_amount: number;
+    status: string;
+  }[]>([]);
+  const [budgetRequestsLoading, setBudgetRequestsLoading] = useState(false);
+  const [budgetRequestsError, setBudgetRequestsError] = useState<string | null>(null);
+
+  // ── Gift payments (vendor payouts) for the active PAB month. Amounts are
+  // USD; converted to PHP for the outflow total via `usdToPhpRate`.
+  const [giftPaymentRows, setGiftPaymentRows] = useState<{
+    id: string;
+    period_label: string;
+    batch_label: string;
+    vendor_name: string;
+    total_usd: number;
+    date_sent: string | null;
+    created_at: string;
+    status: string;
+  }[]>([]);
+  const [giftPaymentsLoading, setGiftPaymentsLoading] = useState(false);
+  const [giftPaymentsError, setGiftPaymentsError] = useState<string | null>(null);
+
+  // ── Approved tenure gifts (from Gift Tracker shipping submissions) in the active
+  // PAB month. Each approved row carries a gift_name + gift_price_php (PHP) that
+  // flows into the Accounting weekly outflow.
+  const [tenureGiftRows, setTenureGiftRows] = useState<{
+    id: string;
+    personal_email: string;
+    milestone_index: number;
+    milestone_date: string;
+    decided_at: string;
+    decided_by: string | null;
+    gift_name: string;
+    gift_price_php: number;
+  }[]>([]);
+  const [tenureGiftsLoading, setTenureGiftsLoading] = useState(false);
+  const [tenureGiftsError, setTenureGiftsError] = useState<string | null>(null);
+
+  type OrphanageTab = 'visits' | 'wages' | 'budgets' | 'gifts' | 'tenure';
+  const [orphanageTab, setOrphanageTab] = useState<OrphanageTab>('visits');
+
   /** USD → PHP (PHP per $1). Saved in app_settings `usd_to_php_rate`; default is the official ₱100,000 ÷ 10⁵ rate. */
   const [usdToPhpRate, setUsdToPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
   const [usdToPhpInput, setUsdToPhpInput] = useState<string>(String(OFFICIAL_USD_TO_PHP_RATE));
@@ -1582,6 +1632,252 @@ export default function PayrollWizard() {
       .finally(() => setOrphanageLoading(false));
     return () => ctrl.abort();
   }, [currentStep, pabMonthRange]);
+
+  // ── Budget requests (approved only, in PAB month) ──
+  // Status=approved filter at the API; date filter applied client-side against
+  // submitted_at so the list matches the period shown in step 4.
+  useEffect(() => {
+    if (currentStep !== 4 || !pabMonthRange) return;
+    const ctrl = new AbortController();
+    setBudgetRequestsLoading(true);
+    setBudgetRequestsError(null);
+    const startMid = new Date(
+      pabMonthRange.start.getFullYear(),
+      pabMonthRange.start.getMonth(),
+      pabMonthRange.start.getDate(),
+    ).getTime();
+    const endMid = new Date(
+      pabMonthRange.end.getFullYear(),
+      pabMonthRange.end.getMonth(),
+      pabMonthRange.end.getDate(),
+      23,
+      59,
+      59,
+      999,
+    ).getTime();
+    fetch(`/api/orphanage-budget-requests?status=approved`, {
+      cache: 'no-store',
+      signal: ctrl.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as {
+          rows?: {
+            id: string;
+            submitter_email: string;
+            submitted_at: string;
+            visit_type: string;
+            mission_trip: boolean;
+            final_amount: number;
+            status: string;
+          }[];
+        };
+        const filtered = (json.rows ?? []).filter((r) => {
+          const t = new Date(r.submitted_at).getTime();
+          return Number.isFinite(t) && t >= startMid && t <= endMid;
+        });
+        setBudgetRequestRows(filtered);
+      })
+      .catch((e) => {
+        if ((e as { name?: string })?.name === 'AbortError') return;
+        setBudgetRequestsError(e instanceof Error ? e.message : 'Failed to load budget requests');
+        setBudgetRequestRows([]);
+      })
+      .finally(() => setBudgetRequestsLoading(false));
+    return () => ctrl.abort();
+  }, [currentStep, pabMonthRange]);
+
+  // ── Gift payments (sent/paid, in PAB month) ──
+  // No status filter at the API; we keep rows whose status is sent|paid and
+  // whose date_sent (or created_at as fallback) lands inside the PAB month.
+  useEffect(() => {
+    if (currentStep !== 4 || !pabMonthRange) return;
+    const ctrl = new AbortController();
+    setGiftPaymentsLoading(true);
+    setGiftPaymentsError(null);
+    const startMid = new Date(
+      pabMonthRange.start.getFullYear(),
+      pabMonthRange.start.getMonth(),
+      pabMonthRange.start.getDate(),
+    ).getTime();
+    const endMid = new Date(
+      pabMonthRange.end.getFullYear(),
+      pabMonthRange.end.getMonth(),
+      pabMonthRange.end.getDate(),
+      23,
+      59,
+      59,
+      999,
+    ).getTime();
+    fetch(`/api/gift-payments`, {
+      cache: 'no-store',
+      signal: ctrl.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as {
+          rows?: {
+            id: string;
+            period_label: string;
+            batch_label: string;
+            vendor: { name: string };
+            total_usd: number;
+            date_sent: string | null;
+            created_at: string;
+            status: string;
+          }[];
+        };
+        const filtered = (json.rows ?? [])
+          .filter((r) => r.status === 'sent' || r.status === 'paid')
+          .filter((r) => {
+            const refDate = r.date_sent ?? r.created_at;
+            const t = new Date(refDate).getTime();
+            return Number.isFinite(t) && t >= startMid && t <= endMid;
+          })
+          .map((r) => ({
+            id: r.id,
+            period_label: r.period_label,
+            batch_label: r.batch_label,
+            vendor_name: r.vendor?.name ?? '—',
+            total_usd: r.total_usd,
+            date_sent: r.date_sent,
+            created_at: r.created_at,
+            status: r.status,
+          }));
+        setGiftPaymentRows(filtered);
+      })
+      .catch((e) => {
+        if ((e as { name?: string })?.name === 'AbortError') return;
+        setGiftPaymentsError(e instanceof Error ? e.message : 'Failed to load gift payments');
+        setGiftPaymentRows([]);
+      })
+      .finally(() => setGiftPaymentsLoading(false));
+    return () => ctrl.abort();
+  }, [currentStep, pabMonthRange]);
+
+  // ── Tenure gifts (approved shipping submissions, in PAB month by decided_at) ──
+  // We keep rows even when gift_name / gift_price_php are null (legacy approvals
+  // from before the gift-pick dialog) so the user sees them with a warning rather
+  // than silently nothing.
+  /**
+   * Refetches and filters approved tenure-gift rows to the active PAB month.
+   * Hoisted via `useCallback` so the Realtime subscription below can call it.
+   */
+  const refetchTenureGifts = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!pabMonthRange) return;
+      const startMid = new Date(
+        pabMonthRange.start.getFullYear(),
+        pabMonthRange.start.getMonth(),
+        pabMonthRange.start.getDate(),
+      ).getTime();
+      const endMid = new Date(
+        pabMonthRange.end.getFullYear(),
+        pabMonthRange.end.getMonth(),
+        pabMonthRange.end.getDate(),
+        23,
+        59,
+        59,
+        999,
+      ).getTime();
+      try {
+        const res = await fetch(`/api/employee-gift-shipping`, { cache: 'no-store', signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as {
+          rows?: {
+            id: string;
+            personal_email: string;
+            milestone_index: number;
+            milestone_date: string;
+            status: string;
+            decided_at: string | null;
+            decided_by: string | null;
+            gift_name: string | null;
+            gift_price_php: number | null;
+          }[];
+        };
+        const filtered = (json.rows ?? [])
+          .filter((r) => r.status === 'approved' && r.decided_at)
+          .filter((r) => {
+            const t = new Date(r.decided_at!).getTime();
+            return Number.isFinite(t) && t >= startMid && t <= endMid;
+          })
+          .map((r) => ({
+            id: r.id,
+            personal_email: r.personal_email,
+            milestone_index: r.milestone_index,
+            milestone_date: r.milestone_date,
+            decided_at: r.decided_at!,
+            decided_by: r.decided_by,
+            // Render legacy/incomplete rows so the user can spot them rather
+            // than them being silently dropped.
+            gift_name: r.gift_name ?? '(no gift assigned)',
+            gift_price_php:
+              r.gift_price_php != null && Number.isFinite(Number(r.gift_price_php))
+                ? Number(r.gift_price_php)
+                : 0,
+          }));
+        setTenureGiftRows(filtered);
+        setTenureGiftsError(null);
+      } catch (e) {
+        if ((e as { name?: string })?.name === 'AbortError') return;
+        setTenureGiftsError(e instanceof Error ? e.message : 'Failed to load tenure gifts');
+        setTenureGiftRows([]);
+      }
+    },
+    [pabMonthRange],
+  );
+
+  useEffect(() => {
+    if (currentStep !== 4 || !pabMonthRange) return;
+    const ctrl = new AbortController();
+    setTenureGiftsLoading(true);
+    void refetchTenureGifts(ctrl.signal).finally(() => setTenureGiftsLoading(false));
+    return () => ctrl.abort();
+  }, [currentStep, pabMonthRange, refetchTenureGifts]);
+
+  // ── Realtime: refresh tenure gifts the moment the Orphanage team approves
+  // a submission. Subscribes to `employee_gift_shipping_details` while the
+  // user is on step 4, unsubscribes when they leave. Mirrors the dispatch-lock
+  // pattern (also has a focus-refresh as a safety net).
+  useEffect(() => {
+    if (currentStep !== 4) return;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+
+    const channel = supabase
+      .channel(`tenure-gifts-${pabMonthRange?.year ?? 'na'}-${pabMonthRange?.month ?? 'na'}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'employee_gift_shipping_details',
+        },
+        () => {
+          // Any insert/update/delete on the table may have approved a new row
+          // (or unapproved an existing one). Cheaper to refetch the full list
+          // than reconcile per-event.
+          void refetchTenureGifts();
+        },
+      )
+      .subscribe((status, err) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          // eslint-disable-next-line no-console
+          console.warn(`[tenure-gifts] Realtime ${status}. Tab-focus refresh stays as fallback.`, err);
+        }
+      });
+
+    const onFocus = () => void refetchTenureGifts();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+
+    return () => {
+      void supabase.removeChannel(channel);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [currentStep, pabMonthRange, refetchTenureGifts]);
 
   /**
    * HSL payroll weeks run Mon–Sun, so the effective PAB end is extended to the
@@ -5775,6 +6071,25 @@ export default function PayrollWizard() {
         const totalApprovedVisits = orphanageVisitRows.filter((r) => r.isApproved).length;
         const totalPendingVisits = orphanageVisitRows.length - totalApprovedVisits;
 
+        // Budget request totals — final_amount is already in PHP.
+        const totalBudgetRequestsPHP = budgetRequestRows.reduce(
+          (s, r) => s + (Number.isFinite(r.final_amount) ? r.final_amount : 0),
+          0,
+        );
+
+        // Gift payment totals — total_usd × usdToPhpRate.
+        const totalGiftsUSD = giftPaymentRows.reduce(
+          (s, r) => s + (Number.isFinite(r.total_usd) ? r.total_usd : 0),
+          0,
+        );
+        const totalGiftsPHP = totalGiftsUSD * usdToPhpRate;
+
+        // Tenure-gift totals (PHP, snapshot at approval time).
+        const totalTenureGiftsPHP = tenureGiftRows.reduce(
+          (s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0),
+          0,
+        );
+
         const monthLabelOrph = pabMonthRange
           ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
           : 'Active PAB month';
@@ -5806,31 +6121,121 @@ export default function PayrollWizard() {
                 <span className="text-zinc-500 dark:text-zinc-400">
                   {totalOrphanageHours.toFixed(1)} hrs · {formatPHP(totalOrphanageWages)} wages
                 </span>
+                <span className="rounded-full border border-rose-300/70 bg-rose-50 px-2.5 py-0.5 font-medium text-rose-800 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200">
+                  {budgetRequestRows.length} budget request{budgetRequestRows.length === 1 ? '' : 's'} · {formatPHP(totalBudgetRequestsPHP)}
+                </span>
+                <span className="rounded-full border border-fuchsia-300/70 bg-fuchsia-50 px-2.5 py-0.5 font-medium text-fuchsia-800 dark:border-fuchsia-700/60 dark:bg-fuchsia-950/40 dark:text-fuchsia-200">
+                  {giftPaymentRows.length} gift payment{giftPaymentRows.length === 1 ? '' : 's'} · {formatPHP(totalGiftsPHP)}
+                </span>
+                <span className="rounded-full border border-pink-300/70 bg-pink-50 px-2.5 py-0.5 font-medium text-pink-800 dark:border-pink-700/60 dark:bg-pink-950/40 dark:text-pink-200">
+                  {tenureGiftRows.length} tenure gift{tenureGiftRows.length === 1 ? '' : 's'} · {formatPHP(totalTenureGiftsPHP)}
+                </span>
               </div>
             </div>
 
-            {/* Search */}
-            <div className="flex items-center justify-between gap-3">
-              <div className="relative w-full max-w-sm">
-                <Input
-                  value={orphanageSearch}
-                  onChange={(e) => setOrphanageSearch(e.target.value)}
-                  placeholder="Search by name, email, or date…"
-                  className="h-9 pl-3 text-sm"
-                />
-              </div>
-              <span className="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
-                {orphanageVisitRows.length} of {orphanageRows.length} visits
-              </span>
-            </div>
+            {/* Tab strip */}
+            {(() => {
+              const tabs: { key: OrphanageTab; label: string; icon: React.ReactNode; count: number; accent: string }[] = [
+                {
+                  key: 'visits',
+                  label: 'Visits',
+                  icon: <CalendarDays className="h-3.5 w-3.5" />,
+                  count: orphanageVisitRows.length,
+                  accent: 'rose',
+                },
+                {
+                  key: 'wages',
+                  label: 'Wages',
+                  icon: <DollarSign className="h-3.5 w-3.5" />,
+                  count: orphanageWageRows.length,
+                  accent: 'rose',
+                },
+                {
+                  key: 'budgets',
+                  label: 'Budget requests',
+                  icon: <DollarSign className="h-3.5 w-3.5" />,
+                  count: budgetRequestRows.length,
+                  accent: 'rose',
+                },
+                {
+                  key: 'gifts',
+                  label: 'Gift payments',
+                  icon: <Gift className="h-3.5 w-3.5" />,
+                  count: giftPaymentRows.length,
+                  accent: 'fuchsia',
+                },
+                {
+                  key: 'tenure',
+                  label: 'Tenure gifts',
+                  icon: <Gift className="h-3.5 w-3.5" />,
+                  count: tenureGiftRows.length,
+                  accent: 'pink',
+                },
+              ];
+              return (
+                <div className="flex flex-wrap gap-1.5">
+                  {tabs.map((t) => {
+                    const active = orphanageTab === t.key;
+                    return (
+                      <button
+                        key={t.key}
+                        type="button"
+                        onClick={() => setOrphanageTab(t.key)}
+                        className={cn(
+                          'flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                          active
+                            ? t.accent === 'fuchsia'
+                              ? 'border-fuchsia-500/50 bg-fuchsia-600/10 text-fuchsia-700 dark:text-fuchsia-300'
+                              : t.accent === 'pink'
+                                ? 'border-pink-500/50 bg-pink-600/10 text-pink-700 dark:text-pink-300'
+                                : 'border-rose-500/50 bg-rose-600/10 text-rose-700 dark:text-rose-300'
+                            : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50',
+                        )}
+                      >
+                        {t.icon}
+                        {t.label}
+                        <span
+                          className={cn(
+                            'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                            active
+                              ? t.accent === 'fuchsia'
+                                ? 'bg-fuchsia-600 text-white'
+                                : t.accent === 'pink'
+                                  ? 'bg-pink-600 text-white'
+                                  : 'bg-rose-600 text-white'
+                              : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400',
+                          )}
+                        >
+                          {t.count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* Section 1 — Orphanage visits list */}
-            <Card className="border-rose-100/80 dark:border-rose-950/50">
-              <CardHeader className="border-b border-rose-100/60 pb-3 dark:border-rose-900/30">
+            {orphanageTab === 'visits' && (
+            <Card className="overflow-hidden shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800">
+              <CardHeader className="flex flex-col gap-3 border-b border-zinc-200/90 bg-zinc-50/60 pb-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="flex items-center gap-2 text-sm font-semibold">
                   <CalendarDays className="h-4 w-4 text-rose-600 dark:text-rose-400" />
                   Orphanage visits
                 </CardTitle>
+                <div className="flex items-center gap-3">
+                  <div className="relative w-full max-w-[260px]">
+                    <Input
+                      value={orphanageSearch}
+                      onChange={(e) => setOrphanageSearch(e.target.value)}
+                      placeholder="Search name, email, date…"
+                      className="h-8 pl-3 text-xs"
+                    />
+                  </div>
+                  <span className="shrink-0 text-[10px] text-zinc-500 dark:text-zinc-400">
+                    {orphanageVisitRows.length} of {orphanageRows.length}
+                  </span>
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 {orphanageLoading ? (
@@ -5902,10 +6307,12 @@ export default function PayrollWizard() {
                 )}
               </CardContent>
             </Card>
+            )}
 
             {/* Section 2 — Hours and wages summary */}
-            <Card className="border-rose-100/80 dark:border-rose-950/50">
-              <CardHeader className="border-b border-rose-100/60 pb-3 dark:border-rose-900/30">
+            {orphanageTab === 'wages' && (
+            <Card className="overflow-hidden shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800">
+              <CardHeader className="border-b border-zinc-200/90 bg-zinc-50/60 pb-3 dark:border-zinc-800 dark:bg-zinc-900/40">
                 <CardTitle className="flex items-center gap-2 text-sm font-semibold">
                   <DollarSign className="h-4 w-4 text-rose-600 dark:text-rose-400" />
                   Orphanage hours & wages
@@ -5978,6 +6385,349 @@ export default function PayrollWizard() {
                 )}
               </CardContent>
             </Card>
+            )}
+
+            {/* Section 3 — Approved orphanage budget requests in the PAB month */}
+            {orphanageTab === 'budgets' && (
+            <Card className="overflow-hidden shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800">
+              <CardHeader className="border-b border-zinc-200/90 bg-zinc-50/60 pb-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                  <DollarSign className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                  Orphanage budget requests · approved
+                </CardTitle>
+                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Approved requests submitted inside this PAB month. Amounts in PHP.
+                </p>
+              </CardHeader>
+              <CardContent className="p-0">
+                {budgetRequestsLoading ? (
+                  <div className="flex items-center justify-center py-10 text-zinc-500">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+                  </div>
+                ) : budgetRequestsError ? (
+                  <p className="p-6 text-center text-xs text-rose-600 dark:text-rose-400">
+                    {budgetRequestsError}
+                  </p>
+                ) : budgetRequestRows.length === 0 ? (
+                  <p className="p-8 text-center text-xs text-zinc-400">
+                    No approved budget requests in this period.
+                  </p>
+                ) : (
+                  <div className="max-h-[420px] overflow-y-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 z-[1] border-b border-rose-100 bg-rose-50/80 text-[11px] font-semibold uppercase tracking-wider text-rose-700 backdrop-blur dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300">
+                        <tr>
+                          <th className="px-4 py-2.5">Submitted</th>
+                          <th className="px-4 py-2.5">Submitter</th>
+                          <th className="px-4 py-2.5">Visit type</th>
+                          <th className="px-4 py-2.5 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-rose-50 dark:divide-rose-950/30">
+                        {budgetRequestRows.map((r) => (
+                          <tr
+                            key={r.id}
+                            className="transition-colors hover:bg-rose-50/40 dark:hover:bg-rose-950/15"
+                          >
+                            <td className="px-4 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
+                              {r.submitted_at.slice(0, 10)}
+                            </td>
+                            <td className="px-4 py-2 font-mono text-zinc-600 dark:text-zinc-400">
+                              {r.submitter_email}
+                            </td>
+                            <td className="px-4 py-2 text-zinc-600 dark:text-zinc-400">
+                              {r.visit_type}
+                              {r.mission_trip && (
+                                <span className="ml-1 rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                                  mission
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white">
+                              {formatPHP(r.final_amount)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="border-t-2 border-rose-200/60 bg-rose-50/40 dark:border-rose-800/40 dark:bg-rose-950/30">
+                        <tr>
+                          <td className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300" colSpan={3}>
+                            Total ({budgetRequestRows.length})
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold tabular-nums text-zinc-900 dark:text-white">
+                            {formatPHP(totalBudgetRequestsPHP)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            )}
+
+            {/* Section 4 — Gift payments (sent/paid) in the PAB month */}
+            {orphanageTab === 'gifts' && (
+            <Card className="overflow-hidden shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800">
+              <CardHeader className="border-b border-zinc-200/90 bg-zinc-50/60 pb-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                  <Gift className="h-4 w-4 text-fuchsia-600 dark:text-fuchsia-400" />
+                  Gift payments · sent or paid
+                </CardTitle>
+                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Vendor payouts dated inside this PAB month. USD → PHP at {usdToPhpRate.toLocaleString()}.
+                </p>
+              </CardHeader>
+              <CardContent className="p-0">
+                {giftPaymentsLoading ? (
+                  <div className="flex items-center justify-center py-10 text-zinc-500">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+                  </div>
+                ) : giftPaymentsError ? (
+                  <p className="p-6 text-center text-xs text-rose-600 dark:text-rose-400">
+                    {giftPaymentsError}
+                  </p>
+                ) : giftPaymentRows.length === 0 ? (
+                  <p className="p-8 text-center text-xs text-zinc-400">
+                    No sent or paid gift payments in this period.
+                  </p>
+                ) : (
+                  <div className="max-h-[420px] overflow-y-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="sticky top-0 z-[1] border-b border-fuchsia-100 bg-fuchsia-50/80 text-[11px] font-semibold uppercase tracking-wider text-fuchsia-700 backdrop-blur dark:border-fuchsia-900/40 dark:bg-fuchsia-950/40 dark:text-fuchsia-300">
+                        <tr>
+                          <th className="px-4 py-2.5">Date sent</th>
+                          <th className="px-4 py-2.5">Vendor</th>
+                          <th className="px-4 py-2.5">Batch</th>
+                          <th className="px-4 py-2.5">Status</th>
+                          <th className="px-4 py-2.5 text-right">USD</th>
+                          <th className="px-4 py-2.5 text-right">PHP</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-fuchsia-50 dark:divide-fuchsia-950/30">
+                        {giftPaymentRows.map((r) => (
+                          <tr
+                            key={r.id}
+                            className="transition-colors hover:bg-fuchsia-50/40 dark:hover:bg-fuchsia-950/15"
+                          >
+                            <td className="px-4 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
+                              {(r.date_sent ?? r.created_at).slice(0, 10)}
+                            </td>
+                            <td className="px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">
+                              {r.vendor_name}
+                            </td>
+                            <td className="px-4 py-2 text-zinc-500 dark:text-zinc-400">
+                              {r.batch_label || r.period_label || '—'}
+                            </td>
+                            <td className="px-4 py-2">
+                              <span className="inline-flex items-center rounded-full bg-fuchsia-100 px-2 py-0.5 text-[10px] font-medium text-fuchsia-800 dark:bg-fuchsia-950/50 dark:text-fuchsia-300">
+                                {r.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
+                              ${r.total_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="px-4 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white">
+                              {formatPHP(r.total_usd * usdToPhpRate)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="border-t-2 border-fuchsia-200/60 bg-fuchsia-50/40 dark:border-fuchsia-800/40 dark:bg-fuchsia-950/30">
+                        <tr>
+                          <td className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-fuchsia-700 dark:text-fuchsia-300" colSpan={4}>
+                            Total ({giftPaymentRows.length})
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
+                            ${totalGiftsUSD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono font-bold tabular-nums text-zinc-900 dark:text-white">
+                            {formatPHP(totalGiftsPHP)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            )}
+
+            {/* Section 5 — Tenure gifts approved in this PAB month, rendered in their own
+                dedicated tab inside the Payroll Wizard → Orphanage step. Each gift is shown
+                as a paper-receipt card, with a register-tape grand total at the bottom. */}
+            {orphanageTab === 'tenure' && (
+            <Card className="overflow-hidden shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800">
+              <CardHeader className="border-b border-zinc-200/90 bg-zinc-50/60 pb-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                  <Gift className="h-4 w-4 text-pink-600 dark:text-pink-400" />
+                  Tenure gifts · receipts
+                </CardTitle>
+                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  One receipt per gift approved by the Orphanage team this PAB month. Each line
+                  rolls up into the weekly outflow at validation.
+                </p>
+              </CardHeader>
+              <CardContent className="p-4">
+                {tenureGiftsLoading ? (
+                  <div className="flex items-center justify-center py-10 text-zinc-500">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+                  </div>
+                ) : tenureGiftsError ? (
+                  <p className="p-6 text-center text-xs text-rose-600 dark:text-rose-400">
+                    {tenureGiftsError}
+                  </p>
+                ) : tenureGiftRows.length === 0 ? (
+                  <p className="p-8 text-center text-xs text-zinc-400">
+                    No tenure gifts approved in this period.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {tenureGiftRows.map((r) => {
+                        const receiptId = r.id.replace(/-/g, '').slice(0, 8).toUpperCase();
+                        return (
+                          <div
+                            key={r.id}
+                            className="relative overflow-hidden bg-[#fdfaf3] font-mono text-[11px] text-zinc-800 shadow-sm dark:bg-zinc-900 dark:text-zinc-200"
+                            style={{
+                              // Zig-zag perforation top + bottom — looks like a torn receipt.
+                              maskImage:
+                                'radial-gradient(circle at 6px 0, transparent 4px, black 4.5px), radial-gradient(circle at 6px 100%, transparent 4px, black 4.5px)',
+                              WebkitMaskImage:
+                                'radial-gradient(circle at 6px 0, transparent 4px, black 4.5px), radial-gradient(circle at 6px 100%, transparent 4px, black 4.5px)',
+                              maskComposite: 'intersect',
+                              WebkitMaskComposite: 'source-in',
+                              maskSize: '12px 100%, 12px 100%',
+                              maskRepeat: 'repeat-x, repeat-x',
+                              maskPosition: 'top, bottom',
+                              backgroundImage:
+                                'repeating-linear-gradient(0deg, transparent 0 22px, rgba(0,0,0,0.025) 22px 23px)',
+                            }}
+                          >
+                            <div className="px-5 pb-4 pt-5">
+                              {/* Receipt header */}
+                              <div className="text-center">
+                                <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-pink-700 dark:text-pink-400">
+                                  Tenure Gift Receipt
+                                </div>
+                                <div className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-500">
+                                  No. {receiptId}
+                                </div>
+                              </div>
+
+                              {/* Dashed divider */}
+                              <div className="my-3 border-t border-dashed border-zinc-300 dark:border-zinc-700" />
+
+                              {/* Metadata */}
+                              <div className="grid gap-1">
+                                <div className="flex items-baseline justify-between gap-3">
+                                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                                    Issued
+                                  </span>
+                                  <span className="tabular-nums">
+                                    {new Date(r.decided_at).toLocaleDateString(undefined, {
+                                      year: 'numeric',
+                                      month: 'short',
+                                      day: 'numeric',
+                                    })}
+                                  </span>
+                                </div>
+                                <div className="flex items-baseline justify-between gap-3">
+                                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                                    Recipient
+                                  </span>
+                                  <span className="truncate text-right">{r.personal_email}</span>
+                                </div>
+                                <div className="flex items-baseline justify-between gap-3">
+                                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                                    Milestone
+                                  </span>
+                                  <span>
+                                    {r.milestone_index * 6}-month · #{r.milestone_index}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="my-3 border-t border-dashed border-zinc-300 dark:border-zinc-700" />
+
+                              {/* Itemized line */}
+                              <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
+                                <span>Item</span>
+                                <span>Amount</span>
+                              </div>
+                              <div className="mt-1 flex items-baseline justify-between gap-3 text-[12px] font-medium">
+                                <span className="flex-1 truncate text-zinc-900 dark:text-zinc-100">
+                                  {r.gift_name}
+                                </span>
+                                <span className="tabular-nums text-zinc-900 dark:text-zinc-100">
+                                  {formatPHP(r.gift_price_php)}
+                                </span>
+                              </div>
+
+                              <div className="my-3 border-t border-dashed border-zinc-300 dark:border-zinc-700" />
+
+                              {/* Total */}
+                              <div className="flex items-baseline justify-between gap-3">
+                                <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-700 dark:text-zinc-300">
+                                  Total
+                                </span>
+                                <span className="text-[15px] font-bold tabular-nums text-zinc-900 dark:text-white">
+                                  {formatPHP(r.gift_price_php)}
+                                </span>
+                              </div>
+
+                              <div className="my-3 border-t border-dashed border-zinc-300 dark:border-zinc-700" />
+
+                              {/* Footer */}
+                              <div className="text-center text-[10px] text-zinc-500 dark:text-zinc-500">
+                                <div>Approved by {r.decided_by || '—'}</div>
+                                <div className="mt-1 text-[9px] tracking-widest text-zinc-400 dark:text-zinc-600">
+                                  ★ THANK YOU ★
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Grand total strip — looks like a register tape summary at the bottom */}
+                    <div
+                      className="relative overflow-hidden bg-zinc-900 px-5 py-4 font-mono text-zinc-50 shadow-md dark:bg-zinc-100 dark:text-zinc-900"
+                      style={{
+                        maskImage:
+                          'radial-gradient(circle at 6px 0, transparent 4px, black 4.5px), radial-gradient(circle at 6px 100%, transparent 4px, black 4.5px)',
+                        WebkitMaskImage:
+                          'radial-gradient(circle at 6px 0, transparent 4px, black 4.5px), radial-gradient(circle at 6px 100%, transparent 4px, black 4.5px)',
+                        maskComposite: 'intersect',
+                        WebkitMaskComposite: 'source-in',
+                        maskSize: '12px 100%, 12px 100%',
+                        maskRepeat: 'repeat-x, repeat-x',
+                        maskPosition: 'top, bottom',
+                      }}
+                    >
+                      <div className="flex flex-col gap-1.5 text-xs">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="text-[10px] uppercase tracking-widest opacity-75">Receipts</span>
+                          <span className="tabular-nums">{tenureGiftRows.length}</span>
+                        </div>
+                        <div className="border-t border-dashed border-current/30" />
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="text-[12px] font-bold uppercase tracking-[0.18em]">
+                            Period Total
+                          </span>
+                          <span className="text-lg font-bold tabular-nums">
+                            {formatPHP(totalTenureGiftsPHP)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            )}
           </div>
         );
       }
@@ -5996,6 +6746,50 @@ export default function PayrollWizard() {
         const grandBonuses = finalPayRows.reduce((s, r) => s + r.bonusTotal, 0);
         const grandFinal   = finalPayRows.reduce((s, r) => s + r.finalPay, 0);
         const unassignedCount = finalPayRows.filter(r => !r.deptKey).length;
+
+        // Non-payroll outflows fetched in step 4 (approved budgets, sent/paid gifts,
+        // approved orphanage visit wages). All in PHP — gifts converted at the
+        // wizard's active USD→PHP rate.
+        const stepOrphanageWagesPHP = (() => {
+          const rateByEmail = new Map<string, number>();
+          for (const r of effectiveCalcResults) {
+            const em = (r.email ?? '').trim().toLowerCase();
+            if (!em || r.regularRate == null) continue;
+            rateByEmail.set(em, r.regularRate);
+          }
+          const hoursByEmail = new Map<string, number>();
+          for (const row of orphanageRows) {
+            if (row.status !== 'accounting_approved' && row.status !== 'approved') continue;
+            const em = (row.work_email ?? '').trim().toLowerCase();
+            if (!em) continue;
+            hoursByEmail.set(em, (hoursByEmail.get(em) ?? 0) + (row.override_hours ?? 8));
+          }
+          let total = 0;
+          for (const [em, hrs] of hoursByEmail) {
+            const rate = rateByEmail.get(em);
+            if (rate != null) total += hrs * rate;
+          }
+          return total;
+        })();
+        const stepBudgetRequestsPHP = budgetRequestRows.reduce(
+          (s, r) => s + (Number.isFinite(r.final_amount) ? r.final_amount : 0),
+          0,
+        );
+        const stepGiftsPHP =
+          giftPaymentRows.reduce(
+            (s, r) => s + (Number.isFinite(r.total_usd) ? r.total_usd : 0),
+            0,
+          ) * usdToPhpRate;
+        const stepTenureGiftsPHP = tenureGiftRows.reduce(
+          (s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0),
+          0,
+        );
+        const totalWeeklyOutflow =
+          grandFinal +
+          stepOrphanageWagesPHP +
+          stepBudgetRequestsPHP +
+          stepGiftsPHP +
+          stepTenureGiftsPHP;
 
         return (
           <div className="flex min-w-0 flex-col gap-5">
@@ -6053,14 +6847,31 @@ export default function PayrollWizard() {
               </Card>
               <Card className="border-indigo-200/60 bg-indigo-50/60 shadow-sm ring-0 dark:border-indigo-800/30 dark:bg-indigo-950/20">
                 <CardContent className="pt-4 pb-4">
-                  <div className="text-xs text-indigo-600 dark:text-indigo-400">Grand Total Payout</div>
+                  <div className="text-xs text-indigo-600 dark:text-indigo-400">Total Weekly Outflow</div>
                   <div className="mt-1 font-mono text-xl font-bold text-indigo-700 dark:text-indigo-300">
-                    {formatPHP(grandFinal)}
+                    {formatPHP(totalWeeklyOutflow)}
                   </div>
-                  <div className="mt-1 text-[10px] text-indigo-600/70 dark:text-indigo-400/70">
-                    {payrollComparison.totalOnMaster > 0
-                      ? `${payrollComparison.withHoursThisWeek}/${payrollComparison.totalOnMaster} on master list`
-                      : 'Initial Pay + Bonuses'}
+                  <div className="mt-1.5 space-y-0.5 text-[10px] text-indigo-700/80 dark:text-indigo-300/80">
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Payroll (salaries + bonuses)</span>
+                      <span className="font-mono tabular-nums">{formatPHP(grandFinal)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Orphanage wages</span>
+                      <span className="font-mono tabular-nums">{formatPHP(stepOrphanageWagesPHP)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Budget requests ({budgetRequestRows.length})</span>
+                      <span className="font-mono tabular-nums">{formatPHP(stepBudgetRequestsPHP)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Gift payments ({giftPaymentRows.length})</span>
+                      <span className="font-mono tabular-nums">{formatPHP(stepGiftsPHP)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Tenure gifts ({tenureGiftRows.length})</span>
+                      <span className="font-mono tabular-nums">{formatPHP(stepTenureGiftsPHP)}</span>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
