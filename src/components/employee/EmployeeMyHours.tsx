@@ -650,8 +650,8 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
   );
 
   return (
-    <div className="flex min-h-full min-w-0 flex-1 flex-col overflow-y-auto bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-4 pb-8 sm:p-6">
+    <div className="flex min-h-full min-w-0 flex-1 flex-col overflow-y-scroll bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 [scrollbar-gutter:stable] dark:bg-none dark:bg-[#0d1117]">
+      <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4 p-4 pb-8 sm:p-6">
         <header className="shrink-0 space-y-1">
           <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white sm:text-xl">
             My Hours
@@ -661,10 +661,10 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
           </p>
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch lg:overflow-hidden">
         <Card
           size="sm"
-          className="flex min-h-[22rem] min-w-0 flex-1 flex-col rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 sm:min-h-[20rem]"
+          className="flex min-h-[22rem] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 [@media(max-height:850px)]:max-h-[calc(100dvh-9rem)] dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 sm:min-h-[20rem] lg:max-h-[calc(100dvh-8rem)]"
         >
           <CardHeader className="shrink-0 space-y-2 pb-2 pt-4 sm:pt-5">
             <div className="flex items-start justify-between gap-2">
@@ -775,7 +775,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
               </div>
             ) : hoursCalendar && hoursCalendar.length > 0 ? (
               <div className="flex min-h-0 flex-1 flex-col gap-0">
-                <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
+                <div className="min-h-0 flex-1 overflow-x-auto overflow-y-scroll [scrollbar-gutter:stable]">
                   <div className="sticky top-0 z-10 mb-1 grid min-w-[280px] grid-cols-[1.25rem_repeat(7,minmax(0,1fr))] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95 sm:min-w-0 sm:grid-cols-[1.5rem_repeat(7,minmax(0,1fr))] sm:gap-1">
                     <div />
                     {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
@@ -919,10 +919,10 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                                 : undefined
                             }
                           >
-                            <span className="text-[6px] leading-none text-zinc-400 dark:text-zinc-500 sm:text-[7px]">
+                            <span className="text-[7px] font-medium leading-none tabular-nums text-zinc-400 dark:text-zinc-500 sm:text-[8px]">
                               {day.dateStr}
                             </span>
-                            <span className={`font-mono text-[9px] font-bold leading-none sm:text-[10px] ${hourText}`}>
+                            <span className={`font-mono text-[11px] font-bold leading-none tabular-nums sm:text-[13px] ${hourText}`}>
                               {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
                             </span>
                           </div>

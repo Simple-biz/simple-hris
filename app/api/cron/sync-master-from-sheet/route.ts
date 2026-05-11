@@ -108,6 +108,7 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
         reonboarded: result.reonboarded,
         rows_missing_personal_email: result.rowsMissingPersonalEmail,
         duplicates_in_csv: result.duplicatesInCsv,
+        reconciled_via_work_email: result.reconciledViaWorkEmail,
         upload_id: result.uploadId,
         clear_offboarded: clearOffboarded,
       },

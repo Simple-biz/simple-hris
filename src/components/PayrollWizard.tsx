@@ -959,19 +959,26 @@ export default function PayrollWizard() {
   const [orphanageError, setOrphanageError] = useState<string | null>(null);
   const [orphanageSearch, setOrphanageSearch] = useState('');
 
-  // ── Approved orphanage budget requests for the active PAB month. Amounts are
-  // already in PHP (final_amount). Filtered client-side by submitted_at.
+  // ── Orphanage budget requests for Accounting approval/dispatch. Amounts are
+  // already in PHP; only approved rows are added to the payroll outflow.
   const [budgetRequestRows, setBudgetRequestRows] = useState<{
     id: string;
     submitter_email: string;
     submitted_at: string;
+    created_at: string | null;
+    updated_at: string | null;
+    decided_at: string | null;
+    decided_by: string | null;
     visit_type: string;
     mission_trip: boolean;
-    final_amount: number;
-    status: string;
+    subtotal: number | string | null;
+    leftover: number | string | null;
+    final_amount: number | string | null;
+    status: 'pending' | 'approved' | 'rejected';
   }[]>([]);
   const [budgetRequestsLoading, setBudgetRequestsLoading] = useState(false);
   const [budgetRequestsError, setBudgetRequestsError] = useState<string | null>(null);
+  const [budgetRequestDecidingId, setBudgetRequestDecidingId] = useState<string | null>(null);
 
   // ── Gift payments (vendor payouts) for the active PAB month. Amounts are
   // USD; converted to PHP for the outflow total via `usdToPhpRate`.
@@ -1633,20 +1640,30 @@ export default function PayrollWizard() {
     return () => ctrl.abort();
   }, [currentStep, pabMonthRange]);
 
-  // ── Budget requests (approved only, in PAB month) ──
-  // Status=approved filter at the API; date filter applied client-side against
-  // submitted_at so the list matches the period shown in step 4.
+  // ── Budget requests for Accounting approval/dispatch ──
+  // Pull all rows so pending Orphanage-side requests can be approved here. Approved
+  // rows count toward dispatch; pending rows stay visible so Accounting can close them.
   useEffect(() => {
     if (currentStep !== 4 || !pabMonthRange) return;
     const ctrl = new AbortController();
     setBudgetRequestsLoading(true);
     setBudgetRequestsError(null);
-    const startMid = new Date(
+    const monthStart = new Date(pabMonthRange.year, pabMonthRange.month, 1).getTime();
+    const monthEnd = new Date(
+      pabMonthRange.year,
+      pabMonthRange.month + 1,
+      0,
+      23,
+      59,
+      59,
+      999,
+    ).getTime();
+    const rangeStart = new Date(
       pabMonthRange.start.getFullYear(),
       pabMonthRange.start.getMonth(),
       pabMonthRange.start.getDate(),
     ).getTime();
-    const endMid = new Date(
+    const rangeEnd = new Date(
       pabMonthRange.end.getFullYear(),
       pabMonthRange.end.getMonth(),
       pabMonthRange.end.getDate(),
@@ -1655,7 +1672,15 @@ export default function PayrollWizard() {
       59,
       999,
     ).getTime();
-    fetch(`/api/orphanage-budget-requests?status=approved`, {
+    const isInActiveWindow = (iso: string | null | undefined): boolean => {
+      if (!iso) return false;
+      const t = new Date(iso).getTime();
+      return Number.isFinite(t) && (
+        (t >= monthStart && t <= monthEnd) ||
+        (t >= rangeStart && t <= rangeEnd)
+      );
+    };
+    fetch(`/api/orphanage-budget-requests`, {
       cache: 'no-store',
       signal: ctrl.signal,
     })
@@ -1666,15 +1691,27 @@ export default function PayrollWizard() {
             id: string;
             submitter_email: string;
             submitted_at: string;
+            created_at: string | null;
+            updated_at: string | null;
+            decided_at: string | null;
+            decided_by: string | null;
             visit_type: string;
             mission_trip: boolean;
-            final_amount: number;
-            status: string;
+            subtotal: number | string | null;
+            leftover: number | string | null;
+            final_amount: number | string | null;
+            status: 'pending' | 'approved' | 'rejected';
           }[];
         };
         const filtered = (json.rows ?? []).filter((r) => {
-          const t = new Date(r.submitted_at).getTime();
-          return Number.isFinite(t) && t >= startMid && t <= endMid;
+          if (r.status === 'pending') return true;
+          if (r.status !== 'approved') return false;
+          return (
+            isInActiveWindow(r.decided_at) ||
+            isInActiveWindow(r.submitted_at) ||
+            isInActiveWindow(r.created_at) ||
+            isInActiveWindow(r.updated_at)
+          );
         });
         setBudgetRequestRows(filtered);
       })
@@ -1686,6 +1723,42 @@ export default function PayrollWizard() {
       .finally(() => setBudgetRequestsLoading(false));
     return () => ctrl.abort();
   }, [currentStep, pabMonthRange]);
+
+  const decideBudgetRequest = useCallback(async (
+    id: string,
+    status: 'approved' | 'rejected',
+  ) => {
+    setBudgetRequestDecidingId(id);
+    try {
+      const res = await fetch(`/api/orphanage-budget-requests/${encodeURIComponent(id)}/decide`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status,
+          decided_by: 'Payroll Wizard',
+        }),
+      });
+      const json = (await res.json()) as {
+        row?: typeof budgetRequestRows[number] | null;
+        error?: string | null;
+      };
+      if (!res.ok || json.error || !json.row) {
+        throw new Error(json.error ?? `HTTP ${res.status}`);
+      }
+      setBudgetRequestRows((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, ...json.row } : r)),
+      );
+      toast.success(
+        status === 'approved'
+          ? 'Budget request approved for payroll dispatch.'
+          : 'Budget request rejected.',
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update budget request');
+    } finally {
+      setBudgetRequestDecidingId(null);
+    }
+  }, []);
 
   // ── Gift payments (sent/paid, in PAB month) ──
   // No status filter at the API; we keep rows whose status is sent|paid and
@@ -6071,11 +6144,13 @@ export default function PayrollWizard() {
         const totalApprovedVisits = orphanageVisitRows.filter((r) => r.isApproved).length;
         const totalPendingVisits = orphanageVisitRows.length - totalApprovedVisits;
 
-        // Budget request totals — final_amount is already in PHP.
-        const totalBudgetRequestsPHP = budgetRequestRows.reduce(
-          (s, r) => s + (Number.isFinite(r.final_amount) ? r.final_amount : 0),
-          0,
-        );
+        // Budget request totals — only Accounting-approved rows are payable.
+        const approvedBudgetRequestRows = budgetRequestRows.filter((r) => r.status === 'approved');
+        const pendingBudgetRequestRows = budgetRequestRows.filter((r) => r.status === 'pending');
+        const totalBudgetRequestsPHP = approvedBudgetRequestRows.reduce((s, r) => {
+          const amount = Number(r.final_amount ?? 0);
+          return s + (Number.isFinite(amount) ? amount : 0);
+        }, 0);
 
         // Gift payment totals — total_usd × usdToPhpRate.
         const totalGiftsUSD = giftPaymentRows.reduce(
@@ -6122,8 +6197,13 @@ export default function PayrollWizard() {
                   {totalOrphanageHours.toFixed(1)} hrs · {formatPHP(totalOrphanageWages)} wages
                 </span>
                 <span className="rounded-full border border-rose-300/70 bg-rose-50 px-2.5 py-0.5 font-medium text-rose-800 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200">
-                  {budgetRequestRows.length} budget request{budgetRequestRows.length === 1 ? '' : 's'} · {formatPHP(totalBudgetRequestsPHP)}
+                  {approvedBudgetRequestRows.length} approved budget request{approvedBudgetRequestRows.length === 1 ? '' : 's'} · {formatPHP(totalBudgetRequestsPHP)}
                 </span>
+                {pendingBudgetRequestRows.length > 0 && (
+                  <span className="rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-0.5 font-medium text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+                    {pendingBudgetRequestRows.length} budget pending approval
+                  </span>
+                )}
                 <span className="rounded-full border border-fuchsia-300/70 bg-fuchsia-50 px-2.5 py-0.5 font-medium text-fuchsia-800 dark:border-fuchsia-700/60 dark:bg-fuchsia-950/40 dark:text-fuchsia-200">
                   {giftPaymentRows.length} gift payment{giftPaymentRows.length === 1 ? '' : 's'} · {formatPHP(totalGiftsPHP)}
                 </span>
@@ -6387,16 +6467,16 @@ export default function PayrollWizard() {
             </Card>
             )}
 
-            {/* Section 3 — Approved orphanage budget requests in the PAB month */}
+            {/* Section 3 — Orphanage budget requests for Accounting approval */}
             {orphanageTab === 'budgets' && (
             <Card className="overflow-hidden shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800">
               <CardHeader className="border-b border-zinc-200/90 bg-zinc-50/60 pb-3 dark:border-zinc-800 dark:bg-zinc-900/40">
                 <CardTitle className="flex items-center gap-2 text-sm font-semibold">
                   <DollarSign className="h-4 w-4 text-rose-600 dark:text-rose-400" />
-                  Orphanage budget requests · approved
+                  Orphanage budget requests
                 </CardTitle>
                 <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Approved requests submitted inside this PAB month. Amounts in PHP.
+                  Pending requests can be approved here. Only approved requests are added to payroll dispatch.
                 </p>
               </CardHeader>
               <CardContent className="p-0">
@@ -6410,53 +6490,120 @@ export default function PayrollWizard() {
                   </p>
                 ) : budgetRequestRows.length === 0 ? (
                   <p className="p-8 text-center text-xs text-zinc-400">
-                    No approved budget requests in this period.
+                    No budget requests ready for this payroll period.
                   </p>
                 ) : (
                   <div className="max-h-[420px] overflow-y-auto">
                     <table className="w-full text-left text-xs">
                       <thead className="sticky top-0 z-[1] border-b border-rose-100 bg-rose-50/80 text-[11px] font-semibold uppercase tracking-wider text-rose-700 backdrop-blur dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300">
                         <tr>
-                          <th className="px-4 py-2.5">Submitted</th>
+                          <th className="px-4 py-2.5">Status</th>
+                          <th className="px-4 py-2.5">Date</th>
                           <th className="px-4 py-2.5">Submitter</th>
                           <th className="px-4 py-2.5">Visit type</th>
-                          <th className="px-4 py-2.5 text-right">Amount</th>
+                          <th className="px-4 py-2.5 text-right">Subtotal</th>
+                          <th className="px-4 py-2.5 text-right">Leftover</th>
+                          <th className="px-4 py-2.5 text-right">Final</th>
+                          <th className="px-4 py-2.5 text-right">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-rose-50 dark:divide-rose-950/30">
-                        {budgetRequestRows.map((r) => (
-                          <tr
-                            key={r.id}
-                            className="transition-colors hover:bg-rose-50/40 dark:hover:bg-rose-950/15"
-                          >
-                            <td className="px-4 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
-                              {r.submitted_at.slice(0, 10)}
-                            </td>
-                            <td className="px-4 py-2 font-mono text-zinc-600 dark:text-zinc-400">
-                              {r.submitter_email}
-                            </td>
-                            <td className="px-4 py-2 text-zinc-600 dark:text-zinc-400">
-                              {r.visit_type}
-                              {r.mission_trip && (
-                                <span className="ml-1 rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
-                                  mission
+                        {budgetRequestRows.map((r) => {
+                          const displayDate = r.decided_at ?? r.submitted_at;
+                          const isDeciding = budgetRequestDecidingId === r.id;
+                          return (
+                            <tr
+                              key={r.id}
+                              className="transition-colors hover:bg-rose-50/40 dark:hover:bg-rose-950/15"
+                            >
+                              <td className="px-4 py-2">
+                                <span
+                                  className={cn(
+                                    'inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset',
+                                    r.status === 'approved' && 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:ring-emerald-800/60',
+                                    r.status === 'pending' && 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:ring-amber-800/60',
+                                    r.status === 'rejected' && 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-950/30 dark:text-rose-300 dark:ring-rose-800/60',
+                                  )}
+                                >
+                                  {r.status}
                                 </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white">
-                              {formatPHP(r.final_amount)}
-                            </td>
-                          </tr>
-                        ))}
+                              </td>
+                              <td className="px-4 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
+                                <div>{displayDate.slice(0, 10)}</div>
+                                {r.decided_at && r.submitted_at && r.submitted_at.slice(0, 10) !== r.decided_at.slice(0, 10) && (
+                                  <div className="mt-0.5 text-[10px] text-zinc-400">
+                                    submitted {r.submitted_at.slice(0, 10)}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-4 py-2 font-mono text-zinc-600 dark:text-zinc-400">
+                                {r.submitter_email}
+                              </td>
+                              <td className="px-4 py-2 text-zinc-600 dark:text-zinc-400">
+                                {r.visit_type}
+                                {r.mission_trip && (
+                                  <span className="ml-1 rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                                    mission
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
+                                {formatPHP(Number(r.subtotal ?? 0))}
+                              </td>
+                              <td className="px-4 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
+                                {formatPHP(Number(r.leftover ?? 0))}
+                              </td>
+                              <td className="px-4 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white">
+                                {formatPHP(Number(r.final_amount ?? 0))}
+                              </td>
+                              <td className="px-4 py-2 text-right">
+                                {r.status === 'pending' ? (
+                                  <div className="flex justify-end gap-1.5">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      className="h-7 gap-1 bg-emerald-600 px-2 text-[11px] text-white hover:bg-emerald-700"
+                                      disabled={isDeciding}
+                                      onClick={() => void decideBudgetRequest(r.id, 'approved')}
+                                    >
+                                      {isDeciding ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <Check className="h-3 w-3" />
+                                      )}
+                                      Approve
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 gap-1 px-2 text-[11px] text-rose-700 hover:text-rose-800 dark:text-rose-300"
+                                      disabled={isDeciding}
+                                      onClick={() => void decideBudgetRequest(r.id, 'rejected')}
+                                    >
+                                      <X className="h-3 w-3" />
+                                      Reject
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] text-zinc-400">
+                                    {r.decided_by ? `by ${r.decided_by}` : 'closed'}
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                       <tfoot className="border-t-2 border-rose-200/60 bg-rose-50/40 dark:border-rose-800/40 dark:bg-rose-950/30">
                         <tr>
-                          <td className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300" colSpan={3}>
-                            Total ({budgetRequestRows.length})
+                          <td className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-rose-700 dark:text-rose-300" colSpan={6}>
+                            Approved total ({approvedBudgetRequestRows.length})
                           </td>
                           <td className="px-4 py-2.5 text-right font-mono font-bold tabular-nums text-zinc-900 dark:text-white">
                             {formatPHP(totalBudgetRequestsPHP)}
                           </td>
+                          <td className="px-4 py-2.5" />
                         </tr>
                       </tfoot>
                     </table>
@@ -6771,10 +6918,11 @@ export default function PayrollWizard() {
           }
           return total;
         })();
-        const stepBudgetRequestsPHP = budgetRequestRows.reduce(
-          (s, r) => s + (Number.isFinite(r.final_amount) ? r.final_amount : 0),
-          0,
-        );
+        const approvedStepBudgetRequestRows = budgetRequestRows.filter((r) => r.status === 'approved');
+        const stepBudgetRequestsPHP = approvedStepBudgetRequestRows.reduce((s, r) => {
+          const amount = Number(r.final_amount ?? 0);
+          return s + (Number.isFinite(amount) ? amount : 0);
+        }, 0);
         const stepGiftsPHP =
           giftPaymentRows.reduce(
             (s, r) => s + (Number.isFinite(r.total_usd) ? r.total_usd : 0),
@@ -6861,7 +7009,7 @@ export default function PayrollWizard() {
                       <span className="font-mono tabular-nums">{formatPHP(stepOrphanageWagesPHP)}</span>
                     </div>
                     <div className="flex items-center justify-between gap-2">
-                      <span>Budget requests ({budgetRequestRows.length})</span>
+                      <span>Budget requests ({approvedStepBudgetRequestRows.length})</span>
                       <span className="font-mono tabular-nums">{formatPHP(stepBudgetRequestsPHP)}</span>
                     </div>
                     <div className="flex items-center justify-between gap-2">

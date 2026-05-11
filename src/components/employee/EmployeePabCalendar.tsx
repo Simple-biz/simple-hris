@@ -435,7 +435,7 @@ export default function EmployeePabCalendar({
                 {Array.from({ length: 5 }, (_, di) => (
                   <div
                     key={di}
-                    className="h-10 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/30"
+                    className="h-14 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 sm:h-16 dark:border-zinc-800 dark:bg-zinc-900/30"
                     style={{ animationDelay: `${(wi * 5 + di) * 50}ms` }}
                   />
                 ))}
@@ -475,9 +475,9 @@ export default function EmployeePabCalendar({
                       return (
                         <div
                           key={di}
-                          className="flex h-10 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/20"
+                          className="flex h-14 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50/50 sm:h-16 dark:border-zinc-800 dark:bg-zinc-900/20"
                         >
-                          <span className="text-[7px] text-zinc-300 dark:text-zinc-700">—</span>
+                          <span className="text-xs text-zinc-300 tabular-nums dark:text-zinc-700">—</span>
                         </div>
                       );
                     }
@@ -519,7 +519,7 @@ export default function EmployeePabCalendar({
                     return (
                       <div
                         key={di}
-                        className={`flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-200 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
+                        className={`relative flex h-14 flex-col overflow-hidden rounded-md border transition-all duration-200 sm:h-16 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
                         title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
                         onClick={
                           cellClickable
@@ -532,22 +532,24 @@ export default function EmployeePabCalendar({
                             : undefined
                         }
                       >
-                        <span className="text-[7px] leading-none text-zinc-400 dark:text-zinc-500">
+                        <span className="pointer-events-none absolute left-1 top-0.5 max-w-[calc(100%-0.5rem)] truncate text-[7px] font-medium leading-none tracking-tight text-zinc-400 dark:text-zinc-500">
                           {day.dateStr}
                         </span>
-                        <span
-                          className={`font-mono text-[10px] font-bold leading-none ${
-                            dispute != null && disputeIsAwaitingResolution(dispute)
-                              ? 'text-amber-700 dark:text-amber-400'
-                              : effectivelyPasses
-                                ? 'text-emerald-700 dark:text-emerald-400'
-                                : isFutureOrToday && !day.hasData
-                                  ? 'text-zinc-400 dark:text-zinc-500'
-                                  : 'text-red-600 dark:text-red-400'
-                          }`}
-                        >
-                          {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
-                        </span>
+                        <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-3.5">
+                          <span
+                            className={`text-center text-lg font-bold tabular-nums leading-none tracking-tight sm:text-xl ${
+                              dispute != null && disputeIsAwaitingResolution(dispute)
+                                ? 'text-amber-700 dark:text-amber-400'
+                                : effectivelyPasses
+                                  ? 'text-emerald-700 dark:text-emerald-400'
+                                  : isFutureOrToday && !day.hasData
+                                    ? 'text-zinc-400 dark:text-zinc-500'
+                                    : 'text-red-600 dark:text-red-400'
+                            }`}
+                          >
+                            {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
+                          </span>
+                        </div>
                       </div>
                     );
                   })}

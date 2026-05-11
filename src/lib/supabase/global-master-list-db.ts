@@ -220,6 +220,52 @@ function composeIdentityKey(personalEmail: string, department: string): string {
   return `${personalEmail}|${department.toLowerCase()}`;
 }
 
+/** Secondary reconcile key: work email is stable across personal-email corrections on the sheet. */
+function composeWorkDeptKey(workEmailLower: string, department: string): string {
+  return `${workEmailLower}|${department.trim().toLowerCase()}`;
+}
+
+type MasterReconcileRow = {
+  id: unknown;
+  "Personal Email": string | null;
+  "Department": string | null;
+  "Work Email": string | null;
+  first_seen_upload_id: string | null;
+  off_boarded_at: string | null;
+};
+
+type MasterListReconcileMatch =
+  | {
+      kind: "personal";
+      id: unknown;
+      off_boarded_at: string | null;
+      first_seen_upload_id: string | null;
+    }
+  | { kind: "work"; row: MasterReconcileRow };
+
+/** Paginated read — roster can exceed a single `.range(0, 9999)` window. */
+async function fetchAllMasterRowsForReconcile(
+  supabase: SupabaseClient,
+  table: string,
+  selectCols: string,
+): Promise<MasterReconcileRow[]> {
+  const pageSize = 1000;
+  const out: MasterReconcileRow[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from(table)
+      .select(selectCols)
+      .not('"Personal Email"', "is", null)
+      .not('"Department"', "is", null)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`Could not read ${table} for reconciliation: ${error.message}`);
+    const batch = (data ?? []) as MasterReconcileRow[];
+    out.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return out;
+}
+
 /** Builds an object `{ dbCol: value }` for a CSV row using the resolved column mapping. */
 function csvRowToObject(
   row: string[],
@@ -284,6 +330,9 @@ async function promoteMasterListUploadToCurrent(
  *   2. For every CSV row with a usable (personal_email, department) pair:
  *        • If that pair exists in `global_master_list`, UPDATE the row with the new
  *          CSV values and bump `last_seen_upload_id` to this upload.
+ *        • Else if `(Work Email, Department)` uniquely matches a non-duplicate DB row
+ *          (same department, case-insensitive work email), UPDATE that row — corrects
+ *          personal-email drift between sheet and DB without orphaning the old row.
  *        • Otherwise INSERT a new row with `first_seen = last_seen = this upload`.
  *   3. Rows missing personal_email are INSERTED without dedupe (counted separately so
  *      HR can patch them later).
@@ -306,6 +355,8 @@ export async function replaceGlobalMasterListFromCsvText(
   duplicatesInCsv: number;
   /** How many previously off-boarded rows were re-activated because clearOffboarded=true. */
   reonboarded: number;
+  /** Rows matched to an existing DB row by Work Email + Department when (Personal Email, Department) did not match — fixes sheet/DB personal-email drift. */
+  reconciledViaWorkEmail: number;
 }> {
   const { clearOffboarded = false } = options;
   const supabase = requireServiceRole();
@@ -356,6 +407,7 @@ export async function replaceGlobalMasterListFromCsvText(
   }
   const personalEmailCsvIdx = insertCols[personalEmailMappingIdx].csvIdx;
   const departmentCsvIdx = insertCols[departmentMappingIdx].csvIdx;
+  const workEmailMappingIdx = findMappingIndexByDbCol(insertCols, "Work Email");
 
   const filteredRows = dataRows.filter((row) => !rowIsEmptyForMappedColumns(row, insertCols));
   if (filteredRows.length === 0) {
@@ -391,36 +443,31 @@ export async function replaceGlobalMasterListFromCsvText(
 
   const uploadId = await createPendingMasterListUpload(supabase, sourceFile, totalUsable);
 
-  // Fetch ALL rows with non-null email + department, then index them by the
-  // lowercased identity key. The previous chunked `.in('"Personal Email"', …)`
-  // approach was case-sensitive (PostgREST does exact string equality), so DB
-  // rows with mixed-case emails (legacy backfill, manual edits) were invisible
-  // to the lookup — those rows then hit the partial unique index on
-  // (LOWER("Personal Email"), LOWER("Department")) when we tried to INSERT
-  // their CSV counterparts. Doing the case fold in memory removes the gap.
-  //
-  // For roster sizes the system targets (≤ a few thousand rows) the single
-  // pass is faster than chunked queries anyway. The 0-9999 range matches the
-  // ceiling used by `fetchActiveEmployees`.
+  // Fetch ALL rows with non-null personal email + department (paginated), then index by
+  // `(personal_email_lc, department_lc)`. Case-fold in memory so DB rows with mixed-case
+  // emails still match the sheet. Also build a secondary index on `(work_email_lc, department_lc)`
+  // for active (non-off-boarded) rows only — used when the sheet's personal email was
+  // corrected but the DB row still has the old address (avoids INSERT + old row falling
+  // out of `active_employees`).
+  const hasWorkEmailCol = specCols.some((c) => normHeader(c) === normHeader("Work Email"));
   const existingByKey = new Map<
     string,
     { id: unknown; first_seen_upload_id: string | null; off_boarded_at: string | null }
   >();
+  const existingByWorkDept = new Map<string, MasterReconcileRow>();
   {
-    const { data, error } = await supabase
-      .from(table)
-      .select('id, "Personal Email", "Department", first_seen_upload_id, off_boarded_at')
-      .not('"Personal Email"', "is", null)
-      .not('"Department"', "is", null)
-      .range(0, 9999);
-    if (error) throw new Error(`Could not read ${table} for reconciliation: ${error.message}`);
-    for (const r of (data ?? []) as {
-      id: unknown;
-      "Personal Email": string | null;
-      "Department": string | null;
-      first_seen_upload_id: string | null;
-      off_boarded_at: string | null;
-    }[]) {
+    const selectCols = hasWorkEmailCol
+      ? 'id, "Personal Email", "Department", "Work Email", first_seen_upload_id, off_boarded_at'
+      : 'id, "Personal Email", "Department", first_seen_upload_id, off_boarded_at';
+    const allRows = await fetchAllMasterRowsForReconcile(supabase, table, selectCols);
+    if (!hasWorkEmailCol) {
+      for (const r of allRows) {
+        r["Work Email"] = null;
+      }
+    }
+
+    const workBuckets = new Map<string, MasterReconcileRow[]>();
+    for (const r of allRows) {
       const pe = normalizeEmail(r["Personal Email"]);
       const dep = normalizeDepartment(r["Department"]);
       if (pe && dep) {
@@ -430,12 +477,22 @@ export async function replaceGlobalMasterListFromCsvText(
           off_boarded_at: r.off_boarded_at ?? null,
         });
       }
+      if (!hasWorkEmailCol) continue;
+      const we = normalizeEmail(r["Work Email"]);
+      if (!we || !dep) continue;
+      const wk = composeWorkDeptKey(we, dep);
+      if (!workBuckets.has(wk)) workBuckets.set(wk, []);
+      workBuckets.get(wk)!.push(r);
+    }
+    for (const [wk, arr] of workBuckets) {
+      if (arr.length === 1) existingByWorkDept.set(wk, arr[0]!);
     }
   }
 
   let inserted = 0;
   let updated = 0;
   let reonboarded = 0;
+  let reconciledViaWorkEmail = 0;
   const rowsToInsert: Record<string, string | null>[] = [];
 
   // ── Dedupe within the CSV itself ──
@@ -463,8 +520,45 @@ export async function replaceGlobalMasterListFromCsvText(
     if (payload["Department"]) payload["Department"] = department;
 
     const existing = existingByKey.get(composeIdentityKey(personalEmail, department));
-    if (existing) {
-      const isOffboarded = !!existing.off_boarded_at;
+    let match: MasterListReconcileMatch | null = existing
+      ? {
+          kind: "personal",
+          id: existing.id,
+          off_boarded_at: existing.off_boarded_at,
+          first_seen_upload_id: existing.first_seen_upload_id,
+        }
+      : null;
+
+    if (!match && hasWorkEmailCol && workEmailMappingIdx >= 0) {
+      const we = normalizeEmail(row[insertCols[workEmailMappingIdx].csvIdx]);
+      if (we) {
+        const workHit = existingByWorkDept.get(composeWorkDeptKey(we, department));
+        if (workHit) match = { kind: "work", row: workHit };
+      }
+    }
+
+    if (match) {
+      if (match.kind === "work") {
+        reconciledViaWorkEmail += 1;
+        const hitRow = match.row;
+        const oldPe = normalizeEmail(hitRow["Personal Email"]);
+        const oldDep = normalizeDepartment(hitRow["Department"]);
+        if (oldPe && oldDep) {
+          existingByKey.delete(composeIdentityKey(oldPe, oldDep));
+        }
+        existingByKey.set(composeIdentityKey(personalEmail, department), {
+          id: hitRow.id,
+          first_seen_upload_id: hitRow.first_seen_upload_id,
+          off_boarded_at: hitRow.off_boarded_at ?? null,
+        });
+        if (workEmailMappingIdx >= 0) {
+          const we = normalizeEmail(row[insertCols[workEmailMappingIdx].csvIdx]);
+          if (we) existingByWorkDept.delete(composeWorkDeptKey(we, department));
+        }
+      }
+
+      const isOffboarded =
+        match.kind === "work" ? !!match.row.off_boarded_at : !!match.off_boarded_at;
       if (clearOffboarded && isOffboarded) reonboarded += 1;
       const updatePayload: Record<string, string | null> = {
         ...payload,
@@ -477,7 +571,7 @@ export async function replaceGlobalMasterListFromCsvText(
         updatePayload["off_boarded_note"] = null;
       }
       updateOps.push({
-        id: existing.id as string | number,
+        id: (match.kind === "work" ? match.row.id : match.id) as string | number,
         payload: updatePayload,
       });
     } else {
@@ -548,6 +642,7 @@ export async function replaceGlobalMasterListFromCsvText(
     rowsMissingPersonalEmail,
     duplicatesInCsv,
     reonboarded,
+    reconciledViaWorkEmail,
   };
 }
 

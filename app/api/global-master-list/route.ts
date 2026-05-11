@@ -54,8 +54,16 @@ export async function POST(req: NextRequest) {
     const text = await (file as Blob).text();
     const fileName = (file as File).name || form.get("fileName")?.toString() || "unknown.csv";
 
-    const { rowCount, uploadId, inserted, updated, rowsMissingPersonalEmail, duplicatesInCsv } =
-      await replaceGlobalMasterListFromCsvText(text, fileName);
+    const {
+      rowCount,
+      uploadId,
+      inserted,
+      updated,
+      rowsMissingPersonalEmail,
+      duplicatesInCsv,
+      reonboarded,
+      reconciledViaWorkEmail,
+    } = await replaceGlobalMasterListFromCsvText(text, fileName);
 
     let ratesReconcile: {
       masterCount: number | null;
@@ -94,6 +102,8 @@ export async function POST(req: NextRequest) {
         updated,
         rows_missing_personal_email: rowsMissingPersonalEmail,
         duplicates_in_csv: duplicatesInCsv,
+        reonboarded,
+        reconciled_via_work_email: reconciledViaWorkEmail,
         upload_id: uploadId,
       },
       ip_address: clientIp(req),
@@ -106,6 +116,8 @@ export async function POST(req: NextRequest) {
       updated,
       rowsMissingPersonalEmail,
       duplicatesInCsv,
+      reonboarded,
+      reconciledViaWorkEmail,
       uploadId,
       ratesReconcile,
     });

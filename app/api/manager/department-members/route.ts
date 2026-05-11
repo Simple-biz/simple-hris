@@ -39,6 +39,10 @@ function toNumber(v: string | null | undefined): number | null {
  * GET — My Team roster from `active_employees`, scoped by explicit `department_managers` rows
  * whenever that list is non-empty (even when the viewer also holds an elevated role).
  *
+ * `active_employees` is the same surface populated by Admin → CSV / “Sync from Google Sheet”
+ * (`replaceGlobalMasterListFromCsvText` in `global-master-list-db.ts` → current
+ * `master_list_uploads` row). Rows not stamped by that ingest stay out of the view.
+ *
  * Full org roster applies only when the user has no department-manager assignments AND holds
  * an elevated role (viewer, payroll, admin, …).
  *

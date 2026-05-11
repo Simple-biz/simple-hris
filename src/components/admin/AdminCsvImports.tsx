@@ -69,6 +69,8 @@ interface MasterListResponse {
   updated?: number;
   rowsMissingPersonalEmail?: number;
   duplicatesInCsv?: number;
+  reonboarded?: number;
+  reconciledViaWorkEmail?: number;
   uploadId?: string;
   ratesReconcile?: { hint?: string | null; ratesFewerThanMaster?: boolean } | null;
   error?: string;
@@ -119,6 +121,7 @@ interface MasterSheetSyncResponse {
   inserted?: number;
   updated?: number;
   reonboarded?: number;
+  reconciledViaWorkEmail?: number;
   rowsMissingPersonalEmail?: number;
   duplicatesInCsv?: number;
   uploadId?: string;
@@ -382,6 +385,11 @@ export default function AdminCsvImports() {
             `${json.duplicatesInCsv} duplicate (personal_email, department) rows in CSV — last occurrence kept`,
           );
         }
+        if ((json.reconciledViaWorkEmail ?? 0) > 0) {
+          sublines.push(
+            `${json.reconciledViaWorkEmail} row(s) merged by Work Email + Department (personal email differed from DB)`,
+          );
+        }
         if (json.ratesReconcile?.hint) {
           sublines.push(json.ratesReconcile.hint);
         }
@@ -487,6 +495,11 @@ export default function AdminCsvImports() {
       if ((json.duplicatesInCsv ?? 0) > 0) {
         sublines.push(
           `${json.duplicatesInCsv} duplicate (personal_email, department) rows in sheet — last occurrence kept`,
+        );
+      }
+      if ((json.reconciledViaWorkEmail ?? 0) > 0) {
+        sublines.push(
+          `${json.reconciledViaWorkEmail} row(s) merged by Work Email + Department (personal email differed from DB)`,
         );
       }
       if (json.dataRows != null) {

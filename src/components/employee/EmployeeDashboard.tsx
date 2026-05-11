@@ -1556,7 +1556,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                   </>
                 ) : null}
               </p>
-              <h1 className="mt-1 font-mono text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl lg:text-[2.25rem] lg:leading-none dark:text-white">
+              <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl lg:text-[2.25rem] lg:leading-none dark:text-white">
                 Overview
               </h1>
               <p className="mt-1.5 hidden text-xs leading-snug text-zinc-500 lg:block dark:text-zinc-500">
@@ -1664,7 +1664,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
         </div>
       </header>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto overscroll-y-contain lg:gap-3 [scrollbar-gutter:stable]">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-scroll overscroll-y-contain pb-4 lg:gap-3 [scrollbar-gutter:stable]">
       {dataError && (
         <Card className="shrink-0 border-red-200 bg-red-50/50 dark:border-red-500/20 dark:bg-red-950/20">
           <CardContent className="flex items-center gap-3 py-3">
@@ -1686,7 +1686,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
           </CardContent>
         </Card>
       ) : !row ? null : (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 lg:gap-4">
+        <div className="flex shrink-0 flex-col gap-3 lg:gap-4">
           {/* Hero — editorial pay statement: typographic on the left, divided list on the right */}
           <motion.section
             initial={{ opacity: 0, y: 8 }}
@@ -1710,27 +1710,27 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                     className="flex-wrap items-baseline gap-x-3 gap-y-1"
                     mask={
                       <>
-                        <span className="break-words font-mono text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-400 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-zinc-600">
+                        <span className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-400 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-zinc-600">
                           ₱•••••••••
                         </span>
-                        <span className="font-mono text-xs text-zinc-400 sm:text-sm dark:text-zinc-600">
+                        <span className="text-xs tabular-nums text-zinc-400 sm:text-sm dark:text-zinc-600">
                           ≈ $••••• USD
                         </span>
                       </>
                     }
                   >
                     <span
-                      className="break-words font-mono text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white"
+                      className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white"
                       title={formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)}
                     >
                       {formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)}
                     </span>
-                    <span className="font-mono text-xs text-zinc-500 sm:text-sm dark:text-zinc-500">
+                    <span className="text-xs tabular-nums text-zinc-500 sm:text-sm dark:text-zinc-500">
                       ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount) / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
                     </span>
                   </HiddenValue>
                 ) : (
-                  <span className="break-words font-mono text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white">
+                  <span className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white">
                     —
                   </span>
                 )}
@@ -1748,7 +1748,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                     Regular
                   </dt>
                   <dd
-                    className="mt-1 break-words font-mono text-base font-medium tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
+                    className="mt-1 break-words text-base font-medium tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
                     title={regularPay != null ? formatPHP(regularPay) : undefined}
                   >
                     {regularPay != null ? (
@@ -1762,7 +1762,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                       '—'
                     )}
                   </dd>
-                  <p className="mt-0.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                  <p className="mt-0.5 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
                     {regularHours.toFixed(2)}h
                     {regularRate != null ? ` · ${formatPHP(regularRate)}/h` : ''}
                   </p>
@@ -1772,7 +1772,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                     Overtime
                   </dt>
                   <dd
-                    className="mt-1 break-words font-mono text-base font-medium tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
+                    className="mt-1 break-words text-base font-medium tabular-nums leading-tight text-zinc-900 sm:text-lg dark:text-white"
                     title={otPay != null ? formatPHP(otPay) : undefined}
                   >
                     {otPay != null ? (
@@ -1793,7 +1793,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                       </HiddenValue>
                     )}
                   </dd>
-                  <p className="mt-0.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                  <p className="mt-0.5 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
                     {otHours > 0
                       ? `${otHours.toFixed(2)}h${otRate != null ? ` · ${formatPHP(otRate)}/h` : ''}`
                       : 'No overtime'}
@@ -1804,7 +1804,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                     PAB Bonus
                   </dt>
                   <dd
-                    className={`mt-1 break-words font-mono text-base font-medium tabular-nums leading-tight sm:text-lg ${
+                    className={`mt-1 break-words text-base font-medium tabular-nums leading-tight sm:text-lg ${
                       pabBonusAmount > 0
                         ? 'text-indigo-700 dark:text-indigo-300'
                         : perfectAttendanceBonusStatus === 'pending'
@@ -1818,7 +1818,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                         ? `+${formatPHP(pabBonusAmount)}`
                         : formatPHP(0)}
                   </dd>
-                  <p className="mt-0.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                  <p className="mt-0.5 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
                     {perfectAttendanceBonusStatus === 'pending'
                       ? 'Period in progress'
                       : isAllTime
@@ -1837,13 +1837,13 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                     Tech Bonus
                   </dt>
                   <dd
-                    className={`mt-1 break-words font-mono text-base font-medium tabular-nums leading-tight sm:text-lg ${
+                    className={`mt-1 break-words text-base font-medium tabular-nums leading-tight sm:text-lg ${
                       technologyBonusAmount > 0 ? 'text-sky-700 dark:text-sky-300' : 'text-zinc-400 dark:text-zinc-600'
                     }`}
                   >
                     {technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0)}
                   </dd>
-                  <p className="mt-0.5 font-mono text-[10px] text-zinc-400 dark:text-zinc-500">
+                  <p className="mt-0.5 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
                     {isTechnologyBonusActive ? 'Unlocked · week 3' : 'Unlocks week 3'}
                   </p>
                 </div>
@@ -1861,7 +1861,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                 <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
                   Hours
                 </span>
-                <span className="font-mono text-sm font-medium tabular-nums text-zinc-900 dark:text-white">
+                <span className="text-sm font-medium tabular-nums text-zinc-900 dark:text-white">
                   {totalHours.toFixed(2)}<span className="text-zinc-400">h</span>
                 </span>
               </div>
@@ -1869,7 +1869,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                 <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
                   Reg / OT
                 </span>
-                <span className="font-mono text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
+                <span className="text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
                   {regularHours.toFixed(1)}<span className="text-zinc-400">h</span>
                   <span className="mx-1 text-zinc-300 dark:text-zinc-700">/</span>
                   {otHours.toFixed(1)}<span className="text-zinc-400">h</span>
@@ -1879,7 +1879,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                 <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
                   Hourly
                 </span>
-                <span className="font-mono text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
+                <span className="text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
                   {regularRate != null ? formatPHP(regularRate) : '—'}
                 </span>
               </div>
@@ -1952,7 +1952,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                   <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-amber-700/80 dark:text-amber-500/80">
                     Period
                   </span>
-                  <span className="font-mono text-[10px] tabular-nums text-amber-800/90 dark:text-amber-300/90">
+                  <span className="text-[10px] tabular-nums text-amber-800/90 dark:text-amber-300/90">
                     {pabMonthRange.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                     <span className="mx-1 text-amber-400">–</span>
                     {pabMonthRange.end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -1963,12 +1963,12 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
           </motion.section>
 
           {/* Daily Hours + PAB Calendar — fills remaining vertical space; side-by-side on lg+, stacked below */}
-          <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-3 xl:gap-4">
+          <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-3 xl:gap-4">
             {/* Daily Hours Bar Chart — always visible. On mobile we grow the
                 card so all 7 weekday rows fit without an inner scroll. */}
             <Card
               size="sm"
-              className="flex min-h-[22rem] flex-1 flex-col rounded-2xl border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-md ring-1 ring-orange-500/5 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-950/30 sm:min-h-[20rem] lg:min-h-0 lg:rounded-xl lg:shadow-sm lg:ring-0"
+              className="flex min-h-[22rem] flex-1 flex-col rounded-2xl border-orange-100/80 bg-gradient-to-br from-white to-blue-50/20 shadow-md ring-1 ring-orange-500/5 dark:border-blue-950/60 dark:bg-none dark:from-blue-950/20 dark:to-blue-950/5 dark:ring-blue-950/30 sm:min-h-[20rem] lg:min-h-[20rem] lg:rounded-xl lg:shadow-sm lg:ring-0"
             >
               <CardHeader className="shrink-0 px-4 pb-2 pt-3 max-lg:px-4 max-lg:pt-3.5 lg:px-3 lg:pb-1.5 lg:pt-2">
                 <CardTitle className="text-sm font-semibold tracking-tight text-zinc-700 lg:text-xs lg:font-medium lg:tracking-normal dark:text-zinc-300 dark:lg:text-zinc-400">
@@ -2030,7 +2030,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                               </span>
                             ) : null}
                           </div>
-                          <span className="w-[3.5rem] shrink-0 text-right font-mono text-[11px] font-medium tabular-nums text-zinc-600 sm:w-[4.25rem] sm:text-xs lg:w-14 lg:text-[10px] lg:font-normal dark:text-zinc-400">
+                          <span className="w-[3.5rem] shrink-0 text-right text-[11px] font-medium tabular-nums text-zinc-600 sm:w-[4.25rem] sm:text-xs lg:w-14 lg:text-[10px] lg:font-normal dark:text-zinc-400">
                             {secondsToDisplay(day.seconds)}
                           </span>
                         </div>
@@ -2065,7 +2065,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                 a tight inner scroll. */}
             <Card
               size="sm"
-              className="flex min-h-[22rem] flex-1 flex-col rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 sm:min-h-[20rem] lg:min-h-0 lg:rounded-xl lg:shadow-sm lg:ring-0"
+              className="flex min-h-[16rem] flex-1 flex-col overflow-hidden rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 sm:min-h-[16rem] lg:min-h-[16rem] lg:rounded-xl lg:shadow-sm lg:ring-0"
             >
               <CardHeader className="shrink-0 pb-2 pt-3">
                 <div className="flex items-start justify-between gap-2">
@@ -2120,7 +2120,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                         {Array.from({ length: 5 }, (_, di) => (
                           <div
                             key={di}
-                            className="h-10 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/30"
+                            className="h-14 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 sm:h-16 dark:border-zinc-800 dark:bg-zinc-900/30"
                             style={{ animationDelay: `${(wi * 5 + di) * 50}ms` }}
                           />
                         ))}
@@ -2134,9 +2134,9 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                 ) : pabCalendar && pabCalendar.length > 0 ? (
                   /* -------- PAB Calendar Grid -------- */
                   <div className="flex min-h-0 flex-1 flex-col gap-0">
-                    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-clip">
+                    <div className="min-h-0 flex-1 overflow-y-scroll overflow-x-clip pr-1 [scrollbar-gutter:stable]">
                       {/* Column headers */}
-                      <div className="sticky top-0 z-10 mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
+                      <div className="sticky top-0 z-10 mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
                         <div />
                         {['M', 'T', 'W', 'T', 'F'].map((d, i) => (
                           <div key={i} className="text-center text-[8px] font-semibold text-zinc-400 dark:text-zinc-500">
@@ -2148,7 +2148,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                       {pabCalendar.map((week, wi) => (
                         <div
                           key={wi}
-                          className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] items-stretch gap-1"
+                          className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] items-stretch gap-0.5"
                           style={{ animation: `pab-row-in 0.35s ease-out ${wi * 80}ms both` }}
                         >
                           <div className="flex items-center justify-end text-[8px] font-medium text-zinc-400 dark:text-zinc-500">
@@ -2164,7 +2164,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                                   key={di}
                                   className="flex h-10 items-center justify-center rounded-md border border-dashed border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/20"
                                 >
-                                  <span className="text-[7px] text-zinc-300 dark:text-zinc-700">—</span>
+                                  <span className="text-xs text-zinc-300 tabular-nums dark:text-zinc-700">—</span>
                                 </div>
                               );
                             }
@@ -2209,36 +2209,40 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                             return (
                               <div
                                 key={di}
-                                className={`flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-300 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
+                                className={`relative flex h-10 flex-col overflow-hidden rounded-md border transition-all duration-300 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
                                 title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
                                 style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
                                 onClick={cellClickable ? () => {
                                   onNavigateToDisputes?.({ date: dayIso, seconds: day.seconds });
                                 } : undefined}
                               >
-                                <span className="text-[7px] leading-none text-zinc-400 dark:text-zinc-500">
+                                <span className="pointer-events-none absolute left-1 top-0.5 max-w-[calc(100%-1.25rem)] truncate text-[5px] font-medium leading-none tabular-nums text-zinc-400 dark:text-zinc-500">
                                   {day.dateStr}
                                 </span>
-                                <span
-                                  className={`font-mono text-[10px] font-bold leading-none ${
-                                    dispute != null && disputeIsAwaitingResolution(dispute)
-                                      ? 'text-amber-700 dark:text-amber-400'
-                                      : effectivelyPasses
-                                        ? 'text-emerald-700 dark:text-emerald-400'
-                                        : isFutureOrToday && !day.hasData
-                                          ? 'text-zinc-400 dark:text-zinc-500'
-                                          : 'text-red-600 dark:text-red-400'
-                                  }`}
-                                >
-                                  {day.hasData ? `${hours.toFixed(1)}` : '—'}
-                                </span>
-                                {dispute != null && disputeIsAwaitingResolution(dispute) ? (
-                                  <Clock className="h-2 w-2 text-amber-500" />
-                                ) : effectivelyPasses ? (
-                                  <CheckCircle2 className="h-2 w-2 text-emerald-500" />
-                                ) : isFutureOrToday && !day.hasData ? null : day.hasData ? (
-                                  <XCircle className="h-2 w-2 text-red-400" />
-                                ) : null}
+                                <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-2.5">
+                                  <span
+                                    className={`text-center text-[12px] font-bold tabular-nums leading-none tracking-tight ${
+                                      dispute != null && disputeIsAwaitingResolution(dispute)
+                                        ? 'text-amber-700 dark:text-amber-400'
+                                        : effectivelyPasses
+                                          ? 'text-emerald-700 dark:text-emerald-400'
+                                          : isFutureOrToday && !day.hasData
+                                            ? 'text-zinc-400 dark:text-zinc-500'
+                                            : 'text-red-600 dark:text-red-400'
+                                    }`}
+                                  >
+                                    {day.hasData ? `${hours.toFixed(1)}h` : '—'}
+                                  </span>
+                                </div>
+                                <div className="pointer-events-none absolute bottom-0.5 right-0.5">
+                                  {dispute != null && disputeIsAwaitingResolution(dispute) ? (
+                                    <Clock className="h-2.5 w-2.5 text-amber-500" />
+                                  ) : effectivelyPasses ? (
+                                    <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500" />
+                                  ) : isFutureOrToday && !day.hasData ? null : day.hasData ? (
+                                    <XCircle className="h-2.5 w-2.5 text-red-400" />
+                                  ) : null}
+                                </div>
                               </div>
                             );
                           })}
@@ -2329,23 +2333,23 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between gap-2">
                     <span className="text-zinc-500 dark:text-zinc-400">Total hours</span>
-                    <span className="font-mono font-medium text-zinc-900 dark:text-zinc-100">{totalHours.toFixed(2)}h</span>
+                    <span className="font-medium tabular-nums text-zinc-900 dark:text-zinc-100">{totalHours.toFixed(2)}h</span>
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-zinc-500 dark:text-zinc-400">Regular pay</span>
-                    <span className="font-mono text-zinc-800 dark:text-zinc-200">
+                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">
                       {regularPay != null ? formatPHP(regularPay) : '—'}
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-zinc-500 dark:text-zinc-400">OT pay</span>
-                    <span className="font-mono text-zinc-800 dark:text-zinc-200">
+                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">
                       {otPay != null ? formatPHP(otPay) : otHours > 0 ? '—' : formatPHP(0)}
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-zinc-500 dark:text-zinc-400">PAB</span>
-                    <span className="font-mono text-zinc-800 dark:text-zinc-200">
+                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">
                       {perfectAttendanceBonusStatus === 'pending'
                         ? '—'
                         : pabBonusAmount > 0
@@ -2355,21 +2359,21 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-zinc-500 dark:text-zinc-400">Tech bonus</span>
-                    <span className="font-mono text-zinc-800 dark:text-zinc-200">
+                    <span className="tabular-nums text-zinc-800 dark:text-zinc-200">
                       {technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0)}
                     </span>
                   </div>
                   <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
                   <div className="flex justify-between gap-2">
                     <span className="font-medium text-zinc-900 dark:text-white">Total</span>
-                    <span className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-400">
+                    <span className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                       {totalPay != null
                         ? formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)
                         : '—'}
                     </span>
                   </div>
                   {totalPay != null && (
-                    <p className="text-right font-mono text-[10px] text-blue-600 dark:text-blue-400">
+                    <p className="text-right text-[10px] tabular-nums text-blue-600 dark:text-blue-400">
                       ≈{' '}
                       {((totalPay + pabBonusAmount + technologyBonusAmount) / usdToPhpRate).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
