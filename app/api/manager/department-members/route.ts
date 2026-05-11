@@ -7,6 +7,10 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import { getEmployeesForAuthorizedServerRoute } from '@/lib/supabase/employees';
 import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
 import { fetchActiveHslDetailsByEmail } from '@/lib/supabase/hsl-agents';
+import {
+  getEmployeeHourlyRatesRows,
+  indexHourlyRatesByEmail,
+} from '@/lib/supabase/employee-hourly-rates';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -21,6 +25,14 @@ function sortRows(a: EmployeeRow, b: EmployeeRow): number {
   if (!an && bn) return 1;
   if (an && !bn) return -1;
   return an.localeCompare(bn, undefined, { sensitivity: 'base' });
+}
+
+function toNumber(v: string | null | undefined): number | null {
+  if (v == null) return null;
+  const cleaned = v.replace(/[^\d.\-]/g, '');
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -71,21 +83,24 @@ export async function GET() {
       );
     }
 
-    // Pull the HSL roster once (role-within-HSL + hourly/OT rates) and decorate
-    // the team rows below. Doing this unconditionally is fine — one query against
-    // the active view. For non-HSL employees the map miss leaves the hsl_* fields
-    // undefined; the manager panel hides those columns when no member has them.
+    // Pull HSL-specific details plus general payroll rates. AI/API and most
+    // non-HSL departments do not appear in `active_hsl_agents`, so their manager
+    // rates come from `employee_hourly_rates` by email.
     const { byEmail: hslByEmail } = await fetchActiveHslDetailsByEmail();
+    const { rows: rateRows } = await getEmployeeHourlyRatesRows();
+    const ratesByEmail = indexHourlyRatesByEmail(rateRows);
     const decorateWithHsl = (row: EmployeeRow): EmployeeRow => {
       const w = normEmail(row.work_email ?? null);
       const p = normEmail(row.personal_email ?? null);
       const hit = (w && hslByEmail.get(w)) || (p && hslByEmail.get(p)) || null;
-      if (!hit) return { ...row, hsl_role: null, hsl_hourly_rate: null, hsl_ot_rate: null };
+      const rateHit = (w && ratesByEmail.get(w)) || (p && ratesByEmail.get(p)) || null;
       return {
         ...row,
-        hsl_role: hit.role,
-        hsl_hourly_rate: hit.hourlyRate,
-        hsl_ot_rate: hit.otRate,
+        hsl_role: hit?.role ?? null,
+        hsl_hourly_rate: hit?.hourlyRate ?? null,
+        hsl_ot_rate: hit?.otRate ?? null,
+        regular_rate: toNumber(rateHit?.regular_rate),
+        ot_rate: toNumber(rateHit?.ot_rate),
       };
     };
 

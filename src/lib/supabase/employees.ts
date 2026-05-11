@@ -48,6 +48,10 @@ export type EmployeeRow = {
   hsl_hourly_rate?: number | null;
   /** HSL-specific overtime rate (₱). */
   hsl_ot_rate?: number | null;
+  /** Payroll hourly rate, pulled from `employee_hourly_rates` by email for manager roster views. */
+  regular_rate?: number | null;
+  /** Payroll overtime rate, pulled from `employee_hourly_rates` by email for manager roster views. */
+  ot_rate?: number | null;
 };
 
 type RawRow = Record<string, unknown>;

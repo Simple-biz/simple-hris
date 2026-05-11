@@ -597,6 +597,14 @@ function AnimatedRate({
 
 const TEAM_PAGE_SIZE = 15;
 
+function memberHourlyRate(member: EmployeeRow): number | null {
+  return member.hsl_hourly_rate ?? member.regular_rate ?? null;
+}
+
+function memberOtRate(member: EmployeeRow): number | null {
+  return member.hsl_ot_rate ?? member.ot_rate ?? null;
+}
+
 function TeamPanel({ members, teamGate }: TeamPanelProps) {
   const unassigned = teamGate.kind === 'department' && teamGate.departments.length === 0;
   const scoped = teamGate.kind === 'department' && teamGate.departments.length > 0;
@@ -605,8 +613,8 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
   const [page, setPage] = useState(1);
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const showHslRateCol = members.some(
-    (m) => m.hsl_hourly_rate != null || m.hsl_ot_rate != null,
+  const showRateCol = members.some(
+    (m) => memberHourlyRate(m) != null || memberOtRate(m) != null,
   );
 
   // Unique department list for the filter dropdown — sorted, blanks stripped.
@@ -710,7 +718,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
           <h2 className="bg-gradient-to-r from-blue-700 via-zinc-900 to-zinc-900 bg-clip-text text-xl font-bold tracking-tight text-transparent dark:from-blue-400 dark:via-white dark:to-white">
             My team
           </h2>
-          {showHslRateCol && members.length > 0 && (
+          {showRateCol && members.length > 0 && (
             <motion.div whileTap={{ scale: 0.96 }} transition={{ duration: 0.12 }}>
               <Button
                 type="button"
@@ -883,11 +891,8 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
             </div>
           ) : (
             (() => {
-              // Show the HSL-derived columns only when at least one team member has
-              // a synced HSL roster entry — non-HSL managers don't get always-blank
-              // columns. The role column and the rate columns are toggled
-              // independently so a sheet that only carries rates (or vice-versa)
-              // still renders cleanly.
+              // Show role only for HSL roster entries; show rate columns when any
+              // member has either HSL pay-plan rates or employee_hourly_rates values.
               const showHslRoleCol = members.some(
                 (m) => (m.hsl_role ?? '').trim() !== '',
               );
@@ -907,7 +912,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
                           {showHslRoleCol && (
                             <TableHead className="min-w-[180px]">Department/Role</TableHead>
                           )}
-                          {showHslRateCol && (
+                          {showRateCol && (
                             <>
                               <TableHead className="min-w-[110px] text-right">Hourly</TableHead>
                               <TableHead className="min-w-[110px] text-right">OT</TableHead>
@@ -938,18 +943,18 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
                                 )}
                               </TableCell>
                             )}
-                            {showHslRateCol && (
+                            {showRateCol && (
                               <>
                                 <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
                                   <AnimatedRate
-                                    value={m.hsl_hourly_rate}
+                                    value={memberHourlyRate(m)}
                                     hidden={ratesHidden}
                                     formatPhp={formatPhp}
                                   />
                                 </TableCell>
                                 <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
                                   <AnimatedRate
-                                    value={m.hsl_ot_rate}
+                                    value={memberOtRate(m)}
                                     hidden={ratesHidden}
                                     formatPhp={formatPhp}
                                   />
@@ -1011,7 +1016,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
                           )}
                         </div>
 
-                        {showHslRateCol && (
+                        {showRateCol && (
                           <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-zinc-100 bg-gradient-to-br from-zinc-50 to-blue-50/40 px-3 py-2 dark:border-zinc-800 dark:from-zinc-900/60 dark:to-blue-950/20">
                             <div className="flex flex-col gap-0.5">
                               <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
@@ -1019,7 +1024,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
                               </div>
                               <div className="font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
                                 <AnimatedRate
-                                  value={m.hsl_hourly_rate}
+                                  value={memberHourlyRate(m)}
                                   hidden={ratesHidden}
                                   formatPhp={formatPhp}
                                 />
@@ -1031,7 +1036,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
                               </div>
                               <div className="font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
                                 <AnimatedRate
-                                  value={m.hsl_ot_rate}
+                                  value={memberOtRate(m)}
                                   hidden={ratesHidden}
                                   formatPhp={formatPhp}
                                 />

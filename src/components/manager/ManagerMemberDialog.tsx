@@ -29,6 +29,14 @@ function formatPhp(v: number | null | undefined): string {
   })}`;
 }
 
+function memberHourlyRate(member: EmployeeRow): number | null {
+  return member.hsl_hourly_rate ?? member.regular_rate ?? null;
+}
+
+function memberOtRate(member: EmployeeRow): number | null {
+  return member.hsl_ot_rate ?? member.ot_rate ?? null;
+}
+
 function formatDate(raw: string | null | undefined): string | null {
   if (!raw?.trim()) return null;
   const d = new Date(raw);
@@ -180,7 +188,7 @@ function ProfileTab({
               Hourly
             </div>
             <div className="font-mono text-base tabular-nums text-zinc-900 dark:text-zinc-100">
-              <MaskedRate value={member.hsl_hourly_rate} hidden={ratesHidden} />
+              <MaskedRate value={memberHourlyRate(member)} hidden={ratesHidden} />
             </div>
           </div>
           <div className="flex flex-col gap-0.5">
@@ -188,7 +196,7 @@ function ProfileTab({
               Overtime
             </div>
             <div className="font-mono text-base tabular-nums text-zinc-900 dark:text-zinc-100">
-              <MaskedRate value={member.hsl_ot_rate} hidden={ratesHidden} />
+              <MaskedRate value={memberOtRate(member)} hidden={ratesHidden} />
             </div>
           </div>
         </div>
@@ -285,7 +293,7 @@ export default function ManagerMemberDialog({
   }, [member]);
 
   const showRates = !!(
-    member && (member.hsl_hourly_rate != null || member.hsl_ot_rate != null)
+    member && (memberHourlyRate(member) != null || memberOtRate(member) != null)
   );
   const initials = memberInitials(member?.name, member?.work_email ?? member?.personal_email ?? '');
 

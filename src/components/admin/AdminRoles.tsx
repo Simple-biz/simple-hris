@@ -28,29 +28,43 @@ import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 
+// All known role keys — kept so legacy assignments in the DB (e.g. `viewer`,
+// `payroll_coordinator`, `payroll_manager`) still render correctly in the
+// assigned-roles pill list. Only the keys in `ASSIGNABLE_ROLE_KEYS` below
+// are exposed as assign buttons in the right-hand panel.
 const ROLES = [
   { key: 'viewer', label: 'Viewer', blurb: 'Read-only dashboard access.' },
-  { key: 'hr_coordinator', label: 'HR Coordinator', blurb: 'Edit employee profiles.' },
+  { key: 'hr_coordinator', label: 'HR', blurb: 'Unlocks the HR dashboard.' },
   { key: 'payroll_coordinator', label: 'Payroll Coordinator', blurb: 'Upload CSVs, pre-flight payroll.' },
   { key: 'payroll_manager', label: 'Payroll Manager', blurb: 'Payment dispatch only.' },
-  { key: 'finance', label: 'Finance / Accounting', blurb: 'Access the Accounting Dashboard.' },
-  { key: 'manager', label: 'Manager', blurb: 'Approve time adjustments, manage own team.' },
-  { key: 'orphanage_manager', label: 'Orphanage Manager', blurb: 'Verify orphanage PAB disputes.' },
-  { key: 'ceo', label: 'CEO', blurb: 'Executive dashboard access, post company-wide announcements.' },
-  { key: 'admin', label: 'Admin', blurb: 'Full system access.' },
+  { key: 'finance', label: 'Accounting', blurb: 'Unlocks the Accounting dashboard.' },
+  { key: 'manager', label: 'Manager', blurb: 'Unlocks the Manager dashboard.' },
+  { key: 'orphanage_manager', label: 'Orphanage', blurb: 'Unlocks the Orphanage dashboard.' },
+  { key: 'ceo', label: 'CEO', blurb: 'Unlocks the CEO dashboard, post company-wide announcements.' },
+  { key: 'admin', label: 'Admin', blurb: 'Full system access — unlocks every dashboard.' },
 ] as const;
 
 type RoleKey = (typeof ROLES)[number]['key'];
 
 const ROLE_BY_KEY = Object.fromEntries(ROLES.map((r) => [r.key, r])) as Record<RoleKey, (typeof ROLES)[number]>;
 
+// Only these roles get an assign button. Each one unlocks a view in the
+// top-right switcher (see `src/lib/rbac/views.ts → viewsForRoles`).
+const ASSIGNABLE_ROLE_KEYS = [
+  'admin',
+  'ceo',
+  'hr_coordinator',
+  'finance',
+  'orphanage_manager',
+  'manager',
+] as const satisfies readonly RoleKey[];
+
 const ROLE_GROUPS: { title: string; caption: string; keys: RoleKey[] }[] = [
-  { title: 'Baseline', caption: 'Who can see what', keys: ['viewer'] },
-  { title: 'Coordinators', caption: 'HR & payroll inputs', keys: ['hr_coordinator', 'payroll_coordinator'] },
-  { title: 'Management', caption: 'Rates, dispatch & books', keys: ['payroll_manager', 'finance'] },
-  { title: 'Team Lead', caption: 'Team-scoped approvals', keys: ['manager', 'orphanage_manager'] },
-  { title: 'Executive', caption: 'Company-wide access', keys: ['ceo'] },
-  { title: 'System', caption: 'Full control', keys: ['admin'] },
+  {
+    title: 'Roles',
+    caption: 'Each role unlocks the matching view in the top-right switcher.',
+    keys: [...ASSIGNABLE_ROLE_KEYS],
+  },
 ];
 
 function rolePillClasses(role: RoleKey): string {
@@ -343,11 +357,19 @@ export default function AdminRoles() {
     [selectedDeptAssignments],
   );
 
+  // True when this user has the HSL parent department assigned. Strict — the
+  // HSL sub-departments section keys off this single flag.
   const hasHslParent = useMemo(
     () =>
-      [...selectedDeptSet].some(
-        (d) => d === 'hogan_smith_law' || d === 'hogan smith law' || d === 'hsl',
-      ),
+      [...selectedDeptSet].some((d) => {
+        const norm = d.replace(/[\s_-]+/g, '');
+        return (
+          norm === 'hogansmithlaw' ||
+          norm === 'hsl' ||
+          // Tolerate sheet variations like "HSL Department" or "Hogan-Smith-Law".
+          norm.startsWith('hogansmithlaw')
+        );
+      }),
     [selectedDeptSet],
   );
 
@@ -890,7 +912,10 @@ export default function AdminRoles() {
                   </section>
                 )}
 
-                {hasRole('manager') && hasHslParent && (
+                {/* HSL sub-departments — visible ONLY when the parent "HSL" / "Hogan
+                    Smith Law" department is assigned above. Toggling HSL off
+                    automatically hides this section. */}
+                {hasHslParent && (
                   <section className="space-y-2">
                     <div className="flex items-baseline justify-between gap-2 border-b border-zinc-100 pb-1 dark:border-zinc-800/80">
                       <div>
@@ -899,10 +924,10 @@ export default function AdminRoles() {
                           HSL sub-departments
                         </h3>
                         <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
-                          Pick which Hogan Smith Law sub-departments this manager runs the
-                          KPI calculator for. Each pick stores a granular hsl:&lt;key&gt; grant in
-                          department_managers; with the parent dept also assigned, the manager
-                          sees all sub-depts.
+                          Pick which Hogan Smith Law sub-departments this person scopes the
+                          KPI calculator to. Each pick stores a granular <code>hsl:&lt;key&gt;</code> grant in
+                          department_managers. Hidden unless the HSL parent department is
+                          assigned above.
                         </p>
                       </div>
                       <Badge variant="outline" className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
