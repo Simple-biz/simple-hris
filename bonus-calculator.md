@@ -50,7 +50,8 @@ Authoritative detail lives in [Documentation/BUSINESS_LOGIC.md](Documentation/BU
 |------|------|
 | Amount | **₱1,850**. |
 | Service | **30 days** from `start_date` on the master list; no bonus before that. |
-| Which paycheck | The weekly pay period whose **Salary Date** falls in the **3rd Mon–Sun week** of that month. **Salary Date** = **Tuesday** = `week_start + 8 days` (Tuesday after the pay period’s Sunday). Week 1 = the Mon–Sun week that contains the 1st. **Exactly** that third week’s qualifying salary date — not week 4+. |
+| Which paycheck | The weekly pay period whose **Salary Date** falls in the **3rd full Mon–Sun week** of that month. **Salary Date** = **Tuesday** = `week_start + 8 days` (Tuesday after the pay period’s Sunday). **Week 1** starts on the **first Monday on or after the 1st** of the month (so partial weeks before the 1st don't count); **Week 3** = Week 1 Monday + 14 days. **Exactly** that third week’s qualifying salary date — not week 4+. Per Carla (May 2026 meeting), this places tech bonus **two weeks out from PAB**. |
+| Worked examples | **Mar 2026** (1st = Sun) → first full week Mar 2–8 → 3rd full week Mar 16–22 → salary Tue Mar 17 pays pay-period Mar 9–15. **May 2026** (1st = Fri) → first full week May 4–10 → 3rd full week May 18–24 → salary Tue May 19 ("week of the 22nd") pays pay-period May 11–17. **Jun 2026** (1st = Mon) → first full week Jun 1–7 → 3rd full week Jun 15–21 → salary Tue Jun 16 pays pay-period Jun 8–14. |
 | Toggle | UI may show `tech_bonus`; **30-day rule is still enforced** at dispatch. |
 
 ---

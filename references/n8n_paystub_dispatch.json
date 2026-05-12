@@ -1,5 +1,5 @@
 {
-  "name": "Paystub Dispatch - Test",
+  "name": "Paystub + Orphanage Dispatch - Test",
   "nodes": [
     {
       "parameters": {
@@ -17,13 +17,12 @@
     },
     {
       "parameters": {
-        "fieldToSplitOut": "employees",
-        "options": {}
+        "jsCode": "// Accepts a single webhook payload that may carry either or both of:\n//   { employees: [...] }    \\u2192 paystub rows (existing HRIS dispatch payload)\n//   { receipts: [...]  }    \\u2192 orphanage receipts (visit_wages /\n//                              budget_request / gift_payment / tenure_gift)\n// Output: one item per row, tagged with `_kind` so the Switch node downstream\n// can route to the right email renderer.\n\nconst body = (items[0] && items[0].json) || {};\nconst out = [];\n\nfor (const emp of Array.isArray(body.employees) ? body.employees : []) {\n  out.push({ json: Object.assign({ _kind: 'paystub' }, emp) });\n}\nfor (const rcpt of Array.isArray(body.receipts) ? body.receipts : []) {\n  out.push({ json: Object.assign({ _kind: 'orphanage' }, rcpt) });\n}\n\nreturn out;\n"
       },
-      "id": "split-employees",
-      "name": "Split Out Employees",
-      "type": "n8n-nodes-base.splitOut",
-      "typeVersion": 1,
+      "id": "build-queue",
+      "name": "Build Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [460, 300]
     },
     {
@@ -32,10 +31,54 @@
         "options": {}
       },
       "id": "loop-over-items",
-      "name": "Loop Over Employees",
+      "name": "Loop Over Items",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._kind }}",
+                    "rightValue": "paystub",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "paystub"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._kind }}",
+                    "rightValue": "orphanage",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "orphanage"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-kind",
+      "name": "Switch (paystub | orphanage)",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [900, 300]
     },
     {
       "parameters": {
@@ -46,11 +89,42 @@
         "html": "<p>Hi {{ $json.name }},</p>\n<p>Your paystub summary (amounts in PHP):</p>\n<ul>\n  <li>Pay period file: {{ $json.pay_period.hubstaff_source_file }}</li>\n  <li>PAB evaluation month: {{ $json.pay_period.pab_evaluation.month_label }}</li>\n  <li>Department: {{ $json.department_name }}</li>\n  <li>Hours (total / reg / OT): {{ $json.hours.total }} / {{ $json.hours.regular }} / {{ $json.hours.ot }}</li>\n  <li>Net pay (final): {{ $json.pay_php.final }}</li>\n  <li>Initial pay: {{ $json.pay_php.initial }}</li>\n  <li>PAB (Perfect Attendance): {{ $json.pay_php.perfect_attendance_bonus }}</li>\n  <li>Tech Bonus: {{ $json.pay_php.tech_bonus }}</li>\n  <li>Other bonuses: {{ $json.pay_php.other_bonuses }}</li>\n</ul>\n<p>Regards,<br/>HR Team</p>",
         "options": {}
       },
-      "id": "send-email",
-      "name": "Send Test Email",
+      "id": "send-paystub-email",
+      "name": "Send Paystub Email",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
-      "position": [900, 300],
+      "position": [1120, 200],
+      "credentials": {
+        "smtp": {
+          "id": "REPLACE_WITH_SMTP_CREDENTIAL_ID",
+          "name": "SMTP (test)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Render the orphanage receipt email as inline HTML, choose recipient + subject.\n// One input item per receipt; output adds `to`, `subject`, `html` fields.\n//\n// Expected per-receipt payload (the wizard should POST these in body.receipts):\n//   {\n//     kind: 'visit_wages' | 'budget_request' | 'gift_payment' | 'tenure_gift',\n//     id: string,\n//     month_label: string,                      // e.g. 'May 2026'\n//     ... type-specific fields (see each branch).\n//   }\n\nconst LOGO = 'https://host.simple.biz/email/simplelogo.png';\n\nfunction fmtPHP(n) {\n  if (n == null) return '\\u20b1\\u00a00.00';\n  return '\\u20b1' + Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\n}\nfunction fmtRate(n) {\n  if (n == null) return '\\u2014';\n  return Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\n}\nfunction fmtUSD(n) {\n  if (n == null) return '$0.00';\n  return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });\n}\nfunction fmtLongDate(raw) {\n  if (!raw) return '\\u2014';\n  const s = String(raw).trim();\n  if (!s) return '\\u2014';\n  const isoOnly = s.length >= 10 ? s.slice(0, 10) : s;\n  const d = new Date(isoOnly + 'T00:00:00');\n  if (Number.isNaN(d.getTime())) return s;\n  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });\n}\nfunction esc(v) {\n  if (v == null) return '';\n  return String(v)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;');\n}\n\nconst WATERMARK_STYLE = '<style>\\n  .paystub-body { position: relative; }\\n  .paystub-body::before {\\n    content: \"\";\\n    position: absolute;\\n    top: 110px; left: 0; right: 0; bottom: 70px;\\n    overflow: hidden;\\n    background-image:\\n      url(\"' + LOGO + '\"), url(\"' + LOGO + '\"), url(\"' + LOGO + '\"), url(\"' + LOGO + '\"),\\n      url(\"' + LOGO + '\"), url(\"' + LOGO + '\"), url(\"' + LOGO + '\"), url(\"' + LOGO + '\"),\\n      url(\"' + LOGO + '\"), url(\"' + LOGO + '\"), url(\"' + LOGO + '\"), url(\"' + LOGO + '\");\\n    background-repeat: no-repeat;\\n    background-size: 120px, 120px, 120px, 120px, 70px, 70px, 70px, 70px, 40px, 40px, 40px, 40px;\\n    background-position: 10% 8%, 75% 22%, 25% 55%, 85% 78%, 50% 12%, 12% 38%, 65% 48%, 38% 85%, 90% 10%, 5% 72%, 55% 30%, 92% 55%;\\n    transform: rotate(-28deg);\\n    opacity: 0.08;\\n    pointer-events: none;\\n    z-index: 2;\\n  }\\n</style>';\n\nfunction header(eyebrow, greeting, subline) {\n  return ''\n    + '<td style=\"background:linear-gradient(to top right,#4338ca 0%,#ffffff 50%,#f97316 100%);padding:24px 28px;text-align:center;\">'\n    + '<div style=\"color:#1e293b;font-size:11px;letter-spacing:0.15em;font-weight:700;text-transform:uppercase;\">' + eyebrow + '</div>'\n    + '<div style=\"margin-top:8px;color:#0f172a;font-size:20px;font-weight:700;letter-spacing:-0.01em;\">' + greeting + '</div>'\n    + '<div style=\"margin-top:4px;color:#334155;font-size:12px;\">' + subline + '</div>'\n    + '</td>';\n}\n\nfunction sectionHeading(label, color) {\n  const c = color || '#ea580c';\n  return ''\n    + '<tr><td style=\"padding:16px 24px 4px 24px;\">'\n    + '<div style=\"font-size:11px;letter-spacing:0.12em;font-weight:700;color:' + c + ';text-transform:uppercase;\">' + label + '</div>'\n    + '<div style=\"height:3px;background:linear-gradient(to top right,#4338ca 0%,#ffffff 50%,#f97316 100%);border-radius:2px;margin-top:6px;width:60px;\"></div>'\n    + '</td></tr>';\n}\n\nfunction sectionCard(rowsHTML) {\n  return ''\n    + '<tr><td style=\"padding:8px 24px 0 24px;\">'\n    + '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background:linear-gradient(to top right,#eff6ff 0%,#ffffff 50%,#fffaf3 100%);border:1px solid #fde4cb;border-radius:8px;\">'\n    + '<tr><td style=\"padding:12px 16px;\">'\n    + '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\">' + rowsHTML + '</table>'\n    + '</td></tr></table>'\n    + '</td></tr>';\n}\n\nfunction labelRow(label, value, opts) {\n  const labelWidth = (opts && opts.labelWidth) || 110;\n  const valueColor = (opts && opts.valueColor) || '#111827';\n  const valueWeight = (opts && opts.valueWeight) || 600;\n  return ''\n    + '<tr>'\n    + '<td style=\"font-size:12px;color:#9a6b3f;padding:3px 0;width:' + labelWidth + 'px;\">' + label + '</td>'\n    + '<td style=\"font-size:13px;color:' + valueColor + ';font-weight:' + valueWeight + ';padding:3px 0;\">' + value + '</td>'\n    + '</tr>';\n}\n\nfunction amountRow(label, amount, color) {\n  const c = color || '#2563eb';\n  return ''\n    + '<tr>'\n    + '<td style=\"font-size:12px;color:#9a6b3f;padding:3px 0;\">' + label + '</td>'\n    + '<td align=\"right\" style=\"font-size:13px;color:' + c + ';font-weight:700;padding:3px 0;\">' + amount + '</td>'\n    + '</tr>';\n}\n\nfunction totalBar(label, amount, currency) {\n  return ''\n    + '<tr><td style=\"padding:16px 24px 8px 24px;\">'\n    + '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background:linear-gradient(to top right,#3730a3 0%,#ffffff 50%,#ea580c 100%);border-radius:10px;\">'\n    + '<tr><td style=\"padding:16px 20px;\">'\n    + '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\"><tr>'\n    + '<td style=\"color:#1e293b;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;\">' + label + '</td>'\n    + '<td align=\"right\" style=\"color:#0f172a;font-size:22px;font-weight:800;letter-spacing:-0.01em;\">' + amount + ' <span style=\"font-size:12px;font-weight:600;color:#475569;\">' + currency + '</span></td>'\n    + '</tr></table>'\n    + '</td></tr></table>'\n    + '</td></tr>';\n}\n\nconst FOOTER = ''\n  + '<tr><td style=\"background:linear-gradient(to top right,#eff6ff 0%,#ffffff 50%,#fffaf3 100%);padding:14px 24px;\">'\n  + '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\"><tr>'\n  + '<td style=\"vertical-align:middle;width:50px;\"><img src=\"' + LOGO + '\" alt=\"Simple\" width=\"42\" style=\"display:block;height:auto;width:42px;border:0;\" /></td>'\n  + '<td style=\"vertical-align:middle;padding-left:12px;text-align:right;\">'\n  + '<div style=\"font-size:12px;color:#1e293b;font-weight:700;\">Simple \\u00b7 Confidential</div>'\n  + '<div style=\"font-size:10px;color:#94a3b8;\">Automated dispatch from Simple HRIS</div>'\n  + '</td></tr></table>'\n  + '</td></tr>';\n\nfunction wrap(headerHTML, sectionsHTML) {\n  return ''\n    + '<!DOCTYPE html><html><head><meta charset=\"utf-8\" /><title>Orphanage Receipt</title>' + WATERMARK_STYLE + '</head><body>'\n    + '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"100%\" style=\"background:linear-gradient(to top right,#c7d2fe 0%,#ffffff 50%,#ffedd5 100%);padding:24px 16px;font-family:-apple-system,BlinkMacSystemFont,\\'Segoe UI\\',Roboto,Helvetica,Arial,sans-serif;color:#1f2937;\">'\n    + '<tr><td align=\"center\">'\n    + '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" width=\"480\" class=\"paystub-body\" style=\"max-width:480px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(59,130,246,0.15);position:relative;\">'\n    + '<tr>' + headerHTML + '</tr>'\n    + sectionsHTML\n    + FOOTER\n    + '</table></td></tr></table></body></html>';\n}\n\nconst out = [];\n\nfor (const item of items) {\n  const r = item.json;\n  const kind = r.kind;\n  const monthLabel = esc(r.month_label || '\\u2014');\n  let to = '';\n  let subject = '';\n  let headerHTML = '';\n  let sectionsHTML = '';\n\n  if (kind === 'visit_wages') {\n    to = r.work_email;\n    subject = '[Simple HRIS] Orphanage visit wages \\u00b7 ' + monthLabel;\n\n    const eyebrow = 'Simple HRIS \\u00b7 Orphanage Visit Receipt \\u00b7 ' + monthLabel;\n    const greeting = 'Hi ' + esc(r.name || '\\u2014') + ',';\n    const visitCount = Number(r.visit_count || 0);\n    const totalHours = Number(r.total_hours || 0);\n    const subline = visitCount + ' approved visit' + (visitCount === 1 ? '' : 's') + ' \\u00b7 <strong>' + totalHours.toFixed(1) + 'h</strong> credited';\n    headerHTML = header(eyebrow, greeting, subline);\n\n    sectionsHTML += sectionHeading('Recipient');\n    sectionsHTML += sectionCard(''\n      + labelRow('Name', esc(r.name || '\\u2014'))\n      + labelRow('Work Email', esc(r.work_email || '\\u2014'))\n      + labelRow('PAB Period', monthLabel));\n\n    sectionsHTML += sectionHeading('Approved Visits');\n    let visitRows = '';\n    const visits = Array.isArray(r.visits) ? r.visits : [];\n    if (visits.length === 0) {\n      visitRows = '<tr><td style=\"font-size:12px;color:#9a6b3f;padding:3px 0;font-style:italic;\">No approved visits.</td></tr>';\n    } else {\n      for (const v of visits) {\n        visitRows += amountRow(esc(fmtLongDate(v.date)), Number(v.hours || 0).toFixed(1) + 'h \\u00d7 \\u20b1' + fmtRate(r.regular_rate));\n      }\n    }\n    sectionsHTML += sectionCard(visitRows);\n\n    sectionsHTML += sectionHeading('Wage Breakdown', '#7c3aed');\n    sectionsHTML += sectionCard(''\n      + labelRow('Visits', String(visitCount), { labelWidth: 150 })\n      + labelRow('Total Hours', totalHours.toFixed(1) + 'h', { labelWidth: 150 })\n      + labelRow('Regular Rate', r.regular_rate != null ? '\\u20b1' + fmtRate(r.regular_rate) + ' / h' : '\\u2014', { labelWidth: 150 }));\n\n    sectionsHTML += totalBar('Total Wages', fmtPHP(r.wages), 'PHP');\n  } else if (kind === 'budget_request') {\n    to = r.submitter_email;\n    subject = '[Simple HRIS] Orphanage budget approved \\u00b7 ' + monthLabel;\n\n    const eyebrow = 'Simple HRIS \\u00b7 Orphanage Budget Receipt \\u00b7 ' + monthLabel;\n    const greeting = 'Hi ' + esc(r.submitter_email || '\\u2014') + ',';\n    const subline = esc(r.visit_type || '\\u2014') + (r.mission_trip ? ' \\u00b7 mission trip' : '');\n    headerHTML = header(eyebrow, greeting, subline);\n\n    sectionsHTML += sectionHeading('Submitter');\n    let infoRows = ''\n      + labelRow('Email', esc(r.submitter_email || '\\u2014'), { labelWidth: 130 })\n      + labelRow('Visit Type', esc(r.visit_type || '\\u2014') + (r.mission_trip ? ' (mission trip)' : ''), { labelWidth: 130 })\n      + labelRow('Submitted', esc(fmtLongDate(r.submitted_at)), { labelWidth: 130 });\n    if (r.decided_at) {\n      infoRows += labelRow('Approved', esc(fmtLongDate(r.decided_at)) + (r.decided_by ? ' \\u00b7 ' + esc(r.decided_by) : ''), { labelWidth: 130 });\n    }\n    sectionsHTML += sectionCard(infoRows);\n\n    sectionsHTML += sectionHeading('Budget Breakdown', '#7c3aed');\n    sectionsHTML += sectionCard(''\n      + amountRow('Subtotal', fmtPHP(r.subtotal))\n      + amountRow('Leftover Carry-in', fmtPHP(r.leftover)));\n\n    sectionsHTML += totalBar('Final Amount', fmtPHP(r.final_amount), 'PHP');\n  } else if (kind === 'gift_payment') {\n    to = r.vendor_email;\n    subject = '[Simple HRIS] Orphanage gift payment receipt';\n\n    const eyebrow = 'Simple HRIS \\u00b7 Orphanage Gift Payment Receipt \\u00b7 ' + monthLabel;\n    const greeting = 'Hi ' + esc(r.vendor_name || 'Vendor') + ',';\n    const subline = 'Batch: <strong>' + esc(r.batch_label || '\\u2014') + '</strong>';\n    headerHTML = header(eyebrow, greeting, subline);\n\n    sectionsHTML += sectionHeading('Vendor');\n    let vendorRows = ''\n      + labelRow('Name', esc(r.vendor_name || '\\u2014'))\n      + labelRow('Period', esc(r.period_label || '\\u2014'))\n      + labelRow('Batch', esc(r.batch_label || '\\u2014'))\n      + labelRow('Status', esc(r.status || '\\u2014'));\n    if (r.date_sent) {\n      vendorRows += labelRow('Date Sent', esc(fmtLongDate(r.date_sent)));\n    }\n    sectionsHTML += sectionCard(vendorRows);\n\n    sectionsHTML += sectionHeading('Conversion', '#7c3aed');\n    sectionsHTML += sectionCard(''\n      + amountRow('Amount (USD)', fmtUSD(r.total_usd))\n      + labelRow('USD \\u2192 PHP rate', '\\u20b1' + fmtRate(r.usd_to_php_rate), { labelWidth: 150 }));\n\n    sectionsHTML += totalBar('Total Paid', fmtPHP(r.total_php), 'PHP');\n  } else if (kind === 'tenure_gift') {\n    to = r.personal_email;\n    subject = '[Simple HRIS] Tenure gift approved \\u00b7 milestone #' + (r.milestone_index || '');\n\n    const eyebrow = 'Simple HRIS \\u00b7 Orphanage Tenure Gift Receipt \\u00b7 ' + monthLabel;\n    const greeting = 'Hi ' + esc(r.personal_email || '\\u2014') + ',';\n    const subline = 'Milestone <strong>#' + esc(r.milestone_index) + '</strong> \\u00b7 ' + esc(fmtLongDate(r.milestone_date));\n    headerHTML = header(eyebrow, greeting, subline);\n\n    sectionsHTML += sectionHeading('Recipient');\n    sectionsHTML += sectionCard(''\n      + labelRow('Personal Email', esc(r.personal_email || '\\u2014'), { labelWidth: 130 })\n      + labelRow('Milestone', '#' + esc(r.milestone_index), { labelWidth: 130 })\n      + labelRow('Milestone Date', esc(fmtLongDate(r.milestone_date)), { labelWidth: 130 })\n      + labelRow('Approved', esc(fmtLongDate(r.decided_at)) + (r.decided_by ? ' \\u00b7 ' + esc(r.decided_by) : ''), { labelWidth: 130 }));\n\n    sectionsHTML += sectionHeading('Gift', '#7c3aed');\n    sectionsHTML += sectionCard(amountRow(esc(r.gift_name || ('Milestone #' + r.milestone_index + ' gift')), fmtPHP(r.gift_price_php)));\n\n    sectionsHTML += totalBar('Gift Value', fmtPHP(r.gift_price_php), 'PHP');\n  } else {\n    throw new Error('Unknown orphanage receipt kind: ' + kind);\n  }\n\n  if (!to) {\n    throw new Error('Missing recipient email for receipt id=' + r.id + ' kind=' + kind);\n  }\n\n  out.push({\n    json: Object.assign({}, r, {\n      to: to,\n      subject: subject,\n      html: wrap(headerHTML, sectionsHTML),\n    }),\n  });\n}\n\nreturn out;\n"
+      },
+      "id": "render-orphanage-html",
+      "name": "Render Orphanage HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@example.com",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.html }}",
+        "options": {}
+      },
+      "id": "send-orphanage-email",
+      "name": "Send Orphanage Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1340, 400],
       "credentials": {
         "smtp": {
           "id": "REPLACE_WITH_SMTP_CREDENTIAL_ID",
@@ -67,47 +141,51 @@
       "name": "Throttle (200ms)",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1,
-      "position": [1120, 300]
+      "position": [1560, 300]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { status: 'ok', sent: $items('Loop Over Employees').length } }}",
+        "responseBody": "={{ { status: 'ok', sent: $items('Loop Over Items').length } }}",
         "options": {}
       },
       "id": "respond-success",
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1340, 300]
+      "position": [1780, 300]
     }
   ],
   "connections": {
     "Webhook: Confirm Dispatch": {
-      "main": [
-        [{ "node": "Split Out Employees", "type": "main", "index": 0 }]
-      ]
+      "main": [[{ "node": "Build Queue", "type": "main", "index": 0 }]]
     },
-    "Split Out Employees": {
-      "main": [
-        [{ "node": "Loop Over Employees", "type": "main", "index": 0 }]
-      ]
+    "Build Queue": {
+      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
     },
-    "Loop Over Employees": {
+    "Loop Over Items": {
       "main": [
         [{ "node": "Respond to Webhook", "type": "main", "index": 0 }],
-        [{ "node": "Send Test Email", "type": "main", "index": 0 }]
+        [{ "node": "Switch (paystub | orphanage)", "type": "main", "index": 0 }]
       ]
     },
-    "Send Test Email": {
+    "Switch (paystub | orphanage)": {
       "main": [
-        [{ "node": "Throttle (200ms)", "type": "main", "index": 0 }]
+        [{ "node": "Send Paystub Email", "type": "main", "index": 0 }],
+        [{ "node": "Render Orphanage HTML", "type": "main", "index": 0 }]
       ]
+    },
+    "Send Paystub Email": {
+      "main": [[{ "node": "Throttle (200ms)", "type": "main", "index": 0 }]]
+    },
+    "Render Orphanage HTML": {
+      "main": [[{ "node": "Send Orphanage Email", "type": "main", "index": 0 }]]
+    },
+    "Send Orphanage Email": {
+      "main": [[{ "node": "Throttle (200ms)", "type": "main", "index": 0 }]]
     },
     "Throttle (200ms)": {
-      "main": [
-        [{ "node": "Loop Over Employees", "type": "main", "index": 0 }]
-      ]
+      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
     }
   },
   "settings": {
@@ -118,9 +196,10 @@
   "tags": [
     { "name": "hris" },
     { "name": "paystub" },
+    { "name": "orphanage" },
     { "name": "test" }
   ],
   "meta": {
-    "description": "Test workflow: triggered by HRIS 'Confirm Dispatch'. Receives { pay_period, employees[] } with pay_php, hours, department, and pay_period on each employee row. Replace SMTP credential and fromEmail before running."
+    "description": "Test workflow: triggered by HRIS 'Confirm Dispatch'. Accepts a payload with employees[] (paystubs) and/or receipts[] (orphanage: visit_wages | budget_request | gift_payment | tenure_gift). Switch node routes each row to the right email template. Replace SMTP credential and fromEmail before running."
   }
 }

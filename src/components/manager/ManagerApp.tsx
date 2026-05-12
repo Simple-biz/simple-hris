@@ -44,6 +44,7 @@ import SWall from '@/components/swall/SWall';
 import HslBonusCalculator from '@/components/manager/HslBonusCalculator';
 import ManagerBonusHistory from '@/components/manager/ManagerBonusHistory';
 import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
+import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 
 /** How `/api/manager/department-members` scoped the roster for this session (server-driven). */
 type ManagerTeamGate =
@@ -278,7 +279,7 @@ export default function ManagerApp() {
               {activeTab === 'time-adjustments' && <TimeAdjustments />}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
               {activeTab === 'team' && (
-                <TeamPanel members={teamMembers} teamGate={teamGate} />
+                <TeamPanel members={teamMembers} teamGate={teamGate} viewerEmail={viewerEmail} />
               )}
               {activeTab === 'announcements' && (
                 <ManagerAnnouncementsTab viewerEmail={viewerEmail} teamGate={teamGate} />
@@ -539,6 +540,7 @@ function TimeAdjustments() {
 interface TeamPanelProps {
   members: EmployeeRow[];
   teamGate: ManagerTeamGate;
+  viewerEmail: string | null;
 }
 
 function AnimatedRate({
@@ -605,7 +607,11 @@ function memberOtRate(member: EmployeeRow): number | null {
   return member.hsl_ot_rate ?? member.ot_rate ?? null;
 }
 
-function TeamPanel({ members, teamGate }: TeamPanelProps) {
+function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
+  // Inner tab toggle: Roster (existing) | Newly Hired (HR pending hires routed
+  // here by department_managers). Lives inside the My Team panel so it doesn't
+  // claim a top-level sidebar slot.
+  const [innerTab, setInnerTab] = useState<'roster' | 'newly-hired'>('roster');
   const unassigned = teamGate.kind === 'department' && teamGate.departments.length === 0;
   const scoped = teamGate.kind === 'department' && teamGate.departments.length > 0;
   const [ratesHidden, setRatesHidden] = useState(true);
@@ -788,9 +794,42 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
             </>
           )}
         </p>
+        <div className="mt-2 inline-flex w-fit rounded-md border border-blue-200 bg-blue-50/40 p-0.5 dark:border-blue-900/50 dark:bg-blue-950/20">
+          <button
+            type="button"
+            onClick={() => setInnerTab('roster')}
+            className={cn(
+              'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
+              innerTab === 'roster'
+                ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
+                : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+            )}
+          >
+            Roster
+            <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+              {members.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setInnerTab('newly-hired')}
+            className={cn(
+              'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
+              innerTab === 'newly-hired'
+                ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
+                : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+            )}
+          >
+            Newly Hired
+          </button>
+        </div>
       </header>
 
-      {!unassigned && (
+      {innerTab === 'newly-hired' && (
+        <NewlyHiredPanel viewerEmail={viewerEmail} teamGate={teamGate} />
+      )}
+
+      {innerTab === 'roster' && !unassigned && (
         <div className="flex flex-wrap items-center gap-2">
           <label
             htmlFor="team-search"
@@ -855,6 +894,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
         </div>
       )}
 
+      {innerTab === 'roster' && (
       <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15 dark:ring-blue-400/10">
         <CardContent className="p-0 sm:p-0">
           {unassigned ? (
@@ -1126,6 +1166,7 @@ function TeamPanel({ members, teamGate }: TeamPanelProps) {
           )}
         </CardContent>
       </Card>
+      )}
 
       <ManagerMemberDialog
         member={selectedMember}

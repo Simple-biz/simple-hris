@@ -190,9 +190,12 @@ export function isFinalPabWeek(weekEnd: Date, pabPeriodEnd: Date): boolean {
 }
 
 /**
- * Wizard rule: salary date = period Monday + 8 days. Tech bonus fires
- * when that salary date lands inside the 3rd Mon–Sun calendar week of its
- * month. Strict equality: only the 3rd week, not 4th+.
+ * Carla's rule (May 2026 meeting): salary date = period Monday + 8 days.
+ * Tech bonus fires when that salary date lands inside the **3rd full Mon–Sun
+ * week** of its month — "full week" = a week whose Monday is on or after the
+ * 1st. So week 1 starts on the first Monday ≥ the 1st; week 3 = +14 days.
+ * This places tech bonus two weeks out from PAB. Strict equality: only the
+ * 3rd week, not 4th+.
  */
 export function isTechBonusWeek(weekMonday: Date): boolean {
   const salary = new Date(
@@ -202,11 +205,12 @@ export function isTechBonusWeek(weekMonday: Date): boolean {
   );
   const first = new Date(salary.getFullYear(), salary.getMonth(), 1);
   const dow = first.getDay();
-  const daysBack = dow === 0 ? 6 : dow - 1;
+  // Days forward to first Monday ≥ the 1st. Sun=0→1, Mon=1→0, Tue=2→6, …
+  const daysForward = (8 - dow) % 7;
   const firstMon = new Date(
     first.getFullYear(),
     first.getMonth(),
-    first.getDate() - daysBack,
+    first.getDate() + daysForward,
   );
   const thirdMon = new Date(
     firstMon.getFullYear(),

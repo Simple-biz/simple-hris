@@ -233,19 +233,43 @@ The dispatch mirror covers the same rules described in this section (per-week ga
 1. **30 days of service from `start_date`.** The employee's master-list `start_date` plus 30 days is their `eligibleFrom` date. Before that date the employee never receives the bonus. If `start_date` is missing on an employee, the system treats them as ineligible and surfaces a "start date unknown" state in the employee dashboard.
    - Example: start June 15 → eligible July 15 → bonus lands on July's 3rd paycheck (or August's if July's 3rd paycheck is before July 15).
 
-2. **Paid in the paycheck whose Salary Date falls in the 3rd calendar week of the month.**
+2. **Paid in the paycheck whose Salary Date falls in the 3rd _full_ calendar week of the month.**
    - **Salary Date** = the **Tuesday after the pay-period Sunday** (i.e. `pay_period.week.start + 8 days`). Paychecks dispatch every Tuesday.
-   - Week 1 of a month is the **Mon–Sun week containing the 1st**, even if partial. Week 3 is two weeks later.
+   - **Week 1** of a month is the **first Mon–Sun week whose Monday is on or after the 1st** — so a partial week before the first Monday does **not** count. **Week 3** = Week 1 Monday + 14 days.
    - The qualifying paycheck is the one whose **Salary Date** lands inside that 3rd Mon–Sun window.
+   - Per Carla (May 2026 meeting), this rule places tech bonus **two weeks out from PAB**. Prior versions of this doc described "week 1 = the Mon–Sun week containing the 1st (even if partial)"; that was incorrect and produced the wrong week in months where the 1st falls mid-week. The implementation in `dispatch-bonuses.ts → isTechBonusWeek` is authoritative.
 
-   **April 2026 walk-through** (April 1 = Wednesday → April week 3 = Apr 13–19):
+   **March 2026 walk-through** (Mar 1 = Sun → first full week = Mar 2–8 → week 3 = Mar 16–22):
+
+   | Pay period (Mon–Sun) | Salary Date (Tue) | March week | Tech Bonus? |
+   |---|---|---|---|
+   | Mar 2 – 8 | Mar 10 | week 2 | ❌ |
+   | **Mar 9 – 15** | **Mar 17** | **week 3** | ✅ |
+   | Mar 16 – 22 | Mar 24 | week 4 | ❌ |
+
+   **April 2026 walk-through** (Apr 1 = Wed → first full week = Apr 6–12 → week 3 = Apr 20–26):
 
    | Pay period (Mon–Sun) | Salary Date (Tue) | April week | Tech Bonus? |
    |---|---|---|---|
-   | Mar 30 – Apr 5 | Apr 7 | week 2 | ❌ |
-   | **Apr 6 – 12** | **Apr 14** | **week 3** | ✅ |
-   | Apr 13 – 19 | Apr 21 | week 4 | ❌ |
-   | Apr 20 – 26 | Apr 28 | week 5 | ❌ |
+   | Apr 6 – 12 | Apr 14 | week 2 | ❌ |
+   | **Apr 13 – 19** | **Apr 21** | **week 3** | ✅ |
+   | Apr 20 – 26 | Apr 28 | week 4 | ❌ |
+
+   **May 2026 walk-through** (May 1 = Fri → first full week = May 4–10 → week 3 = May 18–24, the "week of the 22nd"):
+
+   | Pay period (Mon–Sun) | Salary Date (Tue) | May week | Tech Bonus? |
+   |---|---|---|---|
+   | May 4 – 10 | May 12 | week 2 | ❌ |
+   | **May 11 – 17** | **May 19** | **week 3** | ✅ |
+   | May 18 – 24 | May 26 | week 4 | ❌ |
+
+   **June 2026 walk-through** (Jun 1 = Mon → first full week = Jun 1–7 → week 3 = Jun 15–21):
+
+   | Pay period (Mon–Sun) | Salary Date (Tue) | June week | Tech Bonus? |
+   |---|---|---|---|
+   | Jun 1 – 7 | Jun 9 | week 2 | ❌ |
+   | **Jun 8 – 14** | **Jun 16** | **week 3** | ✅ |
+   | Jun 15 – 21 | Jun 23 | week 4 | ❌ |
 
 3. **Equality, not ≥.** Only the paycheck whose Salary Date is in week 3 — weeks 4, 5 do not re-apply the bonus.
 
@@ -253,7 +277,7 @@ The dispatch mirror covers the same rules described in this section (per-week ga
 
 | Surface | File | Notes |
 |---|---|---|
-| PayrollWizard dispatch payload | `src/components/PayrollWizard.tsx` (`dispatchData` useMemo) | `salaryDate = weekStart + 8d`; `isTechBonusWeek` checks that `salaryDate` falls in the 3rd Mon–Sun week of `salaryDate`'s month; `hasThirtyDaysByWeek(workEmail)` is the **canonical 30-day gate** — checks `weekStartDate >= start_date + 30d` (the pay-period Monday, not the salary Tuesday). Salary date is also written to `pay_period.salary_date` on every dispatched employee row. |
+| PayrollWizard dispatch payload | `src/components/PayrollWizard.tsx` (`dispatchData` useMemo) | `salaryDate = weekStart + 8d`; `isTechBonusWeek` checks that `salaryDate` falls in the **3rd full Mon–Sun week** of `salaryDate`'s month (week 1 starts on the first Monday ≥ the 1st); `hasThirtyDaysByWeek(workEmail)` is the **canonical 30-day gate** — checks `weekStartDate >= start_date + 30d` (the pay-period Monday, not the salary Tuesday). Salary date is also written to `pay_period.salary_date` on every dispatched employee row. |
 | Employee Dashboard indicator + stat card + pay summary | `src/components/employee/EmployeeDashboard.tsx` | `isTechnologyBonusActive` mirrors the wizard: derives the **most recently dispatched pay period** (refMonday = `lastTuesday − 8`) for the all-time view, or the selected file's week start for the weekly view; computes salaryDate; checks 3rd-week-of-month. `employeeStartDate` is fetched from `/api/employees` on mount. `techServiceStatus` yields `'eligible' \| 'pending' \| 'unknown'` and drives the amber "Not eligible yet — you'll become eligible on <date> (N days to go)" warning in the indicator row. |
 | **Employee My Hours pay summary** | `src/components/employee/EmployeeMyHours.tsx` | Calendar-month view (March 1 – March 31). `isTechnologyBonusActive` here is gated on `monthHasEnded` — Tech Bonus only "appears" in the row once the displayed month has fully concluded. Within-month view shows `· month not yet ended`. The 30-day service gate uses the salary Tuesday's weekStart (matches `hasThirtyDaysByWeek` byte-for-byte); when `employeeStartDate` is unknown, defaults optimistic. PAB Bonus row similarly: ₱5,000 if every weekday in the month logged ≥7h. |
 | Admin Overview card | `src/components/Overview.tsx` (`techBonusEligibility` useMemo) | Counts employees by eligibility: `{ eligible, pending, unknown }` + progress bar showing `% eligible of total`. |

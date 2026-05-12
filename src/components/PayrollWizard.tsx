@@ -875,6 +875,8 @@ export default function PayrollWizard() {
   const [previewPaystubsOpen, setPreviewPaystubsOpen] = useState(false);
   const [previewSelectedEmail, setPreviewSelectedEmail] = useState<string | null>(null);
   const [previewSearch, setPreviewSearch] = useState('');
+  const [previewTab, setPreviewTab] = useState<'paystubs' | 'orphanage'>('paystubs');
+  const [previewSelectedOrphanageId, setPreviewSelectedOrphanageId] = useState<string | null>(null);
   const [isDispatching, setIsDispatching] = useState(false);
   const [pendingWeekly, setPendingWeekly] = useState<{
     text: string;
@@ -1604,7 +1606,7 @@ export default function PayrollWizard() {
   // Load orphanage disputes (orphanage_visit + ceo_visitation) for the active
   // PAB range when the user lands on step 4. Re-fetches if the range changes.
   useEffect(() => {
-    if (currentStep !== 4 || !pabMonthRange) return;
+    if ((currentStep !== 4 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setOrphanageLoading(true);
     setOrphanageError(null);
@@ -1638,13 +1640,13 @@ export default function PayrollWizard() {
       })
       .finally(() => setOrphanageLoading(false));
     return () => ctrl.abort();
-  }, [currentStep, pabMonthRange]);
+  }, [currentStep, pabMonthRange, previewPaystubsOpen]);
 
   // ── Budget requests for Accounting approval/dispatch ──
   // Pull all rows so pending Orphanage-side requests can be approved here. Approved
   // rows count toward dispatch; pending rows stay visible so Accounting can close them.
   useEffect(() => {
-    if (currentStep !== 4 || !pabMonthRange) return;
+    if ((currentStep !== 4 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setBudgetRequestsLoading(true);
     setBudgetRequestsError(null);
@@ -1722,7 +1724,7 @@ export default function PayrollWizard() {
       })
       .finally(() => setBudgetRequestsLoading(false));
     return () => ctrl.abort();
-  }, [currentStep, pabMonthRange]);
+  }, [currentStep, pabMonthRange, previewPaystubsOpen]);
 
   const decideBudgetRequest = useCallback(async (
     id: string,
@@ -1764,7 +1766,7 @@ export default function PayrollWizard() {
   // No status filter at the API; we keep rows whose status is sent|paid and
   // whose date_sent (or created_at as fallback) lands inside the PAB month.
   useEffect(() => {
-    if (currentStep !== 4 || !pabMonthRange) return;
+    if ((currentStep !== 4 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setGiftPaymentsLoading(true);
     setGiftPaymentsError(null);
@@ -1826,7 +1828,7 @@ export default function PayrollWizard() {
       })
       .finally(() => setGiftPaymentsLoading(false));
     return () => ctrl.abort();
-  }, [currentStep, pabMonthRange]);
+  }, [currentStep, pabMonthRange, previewPaystubsOpen]);
 
   // ── Tenure gifts (approved shipping submissions, in PAB month by decided_at) ──
   // We keep rows even when gift_name / gift_price_php are null (legacy approvals
@@ -1902,12 +1904,12 @@ export default function PayrollWizard() {
   );
 
   useEffect(() => {
-    if (currentStep !== 4 || !pabMonthRange) return;
+    if ((currentStep !== 4 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setTenureGiftsLoading(true);
     void refetchTenureGifts(ctrl.signal).finally(() => setTenureGiftsLoading(false));
     return () => ctrl.abort();
-  }, [currentStep, pabMonthRange, refetchTenureGifts]);
+  }, [currentStep, pabMonthRange, refetchTenureGifts, previewPaystubsOpen]);
 
   // ── Realtime: refresh tenure gifts the moment the Orphanage team approves
   // a submission. Subscribes to `employee_gift_shipping_details` while the
@@ -2443,6 +2445,217 @@ export default function PayrollWizard() {
     });
   }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled]);
 
+  /**
+   * Unified preview items for the "Preview Emails → Orphanage" tab. Pulls
+   * from all four Orphanage-step data streams in the active PAB month so the
+   * dispatch dialog can show every outbound orphanage receipt:
+   *
+   *   1. visit_wages    — per-employee approved orphanage_visit/ceo_visitation
+   *                       summed into hours × regular rate.
+   *   2. budget_request — accounting-approved orphanage budget requests
+   *                       (one per submitter / mission trip).
+   *   3. gift_payment   — sent/paid vendor gift payments (USD → PHP).
+   *   4. tenure_gift    — approved tenure-gift shipping submissions
+   *                       (PHP price snapshot at approval).
+   */
+  const orphanagePreviewItems = useMemo(() => {
+    type VisitWagesData = {
+      kind: 'visit_wages';
+      id: string;
+      email: string;
+      name: string;
+      visitCount: number;
+      totalHours: number;
+      regularRate: number | null;
+      wages: number | null;
+      visits: { date: string; hours: number; reason: string }[];
+    };
+    type BudgetReqData = {
+      kind: 'budget_request';
+      id: string;
+      submitterEmail: string;
+      visitType: string;
+      missionTrip: boolean;
+      subtotal: number;
+      leftover: number;
+      finalAmount: number;
+      submittedAt: string;
+      decidedAt: string | null;
+      decidedBy: string | null;
+    };
+    type GiftPaymentData = {
+      kind: 'gift_payment';
+      id: string;
+      periodLabel: string;
+      batchLabel: string;
+      vendorName: string;
+      totalUSD: number;
+      totalPHP: number;
+      dateSent: string | null;
+      status: string;
+    };
+    type TenureGiftData = {
+      kind: 'tenure_gift';
+      id: string;
+      personalEmail: string;
+      milestoneIndex: number;
+      milestoneDate: string;
+      decidedAt: string;
+      decidedBy: string | null;
+      giftName: string;
+      pricePHP: number;
+    };
+    type Item = VisitWagesData | BudgetReqData | GiftPaymentData | TenureGiftData;
+
+    const items: Item[] = [];
+
+    // ── 1. Visit wages ───────────────────────────────────────────────────
+    const isApprovedVisit = (s: string) => s === 'accounting_approved' || s === 'approved';
+    const rateByEmail = new Map<string, number>();
+    const nameByEmail = new Map<string, string>();
+    for (const r of effectiveCalcResults) {
+      const em = (r.email ?? '').trim().toLowerCase();
+      if (!em) continue;
+      if (r.regularRate != null) rateByEmail.set(em, r.regularRate);
+      if (r.name) nameByEmail.set(em, r.name);
+    }
+    const visitMap = new Map<string, VisitWagesData>();
+    for (const row of orphanageRows) {
+      if (!isApprovedVisit(row.status)) continue;
+      const em = (row.work_email ?? '').trim().toLowerCase();
+      if (!em) continue;
+      const hours = row.override_hours ?? 8;
+      const existing = visitMap.get(em);
+      if (existing) {
+        existing.visitCount += 1;
+        existing.totalHours += hours;
+        existing.wages =
+          existing.regularRate != null ? existing.totalHours * existing.regularRate : null;
+        existing.visits.push({ date: row.dispute_date, hours, reason: row.reason });
+      } else {
+        const rate = rateByEmail.get(em) ?? null;
+        visitMap.set(em, {
+          kind: 'visit_wages',
+          id: `visit:${em}`,
+          email: em,
+          name: nameByEmail.get(em) ?? '—',
+          visitCount: 1,
+          totalHours: hours,
+          regularRate: rate,
+          wages: rate != null ? hours * rate : null,
+          visits: [{ date: row.dispute_date, hours, reason: row.reason }],
+        });
+      }
+    }
+    for (const v of visitMap.values()) {
+      v.visits.sort((a, b) => a.date.localeCompare(b.date));
+      items.push(v);
+    }
+
+    // ── 2. Budget requests (approved only) ───────────────────────────────
+    for (const r of budgetRequestRows) {
+      if (r.status !== 'approved') continue;
+      const toNum = (v: number | string | null): number => {
+        if (v == null) return 0;
+        const n = typeof v === 'number' ? v : parseFloat(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      items.push({
+        kind: 'budget_request',
+        id: `budget:${r.id}`,
+        submitterEmail: r.submitter_email,
+        visitType: r.visit_type,
+        missionTrip: !!r.mission_trip,
+        subtotal: toNum(r.subtotal),
+        leftover: toNum(r.leftover),
+        finalAmount: toNum(r.final_amount),
+        submittedAt: r.submitted_at,
+        decidedAt: r.decided_at,
+        decidedBy: r.decided_by,
+      });
+    }
+
+    // ── 3. Gift payments (sent/paid) ─────────────────────────────────────
+    for (const g of giftPaymentRows) {
+      items.push({
+        kind: 'gift_payment',
+        id: `gift:${g.id}`,
+        periodLabel: g.period_label,
+        batchLabel: g.batch_label,
+        vendorName: g.vendor_name,
+        totalUSD: g.total_usd,
+        totalPHP: g.total_usd * usdToPhpRate,
+        dateSent: g.date_sent,
+        status: g.status,
+      });
+    }
+
+    // ── 4. Tenure gifts ──────────────────────────────────────────────────
+    for (const t of tenureGiftRows) {
+      items.push({
+        kind: 'tenure_gift',
+        id: `tenure:${t.id}`,
+        personalEmail: t.personal_email,
+        milestoneIndex: t.milestone_index,
+        milestoneDate: t.milestone_date,
+        decidedAt: t.decided_at,
+        decidedBy: t.decided_by,
+        giftName: t.gift_name,
+        pricePHP: t.gift_price_php,
+      });
+    }
+
+    return items;
+  }, [
+    orphanageRows,
+    effectiveCalcResults,
+    budgetRequestRows,
+    giftPaymentRows,
+    tenureGiftRows,
+    usdToPhpRate,
+  ]);
+
+  /**
+   * Subtitle/amount helpers for the unified Orphanage preview list. Kept as a
+   * separate function so the list row and the receipt template stay in sync.
+   */
+  const orphanagePreviewItemMeta = (item: typeof orphanagePreviewItems[number]) => {
+    switch (item.kind) {
+      case 'visit_wages':
+        return {
+          title: item.name,
+          subtitle: `${item.email} · ${item.visitCount} visit${item.visitCount === 1 ? '' : 's'} · ${item.totalHours.toFixed(1)}h`,
+          amount: item.wages,
+          amountCurrency: 'PHP' as const,
+          typeLabel: 'Visit wages',
+        };
+      case 'budget_request':
+        return {
+          title: item.submitterEmail,
+          subtitle: `Budget · ${item.visitType}${item.missionTrip ? ' · mission trip' : ''}`,
+          amount: item.finalAmount,
+          amountCurrency: 'PHP' as const,
+          typeLabel: 'Budget request',
+        };
+      case 'gift_payment':
+        return {
+          title: item.vendorName || '(no vendor name)',
+          subtitle: `Gift payment · ${item.batchLabel || item.periodLabel || '—'}`,
+          amount: item.totalPHP,
+          amountCurrency: 'PHP' as const,
+          typeLabel: 'Gift payment',
+        };
+      case 'tenure_gift':
+        return {
+          title: item.giftName || `Tenure gift #${item.milestoneIndex}`,
+          subtitle: `${item.personalEmail} · milestone ${item.milestoneIndex}`,
+          amount: item.pricePHP,
+          amountCurrency: 'PHP' as const,
+          typeLabel: 'Tenure gift',
+        };
+    }
+  };
+
   const bonusTotals = useMemo(() => {
     const result: Record<string, number> = {};
 
@@ -2614,13 +2827,18 @@ export default function PayrollWizard() {
      */
     /**
      * Salary date = the Tuesday after the pay period's Sunday (i.e. weekStart + 8).
-     * Tech bonus attaches to the paycheck whose salary date lands in the 3rd
-     * Mon–Sun calendar week of its month (week 1 = the Mon–Sun week containing
-     * the 1st of the month, even if partial).
+     * Tech bonus attaches to the paycheck whose salary date lands in the **3rd
+     * full Mon–Sun week** of its month — "full week" = a week whose Monday is
+     * on or after the 1st. Per Carla (May 2026 meeting), this lands tech bonus
+     * two weeks out from PAB.
      *
-     * Example for April 2026:
-     *   Pay period Apr 6 – 12  → salary Tue Apr 14 → April week 3 (Apr 13 – 19) → ✅
-     *   Pay period Apr 13 – 19 → salary Tue Apr 21 → April week 4              → ❌
+     * Examples:
+     *   March 2026 (1st = Sun) → first full week Mar 2–8 → 3rd week Mar 16–22
+     *     → salary Tue Mar 17 pays pay-period Mar 9–15 ✅
+     *   May 2026 (1st = Fri)   → first full week May 4–10 → 3rd week May 18–24
+     *     → salary Tue May 19 ("week of the 22nd") pays pay-period May 11–17 ✅
+     *   June 2026 (1st = Mon)  → first full week Jun 1–7 → 3rd week Jun 15–21
+     *     → salary Tue Jun 16 pays pay-period Jun 8–14 ✅
      */
     const salaryDate = weekStartDate
       ? new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 8)
@@ -2630,8 +2848,9 @@ export default function PayrollWizard() {
       const techMonth = { year: salaryDate.getFullYear(), month: salaryDate.getMonth() };
       const first = new Date(techMonth.year, techMonth.month, 1);
       const dow = first.getDay();
-      const daysBack = dow === 0 ? 6 : dow - 1;
-      const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() - daysBack);
+      // Days forward to first Monday ≥ the 1st. Sun=0→1, Mon=1→0, Tue=2→6, …
+      const daysForward = (8 - dow) % 7;
+      const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
       const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
       const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
       const t = salaryDate.getTime();
@@ -7281,10 +7500,12 @@ export default function PayrollWizard() {
                     return;
                   }
                   setPreviewSelectedEmail(null);
+                  setPreviewSelectedOrphanageId(null);
+                  setPreviewTab('paystubs');
                   setPreviewPaystubsOpen(true);
                 }}
               >
-                Preview Paystubs
+                Preview Emails
               </Button>
               <Button
                 className="bg-indigo-600 hover:bg-indigo-700 text-white px-12 font-bold"
@@ -7458,19 +7679,389 @@ export default function PayrollWizard() {
           setPreviewPaystubsOpen(open);
           if (!open) {
             setPreviewSelectedEmail(null);
+            setPreviewSelectedOrphanageId(null);
             setPreviewSearch('');
+            setPreviewTab('paystubs');
           }
         }}
       >
         <DialogContent className="overflow-hidden rounded-2xl border-zinc-200 bg-white p-0 sm:max-w-md dark:border-zinc-800 dark:bg-zinc-950">
           {(() => {
+            const selectedOrphanage = previewSelectedOrphanageId
+              ? orphanagePreviewItems.find((r) => r.id === previewSelectedOrphanageId) ?? null
+              : null;
             const selected = previewSelectedEmail
               ? dispatchData.rows.find((e) => e.email === previewSelectedEmail)
               : null;
+            if (selectedOrphanage) {
+              const o = selectedOrphanage;
+              const meta = orphanagePreviewItemMeta(o);
+              const fmtPHP = (n: number | null) =>
+                n == null ? '—' : '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const fmtRate = (n: number | null) =>
+                n == null ? '—' : n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const fmtUSD = (n: number) =>
+                '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              // "2026-04-01" / "2026-04-01T12:00:00Z" → "April 1, 2026"
+              const fmtLongDate = (raw: string | null | undefined): string => {
+                if (!raw) return '—';
+                const s = String(raw).trim();
+                if (!s) return '—';
+                const isoOnly = s.length >= 10 ? s.slice(0, 10) : s;
+                const d = new Date(`${isoOnly}T00:00:00`);
+                if (Number.isNaN(d.getTime())) return s;
+                return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+              };
+              const monthLabel = pabMonthRange
+                ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
+                : '—';
+              const headerEyebrow = (() => {
+                switch (o.kind) {
+                  case 'visit_wages':    return `Simple HRIS · Orphanage Visit Receipt · ${monthLabel}`;
+                  case 'budget_request': return `Simple HRIS · Orphanage Budget Receipt · ${monthLabel}`;
+                  case 'gift_payment':   return `Simple HRIS · Orphanage Gift Payment Receipt · ${monthLabel}`;
+                  case 'tenure_gift':    return `Simple HRIS · Orphanage Tenure Gift Receipt · ${monthLabel}`;
+                }
+              })();
+              const headerGreeting = (() => {
+                switch (o.kind) {
+                  case 'visit_wages':    return `Hi ${o.name},`;
+                  case 'budget_request': return `Hi ${o.submitterEmail},`;
+                  case 'gift_payment':   return `Hi ${o.vendorName || 'Vendor'},`;
+                  case 'tenure_gift':    return `Hi ${o.personalEmail},`;
+                }
+              })();
+              const headerSubline = (() => {
+                switch (o.kind) {
+                  case 'visit_wages':
+                    return <>{o.visitCount} approved visit{o.visitCount === 1 ? '' : 's'} · <strong>{o.totalHours.toFixed(1)}h</strong> credited</>;
+                  case 'budget_request':
+                    return <>{o.visitType}{o.missionTrip ? ' · mission trip' : ''}</>;
+                  case 'gift_payment':
+                    return <>Batch: <strong>{o.batchLabel || '—'}</strong></>;
+                  case 'tenure_gift':
+                    return <>Milestone <strong>#{o.milestoneIndex}</strong> · {fmtLongDate(o.milestoneDate)}</>;
+                }
+              })();
+              return (
+                <>
+                  <DialogHeader className="sr-only">
+                    <DialogTitle>{meta.typeLabel} · {meta.title}</DialogTitle>
+                    <DialogDescription>{meta.subtitle}</DialogDescription>
+                  </DialogHeader>
+                  <div className="paystub-body relative flex flex-col bg-white">
+                    <style>{`
+                      .paystub-body::before {
+                        content: "";
+                        position: absolute;
+                        top: 110px; left: 0; right: 0; bottom: 70px;
+                        overflow: hidden;
+                        background-image:
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png'),
+                          url('https://host.simple.biz/email/simplelogo.png');
+                        background-repeat: no-repeat;
+                        background-size:
+                          120px, 120px, 120px, 120px,
+                          70px, 70px, 70px, 70px,
+                          40px, 40px, 40px, 40px;
+                        background-position:
+                          10% 8%, 75% 22%, 25% 55%, 85% 78%,
+                          50% 12%, 12% 38%, 65% 48%, 38% 85%,
+                          90% 10%, 5% 72%, 55% 30%, 92% 55%;
+                        transform: rotate(-28deg);
+                        opacity: 0.08;
+                        pointer-events: none;
+                        z-index: 2;
+                      }
+                    `}</style>
+                    <div className="flex shrink-0 items-center justify-between border-b border-zinc-100 bg-white/80 px-4 py-2 backdrop-blur">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs text-zinc-700"
+                        onClick={() => setPreviewSelectedOrphanageId(null)}
+                      >
+                        ← Back
+                      </Button>
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700">
+                        Preview · Not yet sent
+                      </span>
+                    </div>
+                    <div
+                      className="min-h-0 flex-1 overflow-auto"
+                      style={{
+                        background:
+                          'linear-gradient(to top right, #c7d2fe 0%, #ffffff 50%, #ffedd5 100%)',
+                      }}
+                    >
+                      <div className="px-4 py-4 sm:px-6">
+                        <div
+                          className="mx-auto max-w-[480px] overflow-hidden rounded-xl bg-white"
+                          style={{ boxShadow: '0 4px 20px rgba(59,130,246,0.15)' }}
+                        >
+                          {/* Header */}
+                          <div
+                            className="px-7 py-6 text-center"
+                            style={{
+                              background:
+                                'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)',
+                            }}
+                          >
+                            <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-800">
+                              {headerEyebrow}
+                            </div>
+                            <div className="mt-2 text-xl font-bold tracking-tight text-slate-900">
+                              {headerGreeting}
+                            </div>
+                            <div className="mt-1 text-[12px] text-slate-700">
+                              {headerSubline}
+                            </div>
+                          </div>
+
+                          {/* Type-specific receipt body */}
+                          {o.kind === 'visit_wages' && (
+                            <>
+                              <div className="px-6 pt-4">
+                                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-600">Recipient</div>
+                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
+                              </div>
+                              <div className="px-6 pt-2">
+                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
+                                  <table className="w-full border-collapse"><tbody>
+                                    <tr><td className="w-[110px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Name</td><td className="py-[3px] text-[13px] font-semibold text-zinc-900">{o.name}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Work Email</td><td className="py-[3px] text-[13px] font-mono font-semibold text-blue-600">{o.email}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>PAB Period</td><td className="py-[3px] text-[13px] text-zinc-900">{monthLabel}</td></tr>
+                                  </tbody></table>
+                                </div>
+                              </div>
+
+                              <div className="px-6 pt-4">
+                                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-600">Approved Visits</div>
+                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
+                              </div>
+                              <div className="px-6 pt-2">
+                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
+                                  <table className="w-full border-collapse"><tbody>
+                                    {o.visits.length === 0 ? (
+                                      <tr><td className="py-[3px] text-[12px] italic" style={{ color: '#9a6b3f' }}>No approved visits.</td></tr>
+                                    ) : (
+                                      o.visits.map((v, i) => (
+                                        <tr key={i}>
+                                          <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>{fmtLongDate(v.date)}</td>
+                                          <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#2563eb' }}>{v.hours.toFixed(1)}h × ₱{fmtRate(o.regularRate)}</td>
+                                        </tr>
+                                      ))
+                                    )}
+                                  </tbody></table>
+                                </div>
+                              </div>
+
+                              <div className="px-6 pt-4">
+                                <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: '#7c3aed' }}>Wage Breakdown</div>
+                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
+                              </div>
+                              <div className="px-6 pt-2">
+                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
+                                  <table className="w-full border-collapse"><tbody>
+                                    <tr><td className="w-[150px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Visits</td><td className="py-[3px] text-right text-[13px] font-semibold text-zinc-900">{o.visitCount}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Total Hours</td><td className="py-[3px] text-right text-[13px] font-semibold text-zinc-900">{o.totalHours.toFixed(1)}h</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Regular Rate</td><td className="py-[3px] text-right text-[13px] font-semibold text-zinc-900">{o.regularRate != null ? `₱${fmtRate(o.regularRate)} / h` : '—'}</td></tr>
+                                  </tbody></table>
+                                </div>
+                              </div>
+
+                              <div className="px-6 pt-4 pb-2">
+                                <div className="rounded-[10px] px-5 py-4" style={{ background: 'linear-gradient(to top right, #3730a3 0%, #ffffff 50%, #ea580c 100%)' }}>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-800">Total Wages</span>
+                                    <span className="text-[22px] font-extrabold tracking-tight text-slate-900">{fmtPHP(o.wages)} <span className="text-[12px] font-semibold text-slate-600">PHP</span></span>
+                                  </div>
+                                  {o.wages == null && (
+                                    <div className="mt-1 text-right text-[10px] text-slate-700">Rate not on file — wages will resolve once the Rates CSV includes this employee.</div>
+                                  )}
+                                </div>
+                              </div>
+                            </>
+                          )}
+
+                          {o.kind === 'budget_request' && (
+                            <>
+                              <div className="px-6 pt-4">
+                                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-600">Submitter</div>
+                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
+                              </div>
+                              <div className="px-6 pt-2">
+                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
+                                  <table className="w-full border-collapse"><tbody>
+                                    <tr><td className="w-[130px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Email</td><td className="py-[3px] text-[13px] font-mono font-semibold text-blue-600">{o.submitterEmail}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Visit Type</td><td className="py-[3px] text-[13px] font-semibold text-zinc-900">{o.visitType}{o.missionTrip ? ' (mission trip)' : ''}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Submitted</td><td className="py-[3px] text-[13px] text-zinc-900">{fmtLongDate(o.submittedAt)}</td></tr>
+                                    {o.decidedAt && <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Approved</td><td className="py-[3px] text-[13px] text-zinc-900">{fmtLongDate(o.decidedAt)}{o.decidedBy ? ` · ${o.decidedBy}` : ''}</td></tr>}
+                                  </tbody></table>
+                                </div>
+                              </div>
+
+                              <div className="px-6 pt-4">
+                                <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: '#7c3aed' }}>Budget Breakdown</div>
+                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
+                              </div>
+                              <div className="px-6 pt-2">
+                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
+                                  <table className="w-full border-collapse"><tbody>
+                                    <tr><td className="w-[150px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Subtotal</td><td className="py-[3px] text-right text-[13px] font-semibold text-zinc-900">{fmtPHP(o.subtotal)}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Leftover Carry-in</td><td className="py-[3px] text-right text-[13px] font-semibold text-zinc-900">{fmtPHP(o.leftover)}</td></tr>
+                                  </tbody></table>
+                                </div>
+                              </div>
+
+                              <div className="px-6 pt-4 pb-2">
+                                <div className="rounded-[10px] px-5 py-4" style={{ background: 'linear-gradient(to top right, #3730a3 0%, #ffffff 50%, #ea580c 100%)' }}>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-800">Final Amount</span>
+                                    <span className="text-[22px] font-extrabold tracking-tight text-slate-900">{fmtPHP(o.finalAmount)} <span className="text-[12px] font-semibold text-slate-600">PHP</span></span>
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          )}
+
+                          {o.kind === 'gift_payment' && (
+                            <>
+                              <div className="px-6 pt-4">
+                                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-600">Vendor</div>
+                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
+                              </div>
+                              <div className="px-6 pt-2">
+                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
+                                  <table className="w-full border-collapse"><tbody>
+                                    <tr><td className="w-[110px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Name</td><td className="py-[3px] text-[13px] font-semibold text-zinc-900">{o.vendorName || '—'}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Period</td><td className="py-[3px] text-[13px] text-zinc-900">{o.periodLabel || '—'}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Batch</td><td className="py-[3px] text-[13px] text-zinc-900">{o.batchLabel || '—'}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Status</td><td className="py-[3px] text-[13px] text-zinc-900 capitalize">{o.status}</td></tr>
+                                    {o.dateSent && <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Date Sent</td><td className="py-[3px] text-[13px] text-zinc-900">{fmtLongDate(o.dateSent)}</td></tr>}
+                                  </tbody></table>
+                                </div>
+                              </div>
+
+                              <div className="px-6 pt-4">
+                                <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: '#7c3aed' }}>Conversion</div>
+                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
+                              </div>
+                              <div className="px-6 pt-2">
+                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
+                                  <table className="w-full border-collapse"><tbody>
+                                    <tr><td className="w-[150px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Amount (USD)</td><td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#2563eb' }}>{fmtUSD(o.totalUSD)}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>USD → PHP rate</td><td className="py-[3px] text-right text-[13px] text-zinc-900">₱{fmtRate(usdToPhpRate)}</td></tr>
+                                  </tbody></table>
+                                </div>
+                              </div>
+
+                              <div className="px-6 pt-4 pb-2">
+                                <div className="rounded-[10px] px-5 py-4" style={{ background: 'linear-gradient(to top right, #3730a3 0%, #ffffff 50%, #ea580c 100%)' }}>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-800">Total Paid</span>
+                                    <span className="text-[22px] font-extrabold tracking-tight text-slate-900">{fmtPHP(o.totalPHP)} <span className="text-[12px] font-semibold text-slate-600">PHP</span></span>
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          )}
+
+                          {o.kind === 'tenure_gift' && (
+                            <>
+                              <div className="px-6 pt-4">
+                                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-600">Recipient</div>
+                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
+                              </div>
+                              <div className="px-6 pt-2">
+                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
+                                  <table className="w-full border-collapse"><tbody>
+                                    <tr><td className="w-[130px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Personal Email</td><td className="py-[3px] text-[13px] font-mono font-semibold text-blue-600">{o.personalEmail}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Milestone</td><td className="py-[3px] text-[13px] font-semibold text-zinc-900">#{o.milestoneIndex}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Milestone Date</td><td className="py-[3px] text-[13px] text-zinc-900">{fmtLongDate(o.milestoneDate)}</td></tr>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Approved</td><td className="py-[3px] text-[13px] text-zinc-900">{fmtLongDate(o.decidedAt)}{o.decidedBy ? ` · ${o.decidedBy}` : ''}</td></tr>
+                                  </tbody></table>
+                                </div>
+                              </div>
+
+                              <div className="px-6 pt-4">
+                                <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: '#7c3aed' }}>Gift</div>
+                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
+                              </div>
+                              <div className="px-6 pt-2">
+                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
+                                  <table className="w-full border-collapse"><tbody>
+                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>{o.giftName || `Milestone #${o.milestoneIndex} gift`}</td><td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#2563eb' }}>{fmtPHP(o.pricePHP)}</td></tr>
+                                  </tbody></table>
+                                </div>
+                              </div>
+
+                              <div className="px-6 pt-4 pb-2">
+                                <div className="rounded-[10px] px-5 py-4" style={{ background: 'linear-gradient(to top right, #3730a3 0%, #ffffff 50%, #ea580c 100%)' }}>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-800">Gift Value</span>
+                                    <span className="text-[22px] font-extrabold tracking-tight text-slate-900">{fmtPHP(o.pricePHP)} <span className="text-[12px] font-semibold text-slate-600">PHP</span></span>
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          )}
+
+                          {/* Footer */}
+                          <div
+                            className="px-6 py-3.5"
+                            style={{
+                              background:
+                                'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
+                            }}
+                          >
+                            <div className="flex items-center justify-between">
+                              <img
+                                src="https://host.simple.biz/email/simplelogo.png"
+                                alt="Simple"
+                                className="block h-auto w-[42px]"
+                              />
+                              <div className="pl-3 text-right">
+                                <div className="text-[12px] font-bold text-slate-800">Simple · Confidential</div>
+                                <div className="text-[10px] text-slate-400">Automated dispatch from Simple HRIS</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              );
+            }
             if (selected) {
               const pp = selected.pay_php;
               const fmt = (n: number | null) =>
                 n == null ? '—' : '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const fmtRate = (n: number | null) =>
+                n == null ? '—' : n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const weekHuman = (() => {
+                const w = selected.pay_period.week;
+                if (!w) return '—';
+                const s = new Date(w.start + 'T00:00:00');
+                const e = new Date(w.end + 'T00:00:00');
+                if (isNaN(s.getTime()) || isNaN(e.getTime())) return `${w.start} → ${w.end}`;
+                const mon = (d: Date) => d.toLocaleString('en-US', { month: 'short' });
+                const sameMonth = s.getMonth() === e.getMonth() && s.getFullYear() === e.getFullYear();
+                return sameMonth
+                  ? `${mon(s)} ${s.getDate()} – ${e.getDate()}, ${e.getFullYear()}`
+                  : `${mon(s)} ${s.getDate()} – ${mon(e)} ${e.getDate()}, ${e.getFullYear()}`;
+              })();
               return (
                 <>
                   <DialogHeader className="sr-only">
@@ -7525,144 +8116,208 @@ export default function PayrollWizard() {
                         Preview · Not yet sent
                       </span>
                     </div>
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                      {/* Header — full width, centered, vertical like email */}
-                      <div
-                        className="px-6 py-4 text-center"
-                        style={{
-                          background:
-                            'linear-gradient(to top right, #3b82f6 0%, #ffffff 50%, #f97316 100%)',
-                        }}
-                      >
-                        <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-800">
-                          Simple HRIS · Paystub
-                        </div>
-                        <div className="mt-2 text-lg font-bold tracking-tight text-slate-900">
-                          Hi {selected.name},
-                        </div>
-                        <div className="mt-0.5 text-[11px] text-slate-700">
-                          Your paystub has been prepared.
-                        </div>
-                      </div>
-
-                      {/* Recipient */}
-                      <div className="px-4 pt-3">
-                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-orange-600">
-                          Recipient
-                        </div>
+                    <div
+                      className="min-h-0 flex-1 overflow-hidden"
+                      style={{
+                        background:
+                          'linear-gradient(to top right, #c7d2fe 0%, #ffffff 50%, #ffedd5 100%)',
+                      }}
+                    >
+                      <div className="px-4 py-4 sm:px-6">
                         <div
-                          className="mt-0.5 h-0.5 w-12 rounded-sm"
-                          style={{
-                            background:
-                              'linear-gradient(to top right, #3b82f6 0%, #ffffff 50%, #f97316 100%)',
-                          }}
-                        />
-                        <div
-                          className="mt-1.5 rounded-lg border border-orange-100 px-3 py-2"
-                          style={{
-                            background:
-                              'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
-                          }}
+                          className="mx-auto max-w-[480px] overflow-hidden rounded-xl bg-white"
+                          style={{ boxShadow: '0 4px 20px rgba(59,130,246,0.15)' }}
                         >
-                          <div className="space-y-0.5 text-[11px]">
-                            <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Dept</span><span className="truncate font-semibold text-zinc-900">{selected.department_name ?? '—'}</span></div>
-                            <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Week</span><span className="truncate font-mono text-zinc-900">{selected.pay_period.week ? `${selected.pay_period.week.start} → ${selected.pay_period.week.end}` : '—'}</span></div>
-                            <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Salary Date</span><span className="truncate font-mono text-emerald-700">{selected.pay_period.salary_date ?? '—'}</span></div>
-                            <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">PAB Month</span><span className="truncate text-zinc-900">{selected.pay_period.pab_evaluation.month_label}</span></div>
-                            <div className="flex gap-2"><span className="w-20 shrink-0 text-amber-800/70">Email</span><span className="truncate font-mono font-semibold text-blue-600">{selected.personal_email}</span></div>
+                          {/* Header */}
+                          <div
+                            className="px-7 py-6 text-center"
+                            style={{
+                              background:
+                                'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)',
+                            }}
+                          >
+                            <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-800">
+                              Simple HRIS · Paystub · {weekHuman}
+                            </div>
+                            <div className="mt-2 text-xl font-bold tracking-tight text-slate-900">
+                              Hi {selected.name},
+                            </div>
+                            <div className="mt-1 text-[12px] text-slate-700">
+                              Pay period: <strong>{weekHuman}</strong>
+                            </div>
                           </div>
-                        </div>
-                      </div>
 
-                      {/* Earnings */}
-                      <div className="px-4 pt-2.5">
-                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-orange-600">
-                          Earnings
-                        </div>
-                        <div
-                          className="mt-0.5 h-0.5 w-12 rounded-sm"
-                          style={{
-                            background:
-                              'linear-gradient(to top right, #3b82f6 0%, #ffffff 50%, #f97316 100%)',
-                          }}
-                        />
-                        <div
-                          className="mt-1.5 rounded-lg border border-orange-100 px-3 py-2"
-                          style={{
-                            background:
-                              'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
-                          }}
-                        >
-                          <div className="space-y-0.5 font-mono text-[11px]">
-                            <div className="flex justify-between"><span className="text-amber-800/70">Regular</span><span>{selected.hours.regular.toFixed(2)}h · {fmt(pp.regular)}</span></div>
-                            <div className="flex justify-between"><span className="text-amber-800/70">Overtime</span><span>{selected.hours.ot.toFixed(2)}h · {fmt(pp.ot)}</span></div>
-                            <div className="mt-1 border-t border-orange-100 pt-1" />
-                            <div className="flex justify-between"><span className="text-amber-800/70">Initial Pay</span><span className="font-semibold">{fmt(pp.initial)}</span></div>
+                          {/* Recipient */}
+                          <div className="px-6 pt-4">
+                            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-600">
+                              Recipient
+                            </div>
+                            <div
+                              className="mt-1.5 h-[3px] w-[60px] rounded-sm"
+                              style={{
+                                background:
+                                  'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)',
+                              }}
+                            />
                           </div>
-                        </div>
-                      </div>
+                          <div className="px-6 pt-2">
+                            <div
+                              className="rounded-lg border px-4 py-3"
+                              style={{
+                                background:
+                                  'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
+                                borderColor: '#fde4cb',
+                              }}
+                            >
+                              <table className="w-full border-collapse">
+                                <tbody>
+                                  <tr>
+                                    <td className="w-[110px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Name</td>
+                                    <td className="py-[3px] text-[13px] font-semibold text-zinc-900">{selected.name}</td>
+                                  </tr>
+                                  <tr>
+                                    <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Department</td>
+                                    <td className="py-[3px] text-[13px] font-semibold text-zinc-900">{selected.department_name ?? '—'}</td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
 
-                      {/* Bonuses */}
-                      <div className="px-4 pt-2.5">
-                        <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-orange-600">
-                          Bonuses
-                        </div>
-                        <div
-                          className="mt-0.5 h-0.5 w-12 rounded-sm"
-                          style={{
-                            background:
-                              'linear-gradient(to top right, #3b82f6 0%, #ffffff 50%, #f97316 100%)',
-                          }}
-                        />
-                        <div
-                          className="mt-1.5 rounded-lg border border-orange-100 px-3 py-2"
-                          style={{
-                            background:
-                              'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
-                          }}
-                        >
-                          <div className="space-y-0.5 font-mono text-[11px]">
-                            <div className="flex justify-between"><span className="text-amber-800/70">Perfect Attendance</span><span className="font-semibold text-indigo-600">+{fmt(pp.perfect_attendance_bonus)}</span></div>
-                            <div className="flex justify-between"><span className="text-amber-800/70">Tech Bonus</span><span className="font-semibold text-sky-600">+{fmt(pp.tech_bonus)}</span></div>
-                            <div className="flex justify-between"><span className="text-amber-800/70">Other</span><span className="font-semibold text-violet-600">+{fmt(pp.other_bonuses)}</span></div>
-                            <div className="mt-1 border-t border-orange-100 pt-1" />
-                            <div className="flex justify-between"><span className="text-amber-800/70">Bonus Total</span><span className="font-bold">{fmt(pp.bonuses_total)}</span></div>
+                          {/* Earnings */}
+                          <div className="px-6 pt-4">
+                            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-600">
+                              Earnings
+                            </div>
+                            <div
+                              className="mt-1.5 h-[3px] w-[60px] rounded-sm"
+                              style={{
+                                background:
+                                  'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)',
+                              }}
+                            />
                           </div>
-                        </div>
-                      </div>
+                          <div className="px-6 pt-2">
+                            <div
+                              className="rounded-lg border px-4 py-3"
+                              style={{
+                                background:
+                                  'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
+                                borderColor: '#fde4cb',
+                              }}
+                            >
+                              <table className="w-full border-collapse">
+                                <tbody>
+                                  <tr>
+                                    <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>
+                                      Regular ({selected.hours.regular.toFixed(2)}h × ₱{fmtRate(selected.rates_php.regular)})
+                                    </td>
+                                    <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#2563eb' }}>
+                                      {fmt(pp.regular)}
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>
+                                      OT ({selected.hours.ot.toFixed(2)}h × ₱{fmtRate(selected.rates_php.ot)})
+                                    </td>
+                                    <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#2563eb' }}>
+                                      {fmt(pp.ot)}
+                                    </td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
 
-                      {/* Total bar */}
-                      <div className="px-4 pt-2.5">
-                        <div
-                          className="flex items-center justify-between rounded-lg px-4 py-2.5"
-                          style={{
-                            background:
-                              'linear-gradient(to top right, #1d4ed8 0%, #ffffff 50%, #ea580c 100%)',
-                          }}
-                        >
-                          <div className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-800">
-                            Total Pay
+                          {/* Bonuses */}
+                          <div className="px-6 pt-4">
+                            <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: '#7c3aed' }}>
+                              Bonuses
+                            </div>
+                            <div
+                              className="mt-1.5 h-[3px] w-[60px] rounded-sm"
+                              style={{
+                                background:
+                                  'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)',
+                              }}
+                            />
                           </div>
-                          <div className="text-lg font-extrabold tracking-tight text-slate-900">
-                            {fmt(pp.final)} <span className="text-[10px] font-semibold text-slate-600">PHP</span>
+                          <div className="px-6 pt-2">
+                            <div
+                              className="rounded-lg border px-4 py-3"
+                              style={{
+                                background:
+                                  'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
+                                borderColor: '#fde4cb',
+                              }}
+                            >
+                              <table className="w-full border-collapse">
+                                <tbody>
+                                  <tr>
+                                    <td className="w-[150px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Tech Bonus</td>
+                                    <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#7c3aed' }}>
+                                      {fmt(pp.tech_bonus)}
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Attendance Bonus</td>
+                                    <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#7c3aed' }}>
+                                      {fmt(pp.perfect_attendance_bonus)}
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Performance Bonus</td>
+                                    <td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#7c3aed' }}>
+                                      {fmt(pp.other_bonuses)}
+                                    </td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+
+                          {/* Total bar */}
+                          <div className="px-6 pt-4 pb-2">
+                            <div
+                              className="rounded-[10px] px-5 py-4"
+                              style={{
+                                background:
+                                  'linear-gradient(to top right, #3730a3 0%, #ffffff 50%, #ea580c 100%)',
+                              }}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-800">
+                                  Total Pay
+                                </span>
+                                <span className="text-[22px] font-extrabold tracking-tight text-slate-900">
+                                  {fmt(pp.final)}{' '}
+                                  <span className="text-[12px] font-semibold text-slate-600">PHP</span>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Footer */}
+                          <div
+                            className="px-6 py-3.5"
+                            style={{
+                              background:
+                                'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
+                            }}
+                          >
+                            <div className="flex items-center justify-between">
+                              <img
+                                src="https://host.simple.biz/email/simplelogo.png"
+                                alt="Simple"
+                                className="block h-auto w-[42px]"
+                              />
+                              <div className="pl-3 text-right">
+                                <div className="text-[12px] font-bold text-slate-800">Simple · Confidential</div>
+                                <div className="text-[10px] text-slate-400">Automated dispatch from Simple HRIS</div>
+                              </div>
+                            </div>
                           </div>
                         </div>
-                      </div>
-
-                      {/* Footer */}
-                      <div
-                        className="mt-2 flex items-center justify-center gap-2 px-4 py-2"
-                        style={{
-                          background:
-                            'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)',
-                        }}
-                      >
-                        <img
-                          src="https://host.simple.biz/email/simplelogo.png"
-                          alt="Simple"
-                          className="h-5 w-auto"
-                        />
-                        <div className="text-[9px] text-slate-400">© Simple · Confidential</div>
                       </div>
                     </div>
                   </div>
@@ -7670,22 +8325,68 @@ export default function PayrollWizard() {
               );
             }
             const needle = previewSearch.trim().toLowerCase();
-            const filtered = needle
+            const filteredPaystubs = needle
               ? dispatchData.rows.filter(
                   (e) =>
                     e.name.toLowerCase().includes(needle) ||
                     e.personal_email.toLowerCase().includes(needle),
                 )
               : dispatchData.rows;
+            const filteredOrphanage = needle
+              ? orphanagePreviewItems.filter((r) => {
+                  const meta = orphanagePreviewItemMeta(r);
+                  return (
+                    meta.title.toLowerCase().includes(needle) ||
+                    meta.subtitle.toLowerCase().includes(needle) ||
+                    meta.typeLabel.toLowerCase().includes(needle)
+                  );
+                })
+              : orphanagePreviewItems;
             return (
               <>
                 <DialogHeader className="px-6 pt-6">
-                  <DialogTitle className="text-zinc-900 dark:text-white">Preview Paystubs</DialogTitle>
+                  <DialogTitle className="text-zinc-900 dark:text-white">Preview Emails</DialogTitle>
                   <DialogDescription className="text-zinc-600 dark:text-zinc-400">
-                    {dispatchData.rows.length} employee{dispatchData.rows.length === 1 ? '' : 's'} queued for this batch.
-                    Click View to inspect a paystub.
+                    {previewTab === 'paystubs'
+                      ? `${dispatchData.rows.length} paystub${dispatchData.rows.length === 1 ? '' : 's'} queued for this batch.`
+                      : `${orphanagePreviewItems.length} orphanage receipt${orphanagePreviewItems.length === 1 ? '' : 's'} queued — visit wages, budget requests, gift payments, tenure gifts.`}
+                    {' '}Click View to inspect the email.
                   </DialogDescription>
                 </DialogHeader>
+                <div className="px-6 pt-3">
+                  <div className="inline-flex w-full rounded-md border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTab('paystubs')}
+                      className={cn(
+                        'flex-1 rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
+                        previewTab === 'paystubs'
+                          ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-white'
+                          : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+                      )}
+                    >
+                      Paystubs
+                      <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                        {dispatchData.rows.length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTab('orphanage')}
+                      className={cn(
+                        'flex-1 rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
+                        previewTab === 'orphanage'
+                          ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-white'
+                          : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+                      )}
+                    >
+                      Orphanage
+                      <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                        {orphanagePreviewItems.length}
+                      </span>
+                    </button>
+                  </div>
+                </div>
                 <div className="px-6 pt-3">
                   <input
                     type="text"
@@ -7696,32 +8397,87 @@ export default function PayrollWizard() {
                   />
                 </div>
                 <div className="max-h-[60vh] overflow-y-auto px-6 pb-6 pt-2">
-                  {filtered.length === 0 ? (
+                  {previewTab === 'paystubs' ? (
+                    filteredPaystubs.length === 0 ? (
+                      <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                        {dispatchData.rows.length === 0
+                          ? 'No employees queued for dispatch.'
+                          : `No employees match “${previewSearch}”.`}
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                        {filteredPaystubs.map((e) => (
+                          <div key={e.email} className="flex items-center justify-between gap-3 py-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-medium text-zinc-900 dark:text-white">
+                                {e.name}
+                              </div>
+                              <div className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                                {e.personal_email}
+                              </div>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 shrink-0"
+                              onClick={() => setPreviewSelectedEmail(e.email)}
+                            >
+                              View
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  ) : orphanageLoading || budgetRequestsLoading || giftPaymentsLoading || tenureGiftsLoading ? (
+                    <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500 dark:text-zinc-400">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading orphanage receipts…
+                    </div>
+                  ) : filteredOrphanage.length === 0 ? (
                     <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                      No employees match &ldquo;{previewSearch}&rdquo;.
+                      {orphanagePreviewItems.length === 0
+                        ? 'No orphanage receipts queued for this PAB period.'
+                        : `No receipts match “${previewSearch}”.`}
                     </div>
                   ) : (
                     <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                      {filtered.map((e) => (
-                        <div key={e.email} className="flex items-center justify-between gap-3 py-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium text-zinc-900 dark:text-white">
-                              {e.name}
+                      {filteredOrphanage.map((r) => {
+                        const meta = orphanagePreviewItemMeta(r);
+                        const typeAccent = (() => {
+                          switch (r.kind) {
+                            case 'visit_wages':    return 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700/50 dark:bg-indigo-950/30 dark:text-indigo-300';
+                            case 'budget_request': return 'border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300';
+                            case 'gift_payment':   return 'border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-700/50 dark:bg-violet-950/30 dark:text-violet-300';
+                            case 'tenure_gift':    return 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300';
+                          }
+                        })();
+                        return (
+                          <div key={r.id} className="flex items-center justify-between gap-3 py-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className={cn('shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide', typeAccent)}>
+                                  {meta.typeLabel}
+                                </span>
+                                <span className="truncate text-sm font-medium text-zinc-900 dark:text-white">
+                                  {meta.title}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                                {meta.subtitle}
+                                {meta.amount != null ? ` · ${formatPHP(meta.amount)}` : ''}
+                              </div>
                             </div>
-                            <div className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
-                              {e.personal_email}
-                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 shrink-0"
+                              onClick={() => setPreviewSelectedOrphanageId(r.id)}
+                            >
+                              View
+                            </Button>
                           </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 shrink-0"
-                            onClick={() => setPreviewSelectedEmail(e.email)}
-                          >
-                            View
-                          </Button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>

@@ -591,16 +591,18 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
   }, [monthEnd]);
 
   /**
-   * Tech Bonus pay period for the displayed month. Salary Date = Tuesday in the 3rd
-   * Mon–Sun week of the month (week 1 = the Mon–Sun week containing the 1st);
-   * pay-period Monday = Salary Date − 8 days. Mirrors `PayrollWizard.isTechBonusWeek`
-   * + `hasThirtyDaysByWeek` (BUSINESS_LOGIC.md → Technology Bonus).
+   * Tech Bonus pay period for the displayed month. Salary Date = Tuesday in the
+   * 3rd full Mon–Sun week of the month (week 1 = first Mon–Sun week whose
+   * Monday is ≥ the 1st); pay-period Monday = Salary Date − 8 days. Per Carla
+   * (May 2026), this lands tech bonus two weeks out from PAB. Mirrors
+   * `dispatch-bonuses.ts → isTechBonusWeek`.
    */
   const techBonusPayPeriod = useMemo(() => {
     const first = new Date(viewYear, viewMonth, 1);
     const dow = first.getDay();
-    const daysBack = dow === 0 ? 6 : dow - 1;
-    const firstMon = new Date(viewYear, viewMonth, 1 - daysBack);
+    // Days forward to first Monday ≥ the 1st. Sun=0→1, Mon=1→0, Tue=2→6, …
+    const daysForward = (8 - dow) % 7;
+    const firstMon = new Date(viewYear, viewMonth, 1 + daysForward);
     const week3Mon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
     const salaryDate = new Date(week3Mon.getFullYear(), week3Mon.getMonth(), week3Mon.getDate() + 1);
     const weekStart = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), salaryDate.getDate() - 8);

@@ -35,6 +35,10 @@ export type HrPendingEmployeeRow = {
   promoted_at: string | null;
   /** UUID FK to global_master_list.id. Stays null until status='promoted'. */
   promoted_to_master_id: string | null;
+  /** Set by the assigned department's manager. Required before HR promote runs. */
+  orientation_attended_at: string | null;
+  orientation_attended_by: string | null;
+  orientation_note: string | null;
 };
 
 export type CreateHrPendingInput = {
@@ -229,6 +233,14 @@ export async function promoteHrPendingEmployee(
       error: "Work email is required before promoting to the master list",
     };
   }
+  if (!row.orientation_attended_at) {
+    return {
+      row,
+      masterId: null,
+      error:
+        "Orientation attendance has not been confirmed. The department manager must mark orientation from their Newly Hired tab before promotion.",
+    };
+  }
 
   const uploadId = await getCurrentMasterListUploadId(sb);
   if (!uploadId) {
@@ -279,3 +291,78 @@ export async function promoteHrPendingEmployee(
 
   return { row: promoted as HrPendingEmployeeRow, masterId, error: null };
 }
+
+/**
+ * Manager dashboard fetch: every pending hire in any of the manager's
+ * departments that is still actionable (not promoted, not cancelled). Used by
+ * `/api/manager/pending-hires` to feed the My Team → Newly Hired tab.
+ *
+ * Case-insensitive department match; `departments` is the list returned by
+ * `listDepartmentsForManager(managerEmail)`.
+ */
+export async function listManagerPendingHires(
+  departments: string[],
+): Promise<{ rows: HrPendingEmployeeRow[]; error: string | null }> {
+  if (departments.length === 0) return { rows: [], error: null };
+  const sb = client();
+  const { data, error } = await sb
+    .from(TABLE)
+    .select("*")
+    .in("status", ["pending_work_email", "ready"])
+    .order("created_at", { ascending: false })
+    .range(0, 499);
+  if (error) return { rows: [], error: error.message };
+  // Department comparison is case-insensitive/trim-tolerant since hr_pending_employees
+  // stores whatever the AddPersonDialog typed but department_managers may
+  // capitalize differently.
+  const wanted = new Set(departments.map((d) => d.trim().toLowerCase()));
+  const rows = ((data ?? []) as HrPendingEmployeeRow[]).filter((r) =>
+    wanted.has((r.department ?? "").trim().toLowerCase()),
+  );
+  return { rows, error: null };
+}
+
+/**
+ * Manager stamps orientation as attended. Caller is responsible for verifying
+ * (at the route layer) that `markedBy` actually manages the hire's department
+ * — this function only writes the row. Idempotent: re-marking just updates
+ * the timestamp + note.
+ */
+export async function markPendingHireOrientation(
+  id: number,
+  args: { markedBy: string; note?: string | null },
+): Promise<{ row: HrPendingEmployeeRow | null; error: string | null }> {
+  const sb = client();
+  const { data, error } = await sb
+    .from(TABLE)
+    .update({
+      orientation_attended_at: new Date().toISOString(),
+      orientation_attended_by: args.markedBy.trim().toLowerCase(),
+      orientation_note: args.note?.trim() || null,
+    })
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) return { row: null, error: error.message };
+  return { row: data as HrPendingEmployeeRow, error: null };
+}
+
+/** Manager unmarks orientation (typo / changed mind). Clears all 3 columns. */
+export async function clearPendingHireOrientation(
+  id: number,
+): Promise<{ row: HrPendingEmployeeRow | null; error: string | null }> {
+  const sb = client();
+  const { data, error } = await sb
+    .from(TABLE)
+    .update({
+      orientation_attended_at: null,
+      orientation_attended_by: null,
+      orientation_note: null,
+    })
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) return { row: null, error: error.message };
+  return { row: data as HrPendingEmployeeRow, error: null };
+}
+

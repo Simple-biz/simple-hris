@@ -401,15 +401,36 @@ export default function HrOnboarding() {
                             )}
                           </td>
                           <td className="px-4 py-3">
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                'text-[10px] font-medium',
-                                STATUS_BADGE[row.status],
+                            <div className="flex flex-col items-start gap-1">
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  'text-[10px] font-medium',
+                                  STATUS_BADGE[row.status],
+                                )}
+                              >
+                                {STATUS_LABEL[row.status]}
+                              </Badge>
+                              {(row.status === 'ready' || row.status === 'pending_work_email') && (
+                                row.orientation_attended_at ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-emerald-300 bg-emerald-50 text-[10px] font-medium text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100"
+                                    title={`Marked ${formatDate(row.orientation_attended_at)} by ${row.orientation_attended_by ?? '—'}${row.orientation_note ? ` — "${row.orientation_note}"` : ''}`}
+                                  >
+                                    Orientation ✓
+                                  </Badge>
+                                ) : (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-amber-300 bg-amber-50 text-[10px] font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950/35 dark:text-amber-100"
+                                    title="Waiting for the department manager to mark orientation as attended"
+                                  >
+                                    Awaiting orientation
+                                  </Badge>
+                                )
                               )}
-                            >
-                              {STATUS_LABEL[row.status]}
-                            </Badge>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex justify-end gap-1.5">
@@ -418,7 +439,12 @@ export default function HrOnboarding() {
                                   size="sm"
                                   className="h-7 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white hover:opacity-90 disabled:opacity-60"
                                   onClick={() => void promote(row)}
-                                  disabled={isBusy}
+                                  disabled={isBusy || !row.orientation_attended_at}
+                                  title={
+                                    row.orientation_attended_at
+                                      ? 'Promote to master list'
+                                      : 'The department manager must mark orientation attended first.'
+                                  }
                                 >
                                   {isBusy ? (
                                     <Loader2 className="mr-1 h-3 w-3 animate-spin" />

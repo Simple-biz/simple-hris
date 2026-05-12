@@ -87,7 +87,8 @@
       "PowerShell(cd \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\"; npx tsc --noEmit 2>&1 | Where-Object { $_ -match \"AdminCsvImports\" })",
       "PowerShell(cd \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\"; $output = npx tsc --noEmit 2>&1; $output | ForEach-Object { $_.ToString\\(\\) } | Select-String \"AdminCsvImports\" | ForEach-Object { $_.ToString\\(\\) })",
       "PowerShell(Get-Content *)",
-      "PowerShell(cd \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\"; npx tsc --noEmit 2>&1 > \"$env:TEMP\\\\tsc_out.txt\"; exit 0)"
+      "PowerShell(cd \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\"; npx tsc --noEmit 2>&1 > \"$env:TEMP\\\\tsc_out.txt\"; exit 0)",
+      "Bash(awk *)"
     ]
   }
 }

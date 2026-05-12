@@ -103,7 +103,7 @@ Built in `dispatchData` (a `useMemo` in `PayrollWizard.tsx`) and posted as:
 | `rates_php.*` | From `effectiveCalcResults[].regularRate/otRate`. |
 | `pay_php.regular/ot/initial` | From `effectiveCalcResults[]`. |
 | `pay_php.perfect_attendance_bonus` | `isFinalPabWeek && toggles.perfect_attendance ? 5000 : 0`. Only attaches on the final weekly paystub of the PAB month. |
-| `pay_php.tech_bonus` | `(isTechBonusWeek \|\| toggles.tech_bonus) && hasThirtyDays ? 1850 : 0`. Only on the 3rd paycheck of the month and only after 30 days of service. |
+| `pay_php.tech_bonus` | `(isTechBonusWeek \|\| toggles.tech_bonus) && hasThirtyDays ? 1850 : 0`. Only on the paycheck whose salary date falls in the **3rd full Mon–Sun week** of its month (week 1 = first Mon–Sun whose Monday ≥ the 1st; week 3 = +14d) and only after 30 days of service. This lands tech bonus two weeks out from PAB. |
 | `pay_php.other_bonuses` | `bonusTotals[email] − toggledPab − toggledTech`. Department-specific bonuses (collections tiers, per-ticket, etc.). |
 | `pay_php.bonuses_total` | Recomposed: `perfect_attendance_bonus + tech_bonus + other_bonuses`. |
 | `pay_php.final` | `initial + bonuses_total`. |
