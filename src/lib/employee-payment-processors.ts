@@ -1,16 +1,16 @@
 import type { LucideIcon } from 'lucide-react';
-import { Banknote, Coins, Globe2, Wallet, Wallet2, Wifi } from 'lucide-react';
+import { Banknote, Wallet } from 'lucide-react';
 
 /**
  * Company-approved payout processors. Keep in sync with mock-queue.ts ProcessorId
  * and references/add_preferred_processor.sql.
  */
 export const PROCESSOR_OPTIONS = [
-  { id: 'hurupay', label: 'Hurupay', blurb: 'Email only', Icon: Coins },
+  { id: 'hurupay', label: 'Hurupay', blurb: 'Email only', Icon: Wallet, logoSrc: '/hurupay.png' },
   { id: 'wepay', label: 'Wepay', blurb: 'Email only', Icon: Wallet },
-  { id: 'higlobe', label: 'Higlobe', blurb: 'Email + account holder', Icon: Globe2 },
-  { id: 'wise', label: 'Wise', blurb: 'Email or Wise tag', Icon: Wallet2 },
-  { id: 'jeeves', label: 'Jeeves', blurb: 'Phone + wire details', Icon: Wifi },
+  { id: 'higlobe', label: 'Higlobe', blurb: 'Email + account holder', Icon: Wallet, logoSrc: '/higlobe.png' },
+  { id: 'wise', label: 'Wise', blurb: 'Email or Wise tag', Icon: Wallet, logoSrc: '/wise.png' },
+  { id: 'jeeves', label: 'Jeeves', blurb: 'Phone + wire details', Icon: Wallet, logoSrc: '/jeeves.png' },
   { id: 'wires', label: 'Wires', blurb: 'Manual bank wire', Icon: Banknote },
 ] as const;
 
@@ -21,6 +21,7 @@ export type ProcessorOption = {
   label: string;
   blurb: string;
   Icon: LucideIcon;
+  logoSrc?: string;
 };
 
 export function isProcessorId(v: string): v is ProcessorId {

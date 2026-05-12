@@ -135,6 +135,48 @@ function Donut({
   );
 }
 
+/** Hourglass with animated sand draining top → bottom. */
+function AnimatedHourglass() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5 xl:h-6 xl:w-6" fill="none">
+      <defs>
+        {/* Top sand clip: y moves from 2→11, height shrinks 9→0 — surface drops toward neck */}
+        <clipPath id="hg-top">
+          <rect x="0" width="24">
+            <animate attributeName="y" from="2" to="11" dur="2.5s" repeatCount="indefinite" />
+            <animate attributeName="height" from="9" to="0" dur="2.5s" repeatCount="indefinite" />
+          </rect>
+        </clipPath>
+        {/* Bottom sand clip: y moves from 22→13, height grows 0→9 — pile builds from bottom */}
+        <clipPath id="hg-bot">
+          <rect x="0" width="24">
+            <animate attributeName="y" from="22" to="13" dur="2.5s" repeatCount="indefinite" />
+            <animate attributeName="height" from="0" to="9" dur="2.5s" repeatCount="indefinite" />
+          </rect>
+        </clipPath>
+      </defs>
+
+      {/* Top sand */}
+      <polygon points="2,2 22,2 13,11 11,11" fill="#f59e0b" clipPath="url(#hg-top)" />
+      {/* Bottom sand */}
+      <polygon points="2,22 22,22 13,13 11,13" fill="#f59e0b" clipPath="url(#hg-bot)" />
+
+      {/* Hourglass frame */}
+      <path
+        d="M2 2 L22 2 L13 11 L13 13 L22 22 L2 22 L11 13 L11 11 Z"
+        stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"
+        className="text-zinc-500 dark:text-zinc-400"
+      />
+
+      {/* Falling sand stream through neck */}
+      <rect x="11.5" y="11" width="1" height="2" fill="#f59e0b">
+        <animate attributeName="opacity" values="0.9;0.3;0.9" dur="0.35s" repeatCount="indefinite" />
+        <animate attributeName="y" values="11;11.8;11" dur="0.35s" repeatCount="indefinite" />
+      </rect>
+    </svg>
+  );
+}
+
 const MIX_COLORS = [
   '#f97316', '#0d9488', '#7c3aed', '#0891b2', '#db2777',
   '#10b981', '#ca8a04', '#4f46e5', '#16a34a', '#be185d',
@@ -814,7 +856,9 @@ function SimpleView({
                         />
                         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                           <span className="text-base font-semibold tracking-tight text-zinc-900 xl:text-xl dark:text-white">
-                            {inProgress ? '⏳' : pabTotal > 0 ? `${pabPct}%` : '—'}
+                            {inProgress ? (
+                              <AnimatedHourglass />
+                            ) : pabTotal > 0 ? `${pabPct}%` : '—'}
                           </span>
                           {pabTotal > 0 && (
                             <span className="mt-0.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">

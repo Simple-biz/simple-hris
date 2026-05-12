@@ -49,7 +49,7 @@ type FilesSubTab = 'hubstaff' | 'master' | 'rates' | 'hsl';
 
 type UploadResult =
   | { kind: 'idle' }
-  | { kind: 'uploading'; fileName: string }
+  | { kind: 'uploading'; fileName: string; pct: number; rowHint?: number }
   | { kind: 'success'; fileName: string; summary: string; sublines: string[] }
   | { kind: 'error'; fileName: string; message: string };
 
@@ -215,6 +215,28 @@ export default function AdminCsvImports() {
     setResults((prev) => ({ ...prev, [key]: next }));
   }, []);
 
+  // ── Progress animation for sync/upload operations
+  const animTimers = useRef<Partial<Record<UploadKey, ReturnType<typeof setInterval>>>>({});
+
+  const startProgress = useCallback(
+    (key: UploadKey, fileName: string, rowHint?: number): (() => void) => {
+      const existing = animTimers.current[key];
+      if (existing !== undefined) clearInterval(existing);
+      let pct = 0;
+      setResults((p) => ({ ...p, [key]: { kind: 'uploading', fileName, pct, rowHint } }));
+      const timer = setInterval(() => {
+        pct = Math.min(88, pct + (pct < 35 ? 3.5 : pct < 65 ? 1.5 : pct < 82 ? 0.6 : 0.15));
+        setResults((p) => ({ ...p, [key]: { kind: 'uploading', fileName, pct, rowHint } }));
+      }, 80);
+      animTimers.current[key] = timer;
+      return () => {
+        clearInterval(timer);
+        delete animTimers.current[key];
+      };
+    },
+    [],
+  );
+
   // ── Hubstaff confirm dialog
   const [pendingHubstaff, setPendingHubstaff] = useState<{ text: string; fileName: string } | null>(null);
   const [hubstaffConfirmOpen, setHubstaffConfirmOpen] = useState(false);
@@ -361,18 +383,22 @@ export default function AdminCsvImports() {
       input.value = '';
       if (!file) return;
 
-      setResult('master', { kind: 'uploading', fileName: file.name });
+      const csvText = await file.text();
+      const rowHint = Math.max(0, csvText.split('\n').filter((l) => l.trim()).length - 3);
+      const stopProgress = startProgress('master', file.name, rowHint || undefined);
       try {
         const form = new FormData();
         form.set('file', file);
         const res = await fetch('/api/global-master-list', { method: 'POST', body: form });
         const json = (await res.json()) as MasterListResponse;
         if (!res.ok || !json.success) {
+          stopProgress();
           const message = json.error ?? res.statusText ?? 'Master list import failed';
           setResult('master', { kind: 'error', fileName: file.name, message });
           toast.error('Master list import failed', { description: message });
           return;
         }
+        stopProgress();
         const total = json.rowCount ?? 0;
         const sublines = [
           `${(json.inserted ?? 0).toLocaleString()} new · ${(json.updated ?? 0).toLocaleString()} updated`,
@@ -402,12 +428,13 @@ export default function AdminCsvImports() {
         toast.success('Master list imported', { description: `${total.toLocaleString()} rows` });
         await loadMasterUploads();
       } catch (err) {
+        stopProgress();
         const message = err instanceof Error ? err.message : String(err);
         setResult('master', { kind: 'error', fileName: file.name, message });
         toast.error('Master list import failed', { description: message });
       }
     },
-    [setResult, loadMasterUploads],
+    [setResult, loadMasterUploads, startProgress],
   );
 
   const handleRatesUpload = useCallback(
@@ -417,7 +444,9 @@ export default function AdminCsvImports() {
       input.value = '';
       if (!file) return;
 
-      setResult('rates', { kind: 'uploading', fileName: file.name });
+      const csvText = await file.text();
+      const rowHint = Math.max(0, csvText.split('\n').filter((l) => l.trim()).length - 1);
+      const stopProgress = startProgress('rates', file.name, rowHint || undefined);
       try {
         const form = new FormData();
         form.set('file', file);
@@ -427,11 +456,13 @@ export default function AdminCsvImports() {
         });
         const json = (await res.json()) as RatesResponse;
         if (!res.ok || !json.success) {
+          stopProgress();
           const message = json.error ?? res.statusText ?? 'Rates import failed';
           setResult('rates', { kind: 'error', fileName: file.name, message });
           toast.error('Rates import failed', { description: message });
           return;
         }
+        stopProgress();
         const sublines = [
           `${(json.uniqueEmployees ?? 0).toLocaleString()} employees · ${(
             json.updated ?? 0
@@ -451,12 +482,13 @@ export default function AdminCsvImports() {
         toast.success('Payroll rates imported', { description: sublines[0] });
         await loadRatesUploads();
       } catch (err) {
+        stopProgress();
         const message = err instanceof Error ? err.message : String(err);
         setResult('rates', { kind: 'error', fileName: file.name, message });
         toast.error('Rates import failed', { description: message });
       }
     },
-    [setResult, loadRatesUploads],
+    [setResult, loadRatesUploads, startProgress],
   );
 
   /**
@@ -466,7 +498,7 @@ export default function AdminCsvImports() {
    */
   const handleMasterSheetSync = useCallback(async () => {
     const synthFileName = 'Google Sheet · master list';
-    setResult('master', { kind: 'uploading', fileName: synthFileName });
+    const stopProgress = startProgress('master', synthFileName);
     try {
       const res = await fetch('/api/cron/sync-master-from-sheet', {
         method: 'POST',
@@ -475,11 +507,13 @@ export default function AdminCsvImports() {
       });
       const json = (await res.json()) as MasterSheetSyncResponse;
       if (!res.ok || !json.success) {
+        stopProgress();
         const message = json.error ?? res.statusText ?? 'Google Sheet sync failed';
         setResult('master', { kind: 'error', fileName: synthFileName, message });
         toast.error('Master list sync failed', { description: message });
         return;
       }
+      stopProgress();
       const tab = json.tabName ?? 'sheet';
       const fileName = `Google Sheet · ${tab}`;
       const total = json.rowCount ?? 0;
@@ -514,11 +548,12 @@ export default function AdminCsvImports() {
       toast.success('Synced from Google Sheet', { description: `${total.toLocaleString()} rows` });
       await loadMasterUploads();
     } catch (err) {
+      stopProgress();
       const message = err instanceof Error ? err.message : String(err);
       setResult('master', { kind: 'error', fileName: synthFileName, message });
       toast.error('Master list sync failed', { description: message });
     }
-  }, [setResult, loadMasterUploads, masterSyncClearOffboarded]);
+  }, [setResult, loadMasterUploads, masterSyncClearOffboarded, startProgress]);
 
   /**
    * Pull the "Offboarded" tab of the master Google Sheet and stamp matching
@@ -526,8 +561,16 @@ export default function AdminCsvImports() {
    * Already off-boarded rows are skipped to preserve manual HR edits.
    */
   const [offboardedSyncRunning, setOffboardedSyncRunning] = useState(false);
+  const [offboardedSyncPct, setOffboardedSyncPct] = useState(0);
+  const offboardedTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const handleOffboardedSheetSync = useCallback(async () => {
     setOffboardedSyncRunning(true);
+    setOffboardedSyncPct(0);
+    let pct = 0;
+    offboardedTimer.current = setInterval(() => {
+      pct = Math.min(88, pct + (pct < 35 ? 3.5 : pct < 65 ? 1.5 : pct < 82 ? 0.6 : 0.15));
+      setOffboardedSyncPct(pct);
+    }, 80);
     try {
       const res = await fetch('/api/cron/sync-offboarded-from-sheet', { method: 'POST' });
       const json = (await res.json()) as OffboardedSheetSyncResponse;
@@ -553,6 +596,8 @@ export default function AdminCsvImports() {
       const message = err instanceof Error ? err.message : String(err);
       toast.error('Offboarded sync failed', { description: message });
     } finally {
+      if (offboardedTimer.current) clearInterval(offboardedTimer.current);
+      setOffboardedSyncPct(0);
       setOffboardedSyncRunning(false);
     }
   }, [loadMasterUploads]);
@@ -564,16 +609,18 @@ export default function AdminCsvImports() {
    */
   const handleRatesSheetSync = useCallback(async () => {
     const synthFileName = 'Google Sheet · payroll rates';
-    setResult('rates', { kind: 'uploading', fileName: synthFileName });
+    const stopProgress = startProgress('rates', synthFileName);
     try {
       const res = await fetch('/api/cron/sync-rates-from-sheet', { method: 'POST' });
       const json = (await res.json()) as RatesSheetSyncResponse;
       if (!res.ok || !json.success) {
+        stopProgress();
         const message = json.error ?? res.statusText ?? 'Google Sheet sync failed';
         setResult('rates', { kind: 'error', fileName: synthFileName, message });
         toast.error('Google Sheet sync failed', { description: message });
         return;
       }
+      stopProgress();
       const tab = json.tabName ?? 'sheet';
       const fileName = `Google Sheet · ${tab}`;
       const sublines = [
@@ -600,11 +647,12 @@ export default function AdminCsvImports() {
       toast.success('Synced from Google Sheet', { description: sublines[0] });
       await loadRatesUploads();
     } catch (err) {
+      stopProgress();
       const message = err instanceof Error ? err.message : String(err);
       setResult('rates', { kind: 'error', fileName: synthFileName, message });
       toast.error('Google Sheet sync failed', { description: message });
     }
-  }, [setResult, loadRatesUploads]);
+  }, [setResult, loadRatesUploads, startProgress]);
 
   /**
    * Pull the HSL agent pay plan from the configured Google Sheet. Goes through
@@ -614,7 +662,7 @@ export default function AdminCsvImports() {
    */
   const handleHslSheetSync = useCallback(async () => {
     const synthFileName = 'Google Sheet · HSL agents';
-    setResult('hsl', { kind: 'uploading', fileName: synthFileName });
+    const stopProgress = startProgress('hsl', synthFileName);
     try {
       const res = await fetch('/api/cron/sync-hsl-from-sheet', { method: 'POST' });
       const json = (await res.json()) as {
@@ -632,11 +680,13 @@ export default function AdminCsvImports() {
         error?: string;
       };
       if (!res.ok || !json.success) {
+        stopProgress();
         const message = json.error ?? res.statusText ?? 'HSL sync failed';
         setResult('hsl', { kind: 'error', fileName: synthFileName, message });
         toast.error('HSL sync failed', { description: message });
         return;
       }
+      stopProgress();
       const tab = json.tabName ?? 'sheet';
       const fileName = `Google Sheet · ${tab}`;
       const total = json.rowCount ?? 0;
@@ -663,11 +713,12 @@ export default function AdminCsvImports() {
       toast.success('HSL agents synced', { description: `${total.toLocaleString()} rows` });
       await loadHslUploads();
     } catch (err) {
+      stopProgress();
       const message = err instanceof Error ? err.message : String(err);
       setResult('hsl', { kind: 'error', fileName: synthFileName, message });
       toast.error('HSL sync failed', { description: message });
     }
-  }, [setResult, loadHslUploads]);
+  }, [setResult, loadHslUploads, startProgress]);
 
   /**
    * Hubstaff: parse client-side, validate header shape, then surface a confirm
@@ -738,18 +789,20 @@ export default function AdminCsvImports() {
   const confirmHubstaffUpload = useCallback(async () => {
     if (!pendingHubstaff) return;
     const { text, fileName } = pendingHubstaff;
-    setResult('hubstaff', { kind: 'uploading', fileName });
+    const stopHubstaffProgress = startProgress('hubstaff', fileName);
     try {
       const form = new FormData();
       form.append('file', new Blob([text], { type: 'text/csv' }), fileName);
       const res = await fetch('/api/hubstaff-hours', { method: 'POST', body: form });
       const json = (await res.json()) as HubstaffResponse;
       if (!res.ok || !json.success) {
+        stopHubstaffProgress();
         const message = json.error ?? res.statusText ?? 'Upload failed';
         setResult('hubstaff', { kind: 'error', fileName, message });
         toast.error('Hubstaff upload failed', { description: message });
         return;
       }
+      stopHubstaffProgress();
       const total = json.rowCount ?? 0;
       setResult('hubstaff', {
         kind: 'success',
@@ -764,11 +817,12 @@ export default function AdminCsvImports() {
       setHubstaffConfirmOpen(false);
       await loadUploads();
     } catch (err) {
+      stopHubstaffProgress();
       const message = err instanceof Error ? err.message : String(err);
       setResult('hubstaff', { kind: 'error', fileName, message });
       toast.error('Hubstaff upload failed', { description: message });
     }
-  }, [pendingHubstaff, setResult, loadUploads]);
+  }, [pendingHubstaff, setResult, loadUploads, startProgress]);
 
   // ──────────── Delete-batch flow ────────────
 
@@ -909,6 +963,7 @@ export default function AdminCsvImports() {
               onMasterSyncClearOffboardedChange={setMasterSyncClearOffboarded}
               onOffboardedSheetSync={handleOffboardedSheetSync}
               offboardedSyncRunning={offboardedSyncRunning}
+              offboardedSyncPct={offboardedSyncPct}
               onRatesSheetSync={handleRatesSheetSync}
               onHslSheetSync={handleHslSheetSync}
               selectedSource={selectedSource}
@@ -1143,6 +1198,7 @@ interface UploadTabProps {
   onMasterSyncClearOffboardedChange: (v: boolean) => void;
   onOffboardedSheetSync: () => void | Promise<void>;
   offboardedSyncRunning: boolean;
+  offboardedSyncPct: number;
   onRatesSheetSync: () => void | Promise<void>;
   onHslSheetSync: () => void | Promise<void>;
   /** Which card is "selected" — drives the batches list rendered below. */
@@ -1178,6 +1234,7 @@ function UploadTab(props: UploadTabProps) {
     onMasterSyncClearOffboardedChange,
     onOffboardedSheetSync,
     offboardedSyncRunning,
+    offboardedSyncPct,
     onRatesSheetSync,
     onHslSheetSync,
     selectedSource,
@@ -1251,13 +1308,23 @@ function UploadTab(props: UploadTabProps) {
             disabled={offboardedSyncRunning}
             className="flex items-center justify-center gap-2 rounded-lg border border-rose-200/80 bg-rose-50/60 px-3 py-2 text-xs font-medium text-rose-800 transition-colors hover:bg-rose-100 disabled:opacity-50 dark:border-rose-900/50 dark:bg-rose-950/25 dark:text-rose-200 dark:hover:bg-rose-950/40"
           >
-            {offboardedSyncRunning ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Cloud className="h-3.5 w-3.5" />
-            )}
+            <Cloud className="h-3.5 w-3.5" />
             <span>Sync Offboarded sheet → mark as off-boarded</span>
           </button>
+          {offboardedSyncRunning && (
+            <div className="rounded-lg border border-zinc-200 bg-stone-50/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+              <div className="mb-1 flex items-center justify-between text-[10.5px]">
+                <span className="text-zinc-500 dark:text-zinc-500">Syncing offboarded sheet…</span>
+                <span className="tabular-nums text-zinc-400 dark:text-zinc-600">{Math.round(offboardedSyncPct)}%</span>
+              </div>
+              <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700/60">
+                <div
+                  className="h-full rounded-full bg-rose-500 transition-[width] duration-100 ease-linear"
+                  style={{ width: `${offboardedSyncPct}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <UploadCard
@@ -2124,6 +2191,7 @@ const TONE: Record<
     captionText: string;
     button: string;
     accent: string;
+    progressBar: string;
     /** Ring + thicker border applied when the card is "selected" (i.e. its
      *  archive is shown in the bottom listing). */
     selectedRing: string;
@@ -2138,6 +2206,7 @@ const TONE: Record<
     button:
       'border-emerald-300/80 bg-stone-50 text-emerald-900 hover:bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-950/70',
     accent: 'text-emerald-700 dark:text-emerald-400',
+    progressBar: 'bg-emerald-500',
     selectedRing: 'ring-2 ring-emerald-400/60 border-emerald-400/80 dark:ring-emerald-500/40 dark:border-emerald-700',
   },
   sky: {
@@ -2149,6 +2218,7 @@ const TONE: Record<
     button:
       'border-sky-300/80 bg-stone-50 text-sky-900 hover:bg-sky-50 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100 dark:hover:bg-sky-950/70',
     accent: 'text-sky-700 dark:text-sky-400',
+    progressBar: 'bg-sky-500',
     selectedRing: 'ring-2 ring-sky-400/60 border-sky-400/80 dark:ring-sky-500/40 dark:border-sky-700',
   },
   indigo: {
@@ -2160,6 +2230,7 @@ const TONE: Record<
     button:
       'border-indigo-300/80 bg-indigo-600 text-white hover:bg-indigo-700 dark:border-indigo-700 dark:bg-indigo-600 dark:hover:bg-indigo-700',
     accent: 'text-indigo-700 dark:text-indigo-400',
+    progressBar: 'bg-indigo-500',
     selectedRing: 'ring-2 ring-indigo-400/60 border-indigo-400/80 dark:ring-indigo-500/40 dark:border-indigo-700',
   },
   purple: {
@@ -2171,6 +2242,7 @@ const TONE: Record<
     button:
       'border-purple-300/80 bg-purple-600 text-white hover:bg-purple-700 dark:border-purple-700 dark:bg-purple-600 dark:hover:bg-purple-700',
     accent: 'text-purple-700 dark:text-purple-300',
+    progressBar: 'bg-purple-500',
     selectedRing: 'ring-2 ring-purple-400/60 border-purple-400/80 dark:ring-purple-500/40 dark:border-purple-700',
   },
 };
@@ -2272,7 +2344,7 @@ function UploadCard({
       <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">{description}</p>
       <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-500">{footnote}</p>
 
-      <ResultPanel result={result} accentClass={t.accent} />
+      <ResultPanel result={result} accentClass={t.accent} progressBarClass={t.progressBar} />
 
       <div className="mt-auto flex flex-col gap-2 pt-1">
         <Button
@@ -2311,7 +2383,15 @@ function UploadCard({
   );
 }
 
-function ResultPanel({ result, accentClass }: { result: UploadResult; accentClass: string }) {
+function ResultPanel({
+  result,
+  accentClass,
+  progressBarClass = 'bg-orange-500',
+}: {
+  result: UploadResult;
+  accentClass: string;
+  progressBarClass?: string;
+}) {
   if (result.kind === 'idle') {
     return (
       <div className="rounded-lg border border-dashed border-zinc-200 bg-stone-50/60 px-3 py-2 text-[11px] text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-600">
@@ -2320,15 +2400,28 @@ function ResultPanel({ result, accentClass }: { result: UploadResult; accentClas
     );
   }
   if (result.kind === 'uploading') {
+    const pct = result.pct ?? 0;
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-stone-50/80 px-3 py-2 text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300">
-        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-        <span className="min-w-0">
-          <span className="block truncate font-mono text-[10.5px] text-zinc-500 dark:text-zinc-500">
+      <div className="rounded-lg border border-zinc-200 bg-stone-50/80 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+        <div className="mb-1.5 flex items-center justify-between gap-2 text-[10.5px]">
+          <span className="min-w-0 truncate font-mono text-zinc-500 dark:text-zinc-500">
             {result.fileName}
           </span>
-          <span>Uploading and processing…</span>
-        </span>
+          <span className="shrink-0 tabular-nums text-zinc-400 dark:text-zinc-600">
+            {Math.round(pct)}%
+          </span>
+        </div>
+        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700/60">
+          <div
+            className={cn('h-full rounded-full transition-[width] duration-100 ease-linear', progressBarClass)}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <p className="mt-1.5 text-[10.5px] text-zinc-500 dark:text-zinc-500">
+          {result.rowHint
+            ? `Processing ${result.rowHint.toLocaleString()} rows…`
+            : 'Syncing and processing…'}
+        </p>
       </div>
     );
   }

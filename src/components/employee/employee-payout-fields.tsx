@@ -118,7 +118,8 @@ export function PreferredPaymentMethodRadios({
           disabled && 'pointer-events-none opacity-60',
         )}
       >
-        {PROCESSOR_OPTIONS.map(({ id, label, blurb, Icon }) => {
+        {PROCESSOR_OPTIONS.map(({ id, label, blurb, Icon, ...rest }) => {
+          const logoSrc = 'logoSrc' in rest ? (rest as { logoSrc?: string }).logoSrc : undefined;
           const active = value === id;
           return (
             <button
@@ -139,13 +140,23 @@ export function PreferredPaymentMethodRadios({
             >
               <div
                 className={cn(
-                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors',
-                  active
+                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors overflow-hidden',
+                  logoSrc
+                    ? 'bg-white'
+                    : active
                     ? 'bg-orange-500 text-white'
                     : 'bg-zinc-100 text-zinc-600 group-hover:bg-orange-100 group-hover:text-orange-600 dark:bg-zinc-800 dark:text-zinc-300 dark:group-hover:bg-orange-950 dark:group-hover:text-orange-400',
                 )}
               >
-                <Icon className="h-4 w-4" />
+                {logoSrc ? (
+                  <img
+                    src={logoSrc}
+                    alt={label}
+                    className="h-full w-full object-contain mix-blend-multiply dark:mix-blend-normal"
+                  />
+                ) : (
+                  <Icon className="h-4 w-4" />
+                )}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium text-zinc-900 dark:text-white">{label}</div>
@@ -181,6 +192,7 @@ export function PayoutDetailsFields({
 }) {
   const meta = PROCESSOR_OPTIONS.find((p) => p.id === processor)!;
   const ProcIcon = meta.Icon;
+  const procLogoSrc = 'logoSrc' in meta ? (meta as typeof meta & { logoSrc?: string }).logoSrc : undefined;
   const supportsMultipleBanks = processor === 'jeeves' || processor === 'wires';
 
   const update = <K extends keyof PayoutFields>(key: K, val: PayoutFields[K]) =>
@@ -194,8 +206,19 @@ export function PayoutDetailsFields({
       )}
     >
       <div className="mb-4 flex items-start gap-3 border-b border-zinc-100 pb-3 dark:border-zinc-800">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 dark:bg-emerald-950/40">
-          <ProcIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+        <div className={cn(
+          'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg overflow-hidden',
+          procLogoSrc ? 'bg-white' : 'bg-emerald-500/10 dark:bg-emerald-950/40',
+        )}>
+          {procLogoSrc ? (
+            <img
+              src={procLogoSrc}
+              alt={meta.label}
+              className="h-full w-full object-contain mix-blend-multiply dark:mix-blend-normal"
+            />
+          ) : (
+            <ProcIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-zinc-900 dark:text-white">{meta.label} details</div>
