@@ -5,6 +5,7 @@ import { motion } from 'motion/react';
 import {
   AlertTriangle,
   ArrowLeft,
+  Banknote,
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
@@ -15,11 +16,16 @@ import {
   Download,
   FileSpreadsheet,
   Gauge,
+  Gift,
+  Heart,
   Loader2,
+  Search,
   Send,
   Sparkles,
   Users,
+  X,
 } from 'lucide-react';
+import type { OrphanageDispatchRow } from '@/lib/supabase/orphanage-dispatches';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { formatPHP, formatUSD, PROCESSORS, type ProcessorId } from './mock-queue';
@@ -157,6 +163,9 @@ export default function DispatchReports() {
   const [selectedLoading, setSelectedLoading] = useState(false);
   const [selectedError, setSelectedError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [search, setSearch] = useState('');
+  const [orphanageRows, setOrphanageRows] = useState<OrphanageDispatchRow[]>([]);
+  const [orphanageLoading, setOrphanageLoading] = useState(true);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -187,6 +196,34 @@ export default function DispatchReports() {
     })();
     return () => controller.abort();
   }, []);
+
+  // Fetch paid orphanage dispatches for the reports panel
+  useEffect(() => {
+    (async () => {
+      setOrphanageLoading(true);
+      try {
+        const res = await fetch('/api/orphanage-dispatches?paid=1', { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: OrphanageDispatchRow[]; error?: string };
+        if (!json.error) setOrphanageRows(json.rows ?? []);
+      } catch {
+        // non-fatal — orphanage section silently omitted
+      } finally {
+        setOrphanageLoading(false);
+      }
+    })();
+  }, []);
+
+  const filteredSummaries = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return summaries;
+    return summaries.filter(
+      (s) =>
+        s.reportName.toLowerCase().includes(q) ||
+        (s.sourceFile ?? '').toLowerCase().includes(q) ||
+        (s.periodStart ?? '').includes(q) ||
+        (s.periodEnd ?? '').includes(q),
+    );
+  }, [summaries, search]);
 
   const openReport = async (cycleId: string) => {
     setSelectedLoading(true);
@@ -228,15 +265,15 @@ export default function DispatchReports() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
+      {/* Header */}
+      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-4 dark:border-zinc-800 dark:bg-zinc-950">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
-              Weekly disbursement reports
+              Disbursement reports
             </h1>
             <p className="mt-1 text-xs text-[#71717a] dark:text-zinc-500">
-              One report per Hubstaff upload. Tracks who got paid, what&apos;s pending, and
-              how much went out for the cycle.
+              Weekly payroll cycles and orphanage payments.
             </p>
           </div>
           <div className="hidden items-center gap-1.5 rounded-full border border-orange-200/80 bg-white/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300 sm:inline-flex">
@@ -244,9 +281,40 @@ export default function DispatchReports() {
             {summaries.length} {summaries.length === 1 ? 'report' : 'reports'}
           </div>
         </div>
+        {/* Search bar */}
+        {summaries.length > 0 && (
+          <div className="relative mt-3">
+            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
+              <Search className="h-3.5 w-3.5 text-zinc-400" />
+            </span>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+              placeholder="Search by period, file name…"
+              className="w-full rounded-lg border border-zinc-200 bg-zinc-50 py-1.5 pl-8 pr-8 text-xs placeholder:text-zinc-400 focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-300/60 dark:border-zinc-700 dark:bg-zinc-900 dark:placeholder:text-zinc-600 dark:focus:border-orange-700/60"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute inset-y-0 right-2 flex items-center text-zinc-400 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-3 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        {/* Orphanage payments panel */}
+        {(orphanageRows.length > 0 || orphanageLoading) && (
+          <OrphanageReportsPanel rows={orphanageRows} loading={orphanageLoading} />
+        )}
+
+        {/* Payroll reports */}
         {loading ? (
           <ReportListSkeleton />
         ) : error ? (
@@ -259,23 +327,25 @@ export default function DispatchReports() {
             </h2>
             <p className="max-w-md text-xs text-zinc-500 dark:text-zinc-400">{error}</p>
           </div>
-        ) : summaries.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-center">
+        ) : filteredSummaries.length === 0 ? (
+          <div className={cn('flex items-center justify-center text-center', orphanageRows.length > 0 ? 'mt-6' : 'h-full')}>
             <div>
               <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
-                <FileSpreadsheet className="h-5 w-5" />
+                {search ? <Search className="h-5 w-5" /> : <FileSpreadsheet className="h-5 w-5" />}
               </div>
               <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                No disbursement reports yet
+                {search ? `No reports match "${search}"` : 'No disbursement reports yet'}
               </h2>
               <p className="mt-1 text-xs text-[#71717a] dark:text-zinc-500">
-                Upload a Hubstaff cycle in the Payroll Wizard to start a new report.
+                {search
+                  ? 'Try a different search term.'
+                  : 'Upload a Hubstaff cycle in the Payroll Wizard to start a new report.'}
               </p>
             </div>
           </div>
         ) : (
           <PaginatedReportGrid
-            summaries={summaries}
+            summaries={filteredSummaries}
             page={page}
             onPageChange={setPage}
             onOpen={openReport}
@@ -1108,5 +1178,159 @@ function DetailStat({
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Orphanage Reports Panel ─────────────────────────────────────────────────
+
+function formatOrphanagePHP(v: number | null | undefined) {
+  if (v == null) return '—';
+  return `₱${v.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatDateShort(iso: string | null | undefined) {
+  if (!iso) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+  });
+}
+
+function OrphanageReportsPanel({
+  rows,
+  loading,
+}: {
+  rows: OrphanageDispatchRow[];
+  loading: boolean;
+}) {
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (r) =>
+        r.label.toLowerCase().includes(q) ||
+        r.submitter_email.toLowerCase().includes(q) ||
+        (r.bank_name ?? '').toLowerCase().includes(q) ||
+        (r.transaction_id ?? '').toLowerCase().includes(q),
+    );
+  }, [rows, search]);
+
+  const totalPHP = useMemo(() => rows.reduce((s, r) => s + (r.amount_php ?? 0), 0), [rows]);
+
+  return (
+    <section className="mb-6 rounded-2xl border border-teal-200/70 bg-gradient-to-br from-teal-50/60 to-white p-3 sm:p-4 dark:border-teal-500/20 dark:from-teal-500/5 dark:to-zinc-950">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-teal-800 dark:text-teal-300">
+          <Heart className="h-3.5 w-3.5" fill="currentColor" />
+          Orphanage Payments
+        </h2>
+        <div className="flex items-center gap-2">
+          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-teal-500" />}
+          <span className="font-mono text-[10px] tabular-nums text-teal-800/80 dark:text-teal-300/80">
+            {rows.length} record{rows.length === 1 ? '' : 's'} · {formatOrphanagePHP(totalPHP)}
+          </span>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="relative mt-2.5">
+        <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center">
+          <Search className="h-3.5 w-3.5 text-teal-600/60 dark:text-teal-400/50" />
+        </span>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by label, email, bank, or txn ID…"
+          className="w-full rounded-lg border border-teal-200/80 bg-white/90 py-1.5 pl-7 pr-7 text-[12px] placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-teal-400/60 dark:border-teal-500/20 dark:bg-zinc-950/60 dark:placeholder:text-zinc-600"
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
+            className="absolute inset-y-0 right-2 flex items-center text-zinc-400 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
+      {/* Table */}
+      {filtered.length === 0 ? (
+        <p className="mt-3 text-center text-[11px] text-zinc-500 dark:text-zinc-500">
+          {search ? `No results for "${search}"` : 'No paid orphanage dispatches yet.'}
+        </p>
+      ) : (
+        <div className="mt-3 overflow-x-auto rounded-xl border border-teal-100/80 bg-white/80 dark:border-teal-900/30 dark:bg-zinc-950/60">
+          <table className="w-full min-w-[640px] text-xs">
+            <thead className="bg-teal-50/80 text-[10px] uppercase tracking-wide text-teal-800 dark:bg-teal-950/40 dark:text-teal-400">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">Type</th>
+                <th className="px-3 py-2 text-left font-medium">Description</th>
+                <th className="px-3 py-2 text-left font-medium">Destination bank</th>
+                <th className="px-3 py-2 text-right font-medium">Amount (PHP)</th>
+                <th className="px-3 py-2 text-left font-medium">Status</th>
+                <th className="px-3 py-2 text-left font-medium">Txn ID</th>
+                <th className="px-3 py-2 text-left font-medium">Sent</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-teal-100/60 dark:divide-teal-900/20">
+              {filtered.map((r) => (
+                <tr key={r.id} className="hover:bg-teal-50/40 dark:hover:bg-teal-950/20">
+                  <td className="px-3 py-2">
+                    <span className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                      r.dispatch_type === 'budget_request'
+                        ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
+                        : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300',
+                    )}>
+                      {r.dispatch_type === 'budget_request'
+                        ? <><Banknote className="h-2.5 w-2.5" /> Budget</>
+                        : <><Gift className="h-2.5 w-2.5" /> Gift</>}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.label}</div>
+                    <div className="font-mono text-[10px] text-zinc-500 dark:text-zinc-500">{r.submitter_email}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.bank_name || '—'}</div>
+                    {r.bank_account_number && (
+                      <div className="font-mono text-[10px] text-zinc-500 dark:text-zinc-500">
+                        {r.bank_account_name} · {r.bank_account_number}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono font-semibold tabular-nums text-teal-800 dark:text-teal-300">
+                    {formatOrphanagePHP(r.amount_php)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={cn(
+                      'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                      r.status === 'paid'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
+                        : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
+                    )}>
+                      {r.status === 'paid' ? <CheckCircle2 className="h-2.5 w-2.5" /> : null}
+                      {r.status}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
+                    {r.transaction_id || '—'}
+                  </td>
+                  <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">
+                    {r.sent_date ? formatDateShort(r.sent_date) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

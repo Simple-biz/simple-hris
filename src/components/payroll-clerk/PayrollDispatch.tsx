@@ -12,6 +12,7 @@ import {
   Coins,
   FileSpreadsheet,
   Globe2,
+  Heart,
   History,
   Loader2,
   Lock,
@@ -31,6 +32,7 @@ import ProcessorQueue from './ProcessorQueue';
 import ExcludedQueue from './ExcludedQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
 import DispatchReports from './DispatchReports';
+import OrphanageQueue from './OrphanageQueue';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import {
   Dialog,
@@ -47,7 +49,7 @@ import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-type TabId = 'all' | 'history' | 'reports' | 'excluded' | ProcessorId;
+type TabId = 'all' | 'history' | 'reports' | 'excluded' | 'orphanage' | ProcessorId;
 
 interface ProcessorVisual {
   Icon: React.ComponentType<{ className?: string }>;
@@ -123,6 +125,13 @@ const EXCLUDED_VISUAL: ProcessorVisual = {
   accent: 'from-zinc-500 to-zinc-700',
   glow: 'from-zinc-100/80 via-zinc-50/60 to-white dark:from-zinc-800/60 dark:via-zinc-900/40 dark:to-zinc-900',
   blurb: 'No bank · pay · hours',
+};
+
+const ORPHANAGE_VISUAL: ProcessorVisual = {
+  Icon: Heart,
+  accent: 'from-teal-500 to-emerald-600',
+  glow: 'from-teal-100/80 via-emerald-50/60 to-white dark:from-teal-950/40 dark:via-emerald-950/30 dark:to-zinc-900',
+  blurb: 'Budgets & gifts',
 };
 
 const containerStagger = {
@@ -271,6 +280,7 @@ export default function PayrollDispatch() {
     // Show the skeleton while the network is still in flight OR while we
     // haven't mirrored the first server snapshot into local state yet.
     if (activeTab === 'reports') return <DispatchReports />;
+    if (activeTab === 'orphanage') return <OrphanageQueue />;
     if (error) return <ErrorState message={error} />;
     if (loading || !hydrated) return <QueueSkeleton />;
     if (!cycleReady) return <NoCycleState />;
@@ -500,6 +510,18 @@ export default function PayrollDispatch() {
             </motion.div>
             <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
               <ProcessorCard
+                label="Orphanage"
+                subtitle={ORPHANAGE_VISUAL.blurb}
+                Icon={ORPHANAGE_VISUAL.Icon}
+                accent={ORPHANAGE_VISUAL.accent}
+                glow={ORPHANAGE_VISUAL.glow}
+                active={activeTab === 'orphanage'}
+                onClick={() => setActiveTab('orphanage')}
+                iconOnlyFallback
+              />
+            </motion.div>
+            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+              <ProcessorCard
                 label="Excluded"
                 subtitle={EXCLUDED_VISUAL.blurb}
                 count={excluded.length}
@@ -519,7 +541,7 @@ export default function PayrollDispatch() {
           <AnimatePresence mode="wait">
             <motion.div
               key={
-                activeTab === 'reports' || activeTab === 'excluded'
+                activeTab === 'reports' || activeTab === 'excluded' || activeTab === 'orphanage'
                   ? activeTab
                   : activeTab +
                     (loading || !hydrated

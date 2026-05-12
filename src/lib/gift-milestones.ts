@@ -17,7 +17,7 @@ export function parseStartDate(raw: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function addMonths(d: Date, months: number): Date {
+export function addMonths(d: Date, months: number): Date {
   const out = new Date(d.getTime());
   const targetMonth = out.getMonth() + months;
   out.setMonth(targetMonth);

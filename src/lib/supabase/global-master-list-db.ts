@@ -259,7 +259,7 @@ async function fetchAllMasterRowsForReconcile(
       .not('"Department"', "is", null)
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`Could not read ${table} for reconciliation: ${error.message}`);
-    const batch = (data ?? []) as MasterReconcileRow[];
+    const batch = (data ?? []) as unknown as MasterReconcileRow[];
     out.push(...batch);
     if (batch.length < pageSize) break;
   }

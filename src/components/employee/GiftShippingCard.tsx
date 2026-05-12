@@ -17,6 +17,8 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import {
+  addMonths,
+  buildMilestones,
   diffDays,
   fmtDateIso,
   getCurrentShippingMilestone,
@@ -100,6 +102,29 @@ function statusBadge(status: EmployeeGiftShippingStatus) {
   }
 }
 
+function tenureLabel(months: number): string {
+  if (months % 12 === 0) {
+    const yrs = months / 12;
+    return yrs === 1 ? '1 Year' : `${yrs} Years`;
+  }
+  return `${months} Months`;
+}
+
+type MsStatus = 'approved' | 'pending' | 'rejected' | 'unsubmitted' | 'missed' | 'upcoming';
+
+function getMsStatus(
+  ms: GiftMilestone,
+  rows: EmployeeGiftShippingRow[],
+  currentMs: GiftMilestone | null,
+  today: Date,
+): MsStatus {
+  const row = rows.find((r) => r.milestone_index === ms.index);
+  if (row) return row.status as MsStatus;
+  if (currentMs?.index === ms.index) return 'unsubmitted';
+  if (diffDays(ms.date, today) <= 0) return 'missed';
+  return 'upcoming';
+}
+
 export default function GiftShippingCard({
   personalEmail,
   startDate,
@@ -136,6 +161,8 @@ export default function GiftShippingCard({
   const [saving, setSaving] = useState(false);
   /** Switches the dialog to the celebration screen for ~2.4s after a successful save. */
   const [celebrating, setCelebrating] = useState(false);
+  const [allRows, setAllRows] = useState<EmployeeGiftShippingRow[]>([]);
+  const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
 
   const loadRow = useCallback(async () => {
     if (!milestone || !personalEmail) return;
@@ -147,8 +174,9 @@ export default function GiftShippingCard({
       );
       const json = (await res.json()) as { rows?: EmployeeGiftShippingRow[]; error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load');
-      const match =
-        (json.rows ?? []).find((r) => r.milestone_index === milestone.index) ?? null;
+      const rows = json.rows ?? [];
+      setAllRows(rows);
+      const match = rows.find((r) => r.milestone_index === milestone.index) ?? null;
       setRow(match);
       if (match) {
         setLocation(match.preferred_delivery_location);
@@ -213,6 +241,30 @@ export default function GiftShippingCard({
   const isOverdue = daysUntil < 0;
   const isLocked = row?.status === 'approved';
   const monthsLabel = milestone ? milestone.index * 6 : 0;
+
+  const milestoneMap = useMemo((): GiftMilestone[] => {
+    if (!startDate) return [];
+    const { history, next } = buildMilestones(startDate, today);
+    const result: GiftMilestone[] = [...history];
+    if (next) {
+      result.push(next);
+      for (let extra = 1; extra <= 2; extra++) {
+        const idx = next.index + extra;
+        result.push({ index: idx, date: addMonths(startDate, idx * 6) });
+      }
+    } else if (history.length > 0) {
+      const lastIdx = history[history.length - 1].index;
+      for (let extra = 1; extra <= 3; extra++) {
+        const idx = lastIdx + extra;
+        result.push({ index: idx, date: addMonths(startDate, idx * 6) });
+      }
+    }
+    return result;
+  }, [startDate, today]);
+
+  useEffect(() => {
+    if (!open) setActiveTab('form');
+  }, [open]);
 
   const onSave = async () => {
     if (!milestone) return;
@@ -686,7 +738,28 @@ export default function GiftShippingCard({
             </div>
           </div>
 
-          {/* Body */}
+          {/* Tab switcher */}
+          <div className="flex gap-1 border-b border-pink-100/80 bg-white/60 px-5 py-2 dark:border-pink-900/30 dark:bg-zinc-950/50">
+            {(['form', 'history'] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveTab(tab)}
+                className={cn(
+                  'rounded-full px-3.5 py-1 text-xs font-semibold transition-colors',
+                  activeTab === tab
+                    ? 'bg-pink-600 text-white shadow-sm'
+                    : 'text-zinc-500 hover:bg-pink-50 hover:text-pink-700 dark:text-zinc-400 dark:hover:bg-pink-950/40 dark:hover:text-pink-300',
+                )}
+              >
+                {tab === 'form' ? 'Shipping Form' : 'Gift History'}
+              </button>
+            ))}
+          </div>
+
+          {/* Form tab */}
+          {activeTab === 'form' && (
+          <>
           <div className="flex flex-col gap-5 px-6 py-5">
             {/* Section: Your details (prefilled) */}
             <section>
@@ -789,7 +862,6 @@ export default function GiftShippingCard({
             )}
           </div>
 
-          {/* Footer */}
           <div className="flex items-center justify-end gap-2 border-t border-pink-100/80 bg-pink-50/50 px-6 py-3.5 dark:border-pink-900/30 dark:bg-pink-950/20">
             <Button
               variant="outline"
@@ -817,6 +889,158 @@ export default function GiftShippingCard({
               </Button>
             )}
           </div>
+          </>
+          )}
+
+          {/* History tab — milestone map */}
+          {activeTab === 'history' && (
+          <>
+          <div className="overflow-y-auto px-6 py-5" style={{ maxHeight: '440px' }}>
+            <p className="mb-5 text-[11px] text-zinc-500 dark:text-zinc-400">
+              One gift every 6 months from your start date. Approved gifts show the item selected by the Orphanage team.
+            </p>
+            <div className="relative">
+              {milestoneMap.map((ms, idx) => {
+                const msRow = allRows.find((r) => r.milestone_index === ms.index) ?? null;
+                const msStatus = getMsStatus(ms, allRows, milestone, today);
+                const isLast = idx === milestoneMap.length - 1;
+                const isCurrent = milestone?.index === ms.index;
+                const months = ms.index * 6;
+                return (
+                  <div key={ms.index} className="relative flex gap-4">
+                    {/* Connector line */}
+                    {!isLast && (
+                      <span
+                        aria-hidden
+                        className={cn(
+                          'absolute left-[15px] top-8 bottom-0 w-0.5',
+                          msStatus === 'approved'
+                            ? 'bg-emerald-200 dark:bg-emerald-900/50'
+                            : 'bg-zinc-200 dark:bg-zinc-800',
+                        )}
+                      />
+                    )}
+                    {/* Node */}
+                    <div
+                      className={cn(
+                        'relative z-10 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 text-[11px] font-bold',
+                        msStatus === 'approved' && 'border-emerald-500 bg-emerald-500 text-white',
+                        msStatus === 'pending' && 'border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/40',
+                        msStatus === 'rejected' && 'border-rose-500 bg-rose-50 text-rose-700 dark:bg-rose-950/40',
+                        msStatus === 'unsubmitted' && 'border-pink-500 bg-pink-50 text-pink-700 dark:bg-pink-950/40',
+                        msStatus === 'missed' && 'border-zinc-300 bg-zinc-100 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900',
+                        msStatus === 'upcoming' && 'border-zinc-200 bg-white text-zinc-300 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-600',
+                      )}
+                    >
+                      {msStatus === 'approved' ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : msStatus === 'unsubmitted' || msStatus === 'missed' ? (
+                        <Gift className="h-3.5 w-3.5" />
+                      ) : msStatus === 'upcoming' ? (
+                        <Lock className="h-3 w-3" />
+                      ) : (
+                        <span>{ms.index}</span>
+                      )}
+                    </div>
+                    {/* Content */}
+                    <div className={cn('min-w-0 flex-1', !isLast ? 'pb-6' : 'pb-2')}>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={cn(
+                            'text-[13px] font-semibold leading-tight',
+                            msStatus === 'approved' && 'text-emerald-700 dark:text-emerald-400',
+                            msStatus === 'pending' && 'text-amber-700 dark:text-amber-400',
+                            msStatus === 'rejected' && 'text-rose-700 dark:text-rose-400',
+                            msStatus === 'unsubmitted' && 'text-pink-700 dark:text-pink-300',
+                            (msStatus === 'missed' || msStatus === 'upcoming') && 'text-zinc-400 dark:text-zinc-500',
+                          )}
+                        >
+                          {tenureLabel(months)}
+                        </span>
+                        {isCurrent && (
+                          <span className="rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-pink-700 dark:bg-pink-900/40 dark:text-pink-300">
+                            Current
+                          </span>
+                        )}
+                        {msStatus === 'approved' && (
+                          <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+                            Received
+                          </span>
+                        )}
+                        {msStatus === 'pending' && (
+                          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                            Pending review
+                          </span>
+                        )}
+                        {msStatus === 'rejected' && (
+                          <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-rose-700 dark:bg-rose-900/30 dark:text-rose-400">
+                            Needs revision
+                          </span>
+                        )}
+                        {msStatus === 'upcoming' && (
+                          <span className="text-[10px] text-zinc-400 dark:text-zinc-600">Upcoming</span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-600">
+                        {ms.date.toLocaleDateString(undefined, {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                        })}
+                        {msStatus === 'approved' && msRow?.decided_at && (
+                          <span className="ml-2 text-emerald-600 dark:text-emerald-500">
+                            · Approved{' '}
+                            {new Date(msRow.decided_at).toLocaleDateString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            })}
+                          </span>
+                        )}
+                      </div>
+                      {msStatus === 'approved' && msRow?.gift_name && (
+                        <div className="mt-1.5 flex items-center gap-1.5 rounded-md border border-emerald-100 bg-emerald-50/80 px-2.5 py-1.5 text-[11px] font-medium text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
+                          <Gift className="h-3 w-3 shrink-0" />
+                          <span>{msRow.gift_name}</span>
+                          {msRow.gift_price_php != null && (
+                            <span className="ml-auto font-normal text-emerald-600 dark:text-emerald-500">
+                              ₱{msRow.gift_price_php.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {msStatus === 'rejected' && msRow?.decision_note && (
+                        <div className="mt-1 text-[11px] italic text-rose-600 dark:text-rose-400">
+                          Feedback: {msRow.decision_note}
+                        </div>
+                      )}
+                      {msStatus === 'missed' && (
+                        <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-600">
+                          No shipping details submitted
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="flex items-center justify-between border-t border-pink-100/80 bg-pink-50/50 px-6 py-3 dark:border-pink-900/30 dark:bg-pink-950/20">
+            <p className="text-[11px] text-zinc-400 dark:text-zinc-600">
+              {allRows.filter((r) => r.status === 'approved').length} of{' '}
+              {milestoneMap.filter((m) => diffDays(m.date, today) <= 0).length} milestone
+              {milestoneMap.filter((m) => diffDays(m.date, today) <= 0).length === 1 ? '' : 's'} received
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => setOpen(false)}
+              className="border-pink-200 bg-white text-zinc-700 hover:bg-pink-50 dark:border-pink-900/40 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-pink-950/40"
+            >
+              Close
+            </Button>
+          </div>
+          </>
+          )}
           </>}
         </DialogContent>
       </Dialog>
