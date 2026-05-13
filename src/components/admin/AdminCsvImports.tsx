@@ -118,6 +118,7 @@ interface MasterSheetSyncResponse {
   totalRows?: number;
   dataRows?: number;
   rowCount?: number;
+  activeCount?: number | null;
   inserted?: number;
   updated?: number;
   reonboarded?: number;
@@ -251,7 +252,7 @@ export default function AdminCsvImports() {
   // ── Which upload card is currently "selected" — drives the batches list
   // shown at the bottom of the Upload tab. Click any card to switch.
   const [selectedSource, setSelectedSource] = useState<UploadKey>('hubstaff');
-  const [masterSyncClearOffboarded, setMasterSyncClearOffboarded] = useState(false);
+  const [masterSyncClearOffboarded, setMasterSyncClearOffboarded] = useState(true);
 
   // ── Hubstaff uploads list (for "Uploaded batches" + Files tab)
   const [uploads, setUploads] = useState<HubstaffUploadMeta[]>([]);
@@ -507,16 +508,14 @@ export default function AdminCsvImports() {
       });
       const json = (await res.json()) as MasterSheetSyncResponse;
       if (!res.ok || !json.success) {
-        stopProgress();
         const message = json.error ?? res.statusText ?? 'Google Sheet sync failed';
         setResult('master', { kind: 'error', fileName: synthFileName, message });
         toast.error('Master list sync failed', { description: message });
         return;
       }
-      stopProgress();
       const tab = json.tabName ?? 'sheet';
       const fileName = `Google Sheet · ${tab}`;
-      const total = json.rowCount ?? 0;
+      const activeCount = json.activeCount ?? json.rowCount ?? 0;
       const sublines = [
         `${(json.inserted ?? 0).toLocaleString()} new · ${(json.updated ?? 0).toLocaleString()} updated`,
       ];
@@ -539,19 +538,21 @@ export default function AdminCsvImports() {
       if (json.dataRows != null) {
         sublines.push(`${json.dataRows.toLocaleString()} data rows pulled from sheet`);
       }
+      stopProgress();
       setResult('master', {
         kind: 'success',
         fileName,
-        summary: `${total.toLocaleString()} rows imported`,
+        summary: `${activeCount.toLocaleString()} active employees`,
         sublines,
       });
-      toast.success('Synced from Google Sheet', { description: `${total.toLocaleString()} rows` });
+      toast.success('Synced from Google Sheet', { description: `${activeCount.toLocaleString()} active employees` });
       await loadMasterUploads();
     } catch (err) {
-      stopProgress();
       const message = err instanceof Error ? err.message : String(err);
       setResult('master', { kind: 'error', fileName: synthFileName, message });
       toast.error('Master list sync failed', { description: message });
+    } finally {
+      stopProgress();
     }
   }, [setResult, loadMasterUploads, masterSyncClearOffboarded, startProgress]);
 
@@ -610,17 +611,17 @@ export default function AdminCsvImports() {
   const handleRatesSheetSync = useCallback(async () => {
     const synthFileName = 'Google Sheet · payroll rates';
     const stopProgress = startProgress('rates', synthFileName);
+    let succeeded = false;
     try {
       const res = await fetch('/api/cron/sync-rates-from-sheet', { method: 'POST' });
       const json = (await res.json()) as RatesSheetSyncResponse;
       if (!res.ok || !json.success) {
-        stopProgress();
         const message = json.error ?? res.statusText ?? 'Google Sheet sync failed';
         setResult('rates', { kind: 'error', fileName: synthFileName, message });
         toast.error('Google Sheet sync failed', { description: message });
         return;
       }
-      stopProgress();
+      succeeded = true;
       const tab = json.tabName ?? 'sheet';
       const fileName = `Google Sheet · ${tab}`;
       const sublines = [
@@ -638,6 +639,7 @@ export default function AdminCsvImports() {
       if (json.dataRows != null) {
         sublines.push(`${json.dataRows.toLocaleString()} data rows pulled from sheet`);
       }
+      stopProgress();
       setResult('rates', {
         kind: 'success',
         fileName,
@@ -647,10 +649,11 @@ export default function AdminCsvImports() {
       toast.success('Synced from Google Sheet', { description: sublines[0] });
       await loadRatesUploads();
     } catch (err) {
-      stopProgress();
       const message = err instanceof Error ? err.message : String(err);
       setResult('rates', { kind: 'error', fileName: synthFileName, message });
       toast.error('Google Sheet sync failed', { description: message });
+    } finally {
+      stopProgress();
     }
   }, [setResult, loadRatesUploads, startProgress]);
 
@@ -680,13 +683,11 @@ export default function AdminCsvImports() {
         error?: string;
       };
       if (!res.ok || !json.success) {
-        stopProgress();
         const message = json.error ?? res.statusText ?? 'HSL sync failed';
         setResult('hsl', { kind: 'error', fileName: synthFileName, message });
         toast.error('HSL sync failed', { description: message });
         return;
       }
-      stopProgress();
       const tab = json.tabName ?? 'sheet';
       const fileName = `Google Sheet · ${tab}`;
       const total = json.rowCount ?? 0;
@@ -704,6 +705,7 @@ export default function AdminCsvImports() {
       if (json.dataRows != null) {
         sublines.push(`${json.dataRows.toLocaleString()} rows pulled from sheet`);
       }
+      stopProgress();
       setResult('hsl', {
         kind: 'success',
         fileName,
@@ -713,10 +715,11 @@ export default function AdminCsvImports() {
       toast.success('HSL agents synced', { description: `${total.toLocaleString()} rows` });
       await loadHslUploads();
     } catch (err) {
-      stopProgress();
       const message = err instanceof Error ? err.message : String(err);
       setResult('hsl', { kind: 'error', fileName: synthFileName, message });
       toast.error('HSL sync failed', { description: message });
+    } finally {
+      stopProgress();
     }
   }, [setResult, loadHslUploads, startProgress]);
 

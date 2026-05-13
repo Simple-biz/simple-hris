@@ -62,7 +62,7 @@ import {
 } from '@/lib/supabase/pab-day-disputes';
 import HiddenValue from './HiddenValue';
 import GiftShippingCard, { type GiftShippingState } from './GiftShippingCard';
-import { Eye, EyeOff, Gift } from 'lucide-react';
+import { Eye, EyeOff, Gift, Hourglass } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /* ------------------------------------------------------------------ */
@@ -2242,13 +2242,18 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                             const nowMid = new Date();
                             const todayMid = new Date(nowMid.getFullYear(), nowMid.getMonth(), nowMid.getDate());
                             const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
+                            const isToday = cellMid.getTime() === todayMid.getTime();
                             const isFutureOrToday = cellMid.getTime() >= todayMid.getTime();
-                            const canDispute = day.hasData && !day.passes && !dispute && !isFutureOrToday;
+                            const isCurrentWeek = week.some((d) => {
+                              const dm = new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate());
+                              return dm.getTime() === todayMid.getTime();
+                            });
+                            const noMeaningfulData = !day.hasData || day.seconds === 0;
+                            const stillInProgress = isCurrentWeek && noMeaningfulData && !isFutureOrToday;
+
+                            const canDispute = day.hasData && !day.passes && !dispute && !isFutureOrToday && !isCurrentWeek;
                             const cellClickable = canDispute || !!dispute;
 
-                            // Effective pass: either the day hit 7h on its own, OR an approved
-                            // dispute brought it into the 4–7h "forgivable" zone. An approved
-                            // dispute below 4h does NOT pass — the day still counts as a PAB fail.
                             const forgiven =
                               !!dispute &&
                               disputeGrantsPabForgiveness(dispute) &&
@@ -2256,17 +2261,27 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                               (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
                             const effectivelyPasses = day.passes || forgiven;
 
-                            // Future / today with no data → neutral; pending dispute → amber;
-                            // otherwise colour strictly by whether PAB is effectively passing.
                             let cellBorder: string;
                             if (dispute != null && disputeIsAwaitingResolution(dispute)) {
                               cellBorder =
                                 'border-amber-400 bg-amber-50 ring-1 ring-amber-400/35 dark:border-amber-600/60 dark:bg-amber-950/35';
                             } else if (effectivelyPasses) {
-                              cellBorder = forgiven
-                                ? 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400/40 dark:border-emerald-600/60 dark:bg-emerald-950/30'
-                                : 'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30';
-                            } else if (isFutureOrToday && !day.hasData) {
+                              if (isCurrentWeek) {
+                                cellBorder = forgiven
+                                  ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-400/40 dark:border-blue-600/60 dark:bg-blue-950/30'
+                                  : 'border-blue-300 bg-blue-50 dark:border-blue-800/60 dark:bg-blue-950/30';
+                              } else {
+                                cellBorder = forgiven
+                                  ? 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400/40 dark:border-emerald-600/60 dark:bg-emerald-950/30'
+                                  : 'border-emerald-300 bg-emerald-50 dark:border-emerald-800/60 dark:bg-emerald-950/30';
+                              }
+                            } else if (isToday) {
+                              cellBorder =
+                                'border-orange-300 bg-white dark:border-orange-700/60 dark:bg-zinc-900/40';
+                            } else if (stillInProgress) {
+                              cellBorder =
+                                'border-orange-800/60 bg-orange-950/30 dark:border-orange-800/50 dark:bg-orange-950/20';
+                            } else if (isFutureOrToday || !day.hasData) {
                               cellBorder =
                                 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
                             } else {
@@ -2278,7 +2293,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                               <div
                                 key={di}
                                 className={`relative flex h-10 flex-col overflow-hidden rounded-md border transition-all duration-300 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
+                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
                                 style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
                                 onClick={cellClickable ? () => {
                                   onNavigateToDisputes?.({ date: dayIso, seconds: day.seconds });
@@ -2287,27 +2302,46 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                                 <span className="pointer-events-none absolute left-1 top-0.5 max-w-[calc(100%-1.25rem)] truncate text-[5px] font-medium leading-none tabular-nums text-zinc-400 dark:text-zinc-500">
                                   {day.dateStr}
                                 </span>
-                                <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-2.5">
-                                  <span
-                                    className={`text-center text-[12px] font-bold tabular-nums leading-none tracking-tight ${
-                                      dispute != null && disputeIsAwaitingResolution(dispute)
-                                        ? 'text-amber-700 dark:text-amber-400'
-                                        : effectivelyPasses
-                                          ? 'text-emerald-700 dark:text-emerald-400'
-                                          : isFutureOrToday && !day.hasData
-                                            ? 'text-zinc-400 dark:text-zinc-500'
-                                            : 'text-red-600 dark:text-red-400'
-                                    }`}
-                                  >
-                                    {day.hasData ? `${hours.toFixed(1)}h` : '—'}
+                                {/* Pinging dot for today */}
+                                {isToday && (
+                                  <span className="absolute right-1 top-1 flex h-1.5 w-1.5">
+                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
+                                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-orange-500" />
                                   </span>
+                                )}
+                                <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-2.5">
+                                  {isToday ? (
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      <Hourglass
+                                        className="h-3 w-3 text-orange-400 dark:text-orange-300"
+                                        style={{ animation: 'hourglass-flip 2s ease-in-out infinite' }}
+                                      />
+                                      <span className="text-[7px] font-semibold uppercase tracking-wider text-orange-400 dark:text-orange-300">
+                                        In Progress
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span
+                                      className={`text-center text-[12px] font-bold tabular-nums leading-none tracking-tight ${
+                                        dispute != null && disputeIsAwaitingResolution(dispute)
+                                          ? 'text-amber-700 dark:text-amber-400'
+                                          : effectivelyPasses
+                                            ? (isCurrentWeek ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-700 dark:text-emerald-400')
+                                            : isToday || isFutureOrToday || stillInProgress || !day.hasData
+                                              ? 'text-zinc-400 dark:text-zinc-500'
+                                              : 'text-red-600 dark:text-red-400'
+                                      }`}
+                                    >
+                                      {day.hasData ? `${hours.toFixed(1)}h` : '—'}
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="pointer-events-none absolute bottom-0.5 right-0.5">
                                   {dispute != null && disputeIsAwaitingResolution(dispute) ? (
                                     <Clock className="h-2.5 w-2.5 text-amber-500" />
                                   ) : effectivelyPasses ? (
-                                    <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500" />
-                                  ) : isFutureOrToday && !day.hasData ? null : day.hasData ? (
+                                    <CheckCircle2 className={`h-2.5 w-2.5 ${isCurrentWeek ? 'text-blue-500' : 'text-emerald-500'}`} />
+                                  ) : isToday || isFutureOrToday || stillInProgress || !day.hasData ? null : day.hasData ? (
                                     <XCircle className="h-2.5 w-2.5 text-red-400" />
                                   ) : null}
                                 </div>

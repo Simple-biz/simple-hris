@@ -34,8 +34,8 @@ interface ContractorSidebarProps {
 
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'invoices', label: 'Invoices', icon: FileText },
   { id: 'profile', label: 'Profile', icon: UserCircle },
+  { id: 'invoices', label: 'Invoices', icon: FileText },
 ];
 
 export default function ContractorSidebar({

@@ -724,7 +724,7 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
           <h2 className="bg-gradient-to-r from-blue-700 via-zinc-900 to-zinc-900 bg-clip-text text-xl font-bold tracking-tight text-transparent dark:from-blue-400 dark:via-white dark:to-white">
             My team
           </h2>
-          {showRateCol && members.length > 0 && (
+          {members.length > 0 && (
             <motion.div whileTap={{ scale: 0.96 }} transition={{ duration: 0.12 }}>
               <Button
                 type="button"
@@ -952,12 +952,8 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
                           {showHslRoleCol && (
                             <TableHead className="min-w-[180px]">Department/Role</TableHead>
                           )}
-                          {showRateCol && (
-                            <>
-                              <TableHead className="min-w-[110px] text-right">Hourly</TableHead>
-                              <TableHead className="min-w-[110px] text-right">OT</TableHead>
-                            </>
-                          )}
+                          <TableHead className="min-w-[110px] text-right">Hourly</TableHead>
+                          <TableHead className="min-w-[110px] text-right">OT</TableHead>
                           <TableHead className="min-w-[200px]">Work email</TableHead>
                           <TableHead className="min-w-[200px]">Personal email</TableHead>
                           <TableHead className="w-[80px] text-right">Actions</TableHead>
@@ -990,24 +986,20 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
                                 </div>
                               </TableCell>
                             )}
-                            {showRateCol && (
-                              <>
-                                <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
-                                  <AnimatedRate
-                                    value={memberHourlyRate(m)}
-                                    hidden={ratesHidden}
-                                    formatPhp={formatPhp}
-                                  />
-                                </TableCell>
-                                <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
-                                  <AnimatedRate
-                                    value={memberOtRate(m)}
-                                    hidden={ratesHidden}
-                                    formatPhp={formatPhp}
-                                  />
-                                </TableCell>
-                              </>
-                            )}
+                            <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
+                              <AnimatedRate
+                                value={memberHourlyRate(m)}
+                                hidden={ratesHidden}
+                                formatPhp={formatPhp}
+                              />
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
+                              <AnimatedRate
+                                value={memberOtRate(m)}
+                                hidden={ratesHidden}
+                                formatPhp={formatPhp}
+                              />
+                            </TableCell>
                             <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
                               {m.work_email ?? '—'}
                             </TableCell>
@@ -1073,34 +1065,32 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
                           </div>
                         </div>
 
-                        {showRateCol && (
-                          <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-zinc-100 bg-gradient-to-br from-zinc-50 to-blue-50/40 px-3 py-2 dark:border-zinc-800 dark:from-zinc-900/60 dark:to-blue-950/20">
-                            <div className="flex flex-col gap-0.5">
-                              <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                                Hourly
-                              </div>
-                              <div className="font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
-                                <AnimatedRate
-                                  value={memberHourlyRate(m)}
-                                  hidden={ratesHidden}
-                                  formatPhp={formatPhp}
-                                />
-                              </div>
+                        <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-zinc-100 bg-gradient-to-br from-zinc-50 to-blue-50/40 px-3 py-2 dark:border-zinc-800 dark:from-zinc-900/60 dark:to-blue-950/20">
+                          <div className="flex flex-col gap-0.5">
+                            <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                              Hourly
                             </div>
-                            <div className="flex flex-col gap-0.5">
-                              <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                                OT
-                              </div>
-                              <div className="font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
-                                <AnimatedRate
-                                  value={memberOtRate(m)}
-                                  hidden={ratesHidden}
-                                  formatPhp={formatPhp}
-                                />
-                              </div>
+                            <div className="font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
+                              <AnimatedRate
+                                value={memberHourlyRate(m)}
+                                hidden={ratesHidden}
+                                formatPhp={formatPhp}
+                              />
                             </div>
                           </div>
-                        )}
+                          <div className="flex flex-col gap-0.5">
+                            <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                              OT
+                            </div>
+                            <div className="font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
+                              <AnimatedRate
+                                value={memberOtRate(m)}
+                                hidden={ratesHidden}
+                                formatPhp={formatPhp}
+                              />
+                            </div>
+                          </div>
+                        </div>
 
                         <dl className="mt-3 grid gap-1 text-[11px]">
                           <div className="flex items-baseline gap-1.5">
@@ -1187,7 +1177,6 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
 
       <ManagerMemberDialog
         member={selectedMember}
-        ratesHidden={ratesHidden}
         onClose={() => setSelectedMember(null)}
       />
     </div>

@@ -14,7 +14,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Loader2, RefreshCw } from 'lucide-react';
+import { CalendarDays, Hourglass, Loader2, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { normEmail } from '@/lib/email/norm-email';
 import {
@@ -487,8 +487,18 @@ export default function EmployeePabCalendar({
                     const nowMid = new Date();
                     const todayMid = new Date(nowMid.getFullYear(), nowMid.getMonth(), nowMid.getDate());
                     const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
+                    const isToday = cellMid.getTime() === todayMid.getTime();
                     const isFutureOrToday = cellMid.getTime() >= todayMid.getTime();
-                    const canDispute = day.hasData && !day.passes && !dispute && !isFutureOrToday;
+                    // Week is "current" if it contains today's date
+                    const isCurrentWeek = week.some((d) => {
+                      const dm = new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate());
+                      return dm.getTime() === todayMid.getTime();
+                    });
+                    // In the current week, days with no meaningful data aren't red yet
+                    const noMeaningfulData = !day.hasData || day.seconds === 0;
+                    const stillInProgress = isCurrentWeek && noMeaningfulData && !isFutureOrToday;
+
+                    const canDispute = day.hasData && !day.passes && !dispute && !isFutureOrToday && !isCurrentWeek;
                     const cellClickable = canDispute || !!dispute;
 
                     const forgiven =
@@ -503,12 +513,16 @@ export default function EmployeePabCalendar({
                       cellBorder =
                         'border-amber-300 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-950/40';
                     } else if (effectivelyPasses) {
+                      cellBorder = isCurrentWeek
+                        ? 'border-blue-300 bg-blue-50 dark:border-blue-700/70 dark:bg-blue-950/40'
+                        : 'border-emerald-300 bg-emerald-50 dark:border-emerald-700/70 dark:bg-emerald-950/40';
+                    } else if (isToday) {
                       cellBorder =
-                        'border-emerald-300 bg-emerald-50 dark:border-emerald-700/70 dark:bg-emerald-950/40';
-                    } else if (isFutureOrToday && !day.hasData) {
+                        'border-orange-300 bg-white dark:border-orange-700/60 dark:bg-zinc-900/40';
+                    } else if (stillInProgress) {
                       cellBorder =
-                        'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
-                    } else if (!day.hasData) {
+                        'border-orange-800/60 bg-orange-950/30 dark:border-orange-800/50 dark:bg-orange-950/20';
+                    } else if (isFutureOrToday || !day.hasData) {
                       cellBorder =
                         'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
                     } else {
@@ -520,7 +534,7 @@ export default function EmployeePabCalendar({
                       <div
                         key={di}
                         className={`relative flex h-14 flex-col overflow-hidden rounded-md border transition-all duration-200 sm:h-16 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                        title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
+                        title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
                         onClick={
                           cellClickable
                             ? () =>
@@ -535,20 +549,41 @@ export default function EmployeePabCalendar({
                         <span className="pointer-events-none absolute left-1 top-0.5 max-w-[calc(100%-0.5rem)] truncate text-[7px] font-medium leading-none tracking-tight text-zinc-400 dark:text-zinc-500">
                           {day.dateStr}
                         </span>
-                        <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-3.5">
-                          <span
-                            className={`text-center text-lg font-bold tabular-nums leading-none tracking-tight sm:text-xl ${
-                              dispute != null && disputeIsAwaitingResolution(dispute)
-                                ? 'text-amber-700 dark:text-amber-400'
-                                : effectivelyPasses
-                                  ? 'text-emerald-700 dark:text-emerald-400'
-                                  : isFutureOrToday && !day.hasData
-                                    ? 'text-zinc-400 dark:text-zinc-500'
-                                    : 'text-red-600 dark:text-red-400'
-                            }`}
-                          >
-                            {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
+                        {/* Today pulse indicator */}
+                        {isToday && (
+                          <span className="absolute right-1 top-1 flex h-1.5 w-1.5">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
+                            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-orange-500" />
                           </span>
+                        )}
+                        <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-3.5">
+                          {isToday ? (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <Hourglass
+                                className="h-3.5 w-3.5 text-orange-400 dark:text-orange-300 sm:h-4 sm:w-4"
+                                style={{ animation: 'hourglass-flip 2s ease-in-out infinite' }}
+                              />
+                              <span className="text-[8px] font-semibold uppercase tracking-wider text-orange-400 dark:text-orange-300">
+                                In Progress
+                              </span>
+                            </div>
+                          ) : (
+                            <span
+                              className={`text-center text-lg font-bold tabular-nums leading-none tracking-tight sm:text-xl ${
+                                dispute != null && disputeIsAwaitingResolution(dispute)
+                                  ? 'text-amber-700 dark:text-amber-400'
+                                  : effectivelyPasses
+                                    ? (isCurrentWeek ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-700 dark:text-emerald-400')
+                                    : isToday || isFutureOrToday || stillInProgress
+                                      ? 'text-zinc-400 dark:text-zinc-500'
+                                      : !day.hasData
+                                        ? 'text-zinc-400 dark:text-zinc-500'
+                                        : 'text-red-600 dark:text-red-400'
+                              }`}
+                            >
+                              {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
+                            </span>
+                          )}
                         </div>
                       </div>
                     );

@@ -103,7 +103,8 @@
       "PowerShell(cmd /c \"dir /A C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\ui\")",
       "PowerShell(cmd /c \"dir /A C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\components\\\\ui\")",
       "PowerShell(cmd /c \"dir /A C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\")",
-      "PowerShell(cmd /c \"dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\contractor && dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\\\\contractor && dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\\\\api\\\\contractor\\\\invoices\")"
+      "PowerShell(cmd /c \"dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\contractor && dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\\\\contractor && dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\\\\api\\\\contractor\\\\invoices\")",
+      "Bash(Get-ChildItem -Path \"src\\\\lib\\\\google-sheets\" -ErrorAction SilentlyContinue)"
     ]
   }
 }

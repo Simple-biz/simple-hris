@@ -67,8 +67,8 @@ interface SavedInvoice {
   id: string;
   contractor_email: string;
   invoice_number: string;
-  invoice_date: string;
-  due_date: string;
+  invoice_date: string | null;
+  due_date: string | null;
   from_entity_name: string;
   from_name: string;
   from_address: string;
@@ -78,6 +78,7 @@ interface SavedInvoice {
   to_address: string;
   to_city_state_zip: string;
   to_country: string;
+  logo_data_url: string | null;
   line_items: LineItem[];
   notes: string;
   subtotal: number;
@@ -205,7 +206,50 @@ function FormTextarea({
   );
 }
 
+// ─── Punched holes strip ──────────────────────────────────────────────────────
+
+function PunchedHoles({ position }: { position: 'top' | 'bottom' }) {
+  return (
+    <div
+      className={cn(
+        'flex items-center justify-between border-zinc-200 bg-zinc-100 px-3 py-1.5 dark:border-zinc-700 dark:bg-zinc-800',
+        position === 'top'
+          ? 'rounded-t-xl border border-b-0'
+          : 'rounded-b-xl border border-t-0',
+      )}
+    >
+      <div className="flex gap-1.5">
+        {Array.from({ length: 10 }).map((_, i) => (
+          <div key={i} className="h-2 w-2 rounded-full bg-white shadow-inner ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-700" />
+        ))}
+      </div>
+      {position === 'top' && (
+        <span className="text-[10px] font-bold uppercase tracking-[0.25em] text-zinc-400 dark:text-zinc-500">
+          Invoice
+        </span>
+      )}
+      <div className="flex gap-1.5">
+        {Array.from({ length: 10 }).map((_, i) => (
+          <div key={i} className="h-2 w-2 rounded-full bg-white shadow-inner ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-700" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Invoice View Dialog ───────────────────────────────────────────────────────
+
+const INV_ACCENT = '#B85450';
+const INV_ACCENT_DARK = '#D4705A';
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 14 },
+  show: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: i * 0.055, duration: 0.38, ease: [0.22, 1, 0.36, 1] },
+  }),
+};
 
 function InvoiceViewDialog({
   invoice,
@@ -221,96 +265,243 @@ function InvoiceViewDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl overflow-y-auto" showCloseButton>
-        <DialogHeader>
+      <DialogContent
+        className="w-[95vw] !max-w-[850px] gap-0 overflow-visible border-0 bg-transparent p-0 shadow-none"
+        showCloseButton={false}
+      >
+        {/* Font import */}
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+          .inv-mono { font-family: 'JetBrains Mono', 'Fira Mono', monospace; }
+        `}</style>
+
+        <DialogHeader className="sr-only">
           <DialogTitle>Invoice {invoice.invoice_number}</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 text-sm">
-          {/* From / To */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">From</p>
-              <p className="font-medium text-zinc-900 dark:text-white">{invoice.from_entity_name || '—'}</p>
-              <p className="text-zinc-600 dark:text-zinc-400">{invoice.from_name}</p>
-              <p className="text-zinc-500 dark:text-zinc-500">{invoice.from_address}</p>
-              <p className="text-zinc-500 dark:text-zinc-500">{invoice.from_city_state_zip}</p>
-              <p className="text-zinc-500 dark:text-zinc-500">{invoice.from_country}</p>
-            </div>
-            <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Bill To</p>
-              <p className="font-medium text-zinc-900 dark:text-white">{invoice.to_company || 'Simple.biz'}</p>
-              <p className="text-zinc-500 dark:text-zinc-500">{invoice.to_address || 'Remote/USA'}</p>
-              <p className="text-zinc-500 dark:text-zinc-500">{invoice.to_country || 'USA'}</p>
+
+        {/* Close — floats outside top-right corner */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute -right-4 -top-4 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 shadow-lg transition-all hover:scale-110 hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+
+        {/* ── Receipt wrapper ── */}
+        <div className="overflow-hidden rounded-2xl shadow-[0_32px_80px_-12px_rgba(0,0,0,0.35)]">
+          <PunchedHoles position="top" />
+
+          {/* Body */}
+          <div className="relative max-h-[92vh] overflow-y-auto border-x border-zinc-200 bg-[#FAFAF5] dark:border-zinc-700/80 dark:bg-[#0E0E12]">
+            {/* Left accent rule */}
+            <div
+              className="pointer-events-none absolute bottom-0 left-0 top-0 w-[3px]"
+              style={{ background: `linear-gradient(to bottom, ${INV_ACCENT}, ${INV_ACCENT}88)` }}
+            />
+
+            <div className="inv-mono px-6 py-8 sm:px-10 sm:py-10">
+
+              {/* ── HEADER ── */}
+              <motion.div
+                custom={0} variants={fadeUp} initial="hidden" animate="show"
+                className="flex flex-wrap items-start justify-between gap-6"
+              >
+                {/* Sender block */}
+                <div className="flex min-w-0 items-start gap-5">
+                  {invoice.logo_data_url ? (
+                    <img
+                      src={invoice.logo_data_url}
+                      alt="Logo"
+                      className="h-[72px] w-[72px] shrink-0 rounded-xl object-contain"
+                    />
+                  ) : (
+                    <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800">
+                      <FileText className="h-6 w-6 text-zinc-400 dark:text-zinc-600" />
+                    </div>
+                  )}
+                  <div className="min-w-0 pt-1">
+                    <p className="inv-monotext-xl font-bold leading-tight text-zinc-900 dark:text-zinc-50">
+                      {invoice.from_entity_name || invoice.from_name || '—'}
+                    </p>
+                    {invoice.from_entity_name && invoice.from_name && (
+                      <p className="mt-0.5 text-[15px] text-zinc-500 dark:text-zinc-400">{invoice.from_name}</p>
+                    )}
+                    {[invoice.from_address, invoice.from_city_state_zip, invoice.from_country]
+                      .filter(Boolean)
+                      .map((line, i) => (
+                        <p key={i} className="text-[13px] leading-snug text-zinc-400 dark:text-zinc-500">{line}</p>
+                      ))}
+                  </div>
+                </div>
+
+                {/* Invoice title */}
+                <div className="shrink-0 text-right">
+                  <h2 className="inv-monotext-[36px] font-bold leading-none tracking-tight text-zinc-900 sm:text-[52px] dark:text-zinc-50">
+                    INVOICE
+                  </h2>
+                  <p
+                    className="inv-mono mt-2 text-xl font-bold tracking-wider"
+                    style={{ color: INV_ACCENT }}
+                  >
+                    {invoice.invoice_number}
+                  </p>
+                </div>
+              </motion.div>
+
+              {/* ── RULE ── */}
+              <motion.div custom={1} variants={fadeUp} initial="hidden" animate="show" className="my-8 flex items-center gap-3">
+                <div className="h-px flex-1 bg-zinc-900/10 dark:bg-zinc-100/10" />
+                <div className="h-1.5 w-1.5 rotate-45 rounded-[1px]" style={{ background: INV_ACCENT }} />
+                <div className="h-px flex-1 bg-zinc-900/10 dark:bg-zinc-100/10" />
+              </motion.div>
+
+              {/* ── FROM / BILL TO / DATES ── */}
+              <motion.div
+                custom={2} variants={fadeUp} initial="hidden" animate="show"
+                className="grid grid-cols-2 gap-6 sm:grid-cols-3"
+              >
+                {/* From */}
+                <div>
+                  <p className="inv-mono mb-2 text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500">From</p>
+                  <p className="inv-monotext-base font-bold text-zinc-800 dark:text-zinc-100">
+                    {invoice.from_entity_name || invoice.from_name || '—'}
+                  </p>
+                  {invoice.from_entity_name && invoice.from_name && (
+                    <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{invoice.from_name}</p>
+                  )}
+                  {[invoice.from_address, invoice.from_city_state_zip, invoice.from_country]
+                    .filter(Boolean)
+                    .map((l, i) => (
+                      <p key={i} className="text-[12px] text-zinc-400 dark:text-zinc-500">{l}</p>
+                    ))}
+                </div>
+
+                {/* Bill To */}
+                <div>
+                  <p className="inv-mono mb-2 text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500">Bill To</p>
+                  <p className="inv-monotext-base font-bold text-zinc-800 dark:text-zinc-100">{invoice.to_company || 'Simple.biz'}</p>
+                  <p className="text-[13px] text-zinc-500 dark:text-zinc-400">{invoice.to_address || 'Remote/USA'}</p>
+                  <p className="text-[12px] text-zinc-400 dark:text-zinc-500">{invoice.to_country || 'USA'}</p>
+                </div>
+
+                {/* Dates */}
+                <div className="space-y-3">
+                  <div>
+                    <p className="inv-mono mb-1 text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500">Invoice Date</p>
+                    <p className="inv-mono whitespace-nowrap text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                      {invoice.invoice_date || '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="inv-mono mb-1 text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500">Due Date</p>
+                    <p className="inv-mono whitespace-nowrap text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                      {invoice.due_date || '—'}
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* ── LINE ITEMS ── */}
+              <motion.div custom={3} variants={fadeUp} initial="hidden" animate="show" className="mt-10 overflow-x-auto">
+                <table className="w-full min-w-[480px] table-fixed border-collapse text-[14px]">
+                  <colgroup>
+                    <col className="w-[40%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[18%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[22%]" />
+                  </colgroup>
+                  <thead>
+                    <tr style={{ background: '#1C1C24' }}>
+                      <th className="inv-mono px-5 py-3.5 text-left text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-400">
+                        Description
+                      </th>
+                      <th className="inv-mono px-4 py-3.5 text-right text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-400">Qty</th>
+                      <th className="inv-mono px-4 py-3.5 text-right text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-400">Rate</th>
+                      <th className="inv-mono px-4 py-3.5 text-right text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-400">Tax</th>
+                      <th className="inv-mono px-5 py-3.5 text-right text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-400">
+                        Amount
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item, i) => (
+                      <tr
+                        key={item.id ?? i}
+                        className="border-b border-zinc-200/60 last:border-0 dark:border-zinc-700/40"
+                        style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.018)' }}
+                      >
+                        <td className="px-5 py-4">
+                          <p className="font-medium text-zinc-900 dark:text-zinc-50">{item.description || '—'}</p>
+                          {item.notes && (
+                            <p className="mt-0.5 text-[12px] text-zinc-400 dark:text-zinc-500">{item.notes}</p>
+                          )}
+                        </td>
+                        <td className="inv-mono px-4 py-4 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{item.qty}</td>
+                        <td className="inv-mono px-4 py-4 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{formatPHP(item.rate)}</td>
+                        <td className="inv-mono px-4 py-4 text-right tabular-nums text-zinc-500 dark:text-zinc-500">{item.taxPct}%</td>
+                        <td className="inv-mono px-5 py-4 text-right tabular-nums font-bold text-zinc-900 dark:text-zinc-50">
+                          {formatPHP(item.qty * item.rate)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </motion.div>
+
+              {/* ── TOTALS ── */}
+              <motion.div custom={4} variants={fadeUp} initial="hidden" animate="show" className="mt-8 flex justify-end">
+                <div className="w-64 space-y-2.5 sm:w-72">
+                  <div className="flex items-center justify-between text-[14px] text-zinc-500 dark:text-zinc-400">
+                    <span>Subtotal</span>
+                    <span className="inv-mono tabular-nums font-medium text-zinc-700 dark:text-zinc-300">
+                      {formatPHP(invoice.subtotal)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-[14px] text-zinc-500 dark:text-zinc-400">
+                    <span>Tax</span>
+                    <span className="inv-mono tabular-nums font-medium text-zinc-700 dark:text-zinc-300">
+                      {formatPHP(invoice.tax_total)}
+                    </span>
+                  </div>
+                  <div
+                    className="mt-1 flex items-center justify-between rounded-xl px-5 py-3.5 text-white"
+                    style={{ background: '#1C1C24' }}
+                  >
+                    <span className="inv-mono text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">Total Due</span>
+                    <span className="inv-mono tabular-nums text-lg font-bold" style={{ color: INV_ACCENT_DARK }}>
+                      {formatPHP(invoice.total)}
+                    </span>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* ── NOTES ── */}
+              {invoice.notes && (
+                <motion.div custom={5} variants={fadeUp} initial="hidden" animate="show"
+                  className="mt-8 rounded-xl border border-zinc-200/60 bg-zinc-100/60 px-5 py-4 dark:border-zinc-700/40 dark:bg-zinc-800/30"
+                >
+                  <p className="inv-mono mb-1.5 text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500">Notes</p>
+                  <p className="text-[14px] leading-relaxed text-zinc-600 dark:text-zinc-400">{invoice.notes}</p>
+                </motion.div>
+              )}
+
+              {/* ── FOOTER ── */}
+              <motion.div custom={6} variants={fadeUp} initial="hidden" animate="show"
+                className="mt-10 flex items-center gap-4"
+              >
+                <div className="h-px flex-1" style={{ background: `linear-gradient(to right, ${INV_ACCENT}44, transparent)` }} />
+                <p className="inv-monotext-sm italic text-zinc-400 dark:text-zinc-500">Thank you for your work.</p>
+                <div className="h-px flex-1" style={{ background: `linear-gradient(to left, ${INV_ACCENT}44, transparent)` }} />
+              </motion.div>
+
             </div>
           </div>
-          {/* Dates */}
-          <div className="grid grid-cols-3 gap-3 rounded-lg border border-zinc-100 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-800/50">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Invoice #</p>
-              <p className="font-medium text-zinc-900 dark:text-white">{invoice.invoice_number}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Date</p>
-              <p className="font-medium text-zinc-900 dark:text-white">{invoice.invoice_date}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Due</p>
-              <p className="font-medium text-zinc-900 dark:text-white">{invoice.due_date || '—'}</p>
-            </div>
-          </div>
-          {/* Line items */}
-          <div className="overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-700">
-            <table className="w-full text-xs">
-              <thead className="bg-zinc-900 text-white dark:bg-zinc-800">
-                <tr>
-                  <th className="px-3 py-2 text-left font-semibold">Description</th>
-                  <th className="px-3 py-2 text-right font-semibold">Qty</th>
-                  <th className="px-3 py-2 text-right font-semibold">Rate</th>
-                  <th className="px-3 py-2 text-right font-semibold">Tax %</th>
-                  <th className="px-3 py-2 text-right font-semibold">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                {items.map((item, i) => (
-                  <tr key={item.id ?? i} className="bg-white dark:bg-zinc-900">
-                    <td className="px-3 py-2">
-                      <p className="font-medium text-zinc-900 dark:text-white">{item.description}</p>
-                      {item.notes && <p className="text-zinc-500">{item.notes}</p>}
-                    </td>
-                    <td className="px-3 py-2 text-right text-zinc-700 dark:text-zinc-300">{item.qty}</td>
-                    <td className="px-3 py-2 text-right text-zinc-700 dark:text-zinc-300">{formatPHP(item.rate)}</td>
-                    <td className="px-3 py-2 text-right text-zinc-700 dark:text-zinc-300">{item.taxPct}%</td>
-                    <td className="px-3 py-2 text-right font-medium text-zinc-900 dark:text-white">{formatPHP(item.qty * item.rate)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {/* Totals */}
-          <div className="flex justify-end">
-            <div className="w-48 space-y-1 text-sm">
-              <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
-                <span>Subtotal</span>
-                <span>{formatPHP(invoice.subtotal)}</span>
-              </div>
-              <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
-                <span>Tax</span>
-                <span>{formatPHP(invoice.tax_total)}</span>
-              </div>
-              <div className="flex justify-between rounded-md bg-zinc-900 px-2 py-1.5 font-bold text-white dark:bg-blue-600">
-                <span>TOTAL</span>
-                <span>{formatPHP(invoice.total)}</span>
-              </div>
-            </div>
-          </div>
-          {invoice.notes && (
-            <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Notes</p>
-              <p className="text-zinc-600 dark:text-zinc-400">{invoice.notes}</p>
-            </div>
-          )}
+
+          <PunchedHoles position="bottom" />
         </div>
-        <DialogFooter showCloseButton />
       </DialogContent>
     </Dialog>
   );
@@ -329,24 +520,35 @@ function NewInvoiceForm({
   const [saving, setSaving] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
-  // Prefill "From" fields from the contractor's saved profile
+  // Prefill "From" fields from profile and auto-generate invoice number
   useEffect(() => {
     if (!contractorEmail) return;
-    fetch(`/api/contractor/profile?email=${encodeURIComponent(contractorEmail)}`, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { profile?: Record<string, string | null> | null }) => {
-        const p = j.profile;
-        if (!p) return;
+    Promise.all([
+      fetch(`/api/contractor/profile?email=${encodeURIComponent(contractorEmail)}`, { cache: 'no-store' }).then((r) => r.json()),
+      fetch(`/api/contractor/invoices?email=${encodeURIComponent(contractorEmail)}`, { cache: 'no-store' }).then((r) => r.json()),
+    ])
+      .then(([profileJson, invoicesJson]: [{ profile?: (Record<string, string | null> & { logo_data_url?: string | null }) | null }, { invoices?: unknown[] }]) => {
+        const p = profileJson.profile;
+        const count = (invoicesJson.invoices ?? []).length;
+        // C-<INITIALS>-NNN — derived from email local part
+        const localPart = contractorEmail.split('@')[0];
+        const initials = localPart.split(/[._-]/).map((w) => w[0] ?? '').join('').toUpperCase().slice(0, 3);
+        const nextNum = String(count + 1).padStart(3, '0');
+        const invoiceNumber = `C-${initials}-${nextNum}`;
         setForm((prev) => ({
           ...prev,
-          fromEntityName:   p.from_entity_name?.trim()   || prev.fromEntityName,
-          fromName:         p.from_name?.trim()           || prev.fromName,
-          fromAddress:      p.from_address?.trim()        || prev.fromAddress,
-          fromCityStateZip: p.from_city_state_zip?.trim() || prev.fromCityStateZip,
-          fromCountry:      p.from_country?.trim()        || prev.fromCountry,
+          invoiceNumber,
+          ...(p ? {
+            fromEntityName:   p.from_entity_name?.trim()   || prev.fromEntityName,
+            fromName:         p.from_name?.trim()           || prev.fromName,
+            fromAddress:      p.from_address?.trim()        || prev.fromAddress,
+            fromCityStateZip: p.from_city_state_zip?.trim() || prev.fromCityStateZip,
+            fromCountry:      p.from_country?.trim()        || prev.fromCountry,
+            logoUrl:          p.logo_data_url?.trim()       || prev.logoUrl,
+          } : {}),
         }));
       })
-      .catch(() => {/* ignore — form defaults are fine */});
+      .catch(() => {/* ignore — defaults remain */});
   }, [contractorEmail]);
 
   const set = useCallback(<K extends keyof InvoiceForm>(key: K, value: InvoiceForm[K]) => {
@@ -408,7 +610,7 @@ function NewInvoiceForm({
       });
       const json = await res.json();
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to save');
-      toast.success('Invoice saved!', { description: `Invoice ${form.invoiceNumber} has been created.` });
+      toast.success('Sent to Accounting', { description: `Invoice ${form.invoiceNumber} is pending review.` });
       setForm(defaultForm());
       onSaved();
     } catch (err) {
@@ -423,7 +625,12 @@ function NewInvoiceForm({
   };
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="relative">
+      <PunchedHoles position="top" />
+
+      {/* Receipt body */}
+      <div className="border-x border-zinc-200 bg-white px-6 py-6 sm:px-8 dark:border-zinc-700 dark:bg-zinc-900">
+      <div className="space-y-6 pb-8">
       {/* Top row: Logo + INVOICE heading */}
       <div className="flex items-start gap-4">
         {/* Logo upload */}
@@ -474,6 +681,7 @@ function NewInvoiceForm({
 
       {/* Sender section */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {/* Left — identity */}
         <div className="space-y-3">
           <div className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">From</div>
           <div>
@@ -484,38 +692,37 @@ function NewInvoiceForm({
             <FieldLabel>Your Name</FieldLabel>
             <FormInput value={form.fromName} onChange={(v) => set('fromName', v)} placeholder="Full Name" />
           </div>
+        </div>
+
+        {/* Right — location */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">Location</span>
+            <div className="flex gap-1.5">
+              {[
+                { icon: Globe, label: 'Website' },
+                { icon: Phone, label: 'Phone' },
+                { icon: Mail, label: 'Email' },
+              ].map(({ icon: Icon, label }) => (
+                <button
+                  key={label}
+                  type="button"
+                  title={label}
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:border-blue-700 dark:hover:text-blue-400"
+                  aria-label={label}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                </button>
+              ))}
+            </div>
+          </div>
           <div>
             <FieldLabel>Address</FieldLabel>
             <FormInput value={form.fromAddress} onChange={(v) => set('fromAddress', v)} placeholder="Street Address" />
           </div>
           <div>
-            <FieldLabel>City / State / Zip</FieldLabel>
-            <FormInput value={form.fromCityStateZip} onChange={(v) => set('fromCityStateZip', v)} placeholder="City, State, ZIP" />
-          </div>
-          <div>
             <FieldLabel>Country</FieldLabel>
             <FormInput value={form.fromCountry} onChange={(v) => set('fromCountry', v)} placeholder="Philippines" />
-          </div>
-        </div>
-
-        {/* Contact icon buttons */}
-        <div className="flex flex-col items-end justify-start gap-2 pt-6">
-          <div className="flex gap-2">
-            {[
-              { icon: Globe, label: 'Website' },
-              { icon: Phone, label: 'Phone' },
-              { icon: Mail, label: 'Email' },
-            ].map(({ icon: Icon, label }) => (
-              <button
-                key={label}
-                type="button"
-                title={label}
-                className="flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:border-blue-700 dark:hover:text-blue-400"
-                aria-label={label}
-              >
-                <Icon className="h-3.5 w-3.5" />
-              </button>
-            ))}
           </div>
         </div>
       </div>
@@ -723,10 +930,14 @@ function NewInvoiceForm({
           className="gap-1.5 bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500"
         >
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-          {saving ? 'Saving…' : 'Save Invoice'}
+          {saving ? 'Sending…' : 'Send to Accounting'}
         </Button>
       </div>
     </div>
+    </div>
+
+    <PunchedHoles position="bottom" />
+  </div>
   );
 }
 

@@ -80,6 +80,7 @@ export default function HrOnboarding() {
   const [addOpen, setAddOpen] = useState(false);
   const [setEmailFor, setSetEmailFor] = useState<HrPendingEmployeeRow | null>(null);
   const [confirmCancel, setConfirmCancel] = useState<HrPendingEmployeeRow | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<HrPendingEmployeeRow | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
   const fetchPending = useCallback(async () => {
@@ -171,6 +172,24 @@ export default function HrOnboarding() {
     } finally {
       setBusyId(null);
       setConfirmCancel(null);
+    }
+  }
+
+  async function hardDelete(row: HrPendingEmployeeRow) {
+    setBusyId(row.id);
+    try {
+      const res = await fetch(`/api/hr/pending-employees/${row.id}?hard=true`, {
+        method: 'DELETE',
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to delete');
+      toast.success(`Deleted ${row.name}`);
+      await fetchPending();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete');
+    } finally {
+      setBusyId(null);
+      setConfirmDelete(null);
     }
   }
 
@@ -473,10 +492,21 @@ export default function HrOnboarding() {
                                   className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
                                   onClick={() => setConfirmCancel(row)}
                                   disabled={isBusy}
+                                  title="Cancel hire"
                                 >
-                                  <Trash2 className="h-3 w-3" />
+                                  <XCircle className="h-3 w-3" />
                                 </Button>
                               )}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                                onClick={() => setConfirmDelete(row)}
+                                disabled={isBusy}
+                                title="Permanently delete this record"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
                             </div>
                           </td>
                         </motion.tr>
@@ -537,6 +567,42 @@ export default function HrOnboarding() {
                 <XCircle className="mr-1 h-3 w-3" />
               )}
               Cancel hire
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Hard delete confirm dialog */}
+      <Dialog open={!!confirmDelete} onOpenChange={(o) => !o && setConfirmDelete(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base">Permanently delete this record?</DialogTitle>
+            <DialogDescription className="text-xs">
+              <strong>{confirmDelete?.name}</strong> ({confirmDelete?.personal_email}) will be
+              removed entirely — this cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setConfirmDelete(null)}
+              disabled={busyId === confirmDelete?.id}
+            >
+              Keep
+            </Button>
+            <Button
+              size="sm"
+              className="bg-rose-600 hover:bg-rose-700"
+              onClick={() => confirmDelete && void hardDelete(confirmDelete)}
+              disabled={busyId === confirmDelete?.id}
+            >
+              {busyId === confirmDelete?.id ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <Trash2 className="mr-1 h-3 w-3" />
+              )}
+              Delete permanently
             </Button>
           </DialogFooter>
         </DialogContent>

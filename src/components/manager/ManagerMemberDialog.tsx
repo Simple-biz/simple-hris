@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
-import { Mail, MapPin, ReceiptText, User as UserIcon } from 'lucide-react';
+import { Eye, EyeOff, Mail, MapPin, ReceiptText, User as UserIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -17,7 +18,6 @@ type TabId = 'profile' | 'payments';
 
 interface ManagerMemberDialogProps {
   member: EmployeeRow | null;
-  ratesHidden: boolean;
   onClose: () => void;
 }
 
@@ -166,11 +166,9 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (id: TabId) => 
 function ProfileTab({
   member,
   ratesHidden,
-  showRates,
 }: {
   member: EmployeeRow;
   ratesHidden: boolean;
-  showRates: boolean;
 }) {
   const fullAddress =
     member.full_address?.trim() ||
@@ -181,26 +179,24 @@ function ProfileTab({
 
   return (
     <div className="space-y-4">
-      {showRates && (
-        <div className="grid grid-cols-2 gap-2 rounded-xl border border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 p-3 dark:border-blue-950/50 dark:from-zinc-950/80 dark:to-blue-950/20">
-          <div className="flex flex-col gap-0.5">
-            <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-              Hourly
-            </div>
-            <div className="font-mono text-base tabular-nums text-zinc-900 dark:text-zinc-100">
-              <MaskedRate value={memberHourlyRate(member)} hidden={ratesHidden} />
-            </div>
+      <div className="grid grid-cols-2 gap-2 rounded-xl border border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 p-3 dark:border-blue-950/50 dark:from-zinc-950/80 dark:to-blue-950/20">
+        <div className="flex flex-col gap-0.5">
+          <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+            Hourly
           </div>
-          <div className="flex flex-col gap-0.5">
-            <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-              Overtime
-            </div>
-            <div className="font-mono text-base tabular-nums text-zinc-900 dark:text-zinc-100">
-              <MaskedRate value={memberOtRate(member)} hidden={ratesHidden} />
-            </div>
+          <div className="font-mono text-base tabular-nums text-zinc-900 dark:text-zinc-100">
+            <MaskedRate value={memberHourlyRate(member)} hidden={ratesHidden} />
           </div>
         </div>
-      )}
+        <div className="flex flex-col gap-0.5">
+          <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+            Overtime
+          </div>
+          <div className="font-mono text-base tabular-nums text-zinc-900 dark:text-zinc-100">
+            <MaskedRate value={memberOtRate(member)} hidden={ratesHidden} />
+          </div>
+        </div>
+      </div>
 
       <dl className="divide-y divide-zinc-100 rounded-xl border border-zinc-200/80 bg-white dark:divide-zinc-800/60 dark:border-zinc-800 dark:bg-zinc-950/40">
         <ProfileRow label="Department" value={member.department} />
@@ -281,20 +277,15 @@ function ProfileRow({
 
 export default function ManagerMemberDialog({
   member,
-  ratesHidden,
   onClose,
 }: ManagerMemberDialogProps) {
   const [activeTab, setActiveTab] = useState<TabId>('profile');
+  const [ratesHidden, setRatesHidden] = useState(true);
 
-  // Reset to Profile each time a new member is opened so the dialog never lands on
-  // a stale tab from a previous open.
   useEffect(() => {
     if (member) setActiveTab('profile');
   }, [member]);
 
-  const showRates = !!(
-    member && (memberHourlyRate(member) != null || memberOtRate(member) != null)
-  );
   const initials = memberInitials(member?.name, member?.work_email ?? member?.personal_email ?? '');
 
   return (
@@ -326,6 +317,27 @@ export default function ManagerMemberDialog({
                   )}
                 </DialogDescription>
               </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setRatesHidden((v) => !v)}
+                className="h-7 w-7 shrink-0 border-blue-200 p-0 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                title={ratesHidden ? 'Show rates' : 'Hide rates'}
+              >
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.span
+                    key={ratesHidden ? 'eye' : 'eye-off'}
+                    initial={{ rotate: -45, scale: 0.6, opacity: 0 }}
+                    animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                    exit={{ rotate: 45, scale: 0.6, opacity: 0 }}
+                    transition={{ duration: 0.16, ease: 'easeOut' }}
+                    className="inline-flex"
+                  >
+                    {ratesHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                  </motion.span>
+                </AnimatePresence>
+              </Button>
             </header>
 
             <div className="border-b border-zinc-200/70 bg-white/60 px-3 dark:border-zinc-800 dark:bg-zinc-950/40 sm:px-4">
@@ -346,12 +358,12 @@ export default function ManagerMemberDialog({
                     <ProfileTab
                       member={member}
                       ratesHidden={ratesHidden}
-                      showRates={showRates}
                     />
                   ) : (
                     <ManagerMemberHoursMini
                       workEmail={member.work_email ?? null}
                       personalEmail={member.personal_email ?? null}
+                      ratesHidden={ratesHidden}
                     />
                   )}
                 </motion.div>

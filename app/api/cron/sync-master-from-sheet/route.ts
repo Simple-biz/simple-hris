@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import { fetchMasterSheetAsCsv } from '@/lib/google-sheets/fetch-master-sheet';
 import { replaceGlobalMasterListFromCsvText } from '@/lib/supabase/global-master-list-db';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
@@ -65,6 +66,17 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
 
     const result = await replaceGlobalMasterListFromCsvText(csvText, sourceLabel, { clearOffboarded });
 
+    // Count active (non-offboarded) employees so the UI shows a number matching the HR/Accounting overview.
+    const sb = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!.trim(),
+      process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(),
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    );
+    const { count: activeCount, error: countError } = await sb
+      .from('active_employees')
+      .select('*', { count: 'exact', head: true });
+    if (countError) console.error('[sync-master-from-sheet] active_employees count failed', countError.message);
+
     // Diagnostic — let the dev terminal show the full picture of where rows went.
     const orphanInserts = Math.max(0, result.inserted - 0); // not isolatable from result alone
     console.log('[sync-master-from-sheet] result', {
@@ -124,6 +136,7 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
       headerRowIndex,
       headerColumns,
       apiRowCount,
+      activeCount,
       ...result,
     });
   } catch (e) {

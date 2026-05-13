@@ -30,8 +30,21 @@ CREATE TABLE IF NOT EXISTS contractor_invoices (
   tax_total           NUMERIC(12,2) NOT NULL DEFAULT 0,
   total               NUMERIC(12,2) NOT NULL DEFAULT 0,
 
+  -- Workflow status: 'pending' (sent to accounting) | 'approved' | 'rejected'
+  status              TEXT NOT NULL DEFAULT 'pending',
+
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- If the table already exists, add missing columns:
+ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS status              TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS from_entity_name    TEXT;
+ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS from_name           TEXT;
+ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS from_address        TEXT;
+ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS from_city_state_zip TEXT;
+ALTER TABLE contractor_invoices ADD COLUMN IF NOT EXISTS from_country        TEXT DEFAULT 'Philippines';
+-- Drop old column name if it exists (was "from_company" before rename):
+ALTER TABLE contractor_invoices RENAME COLUMN from_company TO from_entity_name;
 
 CREATE INDEX IF NOT EXISTS contractor_invoices_email_idx ON contractor_invoices (contractor_email);
 CREATE INDEX IF NOT EXISTS contractor_invoices_created_at_idx ON contractor_invoices (created_at DESC);

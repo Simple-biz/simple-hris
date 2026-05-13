@@ -30,6 +30,7 @@ import {
   Timer,
   Play,
   StopCircle,
+  HardHat,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { cn } from '@/lib/utils';
@@ -859,9 +860,10 @@ const steps = [
   { id: 2, label: 'Initial Calculation', icon: DollarSign, description: 'Hubstaff hours × employee_hourly_rates → Initial Pay' },
   { id: 3, label: 'Additions', icon: Calculator, description: 'Apply bonuses and adjustments' },
   { id: 4, label: 'Orphanage', icon: Heart, description: 'Approved orphanage visits and the hours/wages they cover' },
-  { id: 5, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
-  { id: 6, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
-  { id: 7, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
+  { id: 5, label: 'Contractors', icon: HardHat, description: 'Pending contractor invoices — review and approve before dispatch' },
+  { id: 6, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
+  { id: 7, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
+  { id: 8, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
 ];
 
 export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string | null }) {
@@ -914,7 +916,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   const [previewPaystubsOpen, setPreviewPaystubsOpen] = useState(false);
   const [previewSelectedEmail, setPreviewSelectedEmail] = useState<string | null>(null);
   const [previewSearch, setPreviewSearch] = useState('');
-  const [previewTab, setPreviewTab] = useState<'paystubs' | 'orphanage'>('paystubs');
+  const [previewTab, setPreviewTab] = useState<'paystubs' | 'orphanage' | 'contractors'>('paystubs');
   const [previewSelectedOrphanageId, setPreviewSelectedOrphanageId] = useState<string | null>(null);
   const [isDispatching, setIsDispatching] = useState(false);
   const [pendingWeekly, setPendingWeekly] = useState<{
@@ -1054,6 +1056,21 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
 
   type OrphanageTab = 'visits' | 'wages' | 'budgets' | 'gifts' | 'tenure';
   const [orphanageTab, setOrphanageTab] = useState<OrphanageTab>('visits');
+
+  // ── Step 5: Contractor invoices ──────────────────────────────────────────────
+  const [contractorInvoices, setContractorInvoices] = useState<{
+    id: string;
+    contractor_email: string;
+    invoice_number: string;
+    invoice_date: string;
+    due_date: string;
+    from_entity_name: string;
+    from_name: string;
+    total: number;
+    status: string;
+  }[]>([]);
+  const [contractorInvoicesLoading, setContractorInvoicesLoading] = useState(false);
+  const [contractorInvoicesUpdating, setContractorInvoicesUpdating] = useState<string | null>(null);
 
   /** USD → PHP (PHP per $1). Saved in app_settings `usd_to_php_rate`; default is the official ₱100,000 ÷ 10⁵ rate. */
   const [usdToPhpRate, setUsdToPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
@@ -1685,7 +1702,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   // Pull all rows so pending Orphanage-side requests can be approved here. Approved
   // rows count toward dispatch; pending rows stay visible so Accounting can close them.
   useEffect(() => {
-    if ((currentStep !== 4 && currentStep !== 5 && currentStep !== 7 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 6 && currentStep !== 8 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setBudgetRequestsLoading(true);
     setBudgetRequestsError(null);
@@ -1805,7 +1822,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   // No status filter at the API; we keep rows whose status is sent|paid and
   // whose date_sent (or created_at as fallback) lands inside the PAB month.
   useEffect(() => {
-    if ((currentStep !== 4 && currentStep !== 5 && currentStep !== 7 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 6 && currentStep !== 8 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setGiftPaymentsLoading(true);
     setGiftPaymentsError(null);
@@ -1943,7 +1960,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   );
 
   useEffect(() => {
-    if ((currentStep !== 4 && currentStep !== 5 && currentStep !== 7 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 6 && currentStep !== 8 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setTenureGiftsLoading(true);
     void refetchTenureGifts(ctrl.signal).finally(() => setTenureGiftsLoading(false));
@@ -1992,6 +2009,21 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
       document.removeEventListener('visibilitychange', onFocus);
     };
   }, [currentStep, pabMonthRange, refetchTenureGifts]);
+
+  // Fetch all contractor invoices when on step 5 (Contractors)
+  useEffect(() => {
+    if (currentStep !== 5) return;
+    let cancelled = false;
+    setContractorInvoicesLoading(true);
+    fetch('/api/contractor/invoices', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { invoices?: typeof contractorInvoices }) => {
+        if (!cancelled) setContractorInvoices(j.invoices ?? []);
+      })
+      .catch(() => { if (!cancelled) setContractorInvoices([]); })
+      .finally(() => { if (!cancelled) setContractorInvoicesLoading(false); });
+    return () => { cancelled = true; };
+  }, [currentStep]);
 
   /**
    * HSL payroll weeks run Mon–Sun, so the effective PAB end is extended to the
@@ -3590,31 +3622,35 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   const handleMasterSheetSync = async () => {
     setMasterListUploadLoading(true);
     const stopProgress = startSyncProgress('master', setMasterSyncPct);
+    let succeeded = false;
     try {
-      const res = await fetch('/api/cron/sync-master-from-sheet', { method: 'POST', body: JSON.stringify({ clearOffboarded: false }), headers: { 'Content-Type': 'application/json' } });
-      const json = (await res.json()) as { success?: boolean; rowCount?: number; inserted?: number; updated?: number; error?: string };
-      stopProgress();
+      const res = await fetch('/api/cron/sync-master-from-sheet', { method: 'POST', body: JSON.stringify({ clearOffboarded: true }), headers: { 'Content-Type': 'application/json' } });
+      const json = (await res.json()) as { success?: boolean; rowCount?: number; activeCount?: number | null; inserted?: number; updated?: number; error?: string };
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Master list sync failed');
+      succeeded = true;
       setMasterSyncPct({ pct: 100 });
-      toast.success('Master list synced from Google Sheet', { description: `${json.rowCount ?? 0} rows (${json.inserted ?? 0} new · ${json.updated ?? 0} updated)` });
+      const activeCount = json.activeCount ?? json.rowCount ?? 0;
+      toast.success('Master list synced from Google Sheet', { description: `${activeCount} active employees (${json.inserted ?? 0} new · ${json.updated ?? 0} updated)` });
       await reloadMasterEmployees();
     } catch (err) {
-      stopProgress();
-      setMasterSyncPct(null);
       toast.error('Master list sync failed', { description: err instanceof Error ? err.message : String(err) });
     } finally {
+      stopProgress();
       setMasterListUploadLoading(false);
+      if (succeeded) setTimeout(() => setMasterSyncPct(null), 1500);
+      else setMasterSyncPct(null);
     }
   };
 
   const handleRatesSheetSync = async () => {
     setRatesUploadLoading(true);
     const stopProgress = startSyncProgress('rates', setRatesSyncPct);
+    let succeeded = false;
     try {
       const res = await fetch('/api/cron/sync-rates-from-sheet', { method: 'POST' });
       const json = (await res.json()) as { success?: boolean; rowCount?: number; uniqueEmployees?: number; inserted?: number; updated?: number; skippedNoWorkEmail?: number; skippedNoRate?: number; error?: string };
-      stopProgress();
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Rates sync failed');
+      succeeded = true;
       setRatesSyncPct({ pct: 100 });
       toast.success('Payroll rates synced from Google Sheet', {
         description: [
@@ -3624,11 +3660,12 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
         ].join(' · '),
       });
     } catch (err) {
-      stopProgress();
-      setRatesSyncPct(null);
       toast.error('Rates sync failed', { description: err instanceof Error ? err.message : String(err) });
     } finally {
+      stopProgress();
       setRatesUploadLoading(false);
+      if (succeeded) setTimeout(() => setRatesSyncPct(null), 1500);
+      else setRatesSyncPct(null);
     }
   };
 
@@ -3636,22 +3673,24 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
     setHslSyncLoading(true);
     setHslSyncResult(null);
     const stopProgress = startSyncProgress('hsl', setHslSyncPct);
+    let succeeded = false;
     try {
       const res = await fetch('/api/cron/sync-hsl-from-sheet', { method: 'POST' });
       const json = (await res.json()) as { success?: boolean; rowCount?: number; inserted?: number; updated?: number; error?: string };
-      stopProgress();
       if (!res.ok || !json.success) throw new Error(json.error ?? 'HSL sync failed');
+      succeeded = true;
       setHslSyncPct({ pct: 100 });
       setHslSyncResult({ kind: 'success', message: `${json.rowCount ?? 0} agents synced (${json.inserted ?? 0} new · ${json.updated ?? 0} updated)` });
       toast.success('Hogan Smith Pay Plan synced');
     } catch (err) {
-      stopProgress();
-      setHslSyncPct(null);
       const message = err instanceof Error ? err.message : String(err);
       setHslSyncResult({ kind: 'error', message });
       toast.error('HSL sync failed', { description: message });
     } finally {
+      stopProgress();
       setHslSyncLoading(false);
+      if (succeeded) setTimeout(() => setHslSyncPct(null), 1500);
+      else setHslSyncPct(null);
     }
   };
 
@@ -7401,6 +7440,158 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
         );
       }
       case 5: {
+        // ── Contractors ────────────────────────────────────────────────────────
+        const updateInvoiceStatus = async (id: string, status: 'approved' | 'rejected' | 'pending') => {
+          setContractorInvoicesUpdating(id);
+          try {
+            const res = await fetch(`/api/contractor/invoices/${id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            setContractorInvoices((prev) =>
+              prev.map((inv) => (inv.id === id ? { ...inv, status } : inv)),
+            );
+          } catch (err) {
+            toast.error('Failed to update invoice', { description: err instanceof Error ? err.message : String(err) });
+          } finally {
+            setContractorInvoicesUpdating(null);
+          }
+        };
+
+        const pendingInvoices  = contractorInvoices.filter((i) => i.status === 'pending');
+        const approvedInvoices = contractorInvoices.filter((i) => i.status === 'approved');
+        const rejectedInvoices = contractorInvoices.filter((i) => i.status === 'rejected');
+        const approvedTotal = approvedInvoices.reduce((s, i) => s + (i.total ?? 0), 0);
+
+        return (
+          <div className="flex min-w-0 flex-col gap-5">
+            {/* Header */}
+            <div className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-white via-zinc-50/80 to-blue-50/25 p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:from-zinc-950/50 dark:via-zinc-900/40 dark:to-blue-950/15">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Contractor Invoices</h3>
+                  <p className="text-sm text-zinc-600 dark:text-zinc-400">Review and approve invoices before dispatch</p>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  {pendingInvoices.length > 0 && (
+                    <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                      {pendingInvoices.length} pending
+                    </Badge>
+                  )}
+                  <Badge className="border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                    {formatPHP(approvedTotal)} approved
+                  </Badge>
+                </div>
+              </div>
+            </div>
+
+            {contractorInvoicesLoading ? (
+              <div className="flex items-center justify-center gap-2 py-16 text-zinc-500">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-sm">Loading invoices…</span>
+              </div>
+            ) : contractorInvoices.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 py-16 text-center text-zinc-500 dark:text-zinc-400">
+                <HardHat className="h-10 w-10 opacity-25" />
+                <p className="text-sm">No contractor invoices have been submitted yet.</p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+                <table className="w-full text-sm">
+                  <thead className="bg-zinc-900 text-white dark:bg-zinc-800">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold">Contractor</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold">Invoice #</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold">Date</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-semibold">Total</th>
+                      <th className="px-3 py-2.5 text-center text-xs font-semibold">Status</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800 dark:bg-zinc-900">
+                    {contractorInvoices.map((inv) => (
+                      <tr key={inv.id} className="transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-zinc-900 dark:text-white">{inv.from_entity_name || inv.from_name || '—'}</div>
+                          <div className="font-mono text-[11px] text-zinc-500">{inv.contractor_email}</div>
+                        </td>
+                        <td className="px-3 py-3 font-mono text-xs text-zinc-700 dark:text-zinc-300">{inv.invoice_number}</td>
+                        <td className="px-3 py-3 text-xs text-zinc-600 dark:text-zinc-400">{inv.invoice_date || '—'}</td>
+                        <td className="px-3 py-3 text-right font-medium text-zinc-900 dark:text-white">{formatPHP(inv.total ?? 0)}</td>
+                        <td className="px-3 py-3 text-center">
+                          <span className={cn(
+                            'rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                            inv.status === 'approved'
+                              ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300'
+                              : inv.status === 'rejected'
+                              ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-700/50 dark:bg-red-950/30 dark:text-red-300'
+                              : 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300',
+                          )}>
+                            {inv.status}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            {inv.status !== 'approved' && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 border-emerald-500/40 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                                disabled={contractorInvoicesUpdating === inv.id}
+                                onClick={() => void updateInvoiceStatus(inv.id, 'approved')}
+                              >
+                                {contractorInvoicesUpdating === inv.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Approve'}
+                              </Button>
+                            )}
+                            {inv.status !== 'rejected' && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 border-red-500/40 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+                                disabled={contractorInvoicesUpdating === inv.id}
+                                onClick={() => void updateInvoiceStatus(inv.id, 'rejected')}
+                              >
+                                {contractorInvoicesUpdating === inv.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Reject'}
+                              </Button>
+                            )}
+                            {inv.status !== 'pending' && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-zinc-500"
+                                disabled={contractorInvoicesUpdating === inv.id}
+                                onClick={() => void updateInvoiceStatus(inv.id, 'pending')}
+                              >
+                                Reset
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  {approvedInvoices.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
+                        <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+                          Approved total ({approvedInvoices.length} invoice{approvedInvoices.length !== 1 ? 's' : ''})
+                        </td>
+                        <td className="px-3 py-2.5 text-right text-sm font-bold text-emerald-700 dark:text-emerald-400">
+                          {formatPHP(approvedTotal)}
+                        </td>
+                        <td colSpan={2} />
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      }
+      case 6: {
         const finalPayRows = effectiveCalcResults
           .map(r => {
           const rr = ratesByEmail.get(normEmail(r.email) ?? '');
@@ -7460,12 +7651,16 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
           (s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0),
           0,
         );
+        const stepContractorsPHP = contractorInvoices
+          .filter((i) => i.status === 'approved')
+          .reduce((s, i) => s + (i.total ?? 0), 0);
         const totalWeeklyOutflow =
           grandFinal +
           stepOrphanageWagesPHP +
           stepBudgetRequestsPHP +
           stepGiftsPHP +
-          stepTenureGiftsPHP;
+          stepTenureGiftsPHP +
+          stepContractorsPHP;
 
         return (
           <div className="flex min-w-0 flex-col gap-5">
@@ -7548,6 +7743,12 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                       <span>Tenure gifts ({tenureGiftRows.length})</span>
                       <span className="font-mono tabular-nums">{formatPHP(stepTenureGiftsPHP)}</span>
                     </div>
+                    {stepContractorsPHP > 0 && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Contractor invoices ({contractorInvoices.filter(i => i.status === 'approved').length})</span>
+                        <span className="font-mono tabular-nums">{formatPHP(stepContractorsPHP)}</span>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -7706,6 +7907,10 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                     pass: !pabMonthRange || pabMonthColumnCoverageComplete,
                   },
                   { label: 'Cycle Separation (Standard vs Hogan)', pass: true },
+                  {
+                    label: `Contractor Invoices Reviewed (${contractorInvoices.filter(i => i.status === 'pending').length} pending)`,
+                    pass: contractorInvoices.filter(i => i.status === 'pending').length === 0,
+                  },
                 ].map((check, i) => (
                   <div
                     key={i}
@@ -7730,7 +7935,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
           </div>
         );
       }
-      case 6:
+      case 7:
         return (
           <div
             className={cn(
@@ -7868,7 +8073,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                       usdToPhpRate,
                     });
                     setReportsTab('salaries');
-                    setCurrentStep(7);
+                    setCurrentStep(8);
                   } catch (err) {
                     toast.error('Dispatch failed', {
                       description: err instanceof Error ? err.message : String(err),
@@ -7884,7 +8089,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
             </div>
           </div>
         );
-      case 7: {
+      case 8: {
         const snap = reportSnapshot;
         if (!snap) {
           return (
@@ -8922,7 +9127,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                   <DialogDescription className="text-zinc-600 dark:text-zinc-400">
                     {previewTab === 'paystubs'
                       ? `${dispatchData.rows.length} paystub${dispatchData.rows.length === 1 ? '' : 's'} queued for this batch.`
-                      : `${orphanagePreviewItems.length} orphanage receipt${orphanagePreviewItems.length === 1 ? '' : 's'} queued — visit wages, budget requests, gift payments, tenure gifts.`}
+                      : previewTab === 'orphanage'
+                      ? `${orphanagePreviewItems.length} orphanage receipt${orphanagePreviewItems.length === 1 ? '' : 's'} queued — visit wages, budget requests, gift payments, tenure gifts.`
+                      : `${contractorInvoices.filter(i => i.status === 'approved').length} approved contractor invoice${contractorInvoices.filter(i => i.status === 'approved').length === 1 ? '' : 's'} queued.`}
                     {' '}Click View to inspect the email.
                   </DialogDescription>
                 </DialogHeader>
@@ -8956,6 +9163,21 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                       Orphanage
                       <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
                         {orphanagePreviewItems.length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTab('contractors')}
+                      className={cn(
+                        'flex-1 rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
+                        previewTab === 'contractors'
+                          ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-white'
+                          : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+                      )}
+                    >
+                      Contractors
+                      <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                        {contractorInvoices.filter(i => i.status === 'approved').length}
                       </span>
                     </button>
                   </div>
@@ -8997,6 +9219,31 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                             >
                               View
                             </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  ) : previewTab === 'contractors' ? (
+                    contractorInvoices.filter(i => i.status === 'approved').length === 0 ? (
+                      <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                        No approved contractor invoices queued for dispatch.
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                        {contractorInvoices.filter(i => i.status === 'approved').filter(inv =>
+                          !previewSearch.trim() ||
+                          [inv.contractor_email, inv.from_entity_name, inv.from_name, inv.invoice_number]
+                            .join(' ').toLowerCase().includes(previewSearch.trim().toLowerCase())
+                        ).map((inv) => (
+                          <div key={inv.id} className="flex items-center justify-between gap-3 py-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-sm font-medium text-zinc-900 dark:text-white">
+                                {inv.from_entity_name || inv.from_name || inv.contractor_email}
+                              </div>
+                              <div className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                                {inv.invoice_number} · {formatPHP(inv.total ?? 0)}
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>

@@ -189,6 +189,14 @@ export async function cancelHrPendingEmployee(
   return { error: error?.message ?? null };
 }
 
+export async function deleteHrPendingEmployee(
+  id: number,
+): Promise<{ error: string | null }> {
+  const sb = client();
+  const { error } = await sb.from(TABLE).delete().eq("id", id);
+  return { error: error?.message ?? null };
+}
+
 /**
  * Promotes a pending hire into `global_master_list`. Inserts a fresh master-list
  * row stamped with the current upload id (so it appears in `active_employees`),

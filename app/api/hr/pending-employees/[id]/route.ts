@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   cancelHrPendingEmployee,
+  deleteHrPendingEmployee,
   updateHrPendingEmployee,
   type UpdateHrPendingInput,
 } from "@/lib/supabase/hr-pending-employees";
@@ -38,9 +39,9 @@ export async function PATCH(
   return NextResponse.json({ row });
 }
 
-/** DELETE — soft cancel (status → 'cancelled'); row remains for audit. */
+/** DELETE — soft cancel by default; ?hard=true permanently removes the row. */
 export async function DELETE(
-  _req: Request,
+  req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   const authz = await requireElevatedSession();
@@ -50,7 +51,10 @@ export async function DELETE(
   const id = parseId(rawId);
   if (id === null) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
 
-  const { error } = await cancelHrPendingEmployee(id);
+  const hard = new URL(req.url).searchParams.get('hard') === 'true';
+  const { error } = hard
+    ? await deleteHrPendingEmployee(id)
+    : await cancelHrPendingEmployee(id);
   if (error) return NextResponse.json({ error }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

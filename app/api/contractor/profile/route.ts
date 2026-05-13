@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+function errMsg(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'object' && err !== null && 'message' in err) return String((err as Record<string, unknown>).message);
+  return errMsg(err);
+}
+
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
@@ -22,7 +28,7 @@ export async function GET(req: NextRequest) {
     if (error) throw error;
     return NextResponse.json({ profile: data ?? null });
   } catch (err) {
-    return NextResponse.json({ error: String(err), profile: null }, { status: 500 });
+    return NextResponse.json({ error: errMsg(err), profile: null }, { status: 500 });
   }
 }
 
@@ -40,6 +46,7 @@ export async function POST(req: NextRequest) {
         {
           contractor_email:        email,
           display_name:            body.display_name             ?? null,
+          logo_data_url:           body.logo_data_url            ?? null,
           // Invoice "From" details
           from_entity_name:        body.from_entity_name         ?? null,
           from_name:               body.from_name                ?? null,
@@ -71,6 +78,6 @@ export async function POST(req: NextRequest) {
     if (error) throw error;
     return NextResponse.json({ success: true });
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    return NextResponse.json({ error: errMsg(err) }, { status: 500 });
   }
 }

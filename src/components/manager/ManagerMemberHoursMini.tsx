@@ -180,11 +180,13 @@ type MemberMonthlyPaySummary = {
 interface ManagerMemberHoursMiniProps {
   workEmail: string | null;
   personalEmail: string | null;
+  ratesHidden?: boolean;
 }
 
 export default function ManagerMemberHoursMini({
   workEmail,
   personalEmail,
+  ratesHidden = false,
 }: ManagerMemberHoursMiniProps) {
   const aliasNorms = useMemo(() => {
     const set = new Set<string>();
@@ -642,7 +644,7 @@ export default function ManagerMemberHoursMini({
                       <Wallet className="h-3.5 w-3.5 text-emerald-600/70 dark:text-emerald-400/70" />
                     </div>
                     <div className="flex items-baseline gap-2 font-mono text-xl font-bold tabular-nums tracking-tight text-emerald-800 dark:text-emerald-300">
-                      <span>{totalPayPhp != null ? formatPhp(totalPayPhp) : '—'}</span>
+                      <span>{ratesHidden ? <span className="tracking-widest text-zinc-400 dark:text-zinc-600">••••••</span> : (totalPayPhp != null ? formatPhp(totalPayPhp) : '—')}</span>
                       <AnimatePresence>
                         {serverPayLoading && (
                           <motion.span
@@ -676,12 +678,13 @@ export default function ManagerMemberHoursMini({
                             Bonuses
                           </span>
                           <span className="font-mono text-[11px] font-bold tabular-nums text-violet-800 dark:text-violet-200">
-                            {formatPhp(sp.totals.bonusTotalPHP)}
+                            {ratesHidden ? <span className="tracking-widest text-zinc-400 dark:text-zinc-600">••••</span> : formatPhp(sp.totals.bonusTotalPHP)}
                           </span>
                         </div>
                         <BonusRow
                           label="PAB"
                           amount={pabPhp}
+                          hidden={ratesHidden}
                           reason={
                             !pabWeek
                               ? 'No final PAB week falls in this month'
@@ -695,6 +698,7 @@ export default function ManagerMemberHoursMini({
                         <BonusRow
                           label="Tech"
                           amount={techPhp}
+                          hidden={ratesHidden}
                           reason={
                             !techWeek
                               ? 'No 3rd-week salary date falls in this month'
@@ -765,10 +769,12 @@ function BonusRow({
   label,
   amount,
   reason,
+  hidden,
 }: {
   label: string;
   amount: number;
   reason: string | null;
+  hidden?: boolean;
 }) {
   const earned = amount > 0;
   return (
@@ -798,7 +804,7 @@ function BonusRow({
             : 'text-zinc-400 dark:text-zinc-600',
         )}
       >
-        {earned ? formatPhp(amount) : '—'}
+        {hidden ? <span className="tracking-widest text-zinc-400 dark:text-zinc-600">••••</span> : (earned ? formatPhp(amount) : '—')}
       </span>
     </div>
   );

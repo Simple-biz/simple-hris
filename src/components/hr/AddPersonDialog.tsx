@@ -28,8 +28,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { DepartmentRateSummary } from '@/lib/supabase/department-rates';
 import type { HrPendingEmployeeRow } from '@/lib/supabase/hr-pending-employees';
+
+interface HubstaffProject {
+  id: string | number;
+  name: string;
+}
 
 interface AddPersonDialogProps {
   open: boolean;
@@ -106,18 +110,18 @@ export default function AddPersonDialog({
 }: AddPersonDialogProps) {
   const [form, setForm] = useState<FormState>(buildEmptyForm);
   const [submitting, setSubmitting] = useState(false);
-  const [departments, setDepartments] = useState<DepartmentRateSummary[]>([]);
+  const [departments, setDepartments] = useState<HubstaffProject[]>([]);
   const [departmentsLoading, setDepartmentsLoading] = useState(false);
   const [touched, setTouched] = useState<Set<RequiredKey>>(new Set());
 
   useEffect(() => {
     if (!open || departments.length > 0 || departmentsLoading) return;
     setDepartmentsLoading(true);
-    fetch('/api/hr/department-rates', { cache: 'no-store' })
+    fetch('/api/secondary/hubstaff-projects', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { departments?: DepartmentRateSummary[]; error?: string }) => {
+      .then((j: { projects?: HubstaffProject[]; error?: string }) => {
         if (j.error) throw new Error(j.error);
-        setDepartments(j.departments ?? []);
+        setDepartments(j.projects ?? []);
       })
       .catch((e) =>
         toast.error(e instanceof Error ? e.message : 'Could not load departments'),
@@ -132,12 +136,6 @@ export default function AddPersonDialog({
     }
   }, [open]);
 
-  const deptByName = useMemo(() => {
-    const m = new Map<string, DepartmentRateSummary>();
-    for (const d of departments) m.set(d.department, d);
-    return m;
-  }, [departments]);
-
   const update = (patch: Partial<FormState>) =>
     setForm((p) => ({ ...p, ...patch }));
 
@@ -145,21 +143,7 @@ export default function AddPersonDialog({
     setTouched((s) => (s.has(k) ? s : new Set(s).add(k)));
 
   const onDepartmentChange = (next: string) => {
-    setForm((prev) => {
-      const dept = deptByName.get(next);
-      const prevDept = deptByName.get(prev.department);
-      const regularUntouched =
-        prev.regular_rate.trim() === '' ||
-        prev.regular_rate === (prevDept?.regular_rate ?? '');
-      const otUntouched =
-        prev.ot_rate.trim() === '' || prev.ot_rate === (prevDept?.ot_rate ?? '');
-      return {
-        ...prev,
-        department: next,
-        regular_rate: regularUntouched ? dept?.regular_rate ?? '' : prev.regular_rate,
-        ot_rate: otUntouched ? dept?.ot_rate ?? '' : prev.ot_rate,
-      };
-    });
+    setForm((prev) => ({ ...prev, department: next }));
     markTouched('department');
   };
 
@@ -319,7 +303,7 @@ export default function AddPersonDialog({
                   <SelectPrimitive.Trigger
                     onBlur={() => markTouched('department')}
                     className={cn(
-                      'flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-input bg-transparent px-3 py-2 text-sm whitespace-nowrap transition-colors outline-none select-none',
+                      'flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm whitespace-nowrap transition-colors outline-none select-none dark:border-input',
                       'data-placeholder:text-muted-foreground',
                       'hover:border-zinc-400 dark:hover:border-zinc-500',
                       'focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20',
@@ -347,8 +331,8 @@ export default function AddPersonDialog({
                           )}
                           {departments.map((d) => (
                             <SelectPrimitive.Item
-                              key={d.department}
-                              value={d.department}
+                              key={String(d.id)}
+                              value={d.name}
                               className={cn(
                                 'relative flex w-full cursor-default items-center justify-between rounded-lg px-3 py-2 text-sm outline-none select-none',
                                 'focus:bg-emerald-50 focus:text-emerald-900 dark:focus:bg-emerald-950/50 dark:focus:text-emerald-100',
@@ -356,18 +340,11 @@ export default function AddPersonDialog({
                               )}
                             >
                               <SelectPrimitive.ItemText className="flex-1 truncate pr-2">
-                                {d.department}
+                                {d.name}
                               </SelectPrimitive.ItemText>
-                              <span className="flex items-center gap-2 shrink-0">
-                                {d.regular_rate && (
-                                  <span className="font-mono text-[11px] text-zinc-400 dark:text-zinc-500">
-                                    ₱{d.regular_rate}/hr
-                                  </span>
-                                )}
-                                <SelectPrimitive.ItemIndicator className="flex h-4 w-4 items-center justify-center">
-                                  <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />
-                                </SelectPrimitive.ItemIndicator>
-                              </span>
+                              <SelectPrimitive.ItemIndicator className="flex h-4 w-4 items-center justify-center">
+                                <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />
+                              </SelectPrimitive.ItemIndicator>
                             </SelectPrimitive.Item>
                           ))}
                         </SelectPrimitive.List>
@@ -387,7 +364,7 @@ export default function AddPersonDialog({
                 >
                   <SelectPrimitive.Trigger
                     className={cn(
-                      'flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-input bg-transparent px-3 py-2 text-sm whitespace-nowrap transition-colors outline-none select-none',
+                      'flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm whitespace-nowrap transition-colors outline-none select-none dark:border-input',
                       'data-placeholder:text-muted-foreground',
                       'hover:border-zinc-400 dark:hover:border-zinc-500',
                       'focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20',
@@ -491,7 +468,7 @@ export default function AddPersonDialog({
               rows={2}
               placeholder="Interview date, orientation cohort, anything HR should remember."
               className={cn(
-                'w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm',
+                'w-full rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-sm dark:border-input',
                 'placeholder:text-muted-foreground',
                 'focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20',
                 'dark:bg-input/30',
@@ -539,8 +516,8 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <div className={cn('space-y-3 pt-4', !last && 'border-b border-zinc-100 pb-4 dark:border-zinc-800')}>
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+    <div className={cn('space-y-3 pt-4', !last && 'border-b border-zinc-200 pb-4 dark:border-zinc-800')}>
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
         {label}
       </p>
       {children}
@@ -563,7 +540,7 @@ function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs text-zinc-600 dark:text-zinc-400">
+      <Label className="text-xs font-medium text-zinc-700 dark:text-zinc-400">
         {label}
         {required && <span className="ml-0.5 text-rose-500">*</span>}
       </Label>
@@ -571,7 +548,7 @@ function Field({
       {error ? (
         <p className="text-[11px] text-rose-500">{error}</p>
       ) : hint ? (
-        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">{hint}</p>
+        <p className="text-[11px] text-zinc-500 dark:text-zinc-500">{hint}</p>
       ) : null}
     </div>
   );

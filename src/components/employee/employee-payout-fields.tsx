@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { CheckCircle } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { CheckCircle, ChevronDown, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -11,6 +11,187 @@ import {
   type ProcessorId,
 } from '@/lib/employee-payment-processors';
 import { cn } from '@/lib/utils';
+
+// ─── Philippine bank list ─────────────────────────────────────────────────────
+
+const PH_BANK_GROUPS: { group: string; banks: string[] }[] = [
+  {
+    group: 'Universal & Commercial Banks',
+    banks: [
+      'BDO Unibank', 'Land Bank of the Philippines (LandBank)', 'Bank of the Philippine Islands (BPI)',
+      'Metrobank', 'China Bank', 'RCBC', 'Security Bank', 'Philippine National Bank (PNB)',
+      'Development Bank of the Philippines (DBP)', 'UnionBank', 'EastWest Bank',
+      'Asia United Bank (AUB)', 'Bank of Commerce', 'Philippine Bank of Communications (PBCOM)',
+      'Philippine Trust Company (Philtrust Bank)', 'Philippine Veterans Bank',
+      'Maybank Philippines', 'CIMB Bank Philippines', 'Citibank Philippines',
+      'HSBC Philippines', 'Standard Chartered Philippines', 'CTBC Bank Philippines',
+      'MUFG Bank Manila', 'JPMorgan Chase Bank Manila', 'Deutsche Bank Manila',
+      'Bank of America Manila', 'ING Bank Manila', 'Shinhan Bank Philippines',
+      'UOB Manila', 'ICBC Manila', 'Mizuho Bank Manila',
+      'Sumitomo Mitsui Banking Corporation Manila', 'KEB Hana Bank Manila',
+      'Bangkok Bank Manila', 'Cathay United Bank Manila', 'Chang Hwa Commercial Bank Manila',
+      'Hua Nan Commercial Bank Manila', 'First Commercial Bank Manila',
+      'Mega International Commercial Bank Manila', 'Al-Amanah Islamic Investment Bank',
+    ],
+  },
+  {
+    group: 'Digital Banks',
+    banks: [
+      'Maya Bank', 'GoTyme Bank', 'Tonik Bank', 'UnionDigital Bank',
+      'UNO Digital Bank', 'OFBank', 'MariBank',
+    ],
+  },
+  {
+    group: 'Thrift / Savings Banks',
+    banks: [
+      'PSBank', 'CitySavings Bank', 'Sterling Bank of Asia', 'CARD SME Bank',
+      'Producers Bank', 'BPI Direct BanKo',
+    ],
+  },
+  {
+    group: 'Rural & Cooperative Banks',
+    banks: [
+      'CARD Bank', 'Guagua Rural Bank', 'Cantilan Bank',
+      'Rural Bank of Sta. Rosa', 'Cooperative Bank of Negros Occidental',
+    ],
+  },
+];
+
+const ALL_BANKS = PH_BANK_GROUPS.flatMap((g) => g.banks);
+
+// ─── BankSelectField ──────────────────────────────────────────────────────────
+
+function BankSelectField({
+  label,
+  value,
+  onChange,
+  required,
+  disabled = false,
+  placeholder = 'Search or select a bank…',
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  required?: boolean;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const q = query.toLowerCase();
+  const filteredGroups = q
+    ? [{ group: 'Results', banks: ALL_BANKS.filter((b) => b.toLowerCase().includes(q)) }]
+    : PH_BANK_GROUPS;
+
+  const handleSelect = (bank: string) => {
+    onChange(bank);
+    setOpen(false);
+    setQuery('');
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <label className="mb-1.5 flex items-center gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+        {label}
+        {required ? (
+          <span className="text-rose-500">*</span>
+        ) : (
+          <span className="text-zinc-400 dark:text-zinc-600">(optional)</span>
+        )}
+      </label>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => { setOpen((o) => !o); setTimeout(() => inputRef.current?.focus(), 50); }}
+        className={cn(
+          'flex h-9 w-full items-center justify-between rounded-md border border-zinc-200 bg-white px-3 py-1 text-sm text-left transition-colors dark:border-zinc-800 dark:bg-zinc-900/60',
+          value ? 'text-zinc-900 dark:text-white' : 'text-zinc-400',
+          !disabled && 'hover:border-zinc-300 dark:hover:border-zinc-700',
+          disabled && 'cursor-not-allowed opacity-60',
+        )}
+      >
+        <span className="truncate">{value || placeholder}</span>
+        <ChevronDown className={cn('h-4 w-4 shrink-0 text-zinc-400 transition-transform', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          {/* Search */}
+          <div className="flex items-center gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+            <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search banks…"
+              className="flex-1 bg-transparent text-xs text-zinc-900 placeholder:text-zinc-400 outline-none dark:text-white"
+            />
+          </div>
+          {/* Options */}
+          <div className="max-h-56 overflow-y-auto">
+            {filteredGroups.every((g) => g.banks.length === 0) ? (
+              <p className="px-3 py-4 text-center text-xs text-zinc-400">No banks found</p>
+            ) : (
+              filteredGroups.map((group) =>
+                group.banks.length === 0 ? null : (
+                  <div key={group.group}>
+                    <p className="sticky top-0 bg-zinc-50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:bg-zinc-800/80 dark:text-zinc-500">
+                      {group.group}
+                    </p>
+                    {group.banks.map((bank) => (
+                      <button
+                        key={bank}
+                        type="button"
+                        onClick={() => handleSelect(bank)}
+                        className={cn(
+                          'flex w-full items-center px-3 py-2 text-left text-sm transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800',
+                          value === bank
+                            ? 'bg-zinc-100 font-medium text-zinc-900 dark:bg-zinc-700/60 dark:text-white'
+                            : 'text-zinc-700 dark:text-zinc-300',
+                        )}
+                      >
+                        {bank}
+                      </button>
+                    ))}
+                  </div>
+                )
+              )
+            )}
+          </div>
+          {/* Custom entry hint */}
+          {query && !ALL_BANKS.some((b) => b.toLowerCase() === q) && (
+            <div className="border-t border-zinc-100 dark:border-zinc-800">
+              <button
+                type="button"
+                onClick={() => handleSelect(query)}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-500 hover:bg-zinc-50 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              >
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Use</span>
+                <span className="font-medium text-zinc-700 dark:text-zinc-200">&ldquo;{query}&rdquo;</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export interface PayoutFields {
   preferredBankSlot: 'primary' | 'alternative';
@@ -342,7 +523,7 @@ export function PayoutDetailsFields({
               </div>
             </div>
             <FormField
-            disabled={disabled}
+              disabled={disabled}
               label="Phone Number"
               required
               placeholder="+63 9XX XXX XXXX"
@@ -350,23 +531,22 @@ export function PayoutDetailsFields({
               onChange={(v) => update('phoneNumber', v)}
             />
             <FormField
-            disabled={disabled}
+              disabled={disabled}
               label="Account Holder Name"
               required
               placeholder="Juan Dela Cruz"
               value={payout.accountHolderName}
               onChange={(v) => update('accountHolderName', v)}
             />
-            <FormField
-            disabled={disabled}
+            <BankSelectField
+              disabled={disabled}
               label="Bank Name"
               required
-              placeholder="BDO, BPI, Metrobank, etc."
               value={payout.bankName}
               onChange={(v) => update('bankName', v)}
             />
             <FormField
-            disabled={disabled}
+              disabled={disabled}
               label="Account Number"
               required
               mono
@@ -375,7 +555,7 @@ export function PayoutDetailsFields({
               onChange={(v) => update('accountNumber', v)}
             />
             <FormField
-            disabled={disabled}
+              disabled={disabled}
               label="SWIFT / BIC Code"
               required
               mono
@@ -384,7 +564,7 @@ export function PayoutDetailsFields({
               onChange={(v) => update('swiftCode', v)}
             />
             <FormField
-            disabled={disabled}
+              disabled={disabled}
               label="Full Address"
               required
               fullWidth
@@ -397,12 +577,12 @@ export function PayoutDetailsFields({
                 Alternative bank
               </div>
             </div>
-            <FormField
+            <BankSelectField
               disabled={disabled}
               label="Bank Name"
-              placeholder="Optional backup bank"
               value={payout.altBankName}
               onChange={(v) => update('altBankName', v)}
+              placeholder="Optional backup bank…"
             />
             <FormField
               disabled={disabled}
@@ -438,7 +618,7 @@ export function PayoutDetailsFields({
               </div>
             </div>
             <FormField
-            disabled={disabled}
+              disabled={disabled}
               label="Account Holder Name"
               required
               placeholder="Juan Dela Cruz"
@@ -446,16 +626,15 @@ export function PayoutDetailsFields({
               onChange={(v) => update('accountHolderName', v)}
               hint="Exactly as it appears on your bank account."
             />
-            <FormField
-            disabled={disabled}
+            <BankSelectField
+              disabled={disabled}
               label="Bank Name"
               required
-              placeholder="BDO, BPI, Metrobank, etc."
               value={payout.bankName}
               onChange={(v) => update('bankName', v)}
             />
             <FormField
-            disabled={disabled}
+              disabled={disabled}
               label="Account Number"
               required
               mono
@@ -464,7 +643,7 @@ export function PayoutDetailsFields({
               onChange={(v) => update('accountNumber', v)}
             />
             <FormField
-            disabled={disabled}
+              disabled={disabled}
               label="SWIFT / BIC Code"
               required
               mono
@@ -474,7 +653,7 @@ export function PayoutDetailsFields({
               hint="International routing code from your bank."
             />
             <FormField
-            disabled={disabled}
+              disabled={disabled}
               label="Full Address"
               required
               fullWidth
@@ -487,12 +666,12 @@ export function PayoutDetailsFields({
                 Alternative bank
               </div>
             </div>
-            <FormField
+            <BankSelectField
               disabled={disabled}
               label="Bank Name"
-              placeholder="Optional backup bank"
               value={payout.altBankName}
               onChange={(v) => update('altBankName', v)}
+              placeholder="Optional backup bank…"
             />
             <FormField
               disabled={disabled}
