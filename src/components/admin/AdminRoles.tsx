@@ -40,6 +40,7 @@ const ROLES = [
   { key: 'finance', label: 'Accounting', blurb: 'Unlocks the Accounting dashboard.' },
   { key: 'manager', label: 'Manager', blurb: 'Unlocks the Manager dashboard.' },
   { key: 'orphanage_manager', label: 'Orphanage', blurb: 'Unlocks the Orphanage dashboard.' },
+  { key: 'contractor', label: 'Contractor', blurb: 'Unlocks the Contractor dashboard (invoice management).' },
   { key: 'ceo', label: 'CEO', blurb: 'Unlocks the CEO dashboard, post company-wide announcements.' },
   { key: 'admin', label: 'Admin', blurb: 'Full system access — unlocks every dashboard.' },
 ] as const;
@@ -56,6 +57,7 @@ const ASSIGNABLE_ROLE_KEYS = [
   'hr_coordinator',
   'finance',
   'orphanage_manager',
+  'contractor',
   'manager',
 ] as const satisfies readonly RoleKey[];
 
@@ -83,6 +85,8 @@ function rolePillClasses(role: RoleKey): string {
       'border-indigo-500/35 bg-indigo-500/10 text-indigo-800 dark:text-indigo-300/95 dark:border-indigo-600/40',
     orphanage_manager:
       'border-pink-500/35 bg-pink-500/10 text-pink-800 dark:text-pink-300/95 dark:border-pink-600/40',
+    contractor:
+      'border-blue-500/35 bg-blue-500/10 text-blue-800 dark:text-blue-300/95 dark:border-blue-600/40',
     ceo:
       'border-yellow-500/40 bg-yellow-500/10 text-yellow-900 dark:text-yellow-200/95 dark:border-yellow-600/45',
     admin:
@@ -100,6 +104,7 @@ function roleRowAccent(role: RoleKey): string {
     finance: 'border-l-sky-500',
     manager: 'border-l-indigo-500',
     orphanage_manager: 'border-l-pink-500',
+    contractor: 'border-l-blue-500',
     ceo: 'border-l-yellow-500',
     admin: 'border-l-rose-500',
   };

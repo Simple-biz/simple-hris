@@ -425,7 +425,7 @@ const DEPARTMENTS: {
 }[] = [
   { key: 'accounting',       name: 'Accounting',         bonuses: [] },
   { key: 'edit',             name: 'Edit',               bonuses: [] },
-  { key: 'devs',             name: 'Devs',               bonuses: [] },
+  { key: 'devs',             name: 'AI/API Team',         bonuses: [] },
   { key: 'lead_gen',         name: 'Lead Gen',           bonuses: [] },
   {
     key: 'us_manager_bonus',
@@ -5550,7 +5550,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-violet-100 dark:bg-violet-950">
                           <Calculator className="h-3 w-3 text-violet-600 dark:text-violet-400" />
                         </span>
-                        Devs — Ticket + Site Bonus
+                        AI/API Team — Ticket + Site Bonus
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-1.5 pb-4">
@@ -9302,7 +9302,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
         const empM = employeeMetrics[ticketsModalEmail] ?? {};
         const tickets = empM.tickets ?? 0;
         const bonus = tickets * 50;
-        const deptLabel = activeDeptTab === 'devs' ? 'Devs' : 'Edit';
+        const deptLabel = activeDeptTab === 'devs' ? 'AI/API Team' : 'Edit';
         return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -9427,7 +9427,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                 <div className="min-w-0">
                   <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-900 dark:text-white">
                     <Calculator className="h-4 w-4 text-violet-500" />
-                    Devs — {roleLabel}
+                    AI/API Team — {roleLabel}
                   </h2>
                   <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
                     {emp?.name || sitesModalEmail}
@@ -10790,7 +10790,7 @@ const DEPT_FORMULA_INFO: Record<string, { title: string; lines: string[] }> = {
     lines: ['₱50 per completed ticket.'],
   },
   devs: {
-    title: 'Devs — Tickets + Sites',
+    title: 'AI/API Team — Tickets + Sites',
     lines: [
       '₱50 per completed ticket (all devs).',
       'Delivery (Harry Jr., Bryan): ₱50 per site delivered.',

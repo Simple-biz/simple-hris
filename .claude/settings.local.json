@@ -91,7 +91,19 @@
       "Bash(awk *)",
       "Bash(copy *)",
       "PowerShell(New-Item *)",
-      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -File -Filter \"*.ts\" -o ErrorAction SilentlyContinue)"
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -File -Filter \"*.ts\" -o ErrorAction SilentlyContinue)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\" -Recurse -Directory)",
+      "Bash(Select-Object FullName)",
+      "Bash(Sort-Object FullName)",
+      "Bash(dir \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\ui\")",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\ui\" -Force | ForEach-Object { $_.Name })",
+      "PowerShell(Split-Path *)",
+      "PowerShell([System.IO.File]::Exists\\(\"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\employee\\\\EmployeeApp.tsx\"\\))",
+      "PowerShell([System.IO.Directory]::GetDirectories\\(\"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\ui\"\\).Count)",
+      "PowerShell(cmd /c \"dir /A C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\ui\")",
+      "PowerShell(cmd /c \"dir /A C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\components\\\\ui\")",
+      "PowerShell(cmd /c \"dir /A C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\")",
+      "PowerShell(cmd /c \"dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\contractor && dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\\\\contractor && dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\\\\api\\\\contractor\\\\invoices\")"
     ]
   }
 }

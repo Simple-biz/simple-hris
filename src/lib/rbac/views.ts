@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-export type AppView = 'employee' | 'admin' | 'accounting' | 'manager' | 'orphanage' | 'ceo' | 'hr';
+export type AppView = 'employee' | 'admin' | 'accounting' | 'manager' | 'orphanage' | 'ceo' | 'hr' | 'contractor';
 export type Role =
   | 'viewer'
   | 'hr_coordinator'
@@ -12,7 +12,8 @@ export type Role =
   | 'admin'
   | 'manager'
   | 'orphanage_manager'
-  | 'ceo';
+  | 'ceo'
+  | 'contractor';
 
 const ACCOUNTING_ROLES: Role[] = [
   'payroll_coordinator',
@@ -30,6 +31,7 @@ export const VIEW_ROUTES: Record<AppView, string> = {
   orphanage: '/orphanage',
   ceo: '/ceo',
   hr: '/hr',
+  contractor: '/contractor',
 };
 
 export const VIEW_LABELS: Record<AppView, string> = {
@@ -40,9 +42,10 @@ export const VIEW_LABELS: Record<AppView, string> = {
   orphanage: 'Orphanage',
   ceo: 'CEO',
   hr: 'HR',
+  contractor: 'Contractor',
 };
 
-const VIEW_PRIORITY: AppView[] = ['admin', 'ceo', 'hr', 'accounting', 'orphanage', 'manager', 'employee'];
+const VIEW_PRIORITY: AppView[] = ['admin', 'ceo', 'hr', 'accounting', 'orphanage', 'manager', 'contractor', 'employee'];
 
 export const ACTIVE_VIEW_KEY = 'active_view';
 export const SESSION_EMAIL_KEY = 'employee_session_email';
@@ -55,6 +58,7 @@ export function viewsForRoles(roles: Role[]): AppView[] {
   if (roles.includes('orphanage_manager')) set.add('orphanage');
   if (roles.includes('manager')) set.add('manager');
   if (roles.includes('admin') || roles.includes('hr_coordinator')) set.add('hr');
+  if (roles.includes('contractor')) set.add('contractor');
   return VIEW_PRIORITY.filter((v) => set.has(v));
 }
 
