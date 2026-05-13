@@ -719,30 +719,27 @@ function calculateDepartmentBonus(
   const dm = deptMetrics[deptKey] ?? {};
 
   switch (deptKey) {
-    // ── Accounting (tiered per day, sum of daily bonuses) ──────────────────
+    // ── Accounting (dept-level daily counts → same bonus for everyone) ──────
     case 'accounting': {
-      for (const emp of employees) {
-        const empM = em(emp.email);
-        const hasDailyBreakdown = ACCOUNTING_WEEKDAY_METRICS.some(({ key }) =>
-          Object.prototype.hasOwnProperty.call(empM, key),
-        );
-        if (hasDailyBreakdown) {
-          let bonus = 0;
-          for (const { key } of ACCOUNTING_WEEKDAY_METRICS) {
-            const day = empM[key] ?? 0;
-            if (day >= 30)      bonus += 450;
-            else if (day >= 22) bonus += 300;
-            else if (day >= 17) bonus += 200;
-          }
-          result[emp.email] = bonus;
-        } else {
-          const collected = empM.collected ?? 0;
-          let bonus = 0;
-          if (collected >= 30)      bonus = 450;
-          else if (collected >= 22) bonus = 300;
-          else if (collected >= 17) bonus = 200;
-          result[emp.email] = bonus;
+      const hasDailyBreakdown = ACCOUNTING_WEEKDAY_METRICS.some(({ key }) =>
+        Object.prototype.hasOwnProperty.call(dm, key),
+      );
+      let sharedBonus = 0;
+      if (hasDailyBreakdown) {
+        for (const { key } of ACCOUNTING_WEEKDAY_METRICS) {
+          const day = dm[key] ?? 0;
+          if (day >= 30)      sharedBonus += 450;
+          else if (day >= 22) sharedBonus += 300;
+          else if (day >= 17) sharedBonus += 200;
         }
+      } else {
+        const collected = dm.collected ?? 0;
+        if (collected >= 30)      sharedBonus = 450;
+        else if (collected >= 22) sharedBonus = 300;
+        else if (collected >= 17) sharedBonus = 200;
+      }
+      for (const emp of employees) {
+        result[emp.email] = sharedBonus;
       }
       break;
     }
@@ -1065,7 +1062,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   const [usdToPhpEditing, setUsdToPhpEditing] = useState(false);
 
   const [activeDeptTab, setActiveDeptTab] = useState('accounting');
-  const [accountingModalEmail, setAccountingModalEmail] = useState<string | null>(null);
+  const [accountingDeptModalOpen, setAccountingDeptModalOpen] = useState(false);
   const [ticketsModalEmail, setTicketsModalEmail] = useState<string | null>(null);
   const [sitesModalEmail, setSitesModalEmail] = useState<string | null>(null);
   const [leadGenModalEmail, setLeadGenModalEmail] = useState<string | null>(null);
@@ -5517,7 +5514,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                         Accounting — Tiered Bonus
                       </CardTitle>
                       <CardDescription className="text-xs text-zinc-500">
-                        Enter collections per weekday (Mon–Fri); the week total sets the tier. If you do not use per-day fields, the legacy single total still applies.
+                        One set of daily counts for the whole team — every accounting employee receives the same bonus.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-1.5 pb-4">
@@ -5901,12 +5898,28 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                               <span className="font-mono font-normal text-zinc-400">M T W T F · 7h+</span>
                             </TableHead>
                             {/* Formula-based dept metric columns */}
-                            {activeDeptTab === 'accounting' && (
-                              <TableHead className="min-w-[120px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
-                                Weekly bonus<br />
-                                <span className="font-mono font-normal text-zinc-400">Σ→≥30 ₱450 · 22–29 ₱300 · 17–21 ₱200</span>
-                              </TableHead>
-                            )}
+                            {activeDeptTab === 'accounting' && (() => {
+                              const acctDm = deptMetrics['accounting'] ?? {};
+                              const hasAcctData = ACCOUNTING_WEEKDAY_METRICS.some(({ key }) =>
+                                Object.prototype.hasOwnProperty.call(acctDm, key),
+                              );
+                              return (
+                                <TableHead className="min-w-[130px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
+                                  <div className="flex flex-col items-center gap-1">
+                                    <span>Weekly bonus (shared)</span>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setAccountingDeptModalOpen(true)}
+                                      className="h-5 border-violet-300 bg-violet-50 px-2 text-[9px] font-semibold text-violet-700 hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/40 dark:text-violet-300"
+                                    >
+                                      {hasAcctData ? 'Edit Counts' : 'Set Counts'}
+                                    </Button>
+                                  </div>
+                                </TableHead>
+                              );
+                            })()}
                             {activeDeptTab === 'edit' && (
                               <TableHead className="min-w-[56px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-violet-600 dark:text-violet-400">
                                 Tix<br /><span className="font-mono font-normal text-zinc-400">×₱50</span>
@@ -6065,38 +6078,26 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                                     </TableCell>
                                   );
                                 })()}
-                                {/* Accounting: Mon–Fri collections (sum = week tier) */}
+                                {/* Accounting: shared dept bonus (read-only per row) */}
                                 {activeDeptTab === 'accounting' && (() => {
-                                  const weekSum = accountingWeeklyCollectedTotal(empM);
-                                  const tierLabel =
-                                    weekSum >= 30 ? '₱450' : weekSum >= 22 ? '₱300' : weekSum >= 17 ? '₱200' : '₱0';
-                                  const hasData = ACCOUNTING_WEEKDAY_METRICS.some(({ key }) =>
-                                    Object.prototype.hasOwnProperty.call(empM, key),
+                                  const acctDm = deptMetrics['accounting'] ?? {};
+                                  const dayBonus = (count: number) =>
+                                    count >= 30 ? 450 : count >= 22 ? 300 : count >= 17 ? 200 : 0;
+                                  const hasDailyBreakdown = ACCOUNTING_WEEKDAY_METRICS.some(({ key }) =>
+                                    Object.prototype.hasOwnProperty.call(acctDm, key),
                                   );
+                                  const sharedBonus = hasDailyBreakdown
+                                    ? ACCOUNTING_WEEKDAY_METRICS.reduce((s, { key }) => s + dayBonus(acctDm[key] ?? 0), 0)
+                                    : dayBonus(acctDm.collected ?? 0);
                                   return (
-                                    <TableCell className="px-1 py-1 align-middle">
-                                      <div className="flex flex-col items-center gap-1">
-                                        <Button
-                                          type="button"
-                                          size="sm"
-                                          variant="outline"
-                                          onClick={() => setAccountingModalEmail(emp.email)}
-                                          className="h-6 border-violet-200 bg-white px-2 text-[10px] font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800/50 dark:bg-zinc-900 dark:text-violet-300 dark:hover:bg-violet-950/40"
-                                        >
-                                          {hasData ? 'Edit Bonus' : 'Set Bonus'}
-                                        </Button>
-                                        <div className="flex items-center gap-1">
-                                          <span className="text-[9px] text-zinc-500 dark:text-zinc-400">
-                                            Σ{' '}
-                                            <span className="font-mono font-bold text-zinc-700 dark:text-zinc-200">
-                                              {weekSum}
-                                            </span>
-                                          </span>
-                                          <span className="text-[9px] font-semibold text-violet-600 dark:text-violet-400">
-                                            {tierLabel}
-                                          </span>
-                                        </div>
-                                      </div>
+                                    <TableCell className="px-1 py-1 text-center align-middle">
+                                      {hasDailyBreakdown ? (
+                                        <span className="font-mono text-xs font-bold text-violet-600 dark:text-violet-400">
+                                          {formatPHP(sharedBonus)}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[9px] text-zinc-400 dark:text-zinc-600">—</span>
+                                      )}
                                     </TableCell>
                                   );
                                 })()}
@@ -9155,24 +9156,25 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
         </div>
       </div>
 
-      {/* Accounting weekly-collections modal */}
-      {accountingModalEmail && (() => {
-        const emp = calcResults.find((e) => e.email === accountingModalEmail);
-        const empM = employeeMetrics[accountingModalEmail] ?? {};
+      {/* Accounting dept-level weekly-collections modal */}
+      {accountingDeptModalOpen && (() => {
+        const acctDm = deptMetrics['accounting'] ?? {};
         const dayBonus = (count: number) =>
-          count >= 30 ? 450 :
-          count >= 22 ? 300 :
-          count >= 17 ? 200 : 0;
+          count >= 30 ? 450 : count >= 22 ? 300 : count >= 17 ? 200 : 0;
         const dailyResults = ACCOUNTING_WEEKDAY_METRICS.map(({ key, label }) => {
-          const count = empM[key] ?? 0;
+          const count = acctDm[key] ?? 0;
           return { key, label, count, bonus: dayBonus(count) };
         });
         const totalBonus = dailyResults.reduce((sum, d) => sum + d.bonus, 0);
         const weekSum = dailyResults.reduce((sum, d) => sum + d.count, 0);
+        const acctEmployees = calcResults.filter((e) => {
+          const dept = employeeDepts[e.email];
+          return dept === 'accounting';
+        });
         return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-            onClick={() => setAccountingModalEmail(null)}
+            onClick={() => setAccountingDeptModalOpen(false)}
           >
             <div
               className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-5 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
@@ -9184,12 +9186,12 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                     <Calculator className="h-4 w-4 text-violet-500" />
                     Accounting Weekly Bonus
                   </h2>
-                  <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-400">
-                    {emp?.name || accountingModalEmail}
+                  <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                    Applies to all {acctEmployees.length} accounting employee{acctEmployees.length !== 1 ? 's' : ''}
                   </p>
                 </div>
                 <button
-                  onClick={() => setAccountingModalEmail(null)}
+                  onClick={() => setAccountingDeptModalOpen(false)}
                   className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
                   aria-label="Close"
                 >
@@ -9207,18 +9209,15 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                     <Input
                       type="number"
                       min={0}
-                      value={empM[key] && empM[key] > 0 ? empM[key] : ''}
+                      value={acctDm[key] && acctDm[key] > 0 ? acctDm[key] : ''}
                       placeholder="0"
                       onChange={(e) => {
                         const v = parseInt(e.target.value, 10);
                         const n = Number.isFinite(v) && v >= 0 ? v : 0;
                         startRecalc(() => {
-                          setEmployeeMetrics((prev) => ({
+                          setDeptMetrics((prev) => ({
                             ...prev,
-                            [accountingModalEmail]: {
-                              ...(prev[accountingModalEmail] ?? {}),
-                              [key]: n,
-                            },
+                            accounting: { ...(prev['accounting'] ?? {}), [key]: n },
                           }));
                         });
                       }}
@@ -9235,7 +9234,6 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                   <span className="font-mono text-sm font-bold text-zinc-900 dark:text-white">{weekSum}</span>
                 </div>
                 <div className="space-y-1.5">
-                  {/* Tier legend */}
                   <div className="mb-2 grid grid-cols-4 gap-1 rounded-md bg-zinc-100 px-2 py-1.5 dark:bg-zinc-800/60">
                     {([['≥30', '₱450'], ['22–29', '₱300'], ['17–21', '₱200'], ['<17', '₱0']] as [string, string][]).map(([t, a]) => (
                       <div key={t} className="flex flex-col items-center gap-0.5">
@@ -9244,7 +9242,6 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                       </div>
                     ))}
                   </div>
-                  {/* Per-day rows */}
                   {dailyResults.map(({ key, label, count, bonus }) => (
                     <div
                       key={key}
@@ -9264,7 +9261,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                   ))}
                 </div>
                 <div className="mt-2 flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
-                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Total bonus awarded</span>
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Bonus per employee</span>
                   <span className="font-mono text-base font-bold text-violet-600 dark:text-violet-400">
                     {formatPHP(totalBonus)}
                   </span>
@@ -9275,10 +9272,12 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                 <Button
                   variant="outline"
                   onClick={() => {
-                    setEmployeeMetrics((prev) => {
-                      const copy = { ...(prev[accountingModalEmail] ?? {}) };
-                      for (const { key } of ACCOUNTING_WEEKDAY_METRICS) delete copy[key];
-                      return { ...prev, [accountingModalEmail]: copy };
+                    startRecalc(() => {
+                      setDeptMetrics((prev) => {
+                        const copy = { ...(prev['accounting'] ?? {}) };
+                        for (const { key } of ACCOUNTING_WEEKDAY_METRICS) delete copy[key];
+                        return { ...prev, accounting: copy };
+                      });
                     });
                   }}
                   className="text-xs"
@@ -9286,7 +9285,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                   Clear days
                 </Button>
                 <Button
-                  onClick={() => setAccountingModalEmail(null)}
+                  onClick={() => setAccountingDeptModalOpen(false)}
                   className="bg-violet-600 text-xs text-white hover:bg-violet-700"
                 >
                   Done
