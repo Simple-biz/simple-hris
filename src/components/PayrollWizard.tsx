@@ -26,7 +26,12 @@ import {
   Clock,
   Heart,
   Gift,
+  BarChart3,
+  Timer,
+  Play,
+  StopCircle,
 } from 'lucide-react';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -835,7 +840,7 @@ function calculateDepartmentBonus(
 const steps = [
   {
     id: 1,
-    label: 'Upload CSV',
+    label: 'Initialize Payroll Data',
     icon: Upload,
     description: 'Global master list + Hubstaff weekly → Supabase',
   },
@@ -844,10 +849,22 @@ const steps = [
   { id: 4, label: 'Orphanage', icon: Heart, description: 'Approved orphanage visits and the hours/wages they cover' },
   { id: 5, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
   { id: 6, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
+  { id: 7, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
 ];
 
 export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string | null }) {
   const [currentStep, setCurrentStep] = useState(1);
+  const [wizardStartedAt] = useState<Date>(() => new Date());
+  const [reportSnapshot, setReportSnapshot] = useState<{
+    startedAt: Date;
+    dispatchedAt: Date;
+    employees: DispatchEmployee[];
+    budgetRequests: { id: string; submitter_email: string; submitted_at: string; decided_at: string | null; decided_by: string | null; visit_type: string; final_amount: number | string | null; status: string }[];
+    giftPayments: { id: string; period_label: string; batch_label: string; vendor_name: string; total_usd: number; date_sent: string | null; status: string }[];
+    tenureGifts: { id: string; personal_email: string; milestone_index: number; milestone_date: string; decided_at: string; decided_by: string | null; gift_name: string | null; gift_price_php: number | null }[];
+    usdToPhpRate: number;
+  } | null>(null);
+  const [reportsTab, setReportsTab] = useState<'salaries' | 'budget' | 'gifts'>('salaries');
   const [users, setUsers] = useState<User[]>(MOCK_USERS);
   const [timeRecords, setTimeRecords] = useState<TimeRecord[]>(MOCK_TIME_RECORDS);
   const [payments, setPayments] = useState<PaymentLineItem[]>(MOCK_PAYMENTS);
@@ -867,6 +884,15 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   const [weeklyUploadLoading, setWeeklyUploadLoading] = useState(false);
   const [masterListUploadLoading, setMasterListUploadLoading] = useState(false);
   const [ratesUploadLoading, setRatesUploadLoading] = useState(false);
+  const { state: lockState, setLocked } = useDispatchLock();
+  const [togglingLock, setTogglingLock] = useState(false);
+  const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
+  const [hslSyncLoading, setHslSyncLoading] = useState(false);
+  const [hslSyncResult, setHslSyncResult] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+  const [masterSyncPct, setMasterSyncPct] = useState<{ pct: number } | null>(null);
+  const [ratesSyncPct, setRatesSyncPct] = useState<{ pct: number } | null>(null);
+  const [hslSyncPct, setHslSyncPct] = useState<{ pct: number } | null>(null);
+  const syncTimers = useRef<{ master?: ReturnType<typeof setInterval>; rates?: ReturnType<typeof setInterval>; hsl?: ReturnType<typeof setInterval> }>({});
   const [hubstaffPage, setHubstaffPage] = useState(1);
   const HUBSTAFF_PAGE_SIZE = 15;
   const SOURCE_FILE_PAGE_SIZE = 25;
@@ -1647,7 +1673,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   // Pull all rows so pending Orphanage-side requests can be approved here. Approved
   // rows count toward dispatch; pending rows stay visible so Accounting can close them.
   useEffect(() => {
-    if ((currentStep !== 4 && currentStep !== 5 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 5 && currentStep !== 7 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setBudgetRequestsLoading(true);
     setBudgetRequestsError(null);
@@ -1767,7 +1793,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   // No status filter at the API; we keep rows whose status is sent|paid and
   // whose date_sent (or created_at as fallback) lands inside the PAB month.
   useEffect(() => {
-    if ((currentStep !== 4 && currentStep !== 5 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 5 && currentStep !== 7 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setGiftPaymentsLoading(true);
     setGiftPaymentsError(null);
@@ -1905,7 +1931,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   );
 
   useEffect(() => {
-    if ((currentStep !== 4 && currentStep !== 5 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 5 && currentStep !== 7 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setTenureGiftsLoading(true);
     void refetchTenureGifts(ctrl.signal).finally(() => setTenureGiftsLoading(false));
@@ -3513,6 +3539,110 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
     }
   };
 
+  const handleLockToggle = async () => {
+    if (togglingLock) return;
+    setTogglingLock(true);
+    const goingLocked = !lockState.locked;
+    try {
+      await setLocked(goingLocked);
+      toast.success(
+        goingLocked
+          ? 'Processing started — employee disputes are paused'
+          : 'Processing stopped — employees can dispute again',
+        { icon: goingLocked ? '🔒' : '🔓' },
+      );
+      setConfirmingLockToggle(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update lock');
+    } finally {
+      setTogglingLock(false);
+    }
+  };
+
+  const startSyncProgress = (key: 'master' | 'rates' | 'hsl', setter: (v: { pct: number } | null) => void) => {
+    const existing = syncTimers.current[key];
+    if (existing !== undefined) clearInterval(existing);
+    let pct = 0;
+    setter({ pct });
+    const timer = setInterval(() => {
+      pct = Math.min(88, pct + (pct < 35 ? 3.5 : pct < 65 ? 1.5 : pct < 82 ? 0.6 : 0.15));
+      setter({ pct });
+    }, 80);
+    syncTimers.current[key] = timer;
+    return () => {
+      clearInterval(timer);
+      delete syncTimers.current[key];
+    };
+  };
+
+  const handleMasterSheetSync = async () => {
+    setMasterListUploadLoading(true);
+    const stopProgress = startSyncProgress('master', setMasterSyncPct);
+    try {
+      const res = await fetch('/api/cron/sync-master-from-sheet', { method: 'POST', body: JSON.stringify({ clearOffboarded: false }), headers: { 'Content-Type': 'application/json' } });
+      const json = (await res.json()) as { success?: boolean; rowCount?: number; inserted?: number; updated?: number; error?: string };
+      stopProgress();
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Master list sync failed');
+      setMasterSyncPct({ pct: 100 });
+      toast.success('Master list synced from Google Sheet', { description: `${json.rowCount ?? 0} rows (${json.inserted ?? 0} new · ${json.updated ?? 0} updated)` });
+      await reloadMasterEmployees();
+    } catch (err) {
+      stopProgress();
+      setMasterSyncPct(null);
+      toast.error('Master list sync failed', { description: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setMasterListUploadLoading(false);
+    }
+  };
+
+  const handleRatesSheetSync = async () => {
+    setRatesUploadLoading(true);
+    const stopProgress = startSyncProgress('rates', setRatesSyncPct);
+    try {
+      const res = await fetch('/api/cron/sync-rates-from-sheet', { method: 'POST' });
+      const json = (await res.json()) as { success?: boolean; rowCount?: number; uniqueEmployees?: number; inserted?: number; updated?: number; skippedNoWorkEmail?: number; skippedNoRate?: number; error?: string };
+      stopProgress();
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Rates sync failed');
+      setRatesSyncPct({ pct: 100 });
+      toast.success('Payroll rates synced from Google Sheet', {
+        description: [
+          `${(json.uniqueEmployees ?? 0).toLocaleString()} employees`,
+          `${json.updated ?? 0} updated`,
+          `${json.inserted ?? 0} new`,
+        ].join(' · '),
+      });
+    } catch (err) {
+      stopProgress();
+      setRatesSyncPct(null);
+      toast.error('Rates sync failed', { description: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setRatesUploadLoading(false);
+    }
+  };
+
+  const handleHslSheetSync = async () => {
+    setHslSyncLoading(true);
+    setHslSyncResult(null);
+    const stopProgress = startSyncProgress('hsl', setHslSyncPct);
+    try {
+      const res = await fetch('/api/cron/sync-hsl-from-sheet', { method: 'POST' });
+      const json = (await res.json()) as { success?: boolean; rowCount?: number; inserted?: number; updated?: number; error?: string };
+      stopProgress();
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'HSL sync failed');
+      setHslSyncPct({ pct: 100 });
+      setHslSyncResult({ kind: 'success', message: `${json.rowCount ?? 0} agents synced (${json.inserted ?? 0} new · ${json.updated ?? 0} updated)` });
+      toast.success('Hogan Smith Pay Plan synced');
+    } catch (err) {
+      stopProgress();
+      setHslSyncPct(null);
+      const message = err instanceof Error ? err.message : String(err);
+      setHslSyncResult({ kind: 'error', message });
+      toast.error('HSL sync failed', { description: message });
+    } finally {
+      setHslSyncLoading(false);
+    }
+  };
+
   const renderStepContent = () => {
     switch (currentStep) {
       case 1:
@@ -3810,7 +3940,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
             {hubstaffActiveTab === 'upload' && (
               <div className="space-y-6">
                 {/* ── 3 upload types in a uniform grid: roster · rates · timesheet ── */}
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   {/* 1. Master list (employee roster) */}
                   <section className="flex flex-col gap-3 rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
                     <div className="flex items-start gap-3">
@@ -3822,21 +3952,16 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                           Global master list
                         </p>
                         <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
-                          Employee roster CSV
+                          Employee Roster
                         </h3>
                       </div>
                     </div>
                     <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-                      Only the <span className="font-medium">MASTERLIST</span> sheet: rows{' '}
-                      <span className="font-medium">1–2</span> must include{' '}
-                      <span className="font-mono">MASTERLIST</span>; row{' '}
-                      <span className="font-medium">3</span> is headers; row{' '}
-                      <span className="font-medium">4+</span> is data. Upload{' '}
-                      <span className="font-medium">replaces every row</span> in{' '}
+                      Pulls the <span className="font-medium">Global Master List</span> sheet via Google Sheets API
+                      and replaces every row in{' '}
                       <span className="font-mono text-zinc-700 dark:text-zinc-300">
                         {process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE ?? 'global_master_list'}
-                      </span>
-                      . Does not touch{' '}
+                      </span>. Does not touch{' '}
                       <span className="font-mono text-zinc-600 dark:text-zinc-400">employee_hourly_rates</span>.
                     </p>
                     <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
@@ -3845,28 +3970,32 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                       </span>{' '}
                       employees loaded from Supabase for this payroll run.
                     </p>
+                    {masterSyncPct !== null && (
+                      <div className="rounded-lg border border-zinc-200 bg-white/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+                        <div className="mb-1 flex items-center justify-between text-[10.5px]">
+                          <span className="text-zinc-500 dark:text-zinc-400">Syncing master list…</span>
+                          <span className="tabular-nums text-zinc-400 dark:text-zinc-600">{Math.round(masterSyncPct.pct)}%</span>
+                        </div>
+                        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700/60">
+                          <div className="h-full rounded-full bg-emerald-500 transition-[width] duration-100 ease-linear" style={{ width: `${masterSyncPct.pct}%` }} />
+                        </div>
+                      </div>
+                    )}
                     <div className="mt-auto flex flex-col gap-2 pt-1">
                       <Button
                         type="button"
                         variant="outline"
                         disabled={masterListUploadLoading}
-                        onClick={() => masterListFileInputRef.current?.click()}
+                        onClick={() => void handleMasterSheetSync()}
                         className="w-full gap-2 border-emerald-300/80 bg-white text-emerald-900 hover:bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-950/70"
                       >
                         {masterListUploadLoading ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <Upload className="h-4 w-4" />
+                          <RefreshCw className="h-4 w-4" />
                         )}
-                        Import master list CSV
+                        Sync from Google Sheet
                       </Button>
-                      <input
-                        type="file"
-                        ref={masterListFileInputRef}
-                        onChange={(ev) => void handleMasterListFileChosen(ev)}
-                        accept=".csv,.CSV,text/csv,application/csv,text/plain"
-                        className="hidden"
-                      />
                     </div>
                   </section>
 
@@ -3881,49 +4010,100 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                           Payroll rates
                         </p>
                         <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
-                          All Dept payroll CSV
+                          All Dept Payroll CSV
                         </h3>
                       </div>
                     </div>
                     <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-                      Upload the <span className="font-medium">All Dept</span> sheet from the Payroll Dashboard.
-                      Reads <span className="font-mono">Work Email</span>,{' '}
-                      <span className="font-mono">Personal Email</span>, <span className="font-mono">Week</span>,{' '}
-                      <span className="font-mono">Regular Rate</span>, and <span className="font-mono">OT Rate</span>,
-                      then upserts{' '}
+                      Pulls the <span className="font-medium">All Dept</span> sheet via Google Sheets API and upserts{' '}
                       <span className="font-mono text-zinc-700 dark:text-zinc-300">employee_hourly_rates</span>{' '}
-                      by work email.
+                      by work email. Multiple weekly rows per employee are expected — the latest week wins.
                     </p>
-                    <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
-                      Multiple weekly rows per employee are expected. The latest week wins.
-                    </p>
+                    {ratesSyncPct !== null && (
+                      <div className="rounded-lg border border-zinc-200 bg-white/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+                        <div className="mb-1 flex items-center justify-between text-[10.5px]">
+                          <span className="text-zinc-500 dark:text-zinc-400">Syncing payroll rates…</span>
+                          <span className="tabular-nums text-zinc-400 dark:text-zinc-600">{Math.round(ratesSyncPct.pct)}%</span>
+                        </div>
+                        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700/60">
+                          <div className="h-full rounded-full bg-sky-500 transition-[width] duration-100 ease-linear" style={{ width: `${ratesSyncPct.pct}%` }} />
+                        </div>
+                      </div>
+                    )}
                     <div className="mt-auto flex flex-col gap-2 pt-1">
                       <Button
                         type="button"
                         variant="outline"
                         disabled={ratesUploadLoading}
-                        onClick={() => ratesFileInputRef.current?.click()}
+                        onClick={() => void handleRatesSheetSync()}
                         className="w-full gap-2 border-sky-300/80 bg-white text-sky-900 hover:bg-sky-50 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100 dark:hover:bg-sky-950/70"
                       >
                         {ratesUploadLoading ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <Upload className="h-4 w-4" />
+                          <RefreshCw className="h-4 w-4" />
                         )}
-                        Import payroll rates CSV
+                        Sync from Google Sheet
                       </Button>
-                      <input
-                        type="file"
-                        ref={ratesFileInputRef}
-                        onChange={(ev) => void handleRatesFileChosen(ev)}
-                        accept=".csv,.CSV,text/csv,application/csv,text/plain"
-                        className="hidden"
-                      />
                     </div>
                   </section>
 
-                  {/* 3. Hubstaff weekly timesheet */}
-                  <section className="flex flex-col gap-3 rounded-xl border border-indigo-200/80 bg-indigo-50/40 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/20 md:col-span-2 xl:col-span-1">
+                  {/* 3. Hogan Smith Pay Plan */}
+                  <section className="flex flex-col gap-3 rounded-xl border border-violet-200/80 bg-violet-50/40 p-4 dark:border-violet-900/40 dark:bg-violet-950/20">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-violet-200/90 bg-white dark:border-violet-800/60 dark:bg-violet-950/50">
+                        <RefreshCw className="h-5 w-5 text-violet-700 dark:text-violet-400" aria-hidden />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-violet-800/90 dark:text-violet-400/90">
+                          Hogan Smith
+                        </p>
+                        <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
+                          Hogan Pay Plan
+                        </h3>
+                      </div>
+                    </div>
+                    <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                      Pulls the <span className="font-medium">Hogan Smith Pay Plan</span> sheet via Google Sheets API
+                      and syncs agent rows into Supabase. No file needed — sync pulls directly from the linked
+                      spreadsheet.
+                    </p>
+                    {hslSyncPct !== null && (
+                      <div className="rounded-lg border border-zinc-200 bg-white/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
+                        <div className="mb-1 flex items-center justify-between text-[10.5px]">
+                          <span className="text-zinc-500 dark:text-zinc-400">Syncing Hogan pay plan…</span>
+                          <span className="tabular-nums text-zinc-400 dark:text-zinc-600">{Math.round(hslSyncPct.pct)}%</span>
+                        </div>
+                        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700/60">
+                          <div className="h-full rounded-full bg-violet-500 transition-[width] duration-100 ease-linear" style={{ width: `${hslSyncPct.pct}%` }} />
+                        </div>
+                      </div>
+                    )}
+                    {hslSyncResult && hslSyncPct === null && (
+                      <p className={`text-xs font-medium ${hslSyncResult.kind === 'success' ? 'text-violet-700 dark:text-violet-300' : 'text-red-600 dark:text-red-400'}`}>
+                        {hslSyncResult.kind === 'success' ? '✓' : '✗'} {hslSyncResult.message}
+                      </p>
+                    )}
+                    <div className="mt-auto flex flex-col gap-2 pt-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={hslSyncLoading}
+                        onClick={() => void handleHslSheetSync()}
+                        className="w-full gap-2 border-violet-300/80 bg-white text-violet-900 hover:bg-violet-50 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-100 dark:hover:bg-violet-950/70"
+                      >
+                        {hslSyncLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-4 w-4" />
+                        )}
+                        Sync from Google Sheet
+                      </Button>
+                    </div>
+                  </section>
+
+                  {/* 4. Hubstaff weekly timesheet */}
+                  <section className="flex flex-col gap-3 rounded-xl border border-indigo-200/80 bg-indigo-50/40 p-4 dark:border-indigo-900/40 dark:bg-indigo-950/20">
                     <div className="flex items-start gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-indigo-200/90 bg-white dark:border-indigo-800/60 dark:bg-indigo-950/50">
                         <Clock className="h-5 w-5 text-indigo-700 dark:text-indigo-400" aria-hidden />
@@ -3974,6 +4154,103 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                     </div>
                   </section>
                 </div>
+
+                {/* ── Start / Stop Processing ── */}
+                <div className={cn(
+                  'flex items-center justify-between gap-4 rounded-xl border px-4 py-3 transition-colors',
+                  lockState.locked
+                    ? 'border-rose-200/80 bg-rose-50/60 dark:border-rose-900/40 dark:bg-rose-950/20'
+                    : 'border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/30',
+                )}>
+                  <div className="flex items-center gap-2.5">
+                    {lockState.locked ? (
+                      <>
+                        <span className="relative flex h-2.5 w-2.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-70" />
+                          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
+                        </span>
+                        <div>
+                          <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">Processing active</p>
+                          <p className="text-xs text-rose-600/80 dark:text-rose-400/70">Employee disputes are paused</p>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <span className="flex h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-600" />
+                        <div>
+                          <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">Not processing</p>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-500">Start to lock disputes and begin payroll</p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <motion.button
+                    type="button"
+                    onClick={() => setConfirmingLockToggle(true)}
+                    disabled={togglingLock}
+                    whileHover={{ y: -1 }}
+                    whileTap={{ scale: 0.95 }}
+                    transition={{ type: 'spring', stiffness: 380, damping: 26 }}
+                    className={cn(
+                      'relative inline-flex h-9 min-w-[8.5rem] items-center justify-center gap-2 overflow-hidden rounded-md px-4 text-sm font-semibold text-white shadow-sm transition-[background-image] duration-300 disabled:opacity-60',
+                      lockState.locked
+                        ? 'bg-gradient-to-br from-rose-500 to-red-600 shadow-rose-500/30 hover:from-rose-600 hover:to-red-700'
+                        : 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700',
+                    )}
+                  >
+                    <AnimatePresence mode="popLayout" initial={false}>
+                      <motion.span
+                        key={lockState.locked ? 'stop' : 'start'}
+                        initial={{ opacity: 0, y: 6, scale: 0.92 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: -6, scale: 0.92 }}
+                        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                        className="flex items-center gap-2"
+                      >
+                        {togglingLock ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : lockState.locked ? (
+                          <StopCircle className="h-4 w-4" />
+                        ) : (
+                          <Play className="h-4 w-4" />
+                        )}
+                        {lockState.locked ? 'Stop processing' : 'Start processing'}
+                      </motion.span>
+                    </AnimatePresence>
+                  </motion.button>
+                </div>
+
+                {/* Confirm toggle dialog */}
+                <Dialog open={confirmingLockToggle} onOpenChange={setConfirmingLockToggle}>
+                  <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                      <DialogTitle>{lockState.locked ? 'Stop processing?' : 'Start processing?'}</DialogTitle>
+                      <DialogDescription>
+                        {lockState.locked
+                          ? 'This will unlock employee disputes. Employees will be able to file disputes again.'
+                          : 'This will lock employee disputes and signal that payroll is being processed. Employees will not be able to file disputes until you stop.'}
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button variant="outline" onClick={() => setConfirmingLockToggle(false)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        disabled={togglingLock}
+                        onClick={() => void handleLockToggle()}
+                        className={cn(
+                          lockState.locked
+                            ? 'bg-rose-600 hover:bg-rose-700'
+                            : 'bg-emerald-600 hover:bg-emerald-700',
+                          'text-white',
+                        )}
+                      >
+                        {togglingLock && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        {lockState.locked ? 'Stop processing' : 'Start processing'}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
 
                 <Card className="border-zinc-200 bg-zinc-50/80 ring-0 dark:border-zinc-800 dark:bg-zinc-900/40">
                   <CardHeader className="pb-2">
@@ -7565,7 +7842,17 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                     toast.success('Payroll Dispatched', {
                       description: `Sent ${employees.length} paystub request${employees.length === 1 ? '' : 's'} to n8n.`,
                     });
-                    setCurrentStep(1);
+                    setReportSnapshot({
+                      startedAt: wizardStartedAt,
+                      dispatchedAt: new Date(),
+                      employees: dispatchData.rows,
+                      budgetRequests: budgetRequestRows.filter(r => r.status === 'approved'),
+                      giftPayments: giftPaymentRows,
+                      tenureGifts: tenureGiftRows,
+                      usdToPhpRate,
+                    });
+                    setReportsTab('salaries');
+                    setCurrentStep(7);
                   } catch (err) {
                     toast.error('Dispatch failed', {
                       description: err instanceof Error ? err.message : String(err),
@@ -7581,6 +7868,260 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
             </div>
           </div>
         );
+      case 7: {
+        const snap = reportSnapshot;
+        if (!snap) {
+          return (
+            <div className="flex flex-col items-center justify-center gap-4 py-20 text-zinc-400">
+              <BarChart3 className="size-10 opacity-40" />
+              <p className="text-sm">No dispatch report yet. Complete a payroll run to see the summary here.</p>
+              <Button variant="outline" size="sm" onClick={() => setCurrentStep(1)}>Back to Start</Button>
+            </div>
+          );
+        }
+
+        const durationMs = snap.dispatchedAt.getTime() - snap.startedAt.getTime();
+        const durationMins = Math.floor(durationMs / 60000);
+        const durationSecs = Math.floor((durationMs % 60000) / 1000);
+        const durationLabel = durationMins > 0
+          ? `${durationMins}m ${durationSecs}s`
+          : `${durationSecs}s`;
+
+        const fmt = (d: Date) => d.toLocaleString('en-PH', {
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+        });
+
+        const totalSalaries = snap.employees.reduce((s, e) => s + (e.pay_php.final ?? 0), 0);
+        const totalBudget = snap.budgetRequests.reduce((s, r) => s + Number(r.final_amount ?? 0), 0);
+        const totalGifts = snap.giftPayments.reduce((s, g) => s + g.total_usd * snap.usdToPhpRate, 0);
+        const totalTenureGifts = snap.tenureGifts.reduce((s, t) => s + (t.gift_price_php ?? 0), 0);
+
+        const tabs = [
+          { id: 'salaries' as const, label: 'Salaries / Wages', count: snap.employees.length, total: totalSalaries },
+          { id: 'budget' as const, label: 'Orphanage Budget Requests', count: snap.budgetRequests.length, total: totalBudget },
+          { id: 'gifts' as const, label: 'Gift Payments', count: snap.giftPayments.length + snap.tenureGifts.length, total: totalGifts + totalTenureGifts },
+        ] as const;
+
+        return (
+          <div className="flex min-w-0 flex-col gap-5">
+            {/* Timestamp banner */}
+            <Card className="border-indigo-200/60 bg-indigo-50/60 dark:border-indigo-800/30 dark:bg-indigo-950/20">
+              <CardContent className="flex flex-wrap items-center gap-6 px-5 py-4">
+                <div className="flex items-center gap-2 text-xs text-indigo-700 dark:text-indigo-300">
+                  <Clock className="size-3.5 shrink-0" />
+                  <span className="font-medium">Started</span>
+                  <span className="font-mono">{fmt(snap.startedAt)}</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-indigo-700 dark:text-indigo-300">
+                  <Send className="size-3.5 shrink-0" />
+                  <span className="font-medium">Dispatched</span>
+                  <span className="font-mono">{fmt(snap.dispatchedAt)}</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300">
+                  <Timer className="size-3.5 shrink-0" />
+                  <span className="font-medium">Duration</span>
+                  <span className="font-mono font-semibold">{durationLabel}</span>
+                </div>
+                <div className="ml-auto flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400">
+                  <span className="font-medium">Total Outflow</span>
+                  <span className="font-mono font-bold text-sm">{formatPHP(totalSalaries + totalBudget + totalGifts + totalTenureGifts)}</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Sub-tabs */}
+            <div className="flex gap-1 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-800 dark:bg-zinc-900/60">
+              {tabs.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setReportsTab(t.id)}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-all",
+                    reportsTab === t.id
+                      ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200",
+                  )}
+                >
+                  <span>{t.label}</span>
+                  <span className={cn(
+                    "rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                    reportsTab === t.id ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300" : "bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400",
+                  )}>{t.count}</span>
+                  <span className="font-mono text-[10px] opacity-70">{formatPHP(t.total)}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Salaries / Wages */}
+            {reportsTab === 'salaries' && (
+              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-[12.5px]">
+                    <thead>
+                      <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                        {['Employee', 'Department', 'Hours', 'Regular', 'OT', 'Bonuses', 'MESA', 'Net Pay'].map(h => (
+                          <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {snap.employees.map((e, i) => (
+                        <tr key={e.email} className={cn("border-b border-zinc-100 last:border-0 dark:border-zinc-800/60", i % 2 === 1 && "bg-zinc-50/50 dark:bg-zinc-900/20")}>
+                          <td className="px-3 py-2">
+                            <p className="font-medium text-zinc-900 dark:text-zinc-100">{e.name}</p>
+                            <p className="text-[10px] font-mono text-zinc-400">{e.email}</p>
+                          </td>
+                          <td className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{e.department_name ?? '—'}</td>
+                          <td className="px-3 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{e.hours.total.toFixed(2)}</td>
+                          <td className="px-3 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{e.pay_php.regular != null ? formatPHP(e.pay_php.regular) : '—'}</td>
+                          <td className="px-3 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{e.pay_php.ot != null ? formatPHP(e.pay_php.ot) : '—'}</td>
+                          <td className="px-3 py-2 font-mono tabular-nums text-emerald-700 dark:text-emerald-400">{e.pay_php.bonuses_total > 0 ? `+${formatPHP(e.pay_php.bonuses_total)}` : '—'}</td>
+                          <td className="px-3 py-2 font-mono tabular-nums text-rose-600 dark:text-rose-400">{e.pay_php.mesa_deduction > 0 ? `-${formatPHP(e.pay_php.mesa_deduction)}` : '—'}</td>
+                          <td className="px-3 py-2 font-mono tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">{formatPHP(e.pay_php.final)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
+                        <td colSpan={7} className="px-3 py-2.5 text-xs font-semibold text-zinc-600 dark:text-zinc-400">Total ({snap.employees.length} employees)</td>
+                        <td className="px-3 py-2.5 font-mono font-bold text-zinc-900 dark:text-zinc-100">{formatPHP(totalSalaries)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Orphanage Budget Requests */}
+            {reportsTab === 'budget' && (
+              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                {snap.budgetRequests.length === 0 ? (
+                  <div className="flex flex-col items-center gap-2 py-12 text-zinc-400">
+                    <Heart className="size-8 opacity-40" />
+                    <p className="text-sm">No approved budget requests this cycle.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-[12.5px]">
+                      <thead>
+                        <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                          {['Submitter', 'Visit Type', 'Submitted', 'Approved By', 'Approved On', 'Amount'].map(h => (
+                            <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {snap.budgetRequests.map((r, i) => (
+                          <tr key={r.id} className={cn("border-b border-zinc-100 last:border-0 dark:border-zinc-800/60", i % 2 === 1 && "bg-zinc-50/50 dark:bg-zinc-900/20")}>
+                            <td className="px-3 py-2 font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.submitter_email}</td>
+                            <td className="px-3 py-2 capitalize text-zinc-600 dark:text-zinc-400">{r.visit_type}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-zinc-500">{new Date(r.submitted_at).toLocaleDateString('en-PH')}</td>
+                            <td className="px-3 py-2 text-xs text-zinc-500">{r.decided_by ?? '—'}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-zinc-500">{r.decided_at ? new Date(r.decided_at).toLocaleDateString('en-PH') : '—'}</td>
+                            <td className="px-3 py-2 font-mono font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{formatPHP(Number(r.final_amount ?? 0))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
+                          <td colSpan={5} className="px-3 py-2.5 text-xs font-semibold text-zinc-600 dark:text-zinc-400">Total ({snap.budgetRequests.length} requests)</td>
+                          <td className="px-3 py-2.5 font-mono font-bold text-zinc-900 dark:text-zinc-100">{formatPHP(totalBudget)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Gift Payments */}
+            {reportsTab === 'gifts' && (
+              <div className="flex flex-col gap-4">
+                {/* Vendor gift payments */}
+                <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                  <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+                    <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Vendor Gift Payments</p>
+                    <span className="font-mono text-xs text-zinc-500">{formatPHP(totalGifts)}</span>
+                  </div>
+                  {snap.giftPayments.length === 0 ? (
+                    <p className="px-4 py-8 text-center text-sm text-zinc-400">No gift payments this cycle.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse text-[12.5px]">
+                        <thead>
+                          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                            {['Vendor', 'Period', 'Batch', 'Date Sent', 'Status', 'Amount (USD)', 'Amount (PHP)'].map(h => (
+                              <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {snap.giftPayments.map((g, i) => (
+                            <tr key={g.id} className={cn("border-b border-zinc-100 last:border-0 dark:border-zinc-800/60", i % 2 === 1 && "bg-zinc-50/50 dark:bg-zinc-900/20")}>
+                              <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-200">{g.vendor_name}</td>
+                              <td className="px-3 py-2 text-zinc-500">{g.period_label}</td>
+                              <td className="px-3 py-2 text-zinc-500">{g.batch_label}</td>
+                              <td className="px-3 py-2 font-mono text-xs text-zinc-500">{g.date_sent ? new Date(g.date_sent).toLocaleDateString('en-PH') : '—'}</td>
+                              <td className="px-3 py-2"><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold capitalize text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">{g.status}</span></td>
+                              <td className="px-3 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">${g.total_usd.toFixed(2)}</td>
+                              <td className="px-3 py-2 font-mono font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{formatPHP(g.total_usd * snap.usdToPhpRate)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Tenure gifts */}
+                <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                  <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+                    <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Tenure Gifts</p>
+                    <span className="font-mono text-xs text-zinc-500">{formatPHP(totalTenureGifts)}</span>
+                  </div>
+                  {snap.tenureGifts.length === 0 ? (
+                    <p className="px-4 py-8 text-center text-sm text-zinc-400">No tenure gifts this cycle.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse text-[12.5px]">
+                        <thead>
+                          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                            {['Employee', 'Gift', 'Milestone', 'Approved By', 'Approved On', 'Amount'].map(h => (
+                              <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {snap.tenureGifts.map((t, i) => (
+                            <tr key={t.id} className={cn("border-b border-zinc-100 last:border-0 dark:border-zinc-800/60", i % 2 === 1 && "bg-zinc-50/50 dark:bg-zinc-900/20")}>
+                              <td className="px-3 py-2 font-mono text-xs text-zinc-700 dark:text-zinc-300">{t.personal_email}</td>
+                              <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">{t.gift_name ?? <span className="italic text-zinc-400">Unknown</span>}</td>
+                              <td className="px-3 py-2 text-zinc-500">Year {t.milestone_index + 1} · {new Date(t.milestone_date).toLocaleDateString('en-PH')}</td>
+                              <td className="px-3 py-2 text-xs text-zinc-500">{t.decided_by ?? '—'}</td>
+                              <td className="px-3 py-2 font-mono text-xs text-zinc-500">{new Date(t.decided_at).toLocaleDateString('en-PH')}</td>
+                              <td className="px-3 py-2 font-mono font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{t.gift_price_php != null ? formatPHP(t.gift_price_php) : <span className="italic text-zinc-400 text-xs">—</span>}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Back to start */}
+            <div className="flex justify-end pt-2">
+              <Button variant="outline" size="sm" onClick={() => setCurrentStep(1)} className="gap-2 text-zinc-600 dark:text-zinc-400">
+                <ArrowLeft className="size-3.5" />
+                Start New Payroll Run
+              </Button>
+            </div>
+          </div>
+        );
+      }
       default:
         return null;
     }
