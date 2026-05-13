@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
         invoice_number: body.invoiceNumber ?? '',
         invoice_date: body.invoiceDate ?? '',
         due_date: body.dueDate ?? '',
-        from_company: body.fromCompany ?? '',
+        from_entity_name: body.fromEntityName ?? '',
         from_name: body.fromName ?? '',
         from_address: body.fromAddress ?? '',
         from_city_state_zip: body.fromCityStateZip ?? '',

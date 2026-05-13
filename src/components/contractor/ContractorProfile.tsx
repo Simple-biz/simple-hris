@@ -20,8 +20,8 @@ import {
   type PayoutFields,
 } from '@/components/employee/employee-payout-fields';
 
-interface EmployeeIdRow {
-  work_email?: string | null;
+interface ContractorProfileRow {
+  contractor_email?: string | null;
   display_name?: string | null;
   preferred_processor?: string | null;
   preferred_bank_slot?: string | null;
@@ -59,13 +59,10 @@ export default function ContractorProfile({
   useEffect(() => {
     if (!contractorEmail) return;
     setLoading(true);
-    fetch('/api/employee-ids', { cache: 'no-store' })
+    fetch(`/api/contractor/profile?email=${encodeURIComponent(norm)}`, { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { rows?: EmployeeIdRow[] }) => {
-        const row = (j.rows ?? []).find((r) => {
-          const we = normEmail(r.work_email ?? '') ?? (r.work_email ?? '').toLowerCase();
-          return we === norm;
-        });
+      .then((j: { profile?: ContractorProfileRow | null }) => {
+        const row = j.profile;
         if (!row) return;
         setDisplayName(row.display_name?.trim() || '');
         if (row.preferred_processor && isProcessorId(row.preferred_processor)) {
@@ -99,30 +96,30 @@ export default function ContractorProfile({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch('/api/update-employee-ids', {
+      const res = await fetch('/api/contractor/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          work_email: norm,
-          bootstrap_display_name: displayName.trim() || undefined,
-          preferred_processor: preferredProcessor || null,
-          preferred_bank_slot: payout.preferredBankSlot || null,
-          hurupay_email: payout.hurupayEmail,
-          wepay_email: payout.wepayEmail,
-          higlobe_email: payout.higlobeEmail,
-          higlobe_account_name: payout.higlobeAccountName,
-          wise_email: payout.wiseEmail,
-          wise_tag: payout.wiseTag,
-          phone_number: payout.phoneNumber,
-          full_address: payout.fullAddress,
-          bank_name: payout.bankName,
-          account_holder_name: payout.accountHolderName,
-          account_number: payout.accountNumber,
-          swift_code: payout.swiftCode,
-          alt_bank_name: payout.altBankName,
-          alt_account_holder_name: payout.altAccountHolderName,
-          alt_account_number: payout.altAccountNumber,
-          alt_routing_number: payout.altSwiftCode,
+          contractor_email:        norm,
+          display_name:            displayName.trim() || null,
+          preferred_processor:     preferredProcessor || null,
+          preferred_bank_slot:     payout.preferredBankSlot || null,
+          hurupay_email:           payout.hurupayEmail || null,
+          wepay_email:             payout.wepayEmail || null,
+          higlobe_email:           payout.higlobeEmail || null,
+          higlobe_account_name:    payout.higlobeAccountName || null,
+          wise_email:              payout.wiseEmail || null,
+          wise_tag:                payout.wiseTag || null,
+          phone_number:            payout.phoneNumber || null,
+          full_address:            payout.fullAddress || null,
+          bank_name:               payout.bankName || null,
+          account_holder_name:     payout.accountHolderName || null,
+          account_number:          payout.accountNumber || null,
+          swift_code:              payout.swiftCode || null,
+          alt_bank_name:           payout.altBankName || null,
+          alt_account_holder_name: payout.altAccountHolderName || null,
+          alt_account_number:      payout.altAccountNumber || null,
+          alt_routing_number:      payout.altSwiftCode || null,
         }),
       });
       const json = (await res.json()) as { error?: string | null; success?: boolean };

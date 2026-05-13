@@ -47,7 +47,7 @@ interface LineItem {
 }
 
 interface InvoiceForm {
-  fromCompany: string;
+  fromEntityName: string;
   fromName: string;
   fromAddress: string;
   fromCityStateZip: string;
@@ -69,7 +69,7 @@ interface SavedInvoice {
   invoice_number: string;
   invoice_date: string;
   due_date: string;
-  from_company: string;
+  from_entity_name: string;
   from_name: string;
   from_address: string;
   from_city_state_zip: string;
@@ -102,7 +102,7 @@ function emptyItem(): LineItem {
 
 function defaultForm(): InvoiceForm {
   return {
-    fromCompany: '',
+    fromEntityName: '',
     fromName: '',
     fromAddress: '',
     fromCityStateZip: '',
@@ -158,7 +158,7 @@ function FormInput({
   type = 'text',
   className,
 }: {
-  value: string | number;
+  value: string | number | null | undefined;
   onChange: (v: string) => void;
   placeholder?: string;
   type?: string;
@@ -167,7 +167,7 @@ function FormInput({
   return (
     <Input
       type={type}
-      value={value}
+      value={value ?? ''}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       className={cn(
@@ -185,7 +185,7 @@ function FormTextarea({
   rows = 3,
   className,
 }: {
-  value: string;
+  value: string | null | undefined;
   onChange: (v: string) => void;
   placeholder?: string;
   rows?: number;
@@ -193,7 +193,7 @@ function FormTextarea({
 }) {
   return (
     <textarea
-      value={value}
+      value={value ?? ''}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       rows={rows}
@@ -230,7 +230,7 @@ function InvoiceViewDialog({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">From</p>
-              <p className="font-medium text-zinc-900 dark:text-white">{invoice.from_company || '—'}</p>
+              <p className="font-medium text-zinc-900 dark:text-white">{invoice.from_entity_name || '—'}</p>
               <p className="text-zinc-600 dark:text-zinc-400">{invoice.from_name}</p>
               <p className="text-zinc-500 dark:text-zinc-500">{invoice.from_address}</p>
               <p className="text-zinc-500 dark:text-zinc-500">{invoice.from_city_state_zip}</p>
@@ -457,8 +457,8 @@ function NewInvoiceForm({
         <div className="space-y-3">
           <div className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">From</div>
           <div>
-            <FieldLabel>Company Name</FieldLabel>
-            <FormInput value={form.fromCompany} onChange={(v) => set('fromCompany', v)} placeholder="Your Company" />
+            <FieldLabel>Entity Name</FieldLabel>
+            <FormInput value={form.fromEntityName} onChange={(v) => set('fromEntityName', v)} placeholder="Your Entity / Company" />
           </div>
           <div>
             <FieldLabel>Your Name</FieldLabel>
@@ -564,13 +564,13 @@ function NewInvoiceForm({
                     <div className="pr-2">
                       <input
                         type="text"
-                        value={item.description}
+                        value={item.description ?? ''}
                         onChange={(e) => setItem(item.id, { description: e.target.value })}
                         placeholder="Item description"
                         className="w-full rounded border-0 bg-transparent text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-0 dark:text-zinc-100"
                       />
                       <textarea
-                        value={item.notes}
+                        value={item.notes ?? ''}
                         onChange={(e) => setItem(item.id, { notes: e.target.value })}
                         placeholder="Additional notes (optional)"
                         rows={1}
@@ -582,7 +582,7 @@ function NewInvoiceForm({
                         type="number"
                         min={0}
                         step={1}
-                        value={item.qty}
+                        value={item.qty ?? 0}
                         onChange={(e) => setItem(item.id, { qty: parseFloat(e.target.value) || 0 })}
                         className="w-full rounded border border-transparent bg-transparent text-right text-sm text-zinc-900 outline-none focus:border-blue-300 focus:ring-0 dark:text-zinc-100"
                       />
@@ -592,7 +592,7 @@ function NewInvoiceForm({
                         type="number"
                         min={0}
                         step={0.01}
-                        value={item.rate}
+                        value={item.rate ?? 0}
                         onChange={(e) => setItem(item.id, { rate: parseFloat(e.target.value) || 0 })}
                         className="w-full rounded border border-transparent bg-transparent text-right text-sm text-zinc-900 outline-none focus:border-blue-300 focus:ring-0 dark:text-zinc-100"
                       />
@@ -603,7 +603,7 @@ function NewInvoiceForm({
                         min={0}
                         max={100}
                         step={0.1}
-                        value={item.taxPct}
+                        value={item.taxPct ?? 0}
                         onChange={(e) => setItem(item.id, { taxPct: parseFloat(e.target.value) || 0 })}
                         className="w-full rounded border border-transparent bg-transparent text-right text-sm text-zinc-900 outline-none focus:border-blue-300 focus:ring-0 dark:text-zinc-100"
                       />
