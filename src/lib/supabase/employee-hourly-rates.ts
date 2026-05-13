@@ -17,6 +17,8 @@ export type EmployeeHourlyRateRow = {
   full_address: string | null;
   city: string | null;
   province_state: string | null;
+  /** MESA Program member — ₱100 deducted from every paycheck when true. */
+  mesa_member: boolean | null;
 };
 
 type RawRow = Record<string, unknown>;
@@ -142,6 +144,8 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
     "province",
   ]);
 
+  const mesa_member_raw = getField(idx, ['mesa_member', 'Mesa Member', 'MESA Member', 'mesa member']);
+
   return {
     work_email: toStr(work_email),
     personal_email: toStr(personal_email),
@@ -156,6 +160,9 @@ export function mapEmployeeHourlyRateRow(row: RawRow): EmployeeHourlyRateRow {
     full_address: toStr(full_address),
     city: toStr(city),
     province_state: toStr(province_state),
+    mesa_member: mesa_member_raw === true || mesa_member_raw === 'true' ? true
+      : mesa_member_raw === false || mesa_member_raw === 'false' ? false
+      : null,
   };
 }
 

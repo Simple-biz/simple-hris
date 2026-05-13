@@ -383,6 +383,7 @@ type DispatchEmployee = {
     perfect_attendance_bonus: number;
     tech_bonus: number;
     other_bonuses: number;
+    mesa_deduction: number;
     final: number;
   };
 };
@@ -845,7 +846,7 @@ const steps = [
   { id: 6, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
 ];
 
-export default function PayrollWizard() {
+export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string | null }) {
   const [currentStep, setCurrentStep] = useState(1);
   const [users, setUsers] = useState<User[]>(MOCK_USERS);
   const [timeRecords, setTimeRecords] = useState<TimeRecord[]>(MOCK_TIME_RECORDS);
@@ -1646,7 +1647,7 @@ export default function PayrollWizard() {
   // Pull all rows so pending Orphanage-side requests can be approved here. Approved
   // rows count toward dispatch; pending rows stay visible so Accounting can close them.
   useEffect(() => {
-    if ((currentStep !== 4 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 5 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setBudgetRequestsLoading(true);
     setBudgetRequestsError(null);
@@ -1737,7 +1738,7 @@ export default function PayrollWizard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status,
-          decided_by: 'Payroll Wizard',
+          decided_by: sessionEmail || 'Payroll Wizard',
         }),
       });
       const json = (await res.json()) as {
@@ -1766,7 +1767,7 @@ export default function PayrollWizard() {
   // No status filter at the API; we keep rows whose status is sent|paid and
   // whose date_sent (or created_at as fallback) lands inside the PAB month.
   useEffect(() => {
-    if ((currentStep !== 4 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 5 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setGiftPaymentsLoading(true);
     setGiftPaymentsError(null);
@@ -1904,7 +1905,7 @@ export default function PayrollWizard() {
   );
 
   useEffect(() => {
-    if ((currentStep !== 4 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 5 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setTenureGiftsLoading(true);
     void refetchTenureGifts(ctrl.signal).finally(() => setTenureGiftsLoading(false));
@@ -2914,7 +2915,13 @@ export default function PayrollWizard() {
       const toggledTech = toggles.tech_bonus ? commonBonusPhp('tech_bonus') : 0;
       const otherBonuses = hasRates ? Math.max(0, rawBonusTotal - toggledPab - toggledTech) : 0;
       const bonusTotal = pabBonus + techBonus + otherBonuses;
-      const finalPay = (r.initialPay ?? 0) + bonusTotal;
+
+      // MESA Program deduction — ₱100 per paycheck for enrolled members.
+      const em = normEmail(r.email);
+      const rateRowForMesa = em ? ratesByEmail.get(em) : undefined;
+      const mesaDeduction = (hasRates && rateRowForMesa?.mesa_member) ? 100 : 0;
+
+      const finalPay = (r.initialPay ?? 0) + bonusTotal - mesaDeduction;
 
       rows.push({
         name: r.name,
@@ -2933,6 +2940,7 @@ export default function PayrollWizard() {
           perfect_attendance_bonus: pabBonus,
           tech_bonus: techBonus,
           other_bonuses: otherBonuses,
+          mesa_deduction: mesaDeduction,
           final: finalPay,
         },
       });
@@ -5711,7 +5719,9 @@ export default function PayrollWizard() {
                             </TableRow>
                           ) : filteredDeptEmployees.map((emp) => {
                             const bonusTotal = bonusTotals[emp.email] ?? 0;
-                            const finalPay = (emp.initialPay ?? 0) + bonusTotal;
+                            const empRateRow = ratesByEmail.get(normEmail(emp.email) ?? '');
+                            const empMesaDeduction = (emp.initialPay != null && empRateRow?.mesa_member) ? 100 : 0;
+                            const finalPay = (emp.initialPay ?? 0) + bonusTotal - empMesaDeduction;
                             const empM = employeeMetrics[emp.email] ?? {};
                             const isJerome = isJeromeRosero(emp.name);
                             return (
@@ -7099,17 +7109,23 @@ export default function PayrollWizard() {
       }
       case 5: {
         const finalPayRows = effectiveCalcResults
-          .map(r => ({
+          .map(r => {
+          const rr = ratesByEmail.get(normEmail(r.email) ?? '');
+          const mesaDed = ((r.initialPay != null) && rr?.mesa_member) ? 100 : 0;
+          return {
             ...r,
             deptKey: employeeDepts[r.email] ?? null,
             deptName: DEPARTMENTS.find(d => d.key === employeeDepts[r.email])?.name ?? '—',
             bonusTotal: bonusTotals[r.email] ?? 0,
-            finalPay: (r.initialPay ?? 0) + (bonusTotals[r.email] ?? 0),
-          }))
+            mesaDeduction: mesaDed,
+            finalPay: (r.initialPay ?? 0) + (bonusTotals[r.email] ?? 0) - mesaDed,
+          };
+          })
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
         const grandInitial = finalPayRows.reduce((s, r) => s + (r.initialPay ?? 0), 0);
         const grandBonuses = finalPayRows.reduce((s, r) => s + r.bonusTotal, 0);
+        const grandMesaDeductions = finalPayRows.reduce((s, r) => s + (r.mesaDeduction ?? 0), 0);
         const grandFinal   = finalPayRows.reduce((s, r) => s + r.finalPay, 0);
         const unassignedCount = finalPayRows.filter(r => !r.deptKey).length;
 

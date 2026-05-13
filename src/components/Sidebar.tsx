@@ -106,22 +106,21 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
       aria-label="Accounting navigation"
     >
       <div className="flex min-h-0 flex-1 flex-col p-6">
-        <div className="mb-8 flex shrink-0 items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/30">
-            <Wand2 className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-orange-600/80 dark:text-orange-400/80">
-              Accounting HRIS
-            </p>
-            <div className="rounded-md bg-white px-2 py-1">
+        <div className="mb-8 shrink-0">
+          <a
+            href="https://www.simple.biz/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="logo-neon"
+          >
+            <div className="logo-neon__inner px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
               <img
                 src="/simple-logo.png"
                 alt="Simple Accounting HRIS"
-                className="h-5 w-auto object-contain"
+                className="h-10 w-full object-contain"
               />
             </div>
-          </div>
+          </a>
         </div>
 
         <ScrollArea className="-mx-2 min-h-0 flex-1">

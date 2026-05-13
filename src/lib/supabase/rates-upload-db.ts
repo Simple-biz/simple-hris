@@ -201,6 +201,14 @@ export async function replaceEmployeeHourlyRatesFromCsv(
     "bank_preferred",
     "BankPreferred",
   );
+  const mesaParticipantIdx = findHeaderIndex(
+    headers,
+    "MESA Participant",
+    "Mesa Participant",
+    "mesa_participant",
+    "MESA Member",
+    "Mesa Member",
+  );
 
   const missing: string[] = [];
   if (workEmailIdx < 0) missing.push("Work Email");
@@ -223,6 +231,9 @@ export async function replaceEmployeeHourlyRatesFromCsv(
      *  cell is blank — payload below skips the field entirely so a blank cell
      *  never clobbers an existing DB value. */
     bankPreferred: string | null;
+    /** True when the sheet cell is "Yes" (case-insensitive). Null when blank —
+     *  blank is treated as no-change so a missing cell never un-enrolls someone. */
+    mesaMember: boolean | null;
   };
 
   let skippedNoWorkEmail = 0;
@@ -250,6 +261,12 @@ export async function replaceEmployeeHourlyRatesFromCsv(
       bankPreferred = raw === "" ? null : raw;
     }
 
+    let mesaMember: boolean | null = null;
+    if (mesaParticipantIdx >= 0) {
+      const raw = String(row[mesaParticipantIdx] ?? "").trim().toLowerCase();
+      if (raw !== "") mesaMember = raw === "yes";
+    }
+
     candidates.push({
       workEmail,
       personalEmail: normalizeEmail(row[personalEmailIdx]),
@@ -257,6 +274,7 @@ export async function replaceEmployeeHourlyRatesFromCsv(
       otRate: parseRate(row[otRateIdx]),
       weekTs: weekIdx >= 0 ? parseWeekStartTs(row[weekIdx]) : 0,
       bankPreferred,
+      mesaMember,
     });
   }
 
@@ -270,7 +288,15 @@ export async function replaceEmployeeHourlyRatesFromCsv(
   for (const c of candidates) {
     const prev = byEmail.get(c.workEmail);
     if (!prev || c.weekTs > prev.weekTs) {
-      byEmail.set(c.workEmail, c);
+      // Carry forward mesa=true from any older row — a blank cell in the latest
+      // week must not silently un-enroll someone who had "Yes" in a prior week.
+      const mesaMember = (prev?.mesaMember === true && c.mesaMember !== true)
+        ? true
+        : c.mesaMember;
+      byEmail.set(c.workEmail, { ...c, mesaMember });
+    } else if (c.mesaMember === true && prev.mesaMember !== true) {
+      // Older row but has "Yes" — propagate it onto the already-kept latest row.
+      byEmail.set(c.workEmail, { ...prev, mesaMember: true });
     }
   }
 
@@ -326,6 +352,7 @@ export async function replaceEmployeeHourlyRatesFromCsv(
     if (c.bankPreferred != null) {
       payload["Bank Preferred"] = c.bankPreferred;
     }
+    (payload as Record<string, unknown>)["mesa_member"] = c.mesaMember ?? false;
 
     const existing =
       existingByWorkEmail.get(c.workEmail) ??

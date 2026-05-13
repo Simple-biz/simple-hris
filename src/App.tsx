@@ -123,7 +123,7 @@ export default function App() {
           />
         );
       case 'payroll-wizard':
-        return <PayrollWizard />;
+        return <PayrollWizard sessionEmail={sessionEmail} />;
       case 'hogan-suite':
         return (
           <div className="p-8 flex flex-col items-center justify-center h-full text-center space-y-4">

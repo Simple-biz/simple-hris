@@ -83,6 +83,8 @@ type EmployeeRateProfileSummary = {
   /** Google Workspace photo URL — populated by NextAuth jwt callback on sign-in. */
   googlePhotoUrl: string | null;
   hasRatesRow: boolean;
+  /** MESA Program member — ₱100 deducted from every paycheck when true. */
+  mesaMember: boolean;
   /** HSL role-within-HSL ("Department/Role" col) when this person is in the
    *  synced HSL roster. Surfaces as a chip on the card. */
   hslRole?: string | null;
@@ -363,6 +365,7 @@ function tableRowFromSummary(p: EmployeeRateProfileSummary) {
     regularRate: formatRateDisplay(p.regularRate ?? "â€”"),
     otRate: formatRateDisplay(p.otRate ?? "â€”"),
     suspended: p.suspended,
+    mesaMember: p.mesaMember,
     hasRatesRow: p.hasRatesRow,
     hslRole: (p.hslRole ?? "").trim() || null,
   };
@@ -423,7 +426,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [rateFilter, setRateFilter] = useState<"all" | "missing_any" | "missing_regular" | "missing_ot" | "missing_both">("all");
+  const [rateFilter, setRateFilter] = useState<"all" | "missing_any" | "missing_regular" | "missing_ot" | "missing_both" | "mesa_eligible">("all");
   const [page, setPage] = useState(1);
   // Persist view-mode preference per browser. On mobile we always render cards
   // (table doesn't fit), so the toggle only appears on md+.
@@ -533,6 +536,8 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
 
   // Suspend state — stores the profile.id currently being toggled, or null
   const [isSuspending, setIsSuspending] = useState<string | null>(null);
+  // MESA Program toggle state
+  const [isMesaToggling, setIsMesaToggling] = useState<string | null>(null);
 
   function extractEmailsFromSummary(p: EmployeeRateProfileSummary): { workEmail: string | null; personalEmail: string | null } {
     return {
@@ -646,6 +651,33 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     }
   }
 
+  async function handleToggleMesa(profile: EmployeeRateProfileSummary, enroll: boolean) {
+    const { workEmail, personalEmail } = extractEmailsFromSummary(profile);
+    if (!workEmail && !personalEmail) {
+      toast.error("Cannot identify employee — no email found");
+      return;
+    }
+    setIsMesaToggling(profile.id);
+    try {
+      const res = await fetch("/api/toggle-mesa-member", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workEmail, personalEmail, mesaMember: enroll, name: profile.displayName || null }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to update MESA status");
+      toast.success(`${profile.displayName} ${enroll ? "enrolled in" : "removed from"} MESA Program`);
+      await fetchProfiles();
+      setActiveProfileSummary((prev) =>
+        prev && prev.id === profile.id ? { ...prev, mesaMember: enroll } : prev,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update MESA status");
+    } finally {
+      setIsMesaToggling(null);
+    }
+  }
+
   const fetchProfiles = async () => {
     try {
       const [profilesRes, fxRes] = await Promise.all([
@@ -740,6 +772,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
       if (rateFilter === "missing_ot" && !missingOt) continue;
       if (rateFilter === "missing_both" && !(missingRegular && missingOt)) continue;
       if (rateFilter === "missing_any" && !(missingRegular || missingOt)) continue;
+      if (rateFilter === "mesa_eligible" && !row.mesaMember) continue;
       if (q && !blob.includes(q)) continue;
       result.push(profile);
     }
@@ -1162,6 +1195,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
             <option value="missing_regular">Missing Regular Rate</option>
             <option value="missing_ot">Missing OT Rate</option>
             <option value="missing_both">Missing both rates</option>
+            <option value="mesa_eligible">MESA Eligible</option>
           </select>
 
           {/* View mode toggle — sliding pill (cards | table). Hidden on mobile (table doesn't fit). */}
@@ -1320,6 +1354,9 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                             <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
                               Department
                             </th>
+                            <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+                              MESA
+                            </th>
                             <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
                               Email
                             </th>
@@ -1402,6 +1439,23 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                     )}
                                   </div>
                                 </td>
+                                <td className="px-3 py-2.5 text-center">
+                                  {row.mesaMember ? (
+                                    <span
+                                      title="MESA Program member — ₱100 deducted per paycheck"
+                                      className="inline-flex items-center rounded border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300"
+                                    >
+                                      MESA
+                                    </span>
+                                  ) : (
+                                    <span
+                                      title="Not enrolled in MESA Program"
+                                      className="inline-flex items-center rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10.5px] font-medium text-zinc-400 dark:border-zinc-700/60 dark:bg-zinc-800/40 dark:text-zinc-500"
+                                    >
+                                      No MESA
+                                    </span>
+                                  )}
+                                </td>
                                 <td className="px-3 py-2.5">
                                   <span className="block max-w-[220px] truncate font-mono text-[11.5px] text-zinc-600 dark:text-zinc-400">
                                     {row.workEmail}
@@ -1475,6 +1529,26 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                         <UserCheck className="size-3.5" />
                                       ) : (
                                         <UserX className="size-3.5" />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      disabled={isMesaToggling === p.id}
+                                      onClick={() => handleToggleMesa(p, !row.mesaMember)}
+                                      title={row.mesaMember ? `Remove ${p.displayName} from MESA Program` : `Enroll ${p.displayName} in MESA Program (₱100/paycheck deduction)`}
+                                      className={cn(
+                                        "h-7 w-7 p-0",
+                                        row.mesaMember
+                                          ? "text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40"
+                                          : "text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40",
+                                      )}
+                                    >
+                                      {isMesaToggling === p.id ? (
+                                        <Loader2 className="size-3.5 animate-spin" />
+                                      ) : (
+                                        <span className="text-[9px] font-black leading-none tracking-tight">M</span>
                                       )}
                                     </Button>
                                     <Button
@@ -1577,6 +1651,21 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                               {row.hslRole}
                             </span>
                           )}
+                          {row.mesaMember ? (
+                            <span
+                              title="MESA Program member — ₱100 deducted per paycheck"
+                              className="inline-flex items-center gap-1 rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300"
+                            >
+                              MESA
+                            </span>
+                          ) : (
+                            <span
+                              title="Not enrolled in MESA Program"
+                              className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs font-medium text-zinc-400 dark:border-zinc-700/60 dark:bg-zinc-800/40 dark:text-zinc-500"
+                            >
+                              No MESA
+                            </span>
+                          )}
                           {row.organization && row.organization !== "—" && (
                             <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-400">
                               {row.organization}
@@ -1633,6 +1722,26 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                               <UserCheck className="size-3.5" />
                             ) : (
                               <UserX className="size-3.5" />
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isMesaToggling === p.id}
+                            onClick={() => handleToggleMesa(p, !row.mesaMember)}
+                            title={row.mesaMember ? `Remove ${p.displayName} from MESA Program` : `Enroll ${p.displayName} in MESA Program (₱100/paycheck deduction)`}
+                            className={cn(
+                              "h-8 w-8 p-0 text-xs font-bold",
+                              row.mesaMember
+                                ? "border-teal-200 text-teal-600 hover:border-teal-300 hover:bg-teal-50 dark:border-teal-800/60 dark:text-teal-400 dark:hover:bg-teal-950/40"
+                                : "border-teal-300 text-teal-600 hover:border-teal-400 hover:bg-teal-50 dark:border-teal-700/60 dark:text-teal-400 dark:hover:bg-teal-950/40",
+                            )}
+                          >
+                            {isMesaToggling === p.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <span className="text-[9px] font-black leading-none tracking-tight">M</span>
                             )}
                           </Button>
                           <Button
@@ -2220,6 +2329,29 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                             </>
                           )}
                         </Button>
+                        {activeProfileSummary && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isMesaToggling === activeProfile.id}
+                            onClick={() => handleToggleMesa(activeProfileSummary, !activeProfileSummary.mesaMember)}
+                            title={activeProfileSummary.mesaMember ? 'Remove from MESA Program' : 'Enroll in MESA Program (₱100/paycheck deduction)'}
+                            className={cn(
+                              "h-8 gap-1.5",
+                              activeProfileSummary.mesaMember
+                                ? "border-teal-200 text-teal-700 hover:border-teal-300 hover:bg-teal-50 dark:border-teal-900/50 dark:text-teal-400 dark:hover:bg-teal-950/30"
+                                : "border-zinc-200 text-zinc-500 hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-teal-900/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400",
+                            )}
+                          >
+                            {isMesaToggling === activeProfile.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <span className="text-[10px] font-black leading-none">
+                                {activeProfileSummary.mesaMember ? '✕ MESA' : '+ MESA'}
+                              </span>
+                            )}
+                          </Button>
+                        )}
                         <Button
                           size="sm"
                           variant="outline"

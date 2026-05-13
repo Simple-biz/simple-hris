@@ -40,6 +40,8 @@ export type EmployeeRateProfileSummary = {
   /** Google Workspace photo URL — populated by NextAuth jwt callback on sign-in. */
   googlePhotoUrl: string | null;
   hasRatesRow: boolean;
+  /** MESA Program member — ₱100 deducted from every paycheck when true. */
+  mesaMember: boolean;
   /** Synced from `active_hsl_agents` ("Department/Role" column) when this employee
    *  is in the HSL roster. Surfaced as a chip on the Rates card. Null otherwise. */
   hslRole?: string | null;
@@ -1221,6 +1223,7 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
       otRate:
         toStr(getField(mergedRates, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])) || null,
       suspended: getField(mergedRates, ["suspended", "Suspended"]) === true,
+      mesaMember: getField(mergedRates, ["mesa_member", "Mesa Member", "MESA Member"]) === true,
       profilePhotoUrl:
         toStr(getField(master ?? {}, ["Profile Photo URL", "profile_photo_url", "Profile_Photo_URL"])) || null,
       googlePhotoUrl:
@@ -1322,6 +1325,7 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
       otRate:
         toStr(getField(mergedRates, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])) || null,
       suspended: getField(mergedRates, ["suspended", "Suspended"]) === true,
+      mesaMember: getField(mergedRates, ["mesa_member", "Mesa Member", "MESA Member"]) === true,
       profilePhotoUrl:
         toStr(getField(masterRow, ["Profile Photo URL", "profile_photo_url", "Profile_Photo_URL"])) || null,
       googlePhotoUrl:

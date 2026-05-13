@@ -14,7 +14,6 @@ import {
   Sun,
   LogOut,
   ChevronRight,
-  User,
   UserCircle,
   Lock,
   Megaphone,
@@ -96,17 +95,21 @@ export default function EmployeeSidebar({
       aria-label="Employee navigation"
     >
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
-        <div className="mb-8 flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/30">
-            <User className="h-5 w-5 text-white" />
-          </div>
-          <div className="rounded-md bg-white px-2.5 py-1.5">
-            <img
-              src="/simple-logo.png"
-              alt="Simple HRIS"
-              className="h-7 w-auto object-contain"
-            />
-          </div>
+        <div className="mb-8">
+          <a
+            href="https://www.simple.biz/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="logo-neon"
+          >
+            <div className="logo-neon__inner px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
+              <img
+                src="/simple-logo.png"
+                alt="Simple HRIS"
+                className="h-10 w-full object-contain"
+              />
+            </div>
+          </a>
         </div>
 
         <ScrollArea className="-mx-2 min-h-0 flex-1">

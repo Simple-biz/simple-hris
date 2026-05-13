@@ -52,6 +52,8 @@ export type EmployeeRow = {
   regular_rate?: number | null;
   /** Payroll overtime rate, pulled from `employee_hourly_rates` by email for manager roster views. */
   ot_rate?: number | null;
+  /** MESA Program member flag — ₱100 deducted from every paycheck when true. */
+  mesa_member?: boolean | null;
 };
 
 type RawRow = Record<string, unknown>;

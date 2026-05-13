@@ -105,6 +105,7 @@ export async function GET() {
         hsl_ot_rate: hit?.otRate ?? null,
         regular_rate: toNumber(rateHit?.regular_rate),
         ot_rate: toNumber(rateHit?.ot_rate),
+        mesa_member: rateHit?.mesa_member ?? null,
       };
     };
 

@@ -613,7 +613,9 @@ export default function ManagerMemberHoursMini({
                 // + Tech bonus gates). Fall back to client-side numbers while
                 // the server fetch is in flight or if it failed.
                 const sp = serverPay;
-                const totalPayPhp = sp?.totals.grandTotalPayPHP ?? monthPay.totalPay;
+                const mesaDeduction = rate?.mesa_member ? 100 : 0;
+                const _rawTotalPay = sp?.totals.grandTotalPayPHP ?? monthPay.totalPay;
+                const totalPayPhp = _rawTotalPay != null ? _rawTotalPay - mesaDeduction : null;
                 const regularSec = sp?.totals.regularSec ?? monthPay.regularSec;
                 const otSec = sp?.totals.otSec ?? monthPay.otSec;
                 const weekendSec = sp?.totals.weekendSec ?? monthPay.weekendTotalSec;
@@ -705,6 +707,16 @@ export default function ManagerMemberHoursMini({
                                     : null
                           }
                         />
+                        {rate?.mesa_member && (
+                          <div className="mt-1 flex items-center justify-between gap-2 rounded-md bg-teal-50/60 px-2 py-1 dark:bg-teal-950/30">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-teal-700/85 dark:text-teal-300/80">
+                              MESA
+                            </span>
+                            <span className="font-mono text-[10.5px] font-semibold tabular-nums text-teal-800 dark:text-teal-200">
+                              −₱100.00
+                            </span>
+                          </div>
+                        )}
                         {!hasRate && (
                           <p className="mt-1 rounded-md bg-amber-50/70 px-2 py-1 text-[9.5px] text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
                             No hourly rate on file — bonuses suppressed.

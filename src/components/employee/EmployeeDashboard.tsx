@@ -62,7 +62,7 @@ import {
 } from '@/lib/supabase/pab-day-disputes';
 import HiddenValue from './HiddenValue';
 import GiftShippingCard, { type GiftShippingState } from './GiftShippingCard';
-import { Gift } from 'lucide-react';
+import { Eye, EyeOff, Gift } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /* ------------------------------------------------------------------ */
@@ -1179,6 +1179,42 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
 
   const technologyBonusAmount = isTechnologyBonusActive && hasRates ? TECHNOLOGY_BONUS_PHP : 0;
 
+  const MESA_DEDUCTION_PHP = 100;
+  const isMesaMember = !!rate?.mesa_member;
+  const mesaDeductionAmount = isMesaMember && totalPay != null ? MESA_DEDUCTION_PHP : 0;
+
+  /** True when the NEXT pay-period week (refMonday + 7) is the tech bonus week. */
+  const isTechBonusNextWeek = useMemo(() => {
+    if (isTechnologyBonusActive) return false;
+    if (!employeeStartDate) return false;
+    const eligibleFrom = new Date(
+      employeeStartDate.getFullYear(),
+      employeeStartDate.getMonth(),
+      employeeStartDate.getDate() + 30,
+    );
+    const refMonday = (() => {
+      if (selectedFileWeek) {
+        const s = selectedFileWeek.start;
+        return new Date(s.getFullYear(), s.getMonth(), s.getDate() + 7);
+      }
+      const today = new Date();
+      const dow = today.getDay();
+      const daysBackToMon = (dow + 6) % 7;
+      const thisMon = new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysBackToMon);
+      return new Date(thisMon.getFullYear(), thisMon.getMonth(), thisMon.getDate() + 7);
+    })();
+    if (refMonday.getTime() < eligibleFrom.getTime()) return false;
+    const salaryDate = new Date(refMonday.getFullYear(), refMonday.getMonth(), refMonday.getDate() + 8);
+    const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
+    const dow = first.getDay();
+    const daysForward = (8 - dow) % 7;
+    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
+    const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
+    const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
+    const t = salaryDate.getTime();
+    return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
+  }, [isTechnologyBonusActive, employeeStartDate, selectedFileWeek]);
+
   /** 30-day service status for Tech Bonus eligibility (independent of week gating). */
   const techServiceStatus = useMemo<
     | { state: 'eligible'; eligibleFrom: Date }
@@ -1709,10 +1745,6 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                 {totalPay != null ? (
                   <HiddenValue
                     revealed={payValuesRevealed}
-                    onToggleRevealed={setPayValuesRevealed}
-                    iconClass="h-5 w-5"
-                    showLabel="Reveal pay amounts"
-                    hideLabel="Hide pay amounts"
                     className="flex-wrap items-baseline gap-x-3 gap-y-1"
                     mask={
                       <>
@@ -1727,12 +1759,12 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                   >
                     <span
                       className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white"
-                      title={formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)}
+                      title={formatPHP(totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount)}
                     >
-                      {formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)}
+                      {formatPHP(totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount)}
                     </span>
                     <span className="text-xs tabular-nums text-zinc-500 sm:text-sm dark:text-zinc-500">
-                      ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount) / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                      ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount) / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
                     </span>
                   </HiddenValue>
                 ) : (
@@ -1741,11 +1773,25 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                   </span>
                 )}
               </div>
-              <p className="mt-1.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-500">
-                {totalPay != null
-                  ? `${isAllTime ? 'All uploads · combined' : 'Selected upload'}${pabMonthRange ? ` · PAB ${pabMonthRange.monthName} ${pabMonthRange.year}` : ''} · FX ${formatPHP(usdToPhpRate)}/USD`
-                  : 'Pending rate assignment — your hourly rate has not been set yet.'}
-              </p>
+              <div className="mt-1.5 flex items-center gap-2">
+                <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-500">
+                  {totalPay != null
+                    ? `${isAllTime ? 'All uploads · combined' : 'Selected upload'}${pabMonthRange ? ` · PAB ${pabMonthRange.monthName} ${pabMonthRange.year}` : ''} · FX ${formatPHP(usdToPhpRate)}/USD`
+                    : 'Pending rate assignment — your hourly rate has not been set yet.'}
+                </p>
+                {totalPay != null && (
+                  <button
+                    type="button"
+                    onClick={() => setPayValuesRevealed(!payValuesRevealed)}
+                    aria-pressed={payValuesRevealed}
+                    aria-label={payValuesRevealed ? 'Hide pay amounts' : 'Reveal pay amounts'}
+                    title={payValuesRevealed ? 'Hide pay amounts' : 'Reveal pay amounts'}
+                    className="inline-flex shrink-0 items-center justify-center rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  >
+                    {payValuesRevealed ? <EyeOff className="h-3.5 w-3.5" aria-hidden /> : <Eye className="h-3.5 w-3.5" aria-hidden />}
+                  </button>
+                )}
+              </div>
 
               {/* Data ribbon */}
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-zinc-200/80 pt-4 sm:grid-cols-4 sm:gap-x-6 dark:border-zinc-800/80">
@@ -1934,7 +1980,9 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                       ? 'text-sky-700 dark:text-sky-300'
                       : techServiceStatus.state === 'pending'
                         ? 'text-amber-700 dark:text-amber-400'
-                        : 'text-zinc-500 dark:text-zinc-500'
+                        : isTechBonusNextWeek
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : 'text-zinc-500 dark:text-zinc-500'
                   }`}
                 >
                   <span
@@ -1943,16 +1991,30 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                         ? 'bg-sky-500'
                         : techServiceStatus.state === 'pending'
                           ? 'bg-amber-500'
-                          : 'bg-zinc-400'
+                          : isTechBonusNextWeek
+                            ? 'bg-emerald-500'
+                            : 'bg-zinc-400'
                     }`}
                   />
                   {isTechnologyBonusActive
                     ? 'Unlocked'
                     : techServiceStatus.state === 'pending'
                       ? `${techServiceStatus.daysRemaining}d to go`
-                      : 'Locked'}
+                      : isTechBonusNextWeek
+                        ? 'Unlocked Next Week'
+                        : 'Locked'}
                 </span>
               </div>
+              {isMesaMember && (
+                <div className="flex items-center justify-between gap-3 bg-teal-50/40 px-3.5 py-2 dark:bg-teal-950/20">
+                  <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-teal-700/80 dark:text-teal-500/80">
+                    MESA
+                  </span>
+                  <span className="text-[11px] font-medium tabular-nums text-teal-800 dark:text-teal-300">
+                    −{formatPHP(MESA_DEDUCTION_PHP)}
+                  </span>
+                </div>
+              )}
               {pabMonthRange && (
                 <div className="flex items-center justify-between gap-3 bg-amber-50/40 px-3.5 py-2 dark:bg-amber-950/20">
                   <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-amber-700/80 dark:text-amber-500/80">
@@ -2369,19 +2431,27 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                       {technologyBonusAmount > 0 ? `+${formatPHP(technologyBonusAmount)}` : formatPHP(0)}
                     </span>
                   </div>
+                  {isMesaMember && (
+                    <div className="flex justify-between gap-2">
+                      <span className="text-teal-600 dark:text-teal-400">MESA deduction</span>
+                      <span className="tabular-nums text-teal-700 dark:text-teal-300">
+                        −{formatPHP(MESA_DEDUCTION_PHP)}
+                      </span>
+                    </div>
+                  )}
                   <div className="my-1 h-px bg-zinc-200 dark:bg-zinc-800" />
                   <div className="flex justify-between gap-2">
                     <span className="font-medium text-zinc-900 dark:text-white">Total</span>
                     <span className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                       {totalPay != null
-                        ? formatPHP(totalPay + pabBonusAmount + technologyBonusAmount)
+                        ? formatPHP(totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount)
                         : '—'}
                     </span>
                   </div>
                   {totalPay != null && (
                     <p className="text-right text-[10px] tabular-nums text-blue-600 dark:text-blue-400">
                       ≈{' '}
-                      {((totalPay + pabBonusAmount + technologyBonusAmount) / usdToPhpRate).toLocaleString('en-US', {
+                      {((totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount) / usdToPhpRate).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}{' '}

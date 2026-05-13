@@ -26,6 +26,8 @@ import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
 } from "@/lib/supabase/server";
+import { listOrphanageBudgetRequests } from "@/lib/supabase/orphanage-budget-requests";
+import { listGiftPayments } from "@/lib/supabase/gift-payments";
 import { effectiveUsdToPhpRateFromStored } from "@/lib/fx/usd-php";
 import { normEmail } from "@/lib/email/norm-email";
 import {
@@ -65,7 +67,7 @@ export interface CurrentPayEntry {
   otHours: number;
   regularPayPHP: number | null;
   otPayPHP: number | null;
-  /** Regular + OT only (no bonuses). Kept for historical callers. */
+  /** Regular + OT only (no bonuses, no deductions). Kept for historical callers. */
   initialPayPHP: number | null;
   /** initialPayPHP / fxRate — null when either input is missing. */
   initialPayUSD: number | null;
@@ -75,7 +77,9 @@ export interface CurrentPayEntry {
   techBonusPHP: number;
   /** Sum of all bonuses. */
   bonusTotalPHP: number;
-  /** Regular + OT + bonuses — what the dispatch screen should show as the amount Lenny pays. */
+  /** ₱100 MESA contribution deducted from this employee's paycheck. 0 when not a member. */
+  mesaDeductionPHP: number;
+  /** Regular + OT + bonuses − MESA deduction — net amount Lenny pays this employee. */
   totalPayPHP: number | null;
   /** USD equivalent of totalPayPHP. */
   totalPayUSD: number | null;
@@ -87,6 +91,12 @@ export interface CurrentPayResult {
   fxRate: number;
   /** Keyed by lowercased work_email (the canonical join key). */
   byEmail: Record<string, CurrentPayEntry>;
+  /** Total MESA contributions collected across all members this cycle (₱100 × count). */
+  stashedMesaTotalPHP: number;
+  /** Sum of final_amount across all approved orphanage budget requests. */
+  approvedBudgetRequestsTotalPHP: number;
+  /** Sum of pending/sent gift payments converted to PHP. */
+  giftPaymentsTotalPHP: number;
 }
 
 function parseRateText(v: string | null | undefined): number | null {
@@ -184,18 +194,20 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     allHubstaffRows,
     masterRows,
     pabOverridesValue,
+    budgetRequestsResult,
+    giftPaymentsResult,
   ] = await Promise.all([
     fetchHubstaffRowsOrdered(),
     getEmployeeHourlyRatesRows(),
     getAppSetting("usd_to_php_rate"),
     cycleIdPromise,
-    // Best-effort: only available with the service-role client. Used for
-    // PAB eligibility merge across the whole month.
     supabase
       ? fetchAllHubstaffRowsForBonusMonth(supabase)
       : Promise.resolve<Record<string, unknown>[]>([]),
     supabase ? fetchMasterMin(supabase) : Promise.resolve<MasterEmployeeMin[]>([]),
     getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
+    listOrphanageBudgetRequests({ status: "approved" }),
+    listGiftPayments({}),
   ]);
 
   const fxRate = effectiveUsdToPhpRateFromStored(fxValue);
@@ -203,6 +215,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
   // Index rates by both work_email and personal_email (lowercased) so a
   // hubstaff row keyed on either still resolves to a rate.
   const rateByEmail = new Map<string, { reg: number | null; ot: number | null }>();
+  const mesaEmails = new Set<string>();
   for (const r of rates.rows) {
     const reg = parseRateText(r.regular_rate);
     const ot = parseRateText(r.ot_rate);
@@ -211,6 +224,10 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     const entry = { reg, ot };
     if (we) rateByEmail.set(we, entry);
     if (pe && !rateByEmail.has(pe)) rateByEmail.set(pe, entry);
+    if (r.mesa_member === true) {
+      if (we) mesaEmails.add(we);
+      if (pe) mesaEmails.add(pe);
+    }
   }
 
   // ── Bonus prep ───────────────────────────────────────────────────────
@@ -336,6 +353,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
 
   // ── Per-employee assembly ────────────────────────────────────────────
   const byEmail: Record<string, CurrentPayEntry> = {};
+  let stashedMesaTotalPHP = 0;
 
   for (const raw of hubstaff.rows) {
     const mapped = mapHubstaffHoursRow(raw);
@@ -368,8 +386,13 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       hasThirtyDays: empHasThirtyDays,
     });
 
+    // MESA: ₱100 deducted from members with a rates row. Accumulate into the
+    // stash total so the dispatch screen can show the pool being built.
+    const mesaDeductionPHP = hasRates && mesaEmails.has(em) ? 100 : 0;
+    if (mesaDeductionPHP > 0) stashedMesaTotalPHP += mesaDeductionPHP;
+
     const totalPayPHP =
-      initialPayPHP != null ? initialPayPHP + bonus.totalPHP : null;
+      initialPayPHP != null ? initialPayPHP + bonus.totalPHP - mesaDeductionPHP : null;
     const totalPayUSD =
       totalPayPHP != null && fxRate > 0 ? totalPayPHP / fxRate : null;
     const initialPayUSD =
@@ -388,6 +411,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       pabBonusPHP: bonus.pabBonusPHP,
       techBonusPHP: bonus.techBonusPHP,
       bonusTotalPHP: bonus.totalPHP,
+      mesaDeductionPHP,
       totalPayPHP: totalPayPHP != null ? Math.round(totalPayPHP * 100) / 100 : null,
       totalPayUSD: totalPayUSD != null ? Math.round(totalPayUSD * 100) / 100 : null,
       hasRate: reg != null,
@@ -403,9 +427,26 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     return null;
   })();
 
+  const approvedBudgetRequestsTotalPHP = (budgetRequestsResult.rows ?? []).reduce(
+    (sum, r) => sum + (r.final_amount ?? 0),
+    0,
+  );
+
+  // Gift payments that haven't been cancelled are still obligations.
+  const activeGiftPayments = (giftPaymentsResult.rows ?? []).filter(
+    (r) => r.status !== "cancelled",
+  );
+  const giftPaymentsTotalPHP = activeGiftPayments.reduce(
+    (sum, r) => sum + (r.total_usd ?? 0) * fxRate,
+    0,
+  );
+
   return {
     period: { cycleId, start: periodStartIso, end: periodEndIso, sourceFile },
     fxRate,
     byEmail,
+    stashedMesaTotalPHP,
+    approvedBudgetRequestsTotalPHP: Math.round(approvedBudgetRequestsTotalPHP * 100) / 100,
+    giftPaymentsTotalPHP: Math.round(giftPaymentsTotalPHP * 100) / 100,
   };
 }

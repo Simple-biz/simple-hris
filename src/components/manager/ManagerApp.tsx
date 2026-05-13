@@ -974,13 +974,20 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
                             </TableCell>
                             {showHslRoleCol && (
                               <TableCell className="text-zinc-600 dark:text-zinc-400">
-                                {m.hsl_role ? (
-                                  <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
-                                    {m.hsl_role}
-                                  </span>
-                                ) : (
-                                  <span className="text-zinc-300 dark:text-zinc-700">—</span>
-                                )}
+                                <div className="flex flex-wrap gap-1">
+                                  {m.hsl_role ? (
+                                    <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+                                      {m.hsl_role}
+                                    </span>
+                                  ) : (
+                                    <span className="text-zinc-300 dark:text-zinc-700">—</span>
+                                  )}
+                                  {m.mesa_member && (
+                                    <span title="MESA Program — ₱100 deducted per paycheck" className="inline-flex items-center rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+                                      MESA
+                                    </span>
+                                  )}
+                                </div>
                               </TableCell>
                             )}
                             {showRateCol && (
@@ -1049,11 +1056,21 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
                               {m.department ?? '—'}
                             </div>
                           </div>
-                          {m.hsl_role && (
-                            <span className="shrink-0 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
-                              {m.hsl_role}
-                            </span>
-                          )}
+                          <div className="flex shrink-0 flex-col items-end gap-1">
+                            {m.hsl_role && (
+                              <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+                                {m.hsl_role}
+                              </span>
+                            )}
+                            {m.mesa_member && (
+                              <span
+                                title="MESA Program — ₱100 deducted per paycheck"
+                                className="rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300"
+                              >
+                                MESA −₱100
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {showRateCol && (
