@@ -329,6 +329,26 @@ function NewInvoiceForm({
   const [saving, setSaving] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
+  // Prefill "From" fields from the contractor's saved profile
+  useEffect(() => {
+    if (!contractorEmail) return;
+    fetch(`/api/contractor/profile?email=${encodeURIComponent(contractorEmail)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { profile?: Record<string, string | null> | null }) => {
+        const p = j.profile;
+        if (!p) return;
+        setForm((prev) => ({
+          ...prev,
+          fromEntityName:   p.from_entity_name?.trim()   || prev.fromEntityName,
+          fromName:         p.from_name?.trim()           || prev.fromName,
+          fromAddress:      p.from_address?.trim()        || prev.fromAddress,
+          fromCityStateZip: p.from_city_state_zip?.trim() || prev.fromCityStateZip,
+          fromCountry:      p.from_country?.trim()        || prev.fromCountry,
+        }));
+      })
+      .catch(() => {/* ignore — form defaults are fine */});
+  }, [contractorEmail]);
+
   const set = useCallback(<K extends keyof InvoiceForm>(key: K, value: InvoiceForm[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   }, []);
