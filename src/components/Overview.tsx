@@ -2013,38 +2013,47 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     return { eligible, pending, unknown, total: employees.length };
   }, [employees, pabMetrics.periodEnd]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-      try {
-        const res = await fetch('/api/employees', { cache: 'no-store' });
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const json = (await res.json()) as {
-          employees: EmployeeRow[];
-          error: string | null;
-        };
-        if (!cancelled) {
-          const t1 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-          setApiLatencyMs(Math.max(0, Math.round(t1 - t0)));
-          setEmployees(json.employees ?? []);
-          setEmployeesError(json.error ?? null);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setEmployees([]);
-          setEmployeesError(e instanceof Error ? e.message : 'Failed to load employees');
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+  const fetchEmployees = React.useCallback(async (signal?: AbortSignal) => {
+    const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    try {
+      const res = await fetch('/api/employees', { cache: 'no-store', signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { employees: EmployeeRow[]; error: string | null };
+      if (signal?.aborted) return;
+      const t1 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      setApiLatencyMs(Math.max(0, Math.round(t1 - t0)));
+      setEmployees(json.employees ?? []);
+      setEmployeesError(json.error ?? null);
+    } catch (e) {
+      if (signal?.aborted) return;
+      setEmployees([]);
+      setEmployeesError(e instanceof Error ? e.message : 'Failed to load employees');
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
   }, []);
+
+  // Initial load
+  useEffect(() => {
+    const ctrl = new AbortController();
+    void fetchEmployees(ctrl.signal);
+    return () => ctrl.abort();
+  }, [fetchEmployees]);
+
+  // Re-fetch when the user focuses the tab (e.g. after syncing master list in admin)
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void fetchEmployees();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [fetchEmployees]);
+
+  // Poll every 60 s as a background safety net
+  useEffect(() => {
+    const id = window.setInterval(() => void fetchEmployees(), 60_000);
+    return () => window.clearInterval(id);
+  }, [fetchEmployees]);
 
   /**
    * Lightweight re-ping (re-issues GET /api/employees just to measure round-trip time).

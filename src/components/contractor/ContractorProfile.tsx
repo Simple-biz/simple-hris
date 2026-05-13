@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Loader2, Save, User, CreditCard, Check } from 'lucide-react';
+import { Loader2, Save, User, CreditCard, Check, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,6 +23,11 @@ import {
 interface ContractorProfileRow {
   contractor_email?: string | null;
   display_name?: string | null;
+  from_entity_name?: string | null;
+  from_name?: string | null;
+  from_address?: string | null;
+  from_city_state_zip?: string | null;
+  from_country?: string | null;
   preferred_processor?: string | null;
   preferred_bank_slot?: string | null;
   hurupay_email?: string | null;
@@ -51,6 +56,14 @@ export default function ContractorProfile({
   const norm = normEmail(contractorEmail) ?? contractorEmail.toLowerCase();
 
   const [displayName, setDisplayName] = useState('');
+
+  // Invoice "From" fields
+  const [fromEntityName, setFromEntityName] = useState('');
+  const [fromName, setFromName] = useState('');
+  const [fromAddress, setFromAddress] = useState('');
+  const [fromCityStateZip, setFromCityStateZip] = useState('');
+  const [fromCountry, setFromCountry] = useState('Philippines');
+
   const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | ''>('');
   const [payout, setPayout] = useState<PayoutFields>(emptyPayout);
   const [loading, setLoading] = useState(true);
@@ -65,6 +78,11 @@ export default function ContractorProfile({
         const row = j.profile;
         if (!row) return;
         setDisplayName(row.display_name?.trim() || '');
+        setFromEntityName(row.from_entity_name?.trim() || '');
+        setFromName(row.from_name?.trim() || '');
+        setFromAddress(row.from_address?.trim() || '');
+        setFromCityStateZip(row.from_city_state_zip?.trim() || '');
+        setFromCountry(row.from_country?.trim() || 'Philippines');
         if (row.preferred_processor && isProcessorId(row.preferred_processor)) {
           setPreferredProcessor(row.preferred_processor);
         }
@@ -102,6 +120,11 @@ export default function ContractorProfile({
         body: JSON.stringify({
           contractor_email:        norm,
           display_name:            displayName.trim() || null,
+          from_entity_name:        fromEntityName.trim() || null,
+          from_name:               fromName.trim() || null,
+          from_address:            fromAddress.trim() || null,
+          from_city_state_zip:     fromCityStateZip.trim() || null,
+          from_country:            fromCountry.trim() || null,
           preferred_processor:     preferredProcessor || null,
           preferred_bank_slot:     payout.preferredBankSlot || null,
           hurupay_email:           payout.hurupayEmail || null,
@@ -148,7 +171,7 @@ export default function ContractorProfile({
           Profile
         </h1>
         <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
-          Set your display name and preferred payment method.
+          Set your details — changes here prefill every new invoice automatically.
         </p>
       </div>
 
@@ -183,6 +206,74 @@ export default function ContractorProfile({
                   readOnly
                   className="cursor-default bg-zinc-50 text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
                 />
+              </div>
+            </div>
+          </section>
+
+          {/* Invoice From Details */}
+          <section className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900/60">
+            <div className="mb-4 flex items-center gap-2">
+              <FileText className="h-4 w-4 text-blue-500" />
+              <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Invoice From</h2>
+              <span className="ml-auto text-[10px] text-zinc-400 dark:text-zinc-500">Prefills new invoices</span>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                  Entity Name
+                </Label>
+                <Input
+                  value={fromEntityName}
+                  onChange={(e) => setFromEntityName(e.target.value)}
+                  placeholder="Your company or sole proprietorship name"
+                  className="dark:border-zinc-700 dark:bg-zinc-900"
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                  Your Name
+                </Label>
+                <Input
+                  value={fromName}
+                  onChange={(e) => setFromName(e.target.value)}
+                  placeholder="Full name on the invoice"
+                  className="dark:border-zinc-700 dark:bg-zinc-900"
+                />
+              </div>
+              <div>
+                <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                  Address
+                </Label>
+                <Input
+                  value={fromAddress}
+                  onChange={(e) => setFromAddress(e.target.value)}
+                  placeholder="Street address"
+                  className="dark:border-zinc-700 dark:bg-zinc-900"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                    City / State / Zip
+                  </Label>
+                  <Input
+                    value={fromCityStateZip}
+                    onChange={(e) => setFromCityStateZip(e.target.value)}
+                    placeholder="City, Province, ZIP"
+                    className="dark:border-zinc-700 dark:bg-zinc-900"
+                  />
+                </div>
+                <div>
+                  <Label className="mb-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                    Country
+                  </Label>
+                  <Input
+                    value={fromCountry}
+                    onChange={(e) => setFromCountry(e.target.value)}
+                    placeholder="Philippines"
+                    className="dark:border-zinc-700 dark:bg-zinc-900"
+                  />
+                </div>
               </div>
             </div>
           </section>
@@ -228,7 +319,6 @@ export default function ContractorProfile({
               </p>
             )}
 
-            {/* Payout detail fields */}
             {preferredProcessor && (
               <PayoutDetailsFields
                 processor={preferredProcessor}

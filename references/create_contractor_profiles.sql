@@ -29,9 +29,23 @@ CREATE TABLE IF NOT EXISTS contractor_profiles (
   alt_account_number    TEXT,
   alt_routing_number    TEXT,
 
+  -- Invoice "From" details (prefilled in new invoices)
+  from_entity_name      TEXT,
+  from_name             TEXT,
+  from_address          TEXT,
+  from_city_state_zip   TEXT,
+  from_country          TEXT DEFAULT 'Philippines',
+
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- If the table already exists without the invoice-from columns, add them:
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS from_entity_name    TEXT;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS from_name           TEXT;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS from_address        TEXT;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS from_city_state_zip TEXT;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS from_country        TEXT DEFAULT 'Philippines';
 
 -- Keep updated_at current automatically
 CREATE OR REPLACE FUNCTION contractor_profiles_set_updated_at()
