@@ -60,7 +60,6 @@ interface InvoiceForm {
   dueDate: string;
   lineItems: LineItem[];
   notes: string;
-  terms: string;
   logoUrl: string | null;
 }
 
@@ -81,7 +80,6 @@ interface SavedInvoice {
   to_country: string;
   line_items: LineItem[];
   notes: string;
-  terms: string;
   subtotal: number;
   tax_total: number;
   total: number;
@@ -117,7 +115,7 @@ function defaultForm(): InvoiceForm {
     dueDate: '',
     lineItems: [emptyItem()],
     notes: '',
-    terms: '',
+
     logoUrl: null,
   };
 }
@@ -309,12 +307,6 @@ function InvoiceViewDialog({
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Notes</p>
               <p className="text-zinc-600 dark:text-zinc-400">{invoice.notes}</p>
-            </div>
-          )}
-          {invoice.terms && (
-            <div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">Terms &amp; Conditions</p>
-              <p className="text-zinc-600 dark:text-zinc-400">{invoice.terms}</p>
             </div>
           )}
         </div>
@@ -676,17 +668,6 @@ function NewInvoiceForm({
           value={form.notes}
           onChange={(v) => set('notes', v)}
           placeholder="Payment instructions, thank-you note, etc."
-          rows={3}
-        />
-      </div>
-
-      {/* Terms & Conditions */}
-      <div>
-        <FieldLabel className="text-blue-600 dark:text-blue-400">Terms &amp; Conditions</FieldLabel>
-        <FormTextarea
-          value={form.terms}
-          onChange={(v) => set('terms', v)}
-          placeholder="List your terms and conditions here…"
           rows={3}
         />
       </div>

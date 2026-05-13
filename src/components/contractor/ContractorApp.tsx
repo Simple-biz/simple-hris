@@ -11,6 +11,7 @@ import { Toaster } from '@/components/ui/sonner';
 import ContractorSidebar from './ContractorSidebar';
 import ContractorOverview from './ContractorOverview';
 import ContractorInvoices from './ContractorInvoices';
+import ContractorProfile from './ContractorProfile';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 
@@ -164,6 +165,8 @@ export default function ContractorApp() {
         );
       case 'invoices':
         return <ContractorInvoices contractorEmail={contractorEmail} />;
+      case 'profile':
+        return <ContractorProfile contractorEmail={contractorEmail} />;
       default:
         return (
           <ContractorOverview

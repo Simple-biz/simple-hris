@@ -9,6 +9,7 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import {
   LayoutDashboard,
   FileText,
+  UserCircle,
   Moon,
   Sun,
   LogOut,
@@ -34,6 +35,7 @@ interface ContractorSidebarProps {
 const navItems = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'invoices', label: 'Invoices', icon: FileText },
+  { id: 'profile', label: 'Profile', icon: UserCircle },
 ];
 
 export default function ContractorSidebar({
