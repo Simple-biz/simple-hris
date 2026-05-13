@@ -54,7 +54,6 @@ interface InvoiceForm {
   fromCountry: string;
   toCompany: string;
   toAddress: string;
-  toCityStateZip: string;
   toCountry: string;
   invoiceNumber: string;
   invoiceDate: string;
@@ -110,10 +109,9 @@ function defaultForm(): InvoiceForm {
     fromAddress: '',
     fromCityStateZip: '',
     fromCountry: 'Philippines',
-    toCompany: '',
-    toAddress: '',
-    toCityStateZip: '',
-    toCountry: '',
+    toCompany: 'Simple.biz',
+    toAddress: 'Remote/USA',
+    toCountry: 'USA',
     invoiceNumber: 'INV-1',
     invoiceDate: today(),
     dueDate: '',
@@ -242,10 +240,9 @@ function InvoiceViewDialog({
             </div>
             <div>
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Bill To</p>
-              <p className="font-medium text-zinc-900 dark:text-white">{invoice.to_company || '—'}</p>
-              <p className="text-zinc-500 dark:text-zinc-500">{invoice.to_address}</p>
-              <p className="text-zinc-500 dark:text-zinc-500">{invoice.to_city_state_zip}</p>
-              <p className="text-zinc-500 dark:text-zinc-500">{invoice.to_country}</p>
+              <p className="font-medium text-zinc-900 dark:text-white">{invoice.to_company || 'Simple.biz'}</p>
+              <p className="text-zinc-500 dark:text-zinc-500">{invoice.to_address || 'Remote/USA'}</p>
+              <p className="text-zinc-500 dark:text-zinc-500">{invoice.to_country || 'USA'}</p>
             </div>
           </div>
           {/* Dates */}
@@ -518,21 +515,11 @@ function NewInvoiceForm({
         {/* Bill To */}
         <div className="space-y-3">
           <div className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">Bill To:</div>
-          <div>
-            <FieldLabel>Client Company</FieldLabel>
-            <FormInput value={form.toCompany} onChange={(v) => set('toCompany', v)} placeholder="Client Company Name" />
-          </div>
-          <div>
-            <FieldLabel>Address</FieldLabel>
-            <FormInput value={form.toAddress} onChange={(v) => set('toAddress', v)} placeholder="Street Address" />
-          </div>
-          <div>
-            <FieldLabel>City / State / Zip</FieldLabel>
-            <FormInput value={form.toCityStateZip} onChange={(v) => set('toCityStateZip', v)} placeholder="City, State, ZIP" />
-          </div>
-          <div>
-            <FieldLabel>Country</FieldLabel>
-            <FormInput value={form.toCountry} onChange={(v) => set('toCountry', v)} placeholder="Country" />
+          <div className="space-y-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 dark:border-zinc-700 dark:bg-zinc-800/50">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Read-only</p>
+            <p className="text-sm font-semibold text-zinc-500 dark:text-zinc-400">Simple.biz</p>
+            <p className="text-sm text-zinc-400 dark:text-zinc-500">Remote/USA</p>
+            <p className="text-sm text-zinc-400 dark:text-zinc-500">USA</p>
           </div>
         </div>
 
