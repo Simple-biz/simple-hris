@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, type Variants } from 'motion/react';
 import { toast } from 'sonner';
 import {
   Plus,
@@ -242,12 +242,12 @@ function PunchedHoles({ position }: { position: 'top' | 'bottom' }) {
 const INV_ACCENT = '#B85450';
 const INV_ACCENT_DARK = '#D4705A';
 
-const fadeUp = {
+const fadeUp: Variants = {
   hidden: { opacity: 0, y: 14 },
   show: (i: number) => ({
     opacity: 1,
     y: 0,
-    transition: { delay: i * 0.055, duration: 0.38, ease: [0.22, 1, 0.36, 1] },
+    transition: { delay: i * 0.055, duration: 0.38, ease: [0.22, 1, 0.36, 1] as number[] },
   }),
 };
 
