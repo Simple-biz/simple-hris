@@ -719,15 +719,30 @@ function calculateDepartmentBonus(
   const dm = deptMetrics[deptKey] ?? {};
 
   switch (deptKey) {
-    // ── Accounting (tiered by collected count) ─────────────────────────────
+    // ── Accounting (tiered per day, sum of daily bonuses) ──────────────────
     case 'accounting': {
       for (const emp of employees) {
-        const collected = accountingWeeklyCollectedTotal(em(emp.email));
-        let bonus = 0;
-        if (collected >= 30)      bonus = 450;
-        else if (collected >= 22) bonus = 300;
-        else if (collected >= 17) bonus = 200;
-        result[emp.email] = bonus;
+        const empM = em(emp.email);
+        const hasDailyBreakdown = ACCOUNTING_WEEKDAY_METRICS.some(({ key }) =>
+          Object.prototype.hasOwnProperty.call(empM, key),
+        );
+        if (hasDailyBreakdown) {
+          let bonus = 0;
+          for (const { key } of ACCOUNTING_WEEKDAY_METRICS) {
+            const day = empM[key] ?? 0;
+            if (day >= 30)      bonus += 450;
+            else if (day >= 22) bonus += 300;
+            else if (day >= 17) bonus += 200;
+          }
+          result[emp.email] = bonus;
+        } else {
+          const collected = empM.collected ?? 0;
+          let bonus = 0;
+          if (collected >= 30)      bonus = 450;
+          else if (collected >= 22) bonus = 300;
+          else if (collected >= 17) bonus = 200;
+          result[emp.email] = bonus;
+        }
       }
       break;
     }
@@ -9144,13 +9159,16 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
       {accountingModalEmail && (() => {
         const emp = calcResults.find((e) => e.email === accountingModalEmail);
         const empM = employeeMetrics[accountingModalEmail] ?? {};
-        const weekSum = accountingWeeklyCollectedTotal(empM);
-        const tierAmount =
-          weekSum >= 30 ? 450 : weekSum >= 22 ? 300 : weekSum >= 17 ? 200 : 0;
-        const tierLabel =
-          weekSum >= 30 ? '≥ 30 collected' :
-          weekSum >= 22 ? '22 – 29 collected' :
-          weekSum >= 17 ? '17 – 21 collected' : '< 17 collected';
+        const dayBonus = (count: number) =>
+          count >= 30 ? 450 :
+          count >= 22 ? 300 :
+          count >= 17 ? 200 : 0;
+        const dailyResults = ACCOUNTING_WEEKDAY_METRICS.map(({ key, label }) => {
+          const count = empM[key] ?? 0;
+          return { key, label, count, bonus: dayBonus(count) };
+        });
+        const totalBonus = dailyResults.reduce((sum, d) => sum + d.bonus, 0);
+        const weekSum = dailyResults.reduce((sum, d) => sum + d.count, 0);
         return (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -9179,6 +9197,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                 </button>
               </div>
 
+              {/* Day inputs */}
               <div className="mb-3 grid grid-cols-5 gap-2">
                 {ACCOUNTING_WEEKDAY_METRICS.map(({ key, label }) => (
                   <div key={key} className="flex flex-col items-center gap-1">
@@ -9209,39 +9228,45 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                 ))}
               </div>
 
+              {/* Per-day breakdown */}
               <div className="mb-4 rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs text-zinc-500 dark:text-zinc-400">Week total</span>
-                  <span className="font-mono text-lg font-bold text-zinc-900 dark:text-white">{weekSum}</span>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">Week total collected</span>
+                  <span className="font-mono text-sm font-bold text-zinc-900 dark:text-white">{weekSum}</span>
                 </div>
-                <div className="space-y-1">
-                  {([
-                    ['≥ 30 collected', '₱450', 30],
-                    ['22 – 29 collected', '₱300', 22],
-                    ['17 – 21 collected', '₱200', 17],
-                    ['< 17 collected', '₱0', 0],
-                  ] as [string, string, number][]).map(([lbl, amt, threshold]) => {
-                    const active = lbl === tierLabel;
-                    return (
-                      <div
-                        key={lbl}
-                        className={cn(
-                          'flex items-center justify-between rounded-md border px-2.5 py-1.5 text-xs transition',
-                          active
-                            ? 'border-violet-500/50 bg-violet-50 font-semibold text-violet-800 dark:border-violet-500/40 dark:bg-violet-950/40 dark:text-violet-200'
-                            : 'border-transparent text-zinc-500 dark:text-zinc-500',
-                        )}
-                      >
-                        <span>{lbl}</span>
-                        <span className="font-mono">{amt}</span>
+                <div className="space-y-1.5">
+                  {/* Tier legend */}
+                  <div className="mb-2 grid grid-cols-4 gap-1 rounded-md bg-zinc-100 px-2 py-1.5 dark:bg-zinc-800/60">
+                    {([['≥30', '₱450'], ['22–29', '₱300'], ['17–21', '₱200'], ['<17', '₱0']] as [string, string][]).map(([t, a]) => (
+                      <div key={t} className="flex flex-col items-center gap-0.5">
+                        <span className="text-[9px] font-semibold text-zinc-500 dark:text-zinc-400">{t}</span>
+                        <span className="font-mono text-[10px] font-bold text-zinc-700 dark:text-zinc-300">{a}</span>
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
+                  {/* Per-day rows */}
+                  {dailyResults.map(({ key, label, count, bonus }) => (
+                    <div
+                      key={key}
+                      className={cn(
+                        'flex items-center justify-between rounded-md border px-2.5 py-1.5 text-xs',
+                        bonus > 0
+                          ? 'border-violet-200/60 bg-violet-50/60 dark:border-violet-800/40 dark:bg-violet-950/20'
+                          : 'border-zinc-100 bg-white dark:border-zinc-800 dark:bg-zinc-900/30',
+                      )}
+                    >
+                      <span className="w-8 font-semibold text-zinc-700 dark:text-zinc-300">{label}</span>
+                      <span className="font-mono text-zinc-600 dark:text-zinc-400">{count} collected</span>
+                      <span className={cn('font-mono font-semibold', bonus > 0 ? 'text-violet-600 dark:text-violet-400' : 'text-zinc-400')}>
+                        {bonus > 0 ? `₱${bonus}` : '—'}
+                      </span>
+                    </div>
+                  ))}
                 </div>
                 <div className="mt-2 flex items-center justify-between border-t border-zinc-200 pt-2 dark:border-zinc-800">
-                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Bonus awarded</span>
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Total bonus awarded</span>
                   <span className="font-mono text-base font-bold text-violet-600 dark:text-violet-400">
-                    {formatPHP(tierAmount)}
+                    {formatPHP(totalBonus)}
                   </span>
                 </div>
               </div>
