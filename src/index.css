@@ -227,6 +227,29 @@
   }
 }
 
+/* Sidebar logo heartbeat */
+@keyframes logo-heartbeat {
+  0%, 100% { transform: scale(1); }
+  15%       { transform: scale(1.09); }
+  30%       { transform: scale(1.01); }
+  45%       { transform: scale(1.06); }
+  65%       { transform: scale(1); }
+}
+
+@keyframes logo-heart-rise {
+  0%   { transform: translateX(-50%) translateY(0px) scale(0.7); opacity: 1; }
+  25%  { transform: translateX(-50%) translateY(-6px) scale(1.3); opacity: 1; }
+  100% { transform: translateX(-50%) translateY(-26px) scale(1); opacity: 0; }
+}
+
+.logo-heartbeat {
+  animation: logo-heartbeat 0.75s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.logo-heart-rise {
+  animation: logo-heart-rise 0.95s ease-out forwards;
+}
+
 /* PAB Calendar animations */
 @keyframes hourglass-flip {
   0%   { transform: rotate(0deg);   opacity: 1; }

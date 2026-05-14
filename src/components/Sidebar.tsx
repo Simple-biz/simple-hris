@@ -87,6 +87,20 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
     return () => { cancelled = true; };
   }, [email]);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
+
+  const [logoBeat, setLogoBeat] = React.useState(false);
+  const [heartUp, setHeartUp] = React.useState(false);
+  React.useEffect(() => {
+    const fire = () => {
+      setLogoBeat(true);
+      setHeartUp(true);
+      setTimeout(() => setHeartUp(false), 950);
+    };
+    const first = setTimeout(fire, 5000);
+    const interval = setInterval(fire, 12000);
+    return () => { clearTimeout(first); clearInterval(interval); };
+  }, []);
+
   const allowedTabs = React.useMemo(() => allowedAccountingTabsForRoles(roles), [roles]);
   const allowedTabSet = React.useMemo(() => new Set<string>(allowedTabs), [allowedTabs]);
   const visibleNavItems = React.useMemo(
@@ -106,21 +120,30 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
       aria-label="Accounting navigation"
     >
       <div className="flex min-h-0 flex-1 flex-col p-6">
-        <div className="mb-8 shrink-0">
+        <div className="mb-8 shrink-0 relative">
           <a
             href="https://www.simple.biz/"
             target="_blank"
             rel="noopener noreferrer"
             className="logo-neon"
           >
-            <div className="logo-neon__inner px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
+            <div className="logo-neon__inner px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white overflow-hidden">
               <img
                 src="/simple-logo.png"
                 alt="Simple Accounting HRIS"
-                className="h-10 w-full object-contain"
+                className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
+                onAnimationEnd={() => setLogoBeat(false)}
               />
             </div>
           </a>
+          {heartUp && (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute left-[48%] top-1 text-sm logo-heart-rise"
+            >
+              🧡
+            </span>
+          )}
         </div>
 
         <ScrollArea className="-mx-2 min-h-0 flex-1">
