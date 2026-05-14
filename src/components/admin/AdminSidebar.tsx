@@ -106,6 +106,14 @@ export default function AdminSidebar({
   }, [emailFromQuery, viewerEmailProp]);
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
+
+  const [logoBeat, setLogoBeat] = React.useState(false);
+  React.useEffect(() => {
+    const fire = () => setLogoBeat(true);
+    const first = setTimeout(fire, 1000);
+    const interval = setInterval(fire, 12000);
+    return () => { clearTimeout(first); clearInterval(interval); };
+  }, []);
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(email);
 
   const displayName = email?.includes('@') ? email.split('@')[0]!.replace(/[._-]/g, ' ') : email || 'Admin';
@@ -153,18 +161,23 @@ export default function AdminSidebar({
       aria-label="Admin navigation"
     >
       {/* Brand — anchored at the top */}
-      <div className="shrink-0 px-5 pb-4 pt-7">
-        <div className="flex items-center gap-2.5 px-1">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-[#18181b] text-sm font-bold tracking-[-0.02em] text-white dark:bg-zinc-100 dark:text-zinc-900">
-            s
+      <div className="shrink-0 px-5 pb-2 pt-7">
+        <a
+          href="https://www.simple.biz/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="logo-neon"
+          onMouseEnter={() => { if (!logoBeat) setLogoBeat(true); }}
+        >
+          <div className="logo-neon__inner relative overflow-hidden px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
+            <img
+              src="/simple-logo.png"
+              alt="Simple HRIS"
+              className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
+              onAnimationEnd={() => setLogoBeat(false)}
+            />
           </div>
-          <div className="flex min-w-0 flex-col leading-tight">
-            <span className="text-[13.5px] font-semibold tracking-[-0.01em] text-[#18181b] dark:text-zinc-100">
-              simple·hris
-            </span>
-            <span className="mt-0.5 text-[10.5px] tracking-[0.02em] text-[#71717a] dark:text-zinc-500">Admin</span>
-          </div>
-        </div>
+        </a>
       </div>
 
       {/* Middle column — single scroll surface for nav + view switcher + theme toggle.

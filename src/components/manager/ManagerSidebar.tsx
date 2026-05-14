@@ -48,13 +48,17 @@ export default function ManagerSidebar({
 }: ManagerSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
-
+  React.useEffect(() => { setMounted(true); }, []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(viewerEmail);
+
+  const [logoBeat, setLogoBeat] = React.useState(false);
+  React.useEffect(() => {
+    const fire = () => setLogoBeat(true);
+    const first = setTimeout(fire, 1000);
+    const interval = setInterval(fire, 12000);
+    return () => { clearTimeout(first); clearInterval(interval); };
+  }, []);
 
   const displayName = viewerEmail?.includes('@')
     ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ')
@@ -128,18 +132,23 @@ export default function ManagerSidebar({
       aria-label="Manager navigation"
     >
       <div className="flex flex-1 flex-col px-5 pb-4 pt-7">
-        <div className="mb-8 flex items-center gap-2.5 px-1">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-gradient-to-br from-blue-600 to-black text-sm font-bold tracking-[-0.02em] text-white shadow-sm shadow-blue-600/30">
-            s
-          </div>
-          <div className="flex min-w-0 flex-col leading-tight">
-            <span className="bg-gradient-to-r from-blue-700 to-zinc-900 bg-clip-text text-[13.5px] font-semibold tracking-[-0.01em] text-transparent dark:from-blue-300 dark:to-white">
-              simple·hris
-            </span>
-            <span className="mt-0.5 text-[10.5px] tracking-[0.02em] text-blue-700/70 dark:text-blue-400/70">
-              Manager
-            </span>
-          </div>
+        <div className="mb-8">
+          <a
+            href="https://www.simple.biz/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="logo-neon"
+            onMouseEnter={() => { if (!logoBeat) setLogoBeat(true); }}
+          >
+            <div className="logo-neon__inner relative overflow-hidden px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
+              <img
+                src="/simple-logo.png"
+                alt="Simple HRIS"
+                className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
+                onAnimationEnd={() => setLogoBeat(false)}
+              />
+            </div>
+          </a>
         </div>
 
         <ScrollArea className="min-h-0 flex-1 pr-2">
