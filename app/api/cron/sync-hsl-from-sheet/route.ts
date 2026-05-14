@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fetchHslSheetRows } from '@/lib/google-sheets/fetch-hsl-sheet';
 import { listHslUploads, replaceHslAgentsFromRows } from '@/lib/supabase/hsl-upload-db';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
 
 const SYSTEM_USER = { name: 'GSheets Sync', role: 'System' } as const;
 
@@ -92,6 +93,8 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
       },
       ip_address: clientIp(req),
     });
+
+    invalidateRateProfilesCache();
 
     return NextResponse.json({
       success: true,

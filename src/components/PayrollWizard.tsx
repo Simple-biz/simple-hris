@@ -3659,6 +3659,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
       const activeCount = json.activeCount ?? json.rowCount ?? 0;
       toast.success('Master list synced from Google Sheet', { description: `${activeCount} active employees (${json.inserted ?? 0} new · ${json.updated ?? 0} updated)` });
       await reloadMasterEmployees();
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('rates-profiles-stale'));
     } catch (err) {
       toast.error('Master list sync failed', { description: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -3686,6 +3687,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
           `${json.inserted ?? 0} new`,
         ].join(' · '),
       });
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('rates-profiles-stale'));
     } catch (err) {
       toast.error('Rates sync failed', { description: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -3709,6 +3711,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
       setHslSyncPct({ pct: 100 });
       setHslSyncResult({ kind: 'success', message: `${json.rowCount ?? 0} agents synced (${json.inserted ?? 0} new · ${json.updated ?? 0} updated)` });
       toast.success('Hogan Smith Pay Plan synced');
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('rates-profiles-stale'));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setHslSyncResult({ kind: 'error', message });

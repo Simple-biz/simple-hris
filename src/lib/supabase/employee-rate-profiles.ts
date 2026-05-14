@@ -765,7 +765,11 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
     );
     const mergedRates = mergeRowsUniqueFieldOrder(orderedGroupRows);
     const master = findMasterForMergedRates(mergedRates, byEmail, byName);
-    if (master) matchedMasters.add(master);
+    // Same master-list-only rule as the summary path: drop rates rows that
+    // don't match a master row, and skip placeholder master rows without a Name.
+    if (!master) continue;
+    if (!toStr(getField(master, ["Name", "name"]))) continue;
+    matchedMasters.add(master);
     const identity = buildIdentity(mergedRates, master);
 
     const sources: RawRow[] = [mergedRates, master ?? {}];
@@ -855,6 +859,9 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
   for (let i = 0; i < masterRaw.length; i++) {
     const masterRow = masterRaw[i];
     if (matchedMasters.has(masterRow)) continue;
+    // Skip placeholder master rows (no Name set) — these are work-email-only
+    // stubs that bloated the Rates & Profiles list with junk entries.
+    if (!toStr(getField(masterRow, ["Name", "name"]))) continue;
 
     const mPersonal = normEmail(
       toStr(getField(masterRow, ["Personal Email", "personal_email", "Personal_Email"])),
@@ -1203,9 +1210,14 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
     );
     const mergedRates = mergeRowsUniqueFieldOrder(orderedGroupRows);
     const master = findMasterForMergedRates(mergedRates, byEmail, byName);
-    if (master) matchedMasters.add(master);
+    // Master list is the single source of truth for Rates & Profiles.
+    // Drop rates rows that don't correspond to any active master row, and skip
+    // placeholder master rows (no Name set — typically work-email-only stubs).
+    if (!master) continue;
+    if (!toStr(getField(master, ["Name", "name"]))) continue;
+    matchedMasters.add(master);
 
-    const rawFields = mergeSourcesDeduped([mergedRates, master ?? {}]);
+    const rawFields = mergeSourcesDeduped([mergedRates, master]);
     const { department, organization, primaryEmail, workEmail, personalEmail } =
       finalizeProfileFields(rawFields);
 
@@ -1270,6 +1282,9 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
   for (let i = 0; i < masterRaw.length; i++) {
     const masterRow = masterRaw[i];
     if (matchedMasters.has(masterRow)) continue;
+    // Skip placeholder master rows (no Name set) — these are work-email-only
+    // stubs that bloated the Rates & Profiles list with junk entries.
+    if (!toStr(getField(masterRow, ["Name", "name"]))) continue;
 
     const mPersonal = normEmail(
       toStr(getField(masterRow, ["Personal Email", "personal_email", "Personal_Email"])),

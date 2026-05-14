@@ -11,6 +11,7 @@ import EmployeeDashboard from './EmployeeDashboard';
 import EmployeeProfile from './EmployeeProfile';
 import EmployeeLeaves from './EmployeeLeaves';
 import EmployeePolicies from './EmployeePolicies';
+import EmployeeMesa from './EmployeeMesa';
 import EmployeeMyHours from './EmployeeMyHours';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import SWall from '@/components/swall/SWall';
@@ -260,6 +261,8 @@ export default function EmployeeApp() {
       //       payrollLocked={lockState.locked}
       //     />
       //   );
+      case 'mesa':
+        return <EmployeeMesa employeeEmail={employeeEmail} />;
       case 'policies':
         return <EmployeePolicies department={employeeDepartment} />;
       case 'announcements':

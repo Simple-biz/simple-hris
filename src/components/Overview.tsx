@@ -2325,6 +2325,20 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     return () => { cancelled = true; };
   }, [selectedSourceFile, sourceFiles]);
 
+  // HSL master-list emails — stable across employee re-fetches when membership is unchanged,
+  // so the PAB effect below doesn't re-run (and flash its loading indicator) on every 60s poll.
+  const hslMasterEmailsKey = useMemo(() => {
+    const ems: string[] = [];
+    for (const e of employees) {
+      if (e.department?.trim().toLowerCase() === 'hsl') {
+        const em = normEmail(e.personal_email ?? null) ?? normEmail(e.work_email ?? null);
+        if (em) ems.push(em);
+      }
+    }
+    ems.sort();
+    return ems.join(',');
+  }, [employees]);
+
   // Compute PAB eligibility for the currently-selected source file
   // (or merged across every file when "__all__" is selected).
   useEffect(() => {
@@ -2408,14 +2422,8 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
           monthLabel = `${monthNames[pabMonth.month]} ${pabMonth.year}`;
         }
 
-        // Build HSL email set from master list for per-employee rule branching
-        const hslMasterEmails = new Set<string>();
-        for (const e of employees) {
-          if (e.department?.trim().toLowerCase() === 'hsl') {
-            const em = normEmail(e.personal_email ?? null) ?? normEmail(e.work_email ?? null);
-            if (em) hslMasterEmails.add(em);
-          }
-        }
+        // Build HSL email set from the memoized key (stable across no-op employee re-fetches).
+        const hslMasterEmails = new Set<string>(hslMasterEmailsKey ? hslMasterEmailsKey.split(',') : []);
 
         let eligible = 0;
         let notEligible = 0;
@@ -2492,7 +2500,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
       }
     })();
     return () => { cancelled = true; };
-  }, [sourceFiles, selectedSourceFile, monthFilter, employees]);
+  }, [sourceFiles, selectedSourceFile, monthFilter, hslMasterEmailsKey]);
 
   /** Master-list rows only. Hubstaff-only workers are no longer merged into
    *  Overview totals — the master list is the single source of truth. */

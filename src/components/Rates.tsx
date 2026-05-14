@@ -712,6 +712,15 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     fetchProfiles();
   }, []);
 
+  // Reload when PayrollWizard finishes a Google Sheet sync (master / rates / HSL).
+  // Server caches are invalidated in the sync route handlers; this just kicks the
+  // open Rates view to re-fetch immediately instead of waiting for the next mount.
+  useEffect(() => {
+    const onStale = () => { void fetchProfiles(); };
+    window.addEventListener('rates-profiles-stale', onStale);
+    return () => window.removeEventListener('rates-profiles-stale', onStale);
+  }, []);
+
   const fetchProfileDetail = async (summary: EmployeeRateProfileSummary) => {
     const query = summary.workEmail ?? summary.personalEmail ?? summary.subtitle ?? summary.id;
     const key = summary.workEmail || summary.personalEmail || summary.subtitle ? "email" : "id";
