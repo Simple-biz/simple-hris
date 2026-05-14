@@ -242,16 +242,18 @@ function PunchedHoles({ position }: { position: 'top' | 'bottom' }) {
 const INV_ACCENT = '#B85450';
 const INV_ACCENT_DARK = '#D4705A';
 
-const FADE_EASE = [0.22, 1, 0.36, 1] as const;
-
-const fadeUp: Variants = {
+const fadeUp = {
   hidden: { opacity: 0, y: 14 },
   show: (i: number) => ({
     opacity: 1,
     y: 0,
-    transition: { delay: i * 0.055, duration: 0.38, ease: FADE_EASE },
+    transition: {
+      delay: i * 0.055,
+      duration: 0.38,
+      ease: [0.22, 1, 0.36, 1] as [number, number, number, number],
+    },
   }),
-};
+} satisfies Variants;
 
 function InvoiceViewDialog({
   invoice,
