@@ -106,7 +106,14 @@
       "PowerShell(cmd /c \"dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\contractor && dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\\\\contractor && dir C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\\\\api\\\\contractor\\\\invoices\")",
       "Bash(Get-ChildItem -Path \"src\\\\lib\\\\google-sheets\" -ErrorAction SilentlyContinue)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -Directory -Name)",
-      "Bash(Select-Object -First 30)"
+      "Bash(Select-Object -First 30)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -Directory)",
+      "Bash(Select-Object -First 20)",
+      "Bash(Format-List FullName)",
+      "Bash(curl -s \"http://localhost:3000/api/employee/commendations\" -H \"Cookie: $\\(cat .env.local)",
+      "Bash(curl *)",
+      "Bash(grep -r \"active_employees\" references/ --include=\"*.sql\" -l)",
+      "Bash(grep -r \"off_boarded\" references/ --include=\"*.sql\" -l)"
     ]
   }
 }

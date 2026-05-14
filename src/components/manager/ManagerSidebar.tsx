@@ -134,27 +134,27 @@ export default function ManagerSidebar({
       role="navigation"
       aria-label="Manager navigation"
     >
-      <div className="flex flex-1 flex-col px-5 pb-4 pt-7">
-        <div className="mb-8">
-          <a
-            href="https://www.simple.biz/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="logo-neon"
-            onMouseEnter={() => { if (!logoBeat) setLogoBeat(true); }}
-          >
-            <div className="logo-neon__inner relative overflow-hidden px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
-              <img
-                src="/simple-logo.png"
-                alt="Simple HRIS"
-                className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
-                onAnimationEnd={() => setLogoBeat(false)}
-              />
-            </div>
-          </a>
-        </div>
+      <div className="shrink-0 px-5 pt-7 pb-5">
+        <a
+          href="https://www.simple.biz/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="logo-neon"
+          onMouseEnter={() => { if (!logoBeat) setLogoBeat(true); }}
+        >
+          <div className="logo-neon__inner relative overflow-hidden px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white">
+            <img
+              src="/simple-logo.png"
+              alt="Simple HRIS"
+              className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
+              onAnimationEnd={() => setLogoBeat(false)}
+            />
+          </div>
+        </a>
+      </div>
 
-        <ScrollArea className="min-h-0 flex-1 pr-2">
+      <ScrollArea className="min-h-0 flex-1 px-5">
+        <div className="pr-2 pb-4">
           <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
             Workspace
           </p>
@@ -228,10 +228,10 @@ export default function ManagerSidebar({
               <span className="text-[#a1a1aa]">{isDark ? '☀' : '☾'}</span>
             </button>
           </div>
-        </ScrollArea>
-      </div>
+        </div>
+      </ScrollArea>
 
-      <div className="mt-auto border-t border-blue-100/60 p-5 dark:border-blue-950/40">
+      <div className="shrink-0 border-t border-blue-100/60 p-5 dark:border-blue-950/40">
         <div className="flex items-center gap-2.5 rounded-md border border-blue-100/70 bg-gradient-to-br from-white to-blue-50/60 px-2.5 py-2 dark:border-blue-950/40 dark:from-zinc-950 dark:to-blue-950/20">
           <EmployeeAvatar
             photoUrl={profilePhotoUrl}

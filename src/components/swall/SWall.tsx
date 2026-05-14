@@ -1,6 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { init } from 'emoji-mart';
+import data from '@emoji-mart/data';
+
+// Initialize emoji-mart once — registers <em-emoji> web component with Facebook set
+init({ data, set: 'facebook' });
+
+function EmEmoji({ native, size = '24' }: { native: string; size?: string | number }) {
+  // em-emoji is a custom web component registered by emoji-mart init()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Tag = 'em-emoji' as any;
+  return <Tag native={native} set="facebook" size={String(size)} />;
+}
 import {
   AtSign,
   Ban,
@@ -1362,9 +1375,9 @@ function SWallPostCard({
               .map((e) => (
                 <span
                   key={e}
-                  className="flex h-[20px] w-[20px] items-center justify-center rounded-full bg-white text-[13px] shadow-[0_0_0_1.5px_rgba(0,0,0,0.07)] dark:bg-zinc-900 dark:shadow-[0_0_0_1.5px_rgba(255,255,255,0.07)]"
+                  className="flex h-[20px] w-[20px] items-center justify-center rounded-full bg-white shadow-[0_0_0_1.5px_rgba(0,0,0,0.07)] dark:bg-zinc-900 dark:shadow-[0_0_0_1.5px_rgba(255,255,255,0.07)]"
                 >
-                  {e}
+                  <EmEmoji native={e} size="13" />
                 </span>
               ))}
           </div>
@@ -1372,75 +1385,81 @@ function SWallPostCard({
         </div>
       )}
 
-      {/* Emoji picker row — fades + slides in above the action bar on Like hover */}
-      <div
-        onMouseEnter={showPicker}
-        onMouseLeave={hidePicker}
-        className={cn(
-          'overflow-hidden border-t border-[#ececec] dark:border-zinc-800',
-          'transition-[max-height,opacity] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]',
-          emojiPickerOpen ? 'max-h-[80px] opacity-100' : 'max-h-0 opacity-0',
-        )}
-      >
-        <div className="flex items-center justify-center gap-5 px-4 py-3">
-          {SWALL_EMOJIS.map((emoji) => {
-            const reacted = post.my_reactions.includes(emoji);
-            const pending = inFlight.has(`${post.id}:${emoji}`);
-            return (
-              <button
-                key={emoji}
-                type="button"
-                disabled={pending}
-                title={REACTION_NAMES[emoji]}
-                onClick={() => onReact(post.id, emoji, reacted)}
-                className={cn(
-                  'text-[26px] leading-none will-change-transform',
-                  'transition-transform duration-200 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)]',
-                  'hover:-translate-y-2 hover:scale-[1.4]',
-                  reacted ? 'scale-[1.15]' : '',
-                  pending ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
-                )}
-              >
-                {emoji}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       {/* Divider */}
       <div className="mx-4 border-t border-[#ececec] dark:border-zinc-800" />
 
-      {/* Action row — Like (opens emoji picker on hover) + Comment */}
+      {/* Action row — Like (floating picker on hover) + Comment */}
       <div className="flex items-stretch">
-        <button
-          type="button"
-          onMouseEnter={showPicker}
-          onMouseLeave={hidePicker}
-          onClick={() => {
-            const primary = post.my_reactions[0] ?? '👍';
-            onReact(post.id, primary, post.my_reactions.includes(primary));
-          }}
-          className={cn(
-            'flex flex-1 items-center justify-center gap-1.5 py-2.5 text-[13px] font-semibold transition-colors',
-            'hover:bg-zinc-50 dark:hover:bg-zinc-800/60',
-            post.my_reactions.length > 0
-              ? 'text-blue-600 dark:text-blue-400'
-              : 'text-zinc-500 dark:text-zinc-400',
-          )}
-        >
-          {post.my_reactions.length > 0 ? (
-            <>
-              <span className="text-[17px] leading-none">{post.my_reactions[0]}</span>
-              <span>{REACTION_NAMES[post.my_reactions[0]!] ?? 'Like'}</span>
-            </>
-          ) : (
-            <>
-              <ThumbsUp className="h-4 w-4" />
-              <span>Like</span>
-            </>
-          )}
-        </button>
+        {/* Like button — picker floats above it, centered */}
+        <div className="relative flex flex-1">
+          <AnimatePresence>
+            {emojiPickerOpen && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.7, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.7, y: 10 }}
+                transition={{ type: 'spring', stiffness: 420, damping: 22 }}
+                onMouseEnter={showPicker}
+                onMouseLeave={hidePicker}
+                className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 origin-bottom"
+              >
+                <div className="flex items-end gap-1 rounded-full border border-[#ececec] bg-white px-3 py-2 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+                  {SWALL_EMOJIS.map((emoji) => {
+                    const reacted = post.my_reactions.includes(emoji);
+                    const pending = inFlight.has(`${post.id}:${emoji}`);
+                    return (
+                      <motion.button
+                        key={emoji}
+                        type="button"
+                        disabled={pending}
+                        title={REACTION_NAMES[emoji]}
+                        onClick={() => onReact(post.id, emoji, reacted)}
+                        animate={reacted ? { y: -4, scale: 1.2 } : { y: 0, scale: 1 }}
+                        whileHover={{ y: -12, scale: 1.5 }}
+                        transition={{ type: 'spring', stiffness: 380, damping: 18 }}
+                        className={cn(
+                          'leading-none',
+                          pending ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+                        )}
+                      >
+                        <EmEmoji native={emoji} size="30" />
+                      </motion.button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <button
+            type="button"
+            onMouseEnter={showPicker}
+            onMouseLeave={hidePicker}
+            onClick={() => {
+              const primary = post.my_reactions[0] ?? '👍';
+              onReact(post.id, primary, post.my_reactions.includes(primary));
+            }}
+            className={cn(
+              'flex w-full items-center justify-center gap-1.5 py-2.5 text-[13px] font-semibold transition-colors',
+              'hover:bg-zinc-50 dark:hover:bg-zinc-800/60',
+              post.my_reactions.length > 0
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-zinc-500 dark:text-zinc-400',
+            )}
+          >
+            {post.my_reactions.length > 0 ? (
+              <>
+                <EmEmoji native={post.my_reactions[0]!} size="18" />
+                <span>{REACTION_NAMES[post.my_reactions[0]!] ?? 'Like'}</span>
+              </>
+            ) : (
+              <>
+                <ThumbsUp className="h-4 w-4" />
+                <span>Like</span>
+              </>
+            )}
+          </button>
+        </div>
 
         <div className="w-px bg-[#ececec] dark:bg-zinc-800" />
 

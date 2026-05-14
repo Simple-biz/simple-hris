@@ -46,6 +46,12 @@ import ManagerBonusHistory from '@/components/manager/ManagerBonusHistory';
 import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
+import {
+  MedalProvider,
+  MedalPalette,
+  MedalBadges,
+  useMedalCtx,
+} from '@/components/manager/MedalRecognition';
 
 /** How `/api/manager/department-members` scoped the roster for this session (server-driven). */
 type ManagerTeamGate =
@@ -611,7 +617,9 @@ function memberOtRate(member: EmployeeRow): number | null {
   return member.hsl_ot_rate ?? member.ot_rate ?? null;
 }
 
-function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
+function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
+  const { draggedMedal, dragOverEmail, setDragOverEmail, openAwardForDrop } = useMedalCtx();
+
   // Inner tab toggle: Roster (existing) | Newly Hired (HR pending hires routed
   // here by department_managers). Lives inside the My Team panel so it doesn't
   // claim a top-level sidebar slot.
@@ -623,6 +631,7 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
   const [page, setPage] = useState(1);
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [medalOpen, setMedalOpen] = useState(false);
   const showRateCol = members.some(
     (m) => memberHourlyRate(m) != null || memberOtRate(m) != null,
   );
@@ -798,34 +807,51 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
             </>
           )}
         </p>
-        <div className="mt-2 inline-flex w-fit rounded-md border border-blue-200 bg-blue-50/40 p-0.5 dark:border-blue-900/50 dark:bg-blue-950/20">
-          <button
-            type="button"
-            onClick={() => setInnerTab('roster')}
-            className={cn(
-              'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
-              innerTab === 'roster'
-                ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-                : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-            )}
-          >
-            Roster
-            <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-              {members.length}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setInnerTab('newly-hired')}
-            className={cn(
-              'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
-              innerTab === 'newly-hired'
-                ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-                : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
-            )}
-          >
-            Newly Hired
-          </button>
+        <div className="mt-2 flex items-center gap-2">
+          <div className="inline-flex w-fit rounded-md border border-blue-200 bg-blue-50/40 p-0.5 dark:border-blue-900/50 dark:bg-blue-950/20">
+            <button
+              type="button"
+              onClick={() => setInnerTab('roster')}
+              className={cn(
+                'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
+                innerTab === 'roster'
+                  ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
+                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+              )}
+            >
+              Roster
+              <span className="ml-1.5 rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                {members.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setInnerTab('newly-hired')}
+              className={cn(
+                'rounded-[5px] px-3 py-1.5 text-xs font-semibold transition',
+                innerTab === 'newly-hired'
+                  ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
+                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+              )}
+            >
+              Newly Hired
+            </button>
+          </div>
+          {!unassigned && members.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setMedalOpen((v) => !v)}
+              title={medalOpen ? 'Hide recognition' : 'Recognize an employee'}
+              className={cn(
+                'rounded-md border px-2 py-1.5 text-sm transition-all',
+                medalOpen
+                  ? 'border-amber-300 bg-amber-50 opacity-80 dark:border-amber-700/60 dark:bg-amber-900/20'
+                  : 'border-zinc-200 bg-white opacity-40 grayscale hover:border-zinc-300 hover:bg-zinc-50 hover:opacity-60 dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-zinc-700',
+              )}
+            >
+              🏅
+            </button>
+          )}
         </div>
       </header>
 
@@ -898,6 +924,21 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
         </div>
       )}
 
+      <AnimatePresence initial={false}>
+        {innerTab === 'roster' && medalOpen && !unassigned && members.length > 0 && (
+          <motion.div
+            key="medal-palette"
+            initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+            animate={{ opacity: 1, height: 'auto', marginBottom: 0 }}
+            exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            style={{ overflow: 'hidden' }}
+          >
+            <MedalPalette />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {innerTab === 'roster' && (
       <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15 dark:ring-blue-400/10">
         <CardContent className="p-0 sm:p-0">
@@ -944,10 +985,38 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
                 if (v == null) return '—';
                 return `₱${v.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
               };
+              const filterKey = `${deptFilter}|${searchQuery.trim()}`;
               return (
                 <>
+                  <motion.div
+                    key={filterKey}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                  >
                   {/* Desktop / tablet: table */}
-                  <div className="hidden overflow-x-auto md:block">
+                  <div
+                    className="hidden overflow-x-auto md:block"
+                    onDragOver={(e) => {
+                      if (!draggedMedal) return;
+                      e.preventDefault();
+                      const tr = (e.target as HTMLElement).closest('tr[data-email]') as HTMLElement | null;
+                      setDragOverEmail(tr?.dataset.email ?? null);
+                    }}
+                    onDragLeave={(e) => {
+                      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                        setDragOverEmail(null);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const tr = (e.target as HTMLElement).closest('tr[data-email]') as HTMLElement | null;
+                      const email = tr?.dataset.email;
+                      const name = tr?.dataset.name ?? null;
+                      if (email) openAwardForDrop(email, name);
+                      setDragOverEmail(null);
+                    }}
+                  >
                     <Table>
                       <TableHeader>
                         <TableRow className="hover:bg-transparent">
@@ -964,10 +1033,21 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {pageSlice.map((m, idx) => (
-                          <TableRow key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}>
+                        {pageSlice.map((m, idx) => {
+                          const rowEmail = m.personal_email ?? m.work_email ?? undefined;
+                          const isOver = !!draggedMedal && !!rowEmail && dragOverEmail === rowEmail;
+                          return (
+                          <TableRow
+                            key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}
+                            data-email={rowEmail}
+                            data-name={m.name ?? undefined}
+                            className={cn(isOver && 'bg-amber-50/60 dark:bg-amber-950/20')}
+                          >
                             <TableCell className="font-medium text-zinc-900 dark:text-zinc-100">
-                              {m.name ?? '—'}
+                              <span className="inline-flex items-center">
+                                {m.name ?? '—'}
+                                <MedalBadges email={rowEmail} />
+                              </span>
                             </TableCell>
                             <TableCell className="text-zinc-600 dark:text-zinc-400">
                               {m.department ?? '—'}
@@ -1024,14 +1104,17 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
                               </Button>
                             </TableCell>
                           </TableRow>
-                        ))}
+                        ); })}
                       </TableBody>
                     </Table>
                   </div>
 
                   {/* Mobile: stacked cards */}
                   <div className="flex flex-col gap-2.5 p-3 md:hidden">
-                    {pageSlice.map((m, idx) => (
+                    {pageSlice.map((m, idx) => {
+                      const cardEmail = m.personal_email ?? m.work_email ?? undefined;
+                      const isCardOver = !!draggedMedal && !!cardEmail && dragOverEmail === cardEmail;
+                      return (
                       <motion.div
                         key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}
                         initial={{ opacity: 0, y: 8 }}
@@ -1041,12 +1124,23 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
                           delay: Math.min(idx * 0.025, 0.18),
                           ease: 'easeOut',
                         }}
-                        className="rounded-xl border border-blue-100/70 bg-white/95 p-3 shadow-sm ring-1 ring-blue-500/5 dark:border-blue-950/50 dark:bg-zinc-950/80 dark:ring-blue-400/10"
+                        onDragOver={(e) => { if (!draggedMedal) return; e.preventDefault(); setDragOverEmail(cardEmail ?? null); }}
+                        onDragLeave={() => setDragOverEmail(null)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          if (cardEmail) openAwardForDrop(cardEmail, m.name ?? null);
+                          setDragOverEmail(null);
+                        }}
+                        className={cn(
+                          'rounded-xl border border-blue-100/70 bg-white/95 p-3 shadow-sm ring-1 ring-blue-500/5 dark:border-blue-950/50 dark:bg-zinc-950/80 dark:ring-blue-400/10',
+                          isCardOver && 'ring-amber-400/60 bg-amber-50/40 dark:bg-amber-950/10',
+                        )}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                              {m.name ?? '—'}
+                            <div className="flex items-center text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                              <span className="truncate">{m.name ?? '—'}</span>
+                              <MedalBadges email={cardEmail} />
                             </div>
                             <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
                               {m.department ?? '—'}
@@ -1124,8 +1218,9 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
                           </Button>
                         </div>
                       </motion.div>
-                    ))}
+                    ); })}
                   </div>
+                  </motion.div>
 
                   {/* Pagination footer */}
                   {filteredMembers.length > TEAM_PAGE_SIZE && (
@@ -1184,6 +1279,22 @@ function TeamPanel({ members, teamGate, viewerEmail }: TeamPanelProps) {
         onClose={() => setSelectedMember(null)}
       />
     </div>
+  );
+}
+
+function TeamPanel(props: TeamPanelProps) {
+  const memberEmails = useMemo(
+    () =>
+      props.members
+        .flatMap((m) => [m.personal_email, m.work_email])
+        .filter((e): e is string => !!e)
+        .map((e) => e.trim().toLowerCase()),
+    [props.members],
+  );
+  return (
+    <MedalProvider viewerEmail={props.viewerEmail} memberEmails={memberEmails}>
+      <TeamPanelInner {...props} />
+    </MedalProvider>
   );
 }
 

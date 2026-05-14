@@ -75,7 +75,7 @@ function matchesEmployeeEmail(emp: EmployeeRow, n: string): boolean {
 
 /* ───────── Visual primitives ───────── */
 
-type TabId = 'overview' | 'compensation' | 'payment';
+type TabId = 'overview' | 'compensation' | 'payment' | 'reports';
 
 function Section({
   title,
@@ -181,6 +181,7 @@ function TabBar({
     { id: 'overview', label: 'Overview', sub: hasAddress ? 'Identity, employment, address' : 'Identity & employment' },
     { id: 'compensation', label: 'Compensation', sub: 'Rates & currency' },
     { id: 'payment', label: 'Payment', sub: 'Disbursement details' },
+    { id: 'reports', label: 'Reports', sub: 'Commendations & recognition' },
   ];
 
   return (
@@ -299,6 +300,20 @@ export default function EmployeeProfile({
   const [payoutEditing, setPayoutEditing] = useState(false);
 
   const [activeTab, setActiveTab] = useState<TabId>('overview');
+
+  interface Commendation { id: string; note: string | null; awarded_by: string; awarded_at: string; }
+  const [commendations, setCommendations] = useState<Commendation[]>([]);
+  const [commendationsLoading, setCommendationsLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setCommendationsLoading(true);
+    void fetch('/api/employee/commendations')
+      .then((r) => r.ok ? r.json() : [])
+      .then((d: unknown) => { if (!cancelled) setCommendations(d as Commendation[]); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setCommendationsLoading(false); });
+    return () => { cancelled = true; };
+  }, [employeeEmail]);
 
   useEffect(() => {
     if (!bankInfo) {
@@ -747,6 +762,7 @@ export default function EmployeeProfile({
                       <Row label="Postal Code" value={master?.postal_code ?? null} mono />
                     </Section>
                   )}
+
                 </>
               )}
 
@@ -897,6 +913,50 @@ export default function EmployeeProfile({
                         </span>
                       </span>
                       <ArrowUpRight className="h-3 w-3 text-zinc-400" />
+                    </div>
+                  )}
+                </>
+              )}
+
+              {activeTab === 'reports' && (
+                <>
+                  {commendationsLoading ? (
+                    <div className="flex items-center justify-center py-20">
+                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
+                    </div>
+                  ) : commendations.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-zinc-200/80 bg-white py-20 text-center dark:border-zinc-800/80 dark:bg-zinc-950/40">
+                      <span className="text-3xl" style={{ filter: 'hue-rotate(120deg)' }} aria-hidden>🚩</span>
+                      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No commendations yet</p>
+                      <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
+                        When your manager shares a commendation with you it will appear here.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3 pt-2">
+                      {commendations.map((c) => (
+                        <div key={c.id} className="flex items-start gap-3 rounded-2xl border border-zinc-200/80 bg-white px-5 py-4 dark:border-zinc-800/80 dark:bg-zinc-950/40">
+                          <span
+                            className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-base ring-1 ring-emerald-200/60 dark:bg-emerald-900/20 dark:ring-emerald-700/30"
+                            style={{ filter: 'hue-rotate(120deg)' }}
+                            aria-hidden
+                          >
+                            🚩
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            {c.note ? (
+                              <p className="text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">&ldquo;{c.note}&rdquo;</p>
+                            ) : (
+                              <p className="text-sm italic text-zinc-400 dark:text-zinc-600">No note left.</p>
+                            )}
+                            <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-600">
+                              From <span className="font-medium text-zinc-500 dark:text-zinc-400">{c.awarded_by}</span>
+                              {' · '}
+                              {new Date(c.awarded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </>
