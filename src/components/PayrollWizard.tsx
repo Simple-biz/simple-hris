@@ -8477,7 +8477,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-zinc-50 p-4 md:p-8 dark:bg-zinc-950">
+    <div className="flex h-full flex-col overflow-hidden bg-zinc-50 p-2 sm:p-4 md:p-8 dark:bg-zinc-950">
       <Dialog
         open={deleteSourceFilePending !== null}
         onOpenChange={(open) => {
@@ -9435,63 +9435,70 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
         </DialogContent>
       </Dialog>
 
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">Payroll Wizard</h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-500">The "Friday Path" Automated Workflow</p>
+      <div className="mb-3 flex items-start justify-between gap-2 sm:mb-6 md:mb-8">
+        <div className="min-w-0">
+          <h2 className="text-lg font-bold tracking-tight text-zinc-900 sm:text-xl md:text-2xl dark:text-white">Payroll Wizard</h2>
+          <p className="hidden text-xs text-zinc-600 sm:block sm:text-sm dark:text-zinc-500">The &quot;Friday Path&quot; Automated Workflow</p>
+          <p className="text-[10px] text-zinc-500 sm:hidden dark:text-zinc-500">
+            Step {currentStep} of {steps.length} · {steps.find((s) => s.id === currentStep)?.label}
+          </p>
         </div>
-        <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="hidden items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 sm:flex dark:border-zinc-800 dark:bg-zinc-900">
           <Button variant="ghost" size="sm" className="text-xs h-8">History</Button>
           <Button variant="ghost" size="sm" className="text-xs h-8">Templates</Button>
         </div>
       </div>
 
-      <div className="flex gap-8 flex-1 overflow-hidden min-h-0">
-        {/* Stepper Sidebar */}
-        <div className="w-64 flex flex-col gap-4 overflow-y-auto min-h-0 pr-2 scrollbar-none">
+      <div className="flex flex-col gap-3 flex-1 overflow-hidden min-h-0 md:flex-row md:gap-8">
+        {/* Stepper — horizontal scroll-strip on mobile, vertical sidebar on desktop */}
+        <div
+          className="flex shrink-0 gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:w-64 md:flex-col md:gap-4 md:overflow-y-auto md:overflow-x-visible md:pr-2 md:pb-0"
+        >
           {steps.map((step) => (
-            <div 
+            <button
+              type="button"
               key={step.id}
+              onClick={() => setCurrentStep(step.id)}
               className={cn(
-                "relative flex items-start gap-4 p-4 rounded-xl border transition-all duration-300",
-                currentStep === step.id 
-                  ? "bg-indigo-600/10 border-indigo-600/50 shadow-[0_0_20px_rgba(79,70,229,0.1)]" 
+                "relative flex shrink-0 items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-all duration-300 md:items-start md:gap-4 md:p-4",
+                currentStep === step.id
+                  ? "bg-indigo-600/10 border-indigo-600/50 shadow-[0_0_20px_rgba(79,70,229,0.1)]"
                   : currentStep > step.id
-                    ? "border border-emerald-500/20 bg-emerald-50/80 opacity-60 dark:bg-zinc-900/50"
-                    : "border border-zinc-200 bg-zinc-100/80 opacity-40 dark:border-zinc-800 dark:bg-zinc-900/30"
+                    ? "border-emerald-500/20 bg-emerald-50/80 opacity-70 dark:bg-zinc-900/50"
+                    : "border-zinc-200 bg-zinc-100/80 opacity-50 dark:border-zinc-800 dark:bg-zinc-900/30",
               )}
             >
               <div className={cn(
-                "w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-colors",
-                currentStep === step.id ? "bg-indigo-600 text-white" : 
-                currentStep > step.id ? "bg-emerald-500 text-white" : "bg-zinc-300 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-500"
+                "flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors md:h-8 md:w-8",
+                currentStep === step.id ? "bg-indigo-600 text-white" :
+                currentStep > step.id ? "bg-emerald-500 text-white" : "bg-zinc-300 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-500",
               )}>
-                {currentStep > step.id ? <Check className="w-4 h-4" /> : <step.icon className="w-4 h-4" />}
+                {currentStep > step.id ? <Check className="h-3 w-3 md:h-4 md:w-4" /> : <step.icon className="h-3 w-3 md:h-4 md:w-4" />}
               </div>
-              <div className="flex flex-col min-w-0">
+              <div className="flex min-w-0 flex-col">
                 <span className={cn(
-                  "text-sm font-bold truncate",
-                  currentStep === step.id ? "text-zinc-900 dark:text-white" : "text-zinc-500 dark:text-zinc-400"
+                  "truncate text-[11px] font-bold md:text-sm",
+                  currentStep === step.id ? "text-zinc-900 dark:text-white" : "text-zinc-500 dark:text-zinc-400",
                 )}>
                   {step.label}
                 </span>
-                <span className="text-[10px] text-zinc-500 truncate leading-tight mt-0.5">
+                <span className="mt-0.5 hidden truncate text-[10px] leading-tight text-zinc-500 md:block">
                   {step.description}
                 </span>
               </div>
               {currentStep === step.id && (
-                <motion.div 
+                <motion.div
                   layoutId="active-indicator"
-                  className="absolute -left-1 top-1/2 -translate-y-1/2 w-2 h-8 bg-indigo-600 rounded-full"
+                  className="absolute -bottom-1 left-1/2 h-1 w-6 -translate-x-1/2 rounded-full bg-indigo-600 md:-left-1 md:bottom-auto md:top-1/2 md:h-8 md:w-2 md:-translate-x-0 md:-translate-y-1/2"
                 />
               )}
-            </div>
+            </button>
           ))}
         </div>
 
         {/* Main Content Area */}
         <div className="flex flex-1 flex-col overflow-hidden min-h-0 rounded-2xl border border-zinc-200 bg-white/80 dark:border-zinc-800 dark:bg-zinc-900/30">
-          <ScrollArea className="flex-1 p-4 md:p-8 min-h-0">
+          <ScrollArea className="flex-1 p-3 sm:p-4 md:p-8 min-h-0">
             <AnimatePresence mode="wait">
               <motion.div
                 key={currentStep}

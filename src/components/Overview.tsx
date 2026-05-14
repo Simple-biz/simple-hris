@@ -24,6 +24,7 @@ import {
   FileWarning,
   CalendarDays,
   UserMinus,
+  UserPlus,
   ArrowRight,
   LayoutGrid,
   Rows3,
@@ -312,6 +313,11 @@ interface SimpleViewProps {
     avgHeadcount: number;
     ratePct: number;
   } | null;
+  newHires: {
+    last30d: number;
+    last7d: number;
+    mostRecentDays: number | null;
+  } | null;
   pabMetrics: {
     loading: boolean;
     totalEmployees: number;
@@ -391,6 +397,7 @@ function SimpleView({
   oldestDisputeDays,
   pendingLeaves,
   attrition,
+  newHires,
   pabMetrics,
   techBonusEligibility,
   pageRows,
@@ -787,26 +794,37 @@ function SimpleView({
             onClick={onNavigate ? () => onNavigate('disputes') : undefined}
           />
           <AttentionCard
-            icon={<FileWarning />}
-            label="Reconciliation"
-            tone={reconcileGaps && reconcileGaps > 0 ? 'info' : 'ok'}
-            tag="2 sources"
-            value={reconcileGaps ?? 0}
-            unit={reconcileGaps === 1 ? 'mismatch' : 'mismatches'}
+            icon={<UserPlus />}
+            label="New hires"
+            tone={newHires && newHires.last30d > 0 ? 'ok' : 'neutral'}
+            tag="last 30 days"
+            value={newHires?.last30d ?? 0}
+            unit={newHires?.last30d === 1 ? 'started' : 'started'}
             sub={
-              <>
-                <strong className="text-zinc-700 dark:text-zinc-300">
-                  {inPayrollNotMaster ?? 0}
-                </strong>{' '}
-                in payroll not on master ·{' '}
-                <strong className="text-zinc-700 dark:text-zinc-300">
-                  {inMasterNotPayroll ?? 0}
-                </strong>{' '}
-                on master not in payroll
-              </>
+              newHires == null || newHires.last30d === 0 ? (
+                <>No new hires in the last 30 days.</>
+              ) : (
+                <>
+                  <strong className="text-zinc-700 dark:text-zinc-300">{newHires.last7d}</strong>{' '}
+                  this week
+                  {newHires.mostRecentDays != null && (
+                    <>
+                      {' · '}
+                      most recent{' '}
+                      <strong className="text-zinc-700 dark:text-zinc-300">
+                        {newHires.mostRecentDays === 0
+                          ? 'today'
+                          : newHires.mostRecentDays === 1
+                            ? 'yesterday'
+                            : `${newHires.mostRecentDays}d ago`}
+                      </strong>
+                    </>
+                  )}
+                </>
+              )
             }
-            cta="Reconcile"
-            onClick={onNavigate ? () => onNavigate('payroll-wizard') : undefined}
+            cta="Open in HR"
+            onClick={() => { window.location.href = '/hr'; }}
           />
           <AttentionCard
             icon={<UserMinus />}
@@ -1913,21 +1931,56 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     avgHeadcount: number;
     ratePct: number;
   } | null>(null);
-  /** Which layout the user is currently viewing — persisted in localStorage. */
-  const [viewMode, setViewMode] = useState<'simple' | 'expanded'>('simple');
-
-  // Load persisted view mode on mount (client-only)
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
+  /** New hires in the trailing 30 days, derived from `start_date` on the master list. */
+  const newHires = useMemo(() => {
+    const now = Date.now();
+    const day = 24 * 3600 * 1000;
+    const cutoff30 = now - 30 * day;
+    const cutoff7 = now - 7 * day;
+    let last30d = 0;
+    let last7d = 0;
+    let mostRecentMs: number | null = null;
+    for (const e of employees) {
+      const raw = e.start_date;
+      if (!raw) continue;
+      const t = new Date(raw).getTime();
+      if (!Number.isFinite(t)) continue;
+      if (t > now) continue;
+      if (t >= cutoff30) {
+        last30d += 1;
+        if (mostRecentMs === null || t > mostRecentMs) mostRecentMs = t;
+      }
+      if (t >= cutoff7) last7d += 1;
+    }
+    const mostRecentDays = mostRecentMs == null
+      ? null
+      : Math.max(0, Math.floor((now - mostRecentMs) / day));
+    return { last30d, last7d, mostRecentDays };
+  }, [employees]);
+  /** Which layout the user is currently viewing — persisted in localStorage.
+   *  Lazy initializer reads from storage synchronously on the FIRST client
+   *  render, so the component never momentarily renders 'simple' and then
+   *  flips to 'expanded' on a follow-up effect. That flash was what made the
+   *  toggle look like it was "switching by itself" on remount. */
+  const [viewMode, setViewMode] = useState<'simple' | 'expanded'>(() => {
+    if (typeof window === 'undefined') return 'simple';
     try {
       const saved = window.localStorage.getItem('overview.viewMode');
-      if (saved === 'simple' || saved === 'expanded') setViewMode(saved);
+      if (saved === 'simple' || saved === 'expanded') return saved;
     } catch {
       /* ignore */
     }
-  }, []);
+    return 'simple';
+  });
 
+  // Persist on change. Guarded by a hydrated flag so the first commit (which
+  // already matches storage) doesn't clobber it before the user toggles.
+  const hydratedRef = React.useRef(false);
   useEffect(() => {
+    if (!hydratedRef.current) {
+      hydratedRef.current = true;
+      return;
+    }
     if (typeof window === 'undefined') return;
     try {
       window.localStorage.setItem('overview.viewMode', viewMode);
@@ -2604,19 +2657,29 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     };
   }, [employeePayByEmail]);
 
-  /** Expanded view: top departments by headcount (merged master+hubstaff). */
+  /** Expanded view: top departments by headcount.
+   *  Reads the `Department` column straight from global_master_list (via the
+   *  `active_employees` view that `/api/employees` returns). Rows whose
+   *  Department is blank are NOT charted — they roll up into a separate
+   *  "unassigned" tally surfaced as a footnote so the pie reflects real
+   *  departments only. */
   const departmentMix = useMemo(() => {
     const counts = new Map<string, number>();
-    let total = 0;
+    let charted = 0;
+    let unassigned = 0;
     for (const e of mergedEmployees) {
-      const key = (e.department ?? '—').trim() || '—';
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-      total += 1;
+      const raw = (e.department ?? '').trim();
+      if (!raw) {
+        unassigned += 1;
+        continue;
+      }
+      counts.set(raw, (counts.get(raw) ?? 0) + 1);
+      charted += 1;
     }
-    const sorted = [...counts.entries()]
-      .map(([dept, n]) => ({ dept, count: n, pct: total > 0 ? (n / total) * 100 : 0 }))
+    const rows = [...counts.entries()]
+      .map(([dept, n]) => ({ dept, count: n, pct: charted > 0 ? (n / charted) * 100 : 0 }))
       .sort((a, b) => b.count - a.count);
-    return { total, rows: sorted };
+    return { total: charted, rows, unassigned };
   }, [mergedEmployees]);
 
   /** Quick lookup for rendering the activity feed with employee names. */
@@ -2766,6 +2829,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
               oldestDisputeDays={oldestDisputeDays}
               pendingLeaves={pendingLeaves}
               attrition={attrition}
+              newHires={newHires}
               pabMetrics={pabMetrics}
               techBonusEligibility={techBonusEligibility}
               pageRows={pageRows}
@@ -3400,6 +3464,13 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
             </CardHeader>
             <CardContent className="pb-3">
               <DeptMixPieChart rows={departmentMix.rows} total={departmentMix.total} />
+              {departmentMix.unassigned > 0 && (
+                <p className="mt-3 rounded-md border border-amber-200/70 bg-amber-50/60 px-2.5 py-1.5 text-[11px] text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+                  <strong>{departmentMix.unassigned}</strong> employee
+                  {departmentMix.unassigned === 1 ? '' : 's'} have no{' '}
+                  <span className="font-mono">Department</span> set on the master list — excluded from the chart.
+                </p>
+              )}
             </CardContent>
           </Card>
 
