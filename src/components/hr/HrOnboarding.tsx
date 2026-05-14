@@ -347,7 +347,7 @@ export default function HrOnboarding() {
             </div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
-              <table className="w-full min-w-[860px] text-left text-sm">
+              <table className="w-full text-left text-sm sm:min-w-[860px]">
                 <thead className="sticky top-0 z-[1] bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Name</th>
@@ -373,7 +373,7 @@ export default function HrOnboarding() {
                           transition={{ duration: 0.18 }}
                           className="align-top transition-colors hover:bg-emerald-50/35 dark:hover:bg-emerald-950/25"
                         >
-                          <td className="px-4 py-3">
+                          <td data-label="Name" className="px-4 py-3">
                             <div className="font-medium text-zinc-900 dark:text-zinc-100">
                               {row.name}
                             </div>
@@ -383,13 +383,13 @@ export default function HrOnboarding() {
                               </div>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
+                          <td data-label="Department" className="px-4 py-3 text-xs text-zinc-700 dark:text-zinc-300">
                             {row.department}
                           </td>
-                          <td className="px-4 py-3 break-all font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                          <td data-label="Personal" className="px-4 py-3 break-all font-mono text-xs text-zinc-600 dark:text-zinc-400">
                             {row.personal_email}
                           </td>
-                          <td className="px-4 py-3 break-all font-mono text-xs">
+                          <td data-label="Work email" className="px-4 py-3 break-all font-mono text-xs">
                             {row.work_email ? (
                               <span className="text-zinc-800 dark:text-zinc-200">
                                 {row.work_email}
@@ -404,10 +404,10 @@ export default function HrOnboarding() {
                               </button>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-400">
+                          <td data-label="Start" className="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-400">
                             {formatDate(row.start_date)}
                           </td>
-                          <td className="px-4 py-3 text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
+                          <td data-label="Rate" className="px-4 py-3 text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
                             {row.regular_rate ? (
                               <>
                                 <span>₱{row.regular_rate}</span>
@@ -419,7 +419,7 @@ export default function HrOnboarding() {
                               '—'
                             )}
                           </td>
-                          <td className="px-4 py-3">
+                          <td data-label="Status" className="px-4 py-3">
                             <div className="flex flex-col items-start gap-1">
                               <Badge
                                 variant="outline"
@@ -451,7 +451,7 @@ export default function HrOnboarding() {
                               )}
                             </div>
                           </td>
-                          <td className="px-4 py-3 text-right">
+                          <td data-label="Actions" className="px-4 py-3 text-right">
                             <div className="flex justify-end gap-1.5">
                               {row.status === 'ready' && (
                                 <Button

@@ -270,3 +270,81 @@
     transform: scale(1);
   }
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+   Global responsive tables — below the sm breakpoint (<640px) every
+   <table> collapses into a vertical stack of "card" rows. Each <tr>
+   becomes a bordered card and each <td> becomes a label/value pair.
+
+   Labels come from a `data-label="…"` attribute on the <td> when present;
+   tables that haven't been annotated still stack legibly (values stack
+   without labels). Opt out by adding the `table-keep` class to the
+   <table> — use it for computational grids (e.g. bonus calculators)
+   where the column relationships are load-bearing.
+   ──────────────────────────────────────────────────────────────────── */
+@media (max-width: 639px) {
+  table:not(.table-keep) {
+    display: block;
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  table:not(.table-keep) thead {
+    /* Hide column headers — labels move to each cell. */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  table:not(.table-keep) tbody,
+  table:not(.table-keep) tfoot {
+    display: block;
+    width: 100%;
+  }
+  table:not(.table-keep) tr {
+    display: block;
+    width: 100%;
+    margin-bottom: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 0.5rem;
+    background-color: hsl(var(--card));
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.025);
+  }
+  table:not(.table-keep) tr:last-child {
+    margin-bottom: 0;
+  }
+  table:not(.table-keep) td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.25rem 0;
+    text-align: right;
+    white-space: normal;
+    word-break: break-word;
+    border: 0;
+  }
+  table:not(.table-keep) td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: hsl(var(--muted-foreground));
+    text-align: left;
+  }
+  /* Cells without a data-label fall back to a normal stacked layout — the
+     ::before is empty, so flex still spaces things consistently. */
+  table:not(.table-keep) td:empty::before,
+  table:not(.table-keep) td[data-label=""]::before {
+    content: "";
+  }
+}

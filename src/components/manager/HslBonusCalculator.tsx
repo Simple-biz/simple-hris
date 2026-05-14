@@ -963,7 +963,7 @@ export function KpiTable({ dept, entries, subtotal, isLocked, onKpiChange, onTog
 
   return (
     <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <table className="w-full min-w-[600px] text-xs">
+      <table className="table-keep w-full min-w-[600px] text-xs">
         <thead>
           <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
             <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Employee</th>
@@ -1252,7 +1252,7 @@ export function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTea
 
   return (
     <div className="h-full overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <table className="w-full min-w-[560px] text-xs">
+      <table className="table-keep w-full min-w-[560px] text-xs">
         <thead>
           <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
             <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Employee</th>

@@ -495,16 +495,16 @@ function OverviewBody() {
       {/* Roster */}
       <Card className="border-zinc-100 shadow-sm dark:border-zinc-800">
           <CardHeader className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <div>
                 <CardTitle className="text-sm font-semibold">Active roster</CardTitle>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
                   {loading ? 'Loading…' : `${filtered.length} of ${roster.length}`}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <DeptFilter rows={roster} getDept={(r) => r.department} value={dept} onChange={setDept} />
-                <div className="relative w-44 shrink-0">
+                <div className="relative w-full sm:w-44 sm:shrink-0">
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
                   <Input
                     value={search}
@@ -542,13 +542,13 @@ function OverviewBody() {
                   <tbody className="divide-y divide-zinc-50 dark:divide-zinc-800/60">
                     {pageRows.map((r, i) => (
                       <tr key={`${r.work_email ?? r.personal_email ?? i}`} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/30">
-                        <td className="px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">{r.name ?? '—'}</td>
-                        <td className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.department ?? '—'}</td>
-                        <td className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.work_email ?? '—'}</td>
-                        <td className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.personal_email ?? '—'}</td>
-                        <td className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.city ?? '—'}</td>
-                        <td className="px-4 py-2 text-zinc-400">{fmtDate(r.start_date)}</td>
-                        <td className="px-4 py-2 tabular-nums text-zinc-400">{tenure(r.start_date)}</td>
+                        <td data-label="Name" className="px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">{r.name ?? '—'}</td>
+                        <td data-label="Dept" className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.department ?? '—'}</td>
+                        <td data-label="Work email" className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.work_email ?? '—'}</td>
+                        <td data-label="Personal email" className="px-4 py-2 font-mono text-zinc-500 dark:text-zinc-400">{r.personal_email ?? '—'}</td>
+                        <td data-label="Location" className="px-4 py-2 text-zinc-500 dark:text-zinc-400">{r.city ?? '—'}</td>
+                        <td data-label="Start date" className="px-4 py-2 text-zinc-400">{fmtDate(r.start_date)}</td>
+                        <td data-label="Tenure" className="px-4 py-2 tabular-nums text-zinc-400">{tenure(r.start_date)}</td>
                       </tr>
                     ))}
                   </tbody>

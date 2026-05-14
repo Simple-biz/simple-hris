@@ -398,7 +398,7 @@ export default function HrOffboarding() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
-                <table className="w-full min-w-[720px] text-left text-sm">
+                <table className="w-full text-left text-sm sm:min-w-[720px]">
                   <thead className="sticky top-0 z-[1] bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
                     <tr>
                       <th className="px-4 py-3 font-semibold">Employee ID</th>
@@ -412,12 +412,12 @@ export default function HrOffboarding() {
                   <tbody className="divide-y divide-emerald-100/70 bg-white/85 dark:divide-emerald-900/35 dark:bg-zinc-950/40">
                     {rosterPageRows.map((r, i) => (
                       <tr key={`${r.work_email ?? r.personal_email ?? i}`} className="align-middle hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20">
-                        <td className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{r.employee_id ?? '—'}</td>
-                        <td className="px-4 py-2.5 text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</td>
-                        <td className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
-                        <td className="break-all px-4 py-2.5 font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.work_email ?? '—'}</td>
-                        <td className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">{r.start_date ?? '—'}</td>
-                        <td className="px-4 py-2.5 text-right">
+                        <td data-label="Employee ID" className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{r.employee_id ?? '—'}</td>
+                        <td data-label="Name" className="px-4 py-2.5 text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</td>
+                        <td data-label="Department" className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
+                        <td data-label="Work email" className="break-all px-4 py-2.5 font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.work_email ?? '—'}</td>
+                        <td data-label="Start" className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">{r.start_date ?? '—'}</td>
+                        <td data-label="Action" className="px-4 py-2.5 text-right">
                           <Button size="sm" variant="outline" onClick={() => setTarget(r)} disabled={!r.work_email}
                             className="h-7 gap-1 border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 disabled:opacity-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
                             title={r.work_email ? `Off-board ${r.name ?? r.work_email}` : 'No work email — cannot off-board'}>
@@ -446,7 +446,7 @@ export default function HrOffboarding() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
-                <table className="w-full min-w-[800px] text-left text-sm">
+                <table className="w-full text-left text-sm sm:min-w-[800px]">
                   <thead className="sticky top-0 z-[1] bg-gradient-to-r from-zinc-50 via-white to-zinc-50/80 text-xs text-zinc-600 dark:from-zinc-900/70 dark:via-zinc-950 dark:to-zinc-900/50 dark:text-zinc-400">
                     <tr>
                       <th className="px-4 py-3 font-semibold">Name</th>
@@ -464,10 +464,10 @@ export default function HrOffboarding() {
                       const isRestoring = restoring === email;
                       return (
                         <tr key={r.id} className="align-middle hover:bg-zinc-50/60 dark:hover:bg-zinc-900/30">
-                          <td className="px-4 py-2.5 font-medium text-zinc-900 dark:text-zinc-100">{r.Name ?? '—'}</td>
-                          <td className="break-all px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{email || '—'}</td>
-                          <td className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.Department ?? '—'}</td>
-                          <td className="px-4 py-2.5">
+                          <td data-label="Name" className="px-4 py-2.5 font-medium text-zinc-900 dark:text-zinc-100">{r.Name ?? '—'}</td>
+                          <td data-label="Work email" className="break-all px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{email || '—'}</td>
+                          <td data-label="Department" className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.Department ?? '—'}</td>
+                          <td data-label="Reason" className="px-4 py-2.5">
                             {r.off_boarded_reason ? (
                               <span className="inline-flex items-center rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
                                 {REASON_LABELS[r.off_boarded_reason] ?? r.off_boarded_reason}
@@ -477,11 +477,11 @@ export default function HrOffboarding() {
                               <p className="mt-0.5 max-w-[180px] truncate text-[11px] text-zinc-500" title={r.off_boarded_note}>{r.off_boarded_note}</p>
                             )}
                           </td>
-                          <td className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
+                          <td data-label="Off-boarded" className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">
                             {r.off_boarded_at ? new Date(r.off_boarded_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—'}
                           </td>
-                          <td className="px-4 py-2.5 font-mono text-xs text-zinc-500 dark:text-zinc-500">{r.off_boarded_by ?? '—'}</td>
-                          <td className="px-4 py-2.5 text-right">
+                          <td data-label="By" className="px-4 py-2.5 font-mono text-xs text-zinc-500 dark:text-zinc-500">{r.off_boarded_by ?? '—'}</td>
+                          <td data-label="Action" className="px-4 py-2.5 text-right">
                             <Button size="sm" variant="outline" onClick={() => void handleRestore(r)} disabled={isRestoring || !email}
                               className="h-7 gap-1 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30">
                               {isRestoring ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
