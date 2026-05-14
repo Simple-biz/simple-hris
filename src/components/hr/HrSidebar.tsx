@@ -8,6 +8,7 @@ import {
   Bell,
   CalendarDays,
   Gift,
+  GraduationCap,
   LayoutDashboard,
   LogIn,
   LogOut,
@@ -28,7 +29,7 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 'gift-tracker' | 's-wall' | 'notifications';
+export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 'gift-tracker' | 'fpu' | 's-wall' | 'notifications';
 
 interface HrSidebarProps {
   activeTab: HrTab;
@@ -141,6 +142,7 @@ export default function HrSidebar({
             {navBtn('offboarding', 'Offboarding', UserMinus)}
             {navBtn('leaves', 'Leave Requests', CalendarDays)}
             {navBtn('gift-tracker', 'Gift Tracker', Gift)}
+            {navBtn('fpu', 'FPU Enrollments', GraduationCap)}
             {navBtn(
               'notifications',
               'Notifications',

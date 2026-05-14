@@ -13,15 +13,26 @@ import {
   Users,
   CheckCircle2,
   Sparkles,
+  GraduationCap,
+  ArrowRight,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { AnimatePresence, motion } from 'motion/react';
+import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import EmployeeFpu from './EmployeeFpu';
 
 interface Props {
   employeeEmail: string;
+  employeeName?: string | null;
+  department?: string | null;
+  startDate?: string | null;
 }
+
+type SubTab = 'about' | 'fpu';
 
 const WEEKLY_EMPLOYEE_CONTRIB = 100;
 const WEEKLY_COMPANY_MATCH = 300;
@@ -30,8 +41,14 @@ const WEEKLY_TOTAL = WEEKLY_EMPLOYEE_CONTRIB + WEEKLY_COMPANY_MATCH;
 const formatPHP = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
-export default function EmployeeMesa({ employeeEmail }: Props) {
+export default function EmployeeMesa({
+  employeeEmail,
+  employeeName,
+  department,
+  startDate,
+}: Props) {
   const [isMember, setIsMember] = useState<boolean | null>(null);
+  const [subTab, setSubTab] = useState<SubTab>('about');
 
   // Look up the current user's mesa_member flag from their rates row.
   useEffect(() => {
@@ -61,6 +78,109 @@ export default function EmployeeMesa({ employeeEmail }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-teal-50/40 to-emerald-50/20 p-4 sm:p-6 dark:bg-none dark:bg-[#0d1117]">
       <div className="mx-auto w-full max-w-4xl space-y-6">
+        {/* Sub-tab switcher (About MESA · FPU Enrollment) */}
+        <div
+          role="tablist"
+          aria-label="MESA sections"
+          className="relative inline-flex items-center gap-1 self-start rounded-lg border border-teal-100/80 bg-white/70 p-1 shadow-sm backdrop-blur dark:border-teal-900/40 dark:bg-zinc-900/60"
+        >
+          <SubTabButton
+            active={subTab === 'about'}
+            onClick={() => setSubTab('about')}
+            icon={HeartHandshake}
+            label="About MESA"
+            tabKey="about"
+          />
+          <SubTabButton
+            active={subTab === 'fpu'}
+            onClick={() => setSubTab('fpu')}
+            icon={GraduationCap}
+            label="FPU Enrollment"
+            tabKey="fpu"
+          />
+        </div>
+
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={subTab}
+            initial={{ opacity: 0, y: 8, filter: 'blur(2px)' }}
+            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, y: -6, filter: 'blur(2px)' }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {subTab === 'fpu' ? (
+              <EmployeeFpu
+                employeeEmail={employeeEmail}
+                employeeName={employeeName ?? null}
+                department={department ?? null}
+                startDate={startDate ?? null}
+                embedded
+              />
+            ) : (
+              <AboutMesa
+                isMember={isMember}
+                onGoToFpu={() => setSubTab('fpu')}
+              />
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+function SubTabButton({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+  tabKey,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  tabKey: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'relative inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors duration-200',
+        active
+          ? 'text-white'
+          : 'text-zinc-600 hover:bg-teal-50/70 hover:text-teal-700 dark:text-zinc-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-200',
+      )}
+    >
+      {active && (
+        <motion.span
+          layoutId="mesa-subtab-pill"
+          aria-hidden
+          className="absolute inset-0 rounded-md bg-gradient-to-r from-teal-500 to-emerald-500 shadow-sm"
+          transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+        />
+      )}
+      <span className="relative z-10 inline-flex items-center gap-1.5">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </span>
+      <span className="sr-only">{tabKey}</span>
+    </button>
+  );
+}
+
+function AboutMesa({
+  isMember,
+  onGoToFpu,
+}: {
+  isMember: boolean | null;
+  onGoToFpu: () => void;
+}) {
+  return (
+    <div className="space-y-6">
         {/* Hero */}
         <div className="overflow-hidden rounded-2xl border border-teal-100/80 bg-gradient-to-br from-teal-50/80 via-white to-emerald-50/60 p-6 shadow-sm dark:border-teal-900/40 dark:from-teal-950/40 dark:via-[#0d1117] dark:to-emerald-950/30 sm:p-8">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -224,6 +344,45 @@ export default function EmployeeMesa({ employeeEmail }: Props) {
           </p>
         </Section>
 
+        {/* How to join — FPU is the only path in */}
+        <section className="space-y-3">
+          <div className="flex items-center gap-3 px-1">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-orange-50 to-amber-100/70 text-orange-600 ring-1 ring-orange-100 dark:from-orange-950/60 dark:to-amber-950/40 dark:text-orange-300 dark:ring-orange-900/60">
+              <GraduationCap className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300">
+                How to join MESA
+              </p>
+              <h3 className="text-base font-semibold text-zinc-900 dark:text-white">
+                Complete Financial Peace University first
+              </h3>
+            </div>
+          </div>
+          <Card className="overflow-hidden border-orange-100/80 shadow-sm dark:border-orange-900/40">
+            <CardContent className="p-5 sm:p-6">
+              <p className="text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
+                The <strong>only way to join MESA</strong> is to complete an upcoming
+                Financial Peace University (FPU) class. New MESA enrollment opens three times
+                per year, each time following an FPU cohort.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  onClick={onGoToFpu}
+                  className="bg-orange-500 text-white shadow-sm hover:bg-orange-600 focus-visible:ring-orange-500/40 dark:bg-orange-500 dark:hover:bg-orange-400"
+                >
+                  Sign up for FPU
+                  <ArrowRight className="ml-1.5 h-4 w-4" />
+                </Button>
+                <span className="text-xs text-zinc-500 dark:text-zinc-500">
+                  Switches to the FPU Enrollment tab so you can review class details and submit your form.
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+
         {/* Closing */}
         <Card className="border-teal-100/80 bg-gradient-to-br from-teal-50/60 to-emerald-50/40 shadow-sm dark:border-teal-900/40 dark:from-teal-950/30 dark:to-emerald-950/20">
           <CardContent className="p-6 sm:p-7">
@@ -244,7 +403,6 @@ export default function EmployeeMesa({ employeeEmail }: Props) {
             </div>
           </CardContent>
         </Card>
-      </div>
     </div>
   );
 }

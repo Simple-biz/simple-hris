@@ -51,6 +51,7 @@ export default function EmployeeApp() {
   const [employeeName, setEmployeeName] = useState<string | null>(null);
   const [employeeDepartment, setEmployeeDepartment] = useState<string | null>(null);
   const [employeeId, setEmployeeId] = useState<string | null>(null);
+  const [employeeStartDate, setEmployeeStartDate] = useState<string | null>(null);
 
   // Google SSO profile photo — falls back through Supabase upload → Gravatar in EmployeeAvatar.
   // Only honored when the NextAuth session email matches the employee being viewed, so
@@ -172,6 +173,7 @@ export default function EmployeeApp() {
         // shouldn't drive the portal's identity (per its lib comment).
         setEmployeeDepartment(master?.department?.trim() || rate?.department?.trim() || null);
         setEmployeeId(master?.employee_id?.trim() || null);
+        setEmployeeStartDate(master?.start_date?.trim() || null);
       } catch {
         if (!cancelled) setProfilePhotoUrl(null);
       }
@@ -262,7 +264,14 @@ export default function EmployeeApp() {
       //     />
       //   );
       case 'mesa':
-        return <EmployeeMesa employeeEmail={employeeEmail} />;
+        return (
+          <EmployeeMesa
+            employeeEmail={employeeEmail}
+            employeeName={employeeName ?? null}
+            department={employeeDepartment ?? null}
+            startDate={employeeStartDate ?? null}
+          />
+        );
       case 'policies':
         return <EmployeePolicies department={employeeDepartment} />;
       case 'announcements':

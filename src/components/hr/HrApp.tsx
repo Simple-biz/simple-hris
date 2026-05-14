@@ -8,6 +8,8 @@ import {
   Building2,
   ChevronLeft,
   ChevronRight,
+  GraduationCap,
+  HeartHandshake,
   Loader2,
   Menu,
   RefreshCw,
@@ -27,6 +29,7 @@ import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
 import HrOffboarding from './HrOffboarding';
+import HrFpuEnrollments from './HrFpuEnrollments';
 import GiftTracker from '@/components/orphanage/GiftTracker';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
 import SWall from '@/components/swall/SWall';
@@ -153,6 +156,7 @@ export default function HrApp() {
               {activeTab === 'offboarding' && <HrOffboarding />}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
               {activeTab === 'gift-tracker' && <GiftTracker viewerEmail={viewerEmail} />}
+              {activeTab === 'fpu' && <HrFpuEnrollments />}
               {activeTab === 'notifications' && (
                 <NotificationsPanel viewerEmail={viewerEmail} accent="emerald" />
               )}
@@ -316,6 +320,10 @@ function OverviewBody() {
     avgHeadcount: number;
     ratePct: number;
   } | null>(null);
+  /** MESA member count from employee_hourly_rates.mesa_member. */
+  const [mesaCount, setMesaCount] = useState<number | null>(null);
+  /** Total FPU enrollment submissions, plus a "this month" slice for sub-line. */
+  const [fpuStats, setFpuStats] = useState<{ total: number; thisMonth: number } | null>(null);
 
   const fetchRoster = useCallback(async () => {
     setLoading(true);
@@ -355,6 +363,46 @@ function OverviewBody() {
     return () => { cancelled = true; };
   }, [roster.length]);
 
+  // MESA members — count rows where mesa_member is true on the rates table.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/employee-hourly-rates', { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: { mesa_member?: boolean | null }[] };
+        const n = (json.rows ?? []).reduce((acc, r) => (r.mesa_member ? acc + 1 : acc), 0);
+        if (!cancelled) setMesaCount(n);
+      } catch {
+        if (!cancelled) setMesaCount(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // FPU enrollments — total submissions plus a current-month count for the sub-line.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/hr/fpu-enrollments', { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: { created_at?: string }[] };
+        const now = new Date();
+        const thisMonth = (json.rows ?? []).reduce((acc, r) => {
+          if (!r.created_at) return acc;
+          const d = new Date(r.created_at);
+          if (Number.isNaN(d.getTime())) return acc;
+          return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+            ? acc + 1
+            : acc;
+        }, 0);
+        if (!cancelled) setFpuStats({ total: (json.rows ?? []).length, thisMonth });
+      } catch {
+        if (!cancelled) setFpuStats(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const deptStats: DeptStat[] = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of roster) {
@@ -385,7 +433,7 @@ function OverviewBody() {
   return (
     <>
       {/* KPI row */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {[
           { label: 'Active employees', value: roster.length, sub: 'on the master list',      icon: Users,     grad: 'from-emerald-500 to-teal-700' },
           { label: 'Departments',      value: deptStats.length, sub: 'with active headcount', icon: Building2, grad: 'from-teal-500 to-emerald-700' },
@@ -405,6 +453,28 @@ function OverviewBody() {
                   : attrition.ratePct >= 5
                     ? 'from-amber-500 to-orange-700'
                     : 'from-emerald-500 to-emerald-700',
+          },
+          {
+            label: 'MESA members',
+            value: mesaCount ?? '—',
+            sub:
+              mesaCount == null
+                ? 'awaiting rates data'
+                : roster.length > 0
+                  ? `${Math.round((mesaCount / Math.max(1, roster.length)) * 100)}% of active`
+                  : 'enrolled in the savings account',
+            icon: HeartHandshake,
+            grad: 'from-teal-500 to-emerald-600',
+          },
+          {
+            label: 'FPU enrollments',
+            value: fpuStats?.total ?? '—',
+            sub:
+              fpuStats == null
+                ? 'awaiting submissions'
+                : `${fpuStats.thisMonth} this month`,
+            icon: GraduationCap,
+            grad: 'from-orange-500 to-amber-600',
           },
         ].map(({ label, value, sub, icon: Icon, grad }) => (
           <div key={label} className="flex items-center gap-3 rounded-xl border border-zinc-100 bg-white px-4 py-3.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
