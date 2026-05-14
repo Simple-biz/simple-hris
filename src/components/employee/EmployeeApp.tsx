@@ -14,6 +14,7 @@ import EmployeePolicies from './EmployeePolicies';
 import EmployeeMyHours from './EmployeeMyHours';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import SWall from '@/components/swall/SWall';
+import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 // import MyDisputes from './MyDisputes'; // hidden — disputes now go through Orphanage Manager → Accounting flow
 import PayrollLockBanner from './PayrollLockBanner';
 import { Toaster } from '@/components/ui/sonner';
@@ -268,6 +269,8 @@ export default function EmployeeApp() {
             department={employeeDepartment}
           />
         );
+      case 'notifications':
+        return <NotificationsPanel viewerEmail={employeeEmail} accent="orange" />;
       case 's-wall':
         return (
           <div className="flex h-full min-h-0 flex-col">

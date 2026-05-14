@@ -292,6 +292,7 @@ type OverviewEmployeeRow = EmployeeRow & { recordSource: 'master' | 'hubstaff' }
 interface OverviewProps {
   onViewRates?: (email: string) => void;
   onNavigate?: (tab: string) => void;
+  initialData?: import('@/lib/accounting/prefetch').InitialAccountingData | null;
 }
 
 interface SimpleViewProps {
@@ -1834,11 +1835,14 @@ function PagerEdgeBtn({
   );
 }
 
-export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}) {
+export default function Overview({ onViewRates, onNavigate, initialData }: OverviewProps = {}) {
+  const prefetchedRatesRef = React.useRef<import('@/lib/supabase/employee-hourly-rates').EmployeeHourlyRateRow[] | null>(
+    initialData?.hourlyRates ?? null,
+  );
   const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
-  const [employees, setEmployees] = useState<EmployeeRow[]>([]);
+  const [employees, setEmployees] = useState<EmployeeRow[]>(initialData?.employees ?? []);
   const [employeesError, setEmployeesError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialData?.employees?.length);
   /** Round-trip time of the most recent /api/employees probe — drives the hero pill MS readout. */
   const [apiLatencyMs, setApiLatencyMs] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1851,9 +1855,11 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
   const [payrollEmailsNorm, setPayrollEmailsNorm] = useState<Set<string> | null>(null);
   const [payrollWorkerCount, setPayrollWorkerCount] = useState<number | null>(null);
   /** All available source files from the API. */
-  const [sourceFiles, setSourceFiles] = useState<string[]>([]);
+  const [sourceFiles, setSourceFiles] = useState<string[]>(initialData?.sourceFiles ?? []);
   /** Currently selected source file: null = latest (default), '__all__' = all time, or a specific filename. */
-  const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(null);
+  const [selectedSourceFile, setSelectedSourceFile] = useState<string | null>(
+    initialData?.sourceFiles?.[0] ?? null,
+  );
   /** The actual file being displayed (resolved from selection). */
   const [activeSourceFile, setActiveSourceFile] = useState<string | null>(null);
   /** Name / department from Hubstaff rows for the selected payroll scope (for employees not on master list). */
@@ -2073,8 +2079,10 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
     }
   }, []);
 
-  // Load source file list once on mount, default to latest
+  // Load source file list once on mount, default to latest.
+  // Skip the network fetch when the server already prefetched the list.
   useEffect(() => {
+    if (initialData?.sourceFiles?.length) return;
     let cancelled = false;
     (async () => {
       try {
@@ -2083,7 +2091,6 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         if (cancelled) return;
         const files = json.files ?? [];
         setSourceFiles(files);
-        // Default to latest file (API returns newest-first)
         if (files.length > 0) {
           setSelectedSourceFile(files[0]);
         }
@@ -2092,6 +2099,7 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
       }
     })();
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Compute stats whenever the selected file changes
@@ -2122,9 +2130,16 @@ export default function Overview({ onViewRates, onNavigate }: OverviewProps = {}
         }
         setActiveSourceFile(displayFile);
 
-        const ratesRes = await fetch('/api/employee-hourly-rates', { cache: 'no-store' });
-        const ratesJson = (await ratesRes.json()) as { rows: EmployeeHourlyRateRow[] };
-        const ratesByEmail = indexHourlyRatesByEmail(ratesJson.rows ?? []);
+        let ratesRows: EmployeeHourlyRateRow[];
+        if (prefetchedRatesRef.current) {
+          ratesRows = prefetchedRatesRef.current;
+          prefetchedRatesRef.current = null; // consume once, subsequent refreshes re-fetch
+        } else {
+          const ratesRes = await fetch('/api/employee-hourly-rates', { cache: 'no-store' });
+          const ratesJson = (await ratesRes.json()) as { rows: EmployeeHourlyRateRow[] };
+          ratesRows = ratesJson.rows ?? [];
+        }
+        const ratesByEmail = indexHourlyRatesByEmail(ratesRows);
 
         // Accumulate payroll rows across all fetched files
         const allPayrollRows: PayrollHubstaffRow[] = [];

@@ -8,6 +8,7 @@ import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import {
   LayoutDashboard,
+  Bell,
   Clock,
   CalendarDays,
   Moon,
@@ -52,6 +53,7 @@ const navItems = [
   // { id: 'disputes', label: 'My Disputes', icon: FileText }, // hidden — disputes now go through Orphanage Manager → Accounting flow (no employee submission)
   { id: 'policies', label: 'Policies', icon: ScrollText },
   { id: 'announcements', label: 'Announcements', icon: Megaphone },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
 ];
 
 export default function EmployeeSidebar({
@@ -152,6 +154,9 @@ export default function EmployeeSidebar({
                   )}
                 />
                 {item.label}
+                {item.id === 'notifications' && payrollLocked && (
+                  <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                )}
                 {item.id === 'disputes' && payrollLocked && (
                   <motion.span
                     initial={{ opacity: 0, scale: 0.6 }}

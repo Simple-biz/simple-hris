@@ -20,12 +20,14 @@ import AnnouncementWall from './components/announcements/AnnouncementWall';
 import AnnouncementComposer from './components/announcements/AnnouncementComposer';
 import SWall from './components/swall/SWall';
 import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForRoles, canAccessAccountingTab } from '@/lib/rbac/accounting-tabs';
+import type { InitialAccountingData } from '@/lib/accounting/prefetch';
+import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
 
-export default function App() {
+export default function App({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [focusRatesEmail, setFocusRatesEmail] = useState<string | null>(null);
@@ -114,7 +116,7 @@ export default function App() {
   const renderContent = () => {
     switch (activeTab) {
       case 'overview':
-        return <Overview onViewRates={handleViewRates} onNavigate={navigate} />;
+        return <Overview onViewRates={handleViewRates} onNavigate={navigate} initialData={initialData} />;
       case 'rates':
         return (
           <Rates
@@ -141,6 +143,8 @@ export default function App() {
         return <PayrollDispatch />;
       case 'disputes':
         return <PabDisputeQueue />;
+      case 'notifications':
+        return <NotificationsPanel viewerEmail={sessionEmail} accent="orange" />;
       case 'settings':
         return <SystemSettings />;
       case 'announcements':
@@ -159,7 +163,7 @@ export default function App() {
           />
         );
       default:
-        return <Overview onViewRates={handleViewRates} onNavigate={navigate} />;
+        return <Overview onViewRates={handleViewRates} onNavigate={navigate} initialData={initialData} />;
     }
   };
 

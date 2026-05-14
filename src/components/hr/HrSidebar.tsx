@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
+  Bell,
   CalendarDays,
   LayoutDashboard,
   LogIn,
@@ -24,8 +25,9 @@ import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 's-wall';
+export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 's-wall' | 'notifications';
 
 interface HrSidebarProps {
   activeTab: HrTab;
@@ -45,6 +47,7 @@ export default function HrSidebar({
   React.useEffect(() => { setMounted(true); }, []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(viewerEmail);
+  const { state: lockState } = useDispatchLock();
 
   const [logoBeat, setLogoBeat] = React.useState(false);
   React.useEffect(() => {
@@ -72,6 +75,7 @@ export default function HrSidebar({
     id: HrTab,
     label: string,
     Icon: React.ComponentType<{ className?: string }>,
+    badge?: React.ReactNode,
   ) => (
     <button
       key={id}
@@ -91,6 +95,7 @@ export default function HrSidebar({
         )}
       />
       <span className="truncate text-left">{label}</span>
+      {badge}
     </button>
   );
 
@@ -134,6 +139,14 @@ export default function HrSidebar({
             {navBtn('onboarding', 'Onboarding', LogIn)}
             {navBtn('offboarding', 'Offboarding', UserMinus)}
             {navBtn('leaves', 'Leave Requests', CalendarDays)}
+            {navBtn(
+              'notifications',
+              'Notifications',
+              Bell,
+              lockState.locked ? (
+                <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+              ) : null,
+            )}
             <button
               key="s-wall"
               type="button"

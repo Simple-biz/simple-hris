@@ -47,9 +47,10 @@ import AnimatedNumber from './AnimatedNumber';
 import QueueSkeleton from './QueueSkeleton';
 import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
+import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-type TabId = 'all' | 'history' | 'reports' | 'excluded' | 'orphanage' | ProcessorId;
+type TabId = 'all' | 'history' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
 
 interface ProcessorVisual {
   Icon: React.ComponentType<{ className?: string }>;
@@ -280,6 +281,7 @@ export default function PayrollDispatch() {
     // Show the skeleton while the network is still in flight OR while we
     // haven't mirrored the first server snapshot into local state yet.
     if (activeTab === 'reports') return <DispatchReports />;
+    if (activeTab === 'notifications') return <NotificationsPanel accent="zinc" />;
     if (activeTab === 'orphanage') return <OrphanageQueue />;
     if (error) return <ErrorState message={error} />;
     if (loading || !hydrated) return <QueueSkeleton />;

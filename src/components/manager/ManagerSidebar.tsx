@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
+  Bell,
   CalendarDays,
   ClipboardCheck,
   Calculator,
@@ -26,8 +27,9 @@ import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'announcements' | 's-wall' | 'hsl-bonus' | 'bonus-history';
+export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'announcements' | 's-wall' | 'hsl-bonus' | 'bonus-history' | 'notifications';
 
 interface ManagerSidebarProps {
   activeTab: ManagerTab;
@@ -51,6 +53,7 @@ export default function ManagerSidebar({
   React.useEffect(() => { setMounted(true); }, []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(viewerEmail);
+  const { state: lockState } = useDispatchLock();
 
   const [logoBeat, setLogoBeat] = React.useState(false);
   React.useEffect(() => {
@@ -200,6 +203,14 @@ export default function ManagerSidebar({
           <nav className="flex flex-col gap-px">
             {navBtn('hsl-bonus', 'KPI Calculator', Calculator)}
             {navBtn('bonus-history', 'Bonus History', History)}
+            {navBtn(
+              'notifications',
+              'Notifications',
+              Bell,
+              lockState.locked ? (
+                <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+              ) : null,
+            )}
           </nav>
 
           <div className="mt-6 border-t border-blue-100/60 pt-4 dark:border-blue-950/40">

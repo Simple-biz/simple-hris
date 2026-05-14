@@ -11,6 +11,7 @@ import AdminCsvImports from '@/components/admin/AdminCsvImports';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
 import SystemDiagnostics from '@/components/SystemDiagnostics';
 import { Construction, Menu } from 'lucide-react';
+import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { Button } from '@/components/ui/button';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
@@ -162,6 +163,8 @@ function AdminPageInner() {
             hint="Database backups are handled by your hosting provider or Supabase scheduled backups."
           />
         );
+      case 'notifications':
+        return <NotificationsPanel viewerEmail={adminEmail} accent="zinc" />;
       case 'settings':
         return (
           <Placeholder title="System settings" hint="Global app settings live in the main HRIS Settings tab for now." />

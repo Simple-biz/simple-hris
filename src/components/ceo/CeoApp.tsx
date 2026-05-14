@@ -12,6 +12,7 @@ import CeoSidebar, { type CeoTab } from './CeoSidebar';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
 import SWall from '@/components/swall/SWall';
+import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -130,6 +131,9 @@ export default function CeoApp() {
               {activeTab === 'overview' && <CeoOverview viewerEmail={viewerEmail} />}
               {activeTab === 'announcements' && (
                 <CeoAnnouncements viewerEmail={viewerEmail} />
+              )}
+              {activeTab === 'notifications' && (
+                <NotificationsPanel viewerEmail={viewerEmail} accent="yellow" />
               )}
               {activeTab === 's-wall' && (
                 <CeoSwallTab viewerEmail={viewerEmail} />

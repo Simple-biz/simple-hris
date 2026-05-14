@@ -6,6 +6,7 @@ import { signOut } from 'next-auth/react';
 import { useTheme } from 'next-themes';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  Bell,
   Building2,
   CheckCircle2,
   ClipboardList,
@@ -54,6 +55,8 @@ import GiftTracker from '@/components/orphanage/GiftTracker';
 import OrphanageBudgetForm from '@/components/orphanage/OrphanageBudgetForm';
 import OrphanageBudgetHistory from '@/components/orphanage/OrphanageBudgetHistory';
 import OrphanagesPanel from '@/components/orphanage/OrphanagesPanel';
+import NotificationsPanel from '@/components/notifications/NotificationsPanel';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 import {
   fetchHoursByEmployee,
   type HubstaffHoursByEmployee,
@@ -183,7 +186,7 @@ export default function OrphanageApp() {
   const welcomeMsg = WELCOME_MESSAGES[welcomeIdx]!;
 
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'queue' | 'budget' | 'budget-history' | 'gift-tracker' | 's-wall'
+    'overview' | 'queue' | 'budget' | 'budget-history' | 'gift-tracker' | 's-wall' | 'notifications'
   >('overview');
   // Sub-tab inside the Orphanage Budget tab — Budget Request form vs Orphanages list.
   const [budgetSubTab, setBudgetSubTab] = useState<'request' | 'orphanages'>('request');
@@ -390,6 +393,7 @@ export default function OrphanageApp() {
       .slice(0, 2) || (viewerEmail || '?').slice(0, 2).toUpperCase();
   const { profilePhotoUrl: orphanagePhotoUrl, googlePhotoUrl: orphanageGooglePhotoUrl } =
     useViewerProfilePhoto(viewerEmail);
+  const { state: lockState } = useDispatchLock();
 
   return (
     <div className="flex h-dvh max-h-dvh overflow-hidden bg-white text-zinc-900 dark:bg-[#0d1117] dark:text-zinc-100">
@@ -503,6 +507,22 @@ export default function OrphanageApp() {
               >
                 <HistoryIcon className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'budget-history' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <span className="truncate text-left">Budget History</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setActiveTab('notifications'); setMobileNavOpen(false); }}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
+                  activeTab === 'notifications'
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-700 font-medium text-white shadow-sm shadow-pink-600/25'
+                    : 'text-[#3f3f46] hover:bg-pink-50 hover:text-pink-900 dark:text-zinc-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
+                )}
+              >
+                <Bell className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'notifications' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
+                <span className="truncate text-left">Notifications</span>
+                {lockState.locked && (
+                  <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                )}
               </button>
               <button
                 type="button"
@@ -1083,6 +1103,18 @@ export default function OrphanageApp() {
               className="flex min-h-0 flex-1 flex-col"
             >
               <GiftTracker viewerEmail={viewerEmail} />
+            </motion.div>
+          )}
+          {activeTab === 'notifications' && (
+            <motion.div
+              key="notifications"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <NotificationsPanel viewerEmail={viewerEmail} accent="pink" />
             </motion.div>
           )}
           {activeTab === 's-wall' && (

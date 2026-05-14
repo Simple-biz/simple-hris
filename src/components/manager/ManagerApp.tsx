@@ -45,6 +45,7 @@ import HslBonusCalculator from '@/components/manager/HslBonusCalculator';
 import ManagerBonusHistory from '@/components/manager/ManagerBonusHistory';
 import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
+import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 
 /** How `/api/manager/department-members` scoped the roster for this session (server-driven). */
 type ManagerTeamGate =
@@ -300,6 +301,9 @@ export default function ManagerApp() {
                   managedDepts={teamGate.kind === 'department' ? teamGate.departments : []}
                   isElevated={teamGate.kind === 'elevated'}
                 />
+              )}
+              {activeTab === 'notifications' && (
+                <NotificationsPanel viewerEmail={viewerEmail} accent="blue" />
               )}
             </motion.div>
           </AnimatePresence>

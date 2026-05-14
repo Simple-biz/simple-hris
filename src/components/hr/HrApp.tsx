@@ -29,6 +29,7 @@ import HrOnboarding from './HrOnboarding';
 import HrOffboarding from './HrOffboarding';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
 import SWall from '@/components/swall/SWall';
+import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import DeptFilter from './DeptFilter';
 
@@ -150,6 +151,9 @@ export default function HrApp() {
               {activeTab === 'onboarding' && <HrOnboarding />}
               {activeTab === 'offboarding' && <HrOffboarding />}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
+              {activeTab === 'notifications' && (
+                <NotificationsPanel viewerEmail={viewerEmail} accent="emerald" />
+              )}
               {activeTab === 's-wall' && <HrSwallTab viewerEmail={viewerEmail} />}
             </motion.div>
           </AnimatePresence>

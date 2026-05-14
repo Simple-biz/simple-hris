@@ -41,6 +41,21 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
+  // Contractors are not permitted to access the employee dashboard.
+  // If someone with the contractor role (and no other roles) navigates to /employee,
+  // redirect them to /contractor.
+  if (!pathname.startsWith('/api/')) {
+    const tokenRoles = ((token as { roles?: string[] }).roles ?? []) as string[];
+    const isContractorOnly =
+      tokenRoles.length > 0 && tokenRoles.every((r) => r === 'contractor');
+    const isEmployeePath = pathname === '/employee' || pathname.startsWith('/employee/');
+    if (isContractorOnly && isEmployeePath) {
+      const contractorUrl = req.nextUrl.clone();
+      contractorUrl.pathname = '/contractor';
+      return NextResponse.redirect(contractorUrl);
+    }
+  }
+
   // Prevent users from loading another employee's dashboard by hand-editing the `?email=`
   // query param.
   //

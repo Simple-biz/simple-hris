@@ -51,7 +51,8 @@ export const ACTIVE_VIEW_KEY = 'active_view';
 export const SESSION_EMAIL_KEY = 'employee_session_email';
 
 export function viewsForRoles(roles: Role[]): AppView[] {
-  const set = new Set<AppView>(['employee']);
+  const set = new Set<AppView>();
+  if (!roles.includes('contractor')) set.add('employee');
   if (roles.includes('admin')) set.add('admin');
   if (roles.includes('ceo')) set.add('ceo');
   if (roles.some((r) => ACCOUNTING_ROLES.includes(r))) set.add('accounting');

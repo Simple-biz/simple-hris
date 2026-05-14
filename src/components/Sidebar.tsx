@@ -6,6 +6,7 @@ import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
+  Bell,
   LayoutDashboard,
   DollarSign,
   Wand2,
@@ -28,6 +29,9 @@ import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { normEmail } from '@/lib/email/norm-email';
 import { allowedAccountingTabsForRoles } from '@/lib/rbac/accounting-tabs';
+import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
+import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -48,6 +52,7 @@ const navItems = [
   { id: 'payment-dispatch', label: 'Payment Dispatch', icon: Send },
   { id: 'disputes', label: 'Orphanage Disputes', icon: AlertCircle },
   { id: 'announcements', label: 'Announcements', icon: Megaphone },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'settings', label: 'System Settings', icon: Settings },
 ];
 
@@ -96,6 +101,8 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
     return () => { clearTimeout(first); clearInterval(interval); };
   }, []);
 
+  const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(email);
+  const { state: lockState } = useDispatchLock();
   const allowedTabs = React.useMemo(() => allowedAccountingTabsForRoles(roles), [roles]);
   const allowedTabSet = React.useMemo(() => new Set<string>(allowedTabs), [allowedTabs]);
   const visibleNavItems = React.useMemo(
@@ -156,9 +163,11 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
                   )}
                 />
                 {item.label}
-                {activeTab === item.id && (
-                  <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70" />
-                )}
+                {item.id === 'notifications' && lockState.locked
+                  ? <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                  : activeTab === item.id && (
+                    <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70" />
+                  )}
               </button>
             ))}
             {allowedTabSet.has('s-wall') && (
@@ -208,14 +217,19 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
             )}
           </div>
         </button>
-        <div className="mb-4 flex items-center gap-3 px-3 py-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-400 to-blue-500 text-xs font-bold text-white shadow-sm">
-            {(email || '?').slice(0, 2).toUpperCase()}
-          </div>
+        <div className="mb-4 flex items-center gap-2.5 rounded-md border border-orange-100 bg-orange-50/60 px-2.5 py-2 dark:border-blue-950/60 dark:bg-blue-950/20">
+          <EmployeeAvatar
+            photoUrl={profilePhotoUrl}
+            googlePhotoUrl={googlePhotoUrl}
+            email={email}
+            initials={(email || '?').slice(0, 2).toUpperCase()}
+            className="h-7 w-7 shrink-0 text-[11px]"
+            pixelSize={56}
+          />
           <div className="flex min-w-0 flex-col overflow-hidden">
-            <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-200" title={email ?? undefined}>{email || 'Not signed in'}</span>
-            <span className="truncate text-xs text-zinc-500 dark:text-zinc-500">
-              Accounting operations
+            <span className="truncate text-[13px] font-medium leading-tight text-zinc-900 dark:text-zinc-200" title={email ?? undefined}>{email || 'Not signed in'}</span>
+            <span className="truncate text-[11px] leading-tight text-zinc-500 dark:text-zinc-500">
+              Accounting
               {roles.length > 0 && (
                 <> · <span className="font-mono text-[10px] text-orange-600 dark:text-orange-400" title={roles.join(', ')}>{roles.join(', ')}</span></>
               )}

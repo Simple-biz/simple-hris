@@ -1,5 +1,12 @@
 import { Suspense } from 'react';
-import AppShell from "@/App";
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth/auth-options';
+import AppShell from '@/App';
+import {
+  hasAccountingRole,
+  prefetchAccountingData,
+  type InitialAccountingData,
+} from '@/lib/accounting/prefetch';
 
 function AppShellFallback() {
   return (
@@ -12,10 +19,23 @@ function AppShellFallback() {
   );
 }
 
-export default function AccountingPage() {
+export default async function AccountingPage() {
+  let initialData: InitialAccountingData | null = null;
+
+  try {
+    const session = await getServerSession(authOptions);
+    const roles = ((session?.user as { roles?: string[] })?.roles) ?? [];
+
+    if (hasAccountingRole(roles)) {
+      initialData = await prefetchAccountingData();
+    }
+  } catch {
+    // Prefetch is best-effort — never block the page
+  }
+
   return (
     <Suspense fallback={<AppShellFallback />}>
-      <AppShell />
+      <AppShell initialData={initialData} />
     </Suspense>
   );
 }

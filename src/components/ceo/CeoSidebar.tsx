@@ -4,7 +4,7 @@ import React from 'react';
 import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
-import { Crown, LayoutDashboard, LogOut, Megaphone, Moon, MoreHorizontal, Newspaper, Sun } from 'lucide-react';
+import { Bell, Crown, LayoutDashboard, LogOut, Megaphone, Moon, MoreHorizontal, Newspaper, Sun } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -13,8 +13,9 @@ import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type CeoTab = 'overview' | 'announcements' | 's-wall';
+export type CeoTab = 'overview' | 'announcements' | 's-wall' | 'notifications';
 
 interface CeoSidebarProps {
   activeTab: CeoTab;
@@ -34,6 +35,7 @@ export default function CeoSidebar({
   React.useEffect(() => { setMounted(true); }, []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(viewerEmail);
+  const { state: lockState } = useDispatchLock();
 
   const [logoBeat, setLogoBeat] = React.useState(false);
   React.useEffect(() => {
@@ -61,6 +63,7 @@ export default function CeoSidebar({
     id: CeoTab,
     label: string,
     Icon: React.ComponentType<{ className?: string }>,
+    badge?: React.ReactNode,
   ) => (
     <button
       key={id}
@@ -80,6 +83,7 @@ export default function CeoSidebar({
         )}
       />
       <span className="truncate text-left">{label}</span>
+      {badge}
     </button>
   );
 
@@ -121,6 +125,14 @@ export default function CeoSidebar({
           <nav className="flex flex-col gap-px">
             {navBtn('overview', 'Overview', LayoutDashboard)}
             {navBtn('announcements', 'Announcements', Megaphone)}
+            {navBtn(
+              'notifications',
+              'Notifications',
+              Bell,
+              lockState.locked ? (
+                <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+              ) : null,
+            )}
             <button
               key="s-wall"
               type="button"

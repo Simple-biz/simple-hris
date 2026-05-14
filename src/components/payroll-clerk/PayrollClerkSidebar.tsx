@@ -6,6 +6,7 @@ import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   Banknote,
+  Bell,
   ClipboardList,
   ShieldOff,
   Coins,
@@ -26,6 +27,7 @@ import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { PROCESSORS, type ProcessorId } from './mock-queue';
 
 const PROCESSOR_ICONS: Record<ProcessorId, React.ComponentType<{ className?: string }>> = {
@@ -60,6 +62,7 @@ export default function PayrollClerkSidebar({
   React.useEffect(() => { setMounted(true); }, []);
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(viewerEmail);
+  const { state: lockState } = useDispatchLock();
 
   const [logoBeat, setLogoBeat] = React.useState(false);
   React.useEffect(() => {
@@ -202,6 +205,14 @@ export default function PayrollClerkSidebar({
             {navBtn('history', 'Sent payments', Banknote)}
             {navBtn('reports', 'Weekly reports', ClipboardList)}
             {navBtn('excluded', 'Excluded', ShieldOff)}
+            {navBtn(
+              'notifications',
+              'Notifications',
+              Bell,
+              lockState.locked ? (
+                <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+              ) : null,
+            )}
           </nav>
 
           <div className="mt-6 border-t border-[#ececec] pt-4 dark:border-zinc-800">

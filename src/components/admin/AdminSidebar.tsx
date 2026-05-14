@@ -6,6 +6,7 @@ import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
+  Bell,
   Database,
   FileUp,
   KeyRound,
@@ -29,6 +30,7 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { normEmail } from '@/lib/email/norm-email';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -60,6 +62,7 @@ const systemNav: Array<{
   { id: 'employees', label: 'Employees', icon: Users, badge: 'count' },
   { id: 'csv-imports', label: 'CSV imports', icon: FileUp },
   { id: 'webhooks', label: 'Webhooks', icon: Webhook, badge: 'alert' },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
 ];
 
 const securityNav: Array<{ id: string; label: string; icon: typeof ShieldCheck }> = [
@@ -106,6 +109,7 @@ export default function AdminSidebar({
   }, [emailFromQuery, viewerEmailProp]);
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
+  const { state: lockState } = useDispatchLock();
 
   const [logoBeat, setLogoBeat] = React.useState(false);
   React.useEffect(() => {
@@ -231,6 +235,9 @@ export default function AdminSidebar({
                     {counts.webhookAlert}
                   </span>
                 );
+              }
+              if (item.id === 'notifications' && lockState.locked) {
+                badge = <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />;
               }
               return navBtn(item.id, item.label, item.icon, badge);
             })}
