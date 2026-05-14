@@ -127,19 +127,24 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
             rel="noopener noreferrer"
             className="logo-neon"
           >
-            <div className="logo-neon__inner px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white overflow-hidden">
+            <div
+              className={cn(
+                'logo-neon__inner px-3 py-2 border border-zinc-200 dark:border-black dark:ring-1 dark:ring-white',
+                logoBeat && 'logo-heartbeat',
+              )}
+              onAnimationEnd={() => setLogoBeat(false)}
+            >
               <img
                 src="/simple-logo.png"
                 alt="Simple Accounting HRIS"
-                className={cn('h-10 w-full object-contain', logoBeat && 'logo-heartbeat')}
-                onAnimationEnd={() => setLogoBeat(false)}
+                className="h-10 w-full object-contain"
               />
             </div>
           </a>
           {heartUp && (
             <span
               aria-hidden
-              className="pointer-events-none absolute left-[48%] top-1 text-sm logo-heart-rise"
+              className="pointer-events-none absolute left-[48%] top-1 text-sm logo-heart-rise select-none"
             >
               🧡
             </span>
