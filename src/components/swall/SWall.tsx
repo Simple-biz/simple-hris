@@ -1038,22 +1038,23 @@ function SWallComposer({
             </button>
           ) : (
             <>
-              <textarea
-                ref={textareaRef}
-                value={body}
-                onChange={handleBodyChange}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                onFocus={() => setFocused(true)}
-                placeholder="Share something with the company…"
-                rows={3}
-                maxLength={2000}
-                className="w-full resize-none rounded-xl border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-[13px] leading-relaxed placeholder:text-zinc-400 focus:border-violet-300 focus:outline-none focus:ring-1 focus:ring-violet-200 dark:border-zinc-800 dark:bg-zinc-900 dark:placeholder:text-zinc-600 dark:focus:border-violet-700 dark:focus:ring-violet-900/40"
-              />
+              <div className="relative">
+                <textarea
+                  ref={textareaRef}
+                  value={body}
+                  onChange={handleBodyChange}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  onFocus={() => setFocused(true)}
+                  placeholder="Share something with the company…"
+                  rows={3}
+                  maxLength={2000}
+                  className="w-full resize-none rounded-xl border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-[13px] leading-relaxed placeholder:text-zinc-400 focus:border-violet-300 focus:outline-none focus:ring-1 focus:ring-violet-200 dark:border-zinc-800 dark:bg-zinc-900 dark:placeholder:text-zinc-600 dark:focus:border-violet-700 dark:focus:ring-violet-900/40"
+                />
 
               {/* @mention dropdown */}
               {mentionQuery !== null && mentionMatches.length > 0 && (
-                <div className="absolute left-0 top-full z-50 mt-1 w-72 overflow-hidden rounded-xl border border-[#ececec] bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                <div className="absolute left-0 top-full z-50 mt-1 w-72 max-h-64 overflow-y-auto overflow-x-hidden rounded-xl border border-[#ececec] bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
                   {mentionMatches.map((profile, i) => (
                     <button
                       key={profile.work_email}
@@ -1082,6 +1083,7 @@ function SWallComposer({
                   ))}
                 </div>
               )}
+              </div>
 
               {/* Image previews */}
               {imagePreviews.length > 0 && (
