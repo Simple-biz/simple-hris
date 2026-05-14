@@ -4,7 +4,6 @@ export const ACCOUNTING_TAB_IDS = [
   'overview',
   'rates',
   'payroll-wizard',
-  'hogan-suite',
   'payment-dispatch',
   'disputes',
   'announcements',

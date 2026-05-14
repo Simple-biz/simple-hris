@@ -126,19 +126,6 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
         );
       case 'payroll-wizard':
         return <PayrollWizard sessionEmail={sessionEmail} />;
-      case 'hogan-suite':
-        return (
-          <div className="p-8 flex flex-col items-center justify-center h-full text-center space-y-4">
-            <div className="w-16 h-16 bg-amber-500/10 rounded-full flex items-center justify-center">
-              <span className="text-2xl font-bold text-amber-500">H</span>
-            </div>
-            <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">Hogan Suite</h2>
-            <p className="text-zinc-600 dark:text-zinc-500 max-w-md">
-              Dedicated view for Monday-Sunday cycle management. 
-              Toggle the Hogan switch in the Payroll Wizard to process these records.
-            </p>
-          </div>
-        );
       case 'payment-dispatch':
         return <PayrollDispatch />;
       case 'disputes':

@@ -113,7 +113,10 @@
       "Bash(curl -s \"http://localhost:3000/api/employee/commendations\" -H \"Cookie: $\\(cat .env.local)",
       "Bash(curl *)",
       "Bash(grep -r \"active_employees\" references/ --include=\"*.sql\" -l)",
-      "Bash(grep -r \"off_boarded\" references/ --include=\"*.sql\" -l)"
+      "Bash(grep -r \"off_boarded\" references/ --include=\"*.sql\" -l)",
+      "Bash(npm uninstall *)",
+      "Bash(pnpm)",
+      "Bash(yarn\")"
     ]
   }
 }

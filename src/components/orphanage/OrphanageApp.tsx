@@ -11,12 +11,10 @@ import {
   CheckCircle2,
   ClipboardList,
   FileText,
-  Gift,
   HeartHandshake,
   History as HistoryIcon,
   LayoutDashboard,
   Loader2,
-  Truck,
   LogOut,
   Menu,
   Moon,
@@ -51,7 +49,6 @@ import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import CreateOrphanageStyleDisputeDialog, {
   type EmployeeOption,
 } from '@/components/orphanage/CreateOrphanageStyleDisputeDialog';
-import GiftTracker from '@/components/orphanage/GiftTracker';
 import OrphanageBudgetForm from '@/components/orphanage/OrphanageBudgetForm';
 import OrphanageBudgetHistory from '@/components/orphanage/OrphanageBudgetHistory';
 import OrphanagesPanel from '@/components/orphanage/OrphanagesPanel';
@@ -186,7 +183,7 @@ export default function OrphanageApp() {
   const welcomeMsg = WELCOME_MESSAGES[welcomeIdx]!;
 
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'queue' | 'budget' | 'budget-history' | 'gift-tracker' | 's-wall' | 'notifications'
+    'overview' | 'queue' | 'budget' | 'budget-history' | 's-wall' | 'notifications'
   >('overview');
   // Sub-tab inside the Orphanage Budget tab — Budget Request form vs Orphanages list.
   const [budgetSubTab, setBudgetSubTab] = useState<'request' | 'orphanages'>('request');
@@ -482,20 +479,7 @@ export default function OrphanageApp() {
                 <PiggyBank className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'budget' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <span className="truncate text-left">Orphanage Budget</span>
               </button>
-              <button
-                type="button"
-                onClick={() => { setActiveTab('gift-tracker'); setMobileNavOpen(false); }}
-                className={cn(
-                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] font-[450] transition-[color,background-color,box-shadow] duration-200 ease-out',
-                  activeTab === 'gift-tracker'
-                    ? 'bg-gradient-to-r from-pink-600 to-rose-700 font-medium text-white shadow-sm shadow-pink-600/25'
-                    : 'text-[#3f3f46] hover:bg-pink-50 hover:text-pink-900 dark:text-zinc-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
-                )}
-              >
-                <Gift className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'gift-tracker' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
-                <span className="truncate text-left">Gift Tracker</span>
-              </button>
-              <button
+<button
                 type="button"
                 onClick={() => { setActiveTab('budget-history'); setMobileNavOpen(false); }}
                 className={cn(
@@ -1093,19 +1077,7 @@ export default function OrphanageApp() {
               </div>
             </motion.div>
           )}
-          {activeTab === 'gift-tracker' && (
-            <motion.div
-              key="gift-tracker"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-              className="flex min-h-0 flex-1 flex-col"
-            >
-              <GiftTracker viewerEmail={viewerEmail} />
-            </motion.div>
-          )}
-          {activeTab === 'notifications' && (
+{activeTab === 'notifications' && (
             <motion.div
               key="notifications"
               initial={{ opacity: 0, y: 10 }}
@@ -1286,7 +1258,6 @@ type OverviewTab =
   | 'queue'
   | 'budget'
   | 'budget-history'
-  | 'gift-tracker'
   | 's-wall';
 
 function OrphanageOverview({
@@ -1301,18 +1272,8 @@ function OrphanageOverview({
   onJumpTo: (tab: OverviewTab) => void;
 }) {
   const [loading, setLoading] = useState(true);
-  const [shippingPending, setShippingPending] = useState(0);
-  const [shippingApprovedThisMonth, setShippingApprovedThisMonth] = useState(0);
-  const [tenureGiftsSpendPhp, setTenureGiftsSpendPhp] = useState(0);
   const [budgetPending, setBudgetPending] = useState(0);
   const [budgetSpendPhp, setBudgetSpendPhp] = useState(0);
-  const [upcomingMilestones, setUpcomingMilestones] = useState<{
-    name: string;
-    email: string;
-    months: number;
-    date: Date;
-    daysUntil: number;
-  }[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1331,46 +1292,12 @@ function OrphanageOverview({
 
     void (async () => {
       try {
-        const [shipRes, budgetRes, empRes] = await Promise.all([
-          fetch('/api/employee-gift-shipping', { cache: 'no-store' }),
-          fetch('/api/orphanage-budget-requests', { cache: 'no-store' }),
-          fetch('/api/employees', { cache: 'no-store' }),
-        ]);
-        const shipJson = (await shipRes.json()) as {
-          rows?: {
-            status: string;
-            decided_at: string | null;
-            gift_price_php: number | null;
-          }[];
-        };
+        const budgetRes = await fetch('/api/orphanage-budget-requests', { cache: 'no-store' });
         const budgetJson = (await budgetRes.json()) as {
           rows?: { status: string; submitted_at: string; final_amount: number }[];
         };
-        const empJson = (await empRes.json()) as {
-          employees?: {
-            name?: string | null;
-            personal_email?: string | null;
-            work_email?: string | null;
-            start_date?: string | null;
-          }[];
-        };
         if (cancelled) return;
 
-        // Shipping submissions
-        const shipRows = shipJson.rows ?? [];
-        setShippingPending(shipRows.filter((r) => r.status === 'pending').length);
-        const approvedThisMonth = shipRows.filter(
-          (r) => r.status === 'approved' && inMonth(r.decided_at),
-        );
-        setShippingApprovedThisMonth(approvedThisMonth.length);
-        setTenureGiftsSpendPhp(
-          approvedThisMonth.reduce(
-            (s, r) => s + (Number.isFinite(r.gift_price_php ?? 0) ? Number(r.gift_price_php ?? 0) : 0),
-            0,
-          ),
-        );
-
-        // Budget requests
         const budgetRows = budgetJson.rows ?? [];
         setBudgetPending(budgetRows.filter((r) => r.status === 'pending').length);
         setBudgetSpendPhp(
@@ -1378,40 +1305,6 @@ function OrphanageOverview({
             .filter((r) => r.status === 'approved' && inMonth(r.submitted_at))
             .reduce((s, r) => s + (Number.isFinite(r.final_amount) ? r.final_amount : 0), 0),
         );
-
-        // Upcoming milestones in the next 30 days.
-        const today = new Date();
-        const startOfToday = new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          today.getDate(),
-        ).getTime();
-        const items: typeof upcomingMilestones = [];
-        for (const e of empJson.employees ?? []) {
-          const raw = (e.start_date ?? '').trim();
-          if (!raw) continue;
-          const startDate = new Date(raw);
-          if (Number.isNaN(startDate.getTime())) continue;
-          // Walk milestones until we pass 30 days from today.
-          for (let i = 1; i <= 60; i += 1) {
-            const d = new Date(startDate);
-            d.setMonth(d.getMonth() + i * 6);
-            const ms = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-            const daysUntil = Math.round((ms - startOfToday) / 86_400_000);
-            if (daysUntil > 30) break; // stop scanning — future milestones too far away
-            if (daysUntil < 0) continue; // past milestones — skip
-            items.push({
-              name: e.name ?? e.personal_email ?? e.work_email ?? '—',
-              email: (e.personal_email ?? e.work_email ?? '').toLowerCase(),
-              months: i * 6,
-              date: d,
-              daysUntil,
-            });
-            break; // one upcoming per employee is enough for the overview
-          }
-        }
-        items.sort((a, b) => a.daysUntil - b.daysUntil);
-        setUpcomingMilestones(items.slice(0, 8));
       } catch {
         // ignore — leave defaults
       } finally {
@@ -1424,7 +1317,7 @@ function OrphanageOverview({
     };
   }, []);
 
-  const totalSpendPhp = budgetSpendPhp + tenureGiftsSpendPhp;
+  const totalSpendPhp = budgetSpendPhp;
   const formatPhp = (n: number) =>
     `₱${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -1469,23 +1362,6 @@ function OrphanageOverview({
         </button>
         <button
           type="button"
-          onClick={() => onJumpTo('gift-tracker')}
-          className="text-left transition-transform hover:-translate-y-0.5"
-        >
-          <OrphanStatTile
-            label="Shipping submissions"
-            value={loading ? '…' : shippingPending}
-            hint={
-              shippingPending === 0
-                ? 'All caught up'
-                : `${shippingPending} awaiting your review`
-            }
-            icon={Truck}
-            accent="rose-deep"
-          />
-        </button>
-        <button
-          type="button"
           onClick={() => onJumpTo('budget-history')}
           className="text-left transition-transform hover:-translate-y-0.5"
         >
@@ -1501,24 +1377,10 @@ function OrphanageOverview({
             accent="pink"
           />
         </button>
-        <button
-          type="button"
-          onClick={() => onJumpTo('gift-tracker')}
-          className="text-left transition-transform hover:-translate-y-0.5"
-        >
-          <OrphanStatTile
-            label="Approved gifts this month"
-            value={loading ? '…' : shippingApprovedThisMonth}
-            hint={`Tenure-gift spend: ${formatPhp(tenureGiftsSpendPhp)}`}
-            icon={Gift}
-            accent="mono"
-          />
-        </button>
       </section>
 
-      {/* Lower row — monthly spend summary + upcoming milestones */}
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]" aria-label="Monthly digest">
-        {/* Monthly spend card */}
+      {/* Monthly spend summary */}
+      <section aria-label="Monthly digest">
         <Card className="overflow-hidden border-pink-100/80 bg-gradient-to-br from-white via-pink-50/30 to-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:from-zinc-950 dark:via-pink-950/12 dark:to-zinc-950 dark:ring-pink-400/10">
           <CardHeader className="border-b border-pink-100/60 pb-3 dark:border-pink-900/40">
             <CardTitle className="flex items-center gap-2 text-sm font-semibold">
@@ -1526,7 +1388,7 @@ function OrphanageOverview({
               This month&apos;s spend
             </CardTitle>
             <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-              Approved budget requests + tenure gifts in {new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}.
+              Approved budget requests in {new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}.
             </p>
           </CardHeader>
           <CardContent className="px-5 py-5">
@@ -1540,62 +1402,7 @@ function OrphanageOverview({
                   {formatPhp(budgetSpendPhp)}
                 </span>
               </div>
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-zinc-600 dark:text-zinc-400">
-                  Tenure gifts ({shippingApprovedThisMonth})
-                </span>
-                <span className="font-mono tabular-nums font-medium text-zinc-800 dark:text-zinc-200">
-                  {formatPhp(tenureGiftsSpendPhp)}
-                </span>
-              </div>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Upcoming milestones */}
-        <Card className="overflow-hidden border-pink-100/80 bg-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:bg-zinc-950 dark:ring-pink-400/10">
-          <CardHeader className="border-b border-pink-100/60 pb-3 dark:border-pink-900/40">
-            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-              <Gift className="h-4 w-4 text-pink-600 dark:text-pink-400" />
-              Upcoming gift milestones · next 30 days
-            </CardTitle>
-            <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-              Employees about to hit a 6-month tenure anniversary.
-            </p>
-          </CardHeader>
-          <CardContent className="p-0">
-            {loading ? (
-              <div className="flex items-center justify-center py-10 text-zinc-500">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
-              </div>
-            ) : upcomingMilestones.length === 0 ? (
-              <p className="px-5 py-8 text-center text-xs text-zinc-400">
-                No milestones in the next 30 days.
-              </p>
-            ) : (
-              <ul className="max-h-[260px] divide-y divide-pink-100/70 overflow-y-auto dark:divide-pink-900/35">
-                {upcomingMilestones.map((m) => (
-                  <li key={`${m.email}-${m.months}`} className="flex items-center justify-between gap-3 px-5 py-2.5">
-                    <div className="min-w-0">
-                      <div className="truncate font-medium text-zinc-800 dark:text-zinc-200">{m.name}</div>
-                      <div className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{m.email}</div>
-                    </div>
-                    <div className="text-right text-xs">
-                      <div className="font-semibold text-pink-700 dark:text-pink-300">
-                        {m.months}-month
-                      </div>
-                      <div className="text-[10.5px] text-zinc-500 dark:text-zinc-500">
-                        {m.daysUntil === 0
-                          ? 'Today'
-                          : m.daysUntil === 1
-                            ? 'Tomorrow'
-                            : `In ${m.daysUntil} days`}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
           </CardContent>
         </Card>
       </section>

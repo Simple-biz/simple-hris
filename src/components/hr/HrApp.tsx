@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
 import HrOffboarding from './HrOffboarding';
+import GiftTracker from '@/components/orphanage/GiftTracker';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
 import SWall from '@/components/swall/SWall';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -151,6 +152,7 @@ export default function HrApp() {
               {activeTab === 'onboarding' && <HrOnboarding />}
               {activeTab === 'offboarding' && <HrOffboarding />}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
+              {activeTab === 'gift-tracker' && <GiftTracker viewerEmail={viewerEmail} />}
               {activeTab === 'notifications' && (
                 <NotificationsPanel viewerEmail={viewerEmail} accent="emerald" />
               )}
@@ -308,6 +310,12 @@ function OverviewBody() {
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('');
   const [page, setPage] = useState(0);
+  /** Trailing-12-month attrition derived from offboard history + active roster. */
+  const [attrition, setAttrition] = useState<{
+    separations: number;
+    avgHeadcount: number;
+    ratePct: number;
+  } | null>(null);
 
   const fetchRoster = useCallback(async () => {
     setLoading(true);
@@ -324,6 +332,28 @@ function OverviewBody() {
   }, []);
 
   useEffect(() => { void fetchRoster(); }, [fetchRoster]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/hr/offboard-history', { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: { off_boarded_at: string | null }[] };
+        const cutoff = Date.now() - 365 * 24 * 3600 * 1000;
+        const separations = (json.rows ?? []).reduce((n, r) => {
+          const t = r.off_boarded_at ? new Date(r.off_boarded_at).getTime() : NaN;
+          return Number.isFinite(t) && t >= cutoff ? n + 1 : n;
+        }, 0);
+        const active = roster.length;
+        const avgHeadcount = active + separations / 2;
+        const ratePct = avgHeadcount > 0 ? (separations / avgHeadcount) * 100 : 0;
+        if (!cancelled) setAttrition({ separations, avgHeadcount, ratePct });
+      } catch {
+        if (!cancelled) setAttrition(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [roster.length]);
 
   const deptStats: DeptStat[] = useMemo(() => {
     const map = new Map<string, number>();
@@ -355,11 +385,27 @@ function OverviewBody() {
   return (
     <>
       {/* KPI row */}
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
           { label: 'Active employees', value: roster.length, sub: 'on the master list',      icon: Users,     grad: 'from-emerald-500 to-teal-700' },
           { label: 'Departments',      value: deptStats.length, sub: 'with active headcount', icon: Building2, grad: 'from-teal-500 to-emerald-700' },
           { label: 'Largest dept',     value: deptStats[0]?.department ?? '—', sub: `${deptStats[0]?.count ?? 0} people`, icon: TrendingUp, grad: 'from-sky-500 to-sky-700' },
+          {
+            label: 'Attrition · 12mo',
+            value: attrition == null ? '—' : `${Math.round(attrition.ratePct)}%`,
+            sub: attrition == null
+              ? 'awaiting offboard data'
+              : `${attrition.separations} separation${attrition.separations === 1 ? '' : 's'} · avg ${Math.round(attrition.avgHeadcount)}`,
+            icon: UserMinus,
+            grad:
+              attrition == null
+                ? 'from-zinc-400 to-zinc-600'
+                : attrition.ratePct >= 15
+                  ? 'from-rose-500 to-red-700'
+                  : attrition.ratePct >= 5
+                    ? 'from-amber-500 to-orange-700'
+                    : 'from-emerald-500 to-emerald-700',
+          },
         ].map(({ label, value, sub, icon: Icon, grad }) => (
           <div key={label} className="flex items-center gap-3 rounded-xl border border-zinc-100 bg-white px-4 py-3.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
             <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white shadow', grad)}>

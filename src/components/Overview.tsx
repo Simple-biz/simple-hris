@@ -23,6 +23,7 @@ import {
   AlertCircle,
   FileWarning,
   CalendarDays,
+  UserMinus,
   ArrowRight,
   LayoutGrid,
   Rows3,
@@ -305,7 +306,12 @@ interface SimpleViewProps {
   pendingDisputes: number | null;
   oldestDisputeDays: number | null;
   pendingLeaves: number | null;
-  weekOrphanageVisits: number | null;
+  attrition: {
+    separations: number;
+    activeHeadcount: number;
+    avgHeadcount: number;
+    ratePct: number;
+  } | null;
   pabMetrics: {
     loading: boolean;
     totalEmployees: number;
@@ -384,7 +390,7 @@ function SimpleView({
   pendingDisputes,
   oldestDisputeDays,
   pendingLeaves,
-  weekOrphanageVisits,
+  attrition,
   pabMetrics,
   techBonusEligibility,
   pageRows,
@@ -453,8 +459,16 @@ function SimpleView({
         ? `overdue ${oldestDisputeDays}d`
         : 'review soon'
       : null;
-  const orphanageCount = weekOrphanageVisits ?? 0;
-  const leaveAndVisitsTotal = (pendingLeaves ?? 0) + orphanageCount;
+  const attritionRatePct = attrition?.ratePct ?? null;
+  const attritionDisplay = attritionRatePct == null ? 0 : Math.round(attritionRatePct);
+  const attritionTone: AttentionTone =
+    attritionRatePct == null
+      ? 'neutral'
+      : attritionRatePct >= 15
+        ? 'warn'
+        : attritionRatePct >= 5
+          ? 'info'
+          : 'ok';
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
@@ -795,18 +809,24 @@ function SimpleView({
             onClick={onNavigate ? () => onNavigate('payroll-wizard') : undefined}
           />
           <AttentionCard
-            icon={<CalendarDays />}
-            label="Leave & visits"
-            tone={leaveAndVisitsTotal > 0 ? 'ok' : 'neutral'}
-            tag="this week"
-            value={leaveAndVisitsTotal}
-            unit={leaveAndVisitsTotal === 1 ? 'item' : 'items'}
+            icon={<UserMinus />}
+            label="Attrition"
+            tone={attritionTone}
+            tag="last 12 months"
+            value={attritionDisplay}
+            unit="%"
             sub={
-              <>
-                <strong className="text-zinc-700 dark:text-zinc-300">{pendingLeaves ?? 0}</strong>{' '}
-                leave requests · <strong className="text-zinc-700 dark:text-zinc-300">{orphanageCount}</strong>{' '}
-                orphanage visits
-              </>
+              attrition == null ? (
+                <>No off-board data available yet.</>
+              ) : (
+                <>
+                  <strong className="text-zinc-700 dark:text-zinc-300">{attrition.separations}</strong>{' '}
+                  separation{attrition.separations === 1 ? '' : 's'} ·{' '}
+                  <strong className="text-zinc-700 dark:text-zinc-300">{attrition.activeHeadcount}</strong>{' '}
+                  active · avg headcount{' '}
+                  <strong className="text-zinc-700 dark:text-zinc-300">{Math.round(attrition.avgHeadcount)}</strong>
+                </>
+              )
             }
             cta="Open in HR"
             onClick={() => { window.location.href = '/hr'; }}
@@ -846,24 +866,31 @@ function SimpleView({
                 const periodEnd = pabMetrics.periodEnd ? new Date(pabMetrics.periodEnd) : null;
                 if (periodEnd) periodEnd.setHours(0, 0, 0, 0);
                 const inProgress = !!periodEnd && today0.getTime() <= periodEnd.getTime();
+                const todayDay = new Date().getDate();
+                const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+                const monthDayPct = Math.round((todayDay / daysInMonth) * 100);
                 return (
                   <>
                     <div className="flex flex-col items-center gap-2.5">
                       <div className="relative h-20 w-20 xl:h-24 xl:w-24">
                         <Donut
-                          pct={inProgress ? 0 : pabPct}
+                          pct={inProgress ? monthDayPct : pabPct}
                           color={inProgress ? '#b45309' : '#047857'}
                           fillContainer
                         />
                         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                           <span className="text-base font-semibold tracking-tight text-zinc-900 xl:text-xl dark:text-white">
                             {inProgress ? (
-                              <AnimatedHourglass />
+                              todayDay
                             ) : pabTotal > 0 ? `${pabPct}%` : '—'}
                           </span>
-                          {pabTotal > 0 && (
+                          {inProgress ? (
                             <span className="mt-0.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-                              {inProgress ? `${pabTotal} pending` : `${pabMetrics.eligible} / ${pabTotal}`}
+                              of {daysInMonth}
+                            </span>
+                          ) : pabTotal > 0 && (
+                            <span className="mt-0.5 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
+                              {pabMetrics.eligible} / {pabTotal}
                             </span>
                           )}
                         </div>
@@ -1879,7 +1906,13 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     Array<{ id: string; work_email: string; dispute_date: string; created_at?: string; reason: string }>
   >([]);
   const [pendingLeaves, setPendingLeaves] = useState<number | null>(null);
-  const [weekOrphanageVisits, setWeekOrphanageVisits] = useState<number | null>(null);
+  /** Trailing-12-month attrition: separations + average headcount snapshot. */
+  const [attrition, setAttrition] = useState<{
+    separations: number;
+    activeHeadcount: number;
+    avgHeadcount: number;
+    ratePct: number;
+  } | null>(null);
   /** Which layout the user is currently viewing — persisted in localStorage. */
   const [viewMode, setViewMode] = useState<'simple' | 'expanded'>('simple');
 
@@ -1962,20 +1995,27 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     })();
     (async () => {
       try {
-        // Orphanage visits in a ±3 day window around today (roughly "this week")
-        const today = new Date();
-        const fmt = (d: Date) =>
-          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        const from = new Date(today.getTime() - 3 * 24 * 3600 * 1000);
-        const to = new Date(today.getTime() + 4 * 24 * 3600 * 1000);
-        const res = await fetch(
-          `/api/pab-disputes/orphanage-visits?from=${fmt(from)}&to=${fmt(to)}`,
-          { cache: 'no-store' },
-        );
-        const json = (await res.json()) as { rows?: { id: string }[] };
-        if (!cancelled) setWeekOrphanageVisits(Array.isArray(json.rows) ? json.rows.length : 0);
+        // Trailing-12-month attrition. Pulls offboarded employees + the active
+        // roster and computes separations / average headcount.
+        const [offRes, empRes] = await Promise.all([
+          fetch('/api/hr/offboard-history', { cache: 'no-store' }),
+          fetch('/api/employees', { cache: 'no-store' }),
+        ]);
+        const offJson = (await offRes.json()) as { rows?: { off_boarded_at: string | null }[] };
+        const empJson = (await empRes.json()) as { employees?: unknown[] };
+        const cutoff = Date.now() - 365 * 24 * 3600 * 1000;
+        const separations = (offJson.rows ?? []).reduce((n, r) => {
+          const t = r.off_boarded_at ? new Date(r.off_boarded_at).getTime() : NaN;
+          return Number.isFinite(t) && t >= cutoff ? n + 1 : n;
+        }, 0);
+        const activeHeadcount = Array.isArray(empJson.employees) ? empJson.employees.length : 0;
+        // Average headcount over the period ≈ start + end / 2.
+        // start ≈ activeNow + everyone who left during the period.
+        const avgHeadcount = activeHeadcount + separations / 2;
+        const ratePct = avgHeadcount > 0 ? (separations / avgHeadcount) * 100 : 0;
+        if (!cancelled) setAttrition({ separations, activeHeadcount, avgHeadcount, ratePct });
       } catch {
-        if (!cancelled) setWeekOrphanageVisits(null);
+        if (!cancelled) setAttrition(null);
       }
     })();
     return () => {
@@ -2401,36 +2441,20 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     return () => { cancelled = true; };
   }, [sourceFiles, selectedSourceFile, monthFilter, employees]);
 
-  /** Master list rows plus Hubstaff-only workers (same payroll scope as stats). */
+  /** Master-list rows only. Hubstaff-only workers are no longer merged into
+   *  Overview totals — the master list is the single source of truth. */
   const mergedEmployees = useMemo((): OverviewEmployeeRow[] => {
     const masterRows: OverviewEmployeeRow[] = employees.map((e) => ({
       ...e,
       recordSource: 'master',
     }));
-    const masterSet = buildMasterEmailSet(employees);
-    const idMap = payrollIdentityByEmail ?? {};
-    const extras: OverviewEmployeeRow[] = [];
-    for (const [em, id] of Object.entries(idMap)) {
-      if (!masterSet.has(em)) {
-        extras.push({
-          employee_id: null,
-          department: id.department,
-          name: id.name,
-          personal_email: em,
-          work_email: em,
-          start_date: null,
-          recordSource: 'hubstaff',
-        });
-      }
-    }
-    const combined = [...masterRows, ...extras];
-    combined.sort((a, b) => {
+    masterRows.sort((a, b) => {
       const an = (a.name ?? a.personal_email ?? '').toLowerCase();
       const bn = (b.name ?? b.personal_email ?? '').toLowerCase();
       return an.localeCompare(bn, undefined, { sensitivity: 'base' });
     });
-    return combined;
-  }, [employees, payrollIdentityByEmail]);
+    return masterRows;
+  }, [employees]);
 
   const departmentOptions = useMemo(() => {
     const set = new Set<string>();
@@ -2741,7 +2765,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
               pendingDisputes={pendingDisputes}
               oldestDisputeDays={oldestDisputeDays}
               pendingLeaves={pendingLeaves}
-              weekOrphanageVisits={weekOrphanageVisits}
+              attrition={attrition}
               pabMetrics={pabMetrics}
               techBonusEligibility={techBonusEligibility}
               pageRows={pageRows}

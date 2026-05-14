@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect, useMemo, useTransition, useCallback } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { motion, AnimatePresence } from 'motion/react';
+import * as XLSX from 'xlsx';
 import {
   Check,
   Upload,
@@ -27,6 +28,7 @@ import {
   Heart,
   Gift,
   BarChart3,
+  Download,
   Timer,
   Play,
   StopCircle,
@@ -860,10 +862,11 @@ const steps = [
   { id: 2, label: 'Initial Calculation', icon: DollarSign, description: 'Hubstaff hours × employee_hourly_rates → Initial Pay' },
   { id: 3, label: 'Additions', icon: Calculator, description: 'Apply bonuses and adjustments' },
   { id: 4, label: 'Orphanage', icon: Heart, description: 'Approved orphanage visits and the hours/wages they cover' },
-  { id: 5, label: 'Contractors', icon: HardHat, description: 'Pending contractor invoices — review and approve before dispatch' },
-  { id: 6, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
-  { id: 7, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
-  { id: 8, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
+  { id: 5, label: 'Tenure Gifts', icon: Gift, description: 'Tenure gifts approved by HR this PAB month' },
+  { id: 6, label: 'Contractors', icon: HardHat, description: 'Pending contractor invoices — review and approve before dispatch' },
+  { id: 7, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
+  { id: 8, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
+  { id: 9, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
 ];
 
 export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string | null }) {
@@ -1053,8 +1056,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   }[]>([]);
   const [tenureGiftsLoading, setTenureGiftsLoading] = useState(false);
   const [tenureGiftsError, setTenureGiftsError] = useState<string | null>(null);
+  const [tenureGiftAccountingStatus, setTenureGiftAccountingStatus] = useState<Record<string, 'approved' | 'rejected'>>({});
 
-  type OrphanageTab = 'visits' | 'wages' | 'budgets' | 'gifts' | 'tenure';
+  type OrphanageTab = 'visits' | 'wages' | 'budgets';
   const [orphanageTab, setOrphanageTab] = useState<OrphanageTab>('visits');
 
   // ── Step 5: Contractor invoices ──────────────────────────────────────────────
@@ -1112,6 +1116,12 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   const [validationSearch, setValidationSearch] = useState('');
   const [employeeDepts, setEmployeeDepts] = useState<Record<string, string>>({});
   const [employeeBonuses, setEmployeeBonuses] = useState<Record<string, Record<string, boolean>>>({});
+  /** Accounting-side per-employee bonus overrides. When present, replaces the auto-computed total. */
+  const [bonusOverrides, setBonusOverrides] = useState<Record<string, number>>({});
+  /** Session-only row deletes for the Orphanage step tables. */
+  const [hiddenVisitIds, setHiddenVisitIds] = useState<Set<string>>(new Set());
+  const [hiddenWageEmails, setHiddenWageEmails] = useState<Set<string>>(new Set());
+  const [hiddenBudgetIds, setHiddenBudgetIds] = useState<Set<string>>(new Set());
   /** Per-employee numeric metrics: email → { metric → value }. Used by formula-based departments. */
   const [employeeMetrics, setEmployeeMetrics] = useState<Record<string, Record<string, number>>>({});
   /** Department-level numeric metrics: deptKey → { metric → value }. Used for pool calculations (QC, HR). */
@@ -1702,7 +1712,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   // Pull all rows so pending Orphanage-side requests can be approved here. Approved
   // rows count toward dispatch; pending rows stay visible so Accounting can close them.
   useEffect(() => {
-    if ((currentStep !== 4 && currentStep !== 6 && currentStep !== 8 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 5 && currentStep !== 7 && currentStep !== 9 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setBudgetRequestsLoading(true);
     setBudgetRequestsError(null);
@@ -1822,7 +1832,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   // No status filter at the API; we keep rows whose status is sent|paid and
   // whose date_sent (or created_at as fallback) lands inside the PAB month.
   useEffect(() => {
-    if ((currentStep !== 4 && currentStep !== 6 && currentStep !== 8 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 5 && currentStep !== 7 && currentStep !== 9 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setGiftPaymentsLoading(true);
     setGiftPaymentsError(null);
@@ -1960,7 +1970,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   );
 
   useEffect(() => {
-    if ((currentStep !== 4 && currentStep !== 6 && currentStep !== 8 && !previewPaystubsOpen) || !pabMonthRange) return;
+    if ((currentStep !== 4 && currentStep !== 5 && currentStep !== 7 && currentStep !== 9 && !previewPaystubsOpen) || !pabMonthRange) return;
     const ctrl = new AbortController();
     setTenureGiftsLoading(true);
     void refetchTenureGifts(ctrl.signal).finally(() => setTenureGiftsLoading(false));
@@ -2012,7 +2022,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
 
   // Fetch all contractor invoices when on step 5 (Contractors)
   useEffect(() => {
-    if (currentStep !== 5) return;
+    if (currentStep !== 6) return;
     let cancelled = false;
     setContractorInvoicesLoading(true);
     fetch('/api/contractor/invoices', { cache: 'no-store' })
@@ -2595,6 +2605,8 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
       if (!isApprovedVisit(row.status)) continue;
       const em = (row.work_email ?? '').trim().toLowerCase();
       if (!em) continue;
+      if (hiddenVisitIds.has(`${em}|${row.dispute_date}`)) continue;
+      if (hiddenWageEmails.has(em)) continue;
       const hours = row.override_hours ?? 8;
       const existing = visitMap.get(em);
       if (existing) {
@@ -2626,6 +2638,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
     // ── 2. Budget requests (approved only) ───────────────────────────────
     for (const r of budgetRequestRows) {
       if (r.status !== 'approved') continue;
+      if (hiddenBudgetIds.has(r.id)) continue;
       const toNum = (v: number | string | null): number => {
         if (v == null) return 0;
         const n = typeof v === 'number' ? v : parseFloat(v);
@@ -2684,6 +2697,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
     giftPaymentRows,
     tenureGiftRows,
     usdToPhpRate,
+    hiddenVisitIds,
+    hiddenWageEmails,
+    hiddenBudgetIds,
   ]);
 
   /**
@@ -2780,6 +2796,12 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
 
     return result;
   }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, ssdKpiAmounts]);
+
+  /** Effective bonus per employee: accounting override wins over the auto-computed total. */
+  const getEffectiveBonus = useCallback(
+    (email: string): number => bonusOverrides[email] ?? bonusTotals[email] ?? 0,
+    [bonusOverrides, bonusTotals],
+  );
 
   /** Enriched dispatch rows shared by Preview Paystubs + Confirm & Dispatch. */
   const dispatchData = useMemo(() => {
@@ -2978,13 +3000,17 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
         hasRates && hasThirtyDays && (isTechBonusWeek || toggles.tech_bonus)
           ? commonBonusPhp('tech_bonus')
           : 0;
+      const hasAccountingOverride = bonusOverrides[r.email] !== undefined;
       const rawBonusTotal = hasRates ? (bonusTotals[r.email] ?? 0) : 0;
       // Strip out the month-wide PAB/tech amounts that `bonusTotals` may include,
       // then re-add the week-gated versions so weekly paystubs get the right total.
       const toggledPab = toggles.perfect_attendance ? commonBonusPhp('perfect_attendance') : 0;
       const toggledTech = toggles.tech_bonus ? commonBonusPhp('tech_bonus') : 0;
-      const otherBonuses = hasRates ? Math.max(0, rawBonusTotal - toggledPab - toggledTech) : 0;
-      const bonusTotal = pabBonus + techBonus + otherBonuses;
+      const autoOtherBonuses = hasRates ? Math.max(0, rawBonusTotal - toggledPab - toggledTech) : 0;
+      // Accounting override replaces the whole bonus total: treat it as "other_bonuses"
+      // and skip PAB/tech gating for this row.
+      const otherBonuses = hasAccountingOverride ? (bonusOverrides[r.email] ?? 0) : autoOtherBonuses;
+      const bonusTotal = hasAccountingOverride ? otherBonuses : (pabBonus + techBonus + otherBonuses);
 
       // MESA Program deduction — ₱100 per paycheck for enrolled members.
       const em = normEmail(r.email);
@@ -3023,6 +3049,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
     employeeDepts,
     employeeBonuses,
     bonusTotals,
+    bonusOverrides,
     pabMonthRange,
     calcSourceFile,
     hubstaffColsForPab,
@@ -5089,10 +5116,10 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
         const activeDept = DEPARTMENTS.find(d => d.key === activeDeptTab) ?? DEPARTMENTS[0]!;
         const deptEmployees = effectiveCalcResults.filter(r => employeeDepts[r.email] === activeDeptTab);
         const unassignedEmployees = effectiveCalcResults.filter(r => !employeeDepts[r.email]);
-        const totalBonusesAdded = Object.values(bonusTotals).reduce((sum, v) => sum + v, 0);
         const assignedEmployees = effectiveCalcResults.filter(r => employeeDepts[r.email]);
+        const totalBonusesAdded = assignedEmployees.reduce((sum, r) => sum + getEffectiveBonus(r.email), 0);
         const totalFinalPay = assignedEmployees.reduce(
-          (sum, r) => sum + (r.initialPay ?? 0) + (bonusTotals[r.email] ?? 0),
+          (sum, r) => sum + (r.initialPay ?? 0) + getEffectiveBonus(r.email),
           0,
         );
         // QC derived values (used in both left panel and table)
@@ -6062,7 +6089,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                               </TableCell>
                             </TableRow>
                           ) : filteredDeptEmployees.map((emp) => {
-                            const bonusTotal = bonusTotals[emp.email] ?? 0;
+                            const autoBonus = bonusTotals[emp.email] ?? 0;
+                            const hasOverride = bonusOverrides[emp.email] !== undefined;
+                            const bonusTotal = hasOverride ? (bonusOverrides[emp.email] ?? 0) : autoBonus;
                             const empRateRow = ratesByEmail.get(normEmail(emp.email) ?? '');
                             const empMesaDeduction = (emp.initialPay != null && empRateRow?.mesa_member) ? 100 : 0;
                             const finalPay = (emp.initialPay ?? 0) + bonusTotal - empMesaDeduction;
@@ -6533,12 +6562,44 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                                 <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-bold">
                                   {isRecalcPending ? (
                                     <span className="inline-block h-3 w-12 animate-pulse rounded bg-emerald-200/60 dark:bg-emerald-900/40" />
-                                  ) : bonusTotal > 0 ? (
-                                    <span className="text-emerald-600 dark:text-emerald-400">
-                                      +{formatPHP(bonusTotal)}
-                                    </span>
                                   ) : (
-                                    <span className="text-zinc-400">—</span>
+                                    <div className="flex items-center justify-end gap-1">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        value={bonusTotal}
+                                        onChange={(e) => {
+                                          const raw = e.target.value;
+                                          const next = raw === '' ? 0 : Number(raw);
+                                          if (!Number.isFinite(next)) return;
+                                          setBonusOverrides((prev) => ({ ...prev, [emp.email]: next }));
+                                        }}
+                                        title={hasOverride ? `Auto-computed: ${formatPHP(autoBonus)}` : 'Auto-computed bonus — edit to override'}
+                                        className={cn(
+                                          'h-6 w-[88px] rounded border bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums focus:outline-none focus:ring-1 dark:bg-zinc-900',
+                                          hasOverride
+                                            ? 'border-amber-400/70 text-amber-700 focus:ring-amber-400 dark:border-amber-700/60 dark:text-amber-300'
+                                            : bonusTotal > 0
+                                              ? 'border-emerald-300/70 text-emerald-600 focus:ring-emerald-400 dark:border-emerald-700/40 dark:text-emerald-400'
+                                              : 'border-zinc-200 text-zinc-500 focus:ring-zinc-300 dark:border-zinc-700',
+                                        )}
+                                      />
+                                      {hasOverride && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setBonusOverrides((prev) => {
+                                            const next = { ...prev };
+                                            delete next[emp.email];
+                                            return next;
+                                          })}
+                                          title={`Revert to auto: ${formatPHP(autoBonus)}`}
+                                          className="text-zinc-400 hover:text-red-500"
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </button>
+                                      )}
+                                    </div>
                                   )}
                                 </TableCell>
                                 <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-semibold text-zinc-900 dark:text-white">
@@ -6591,7 +6652,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                           ) : (
                             <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
                               +{formatPHP(
-                                deptEmployees.reduce((sum, e) => sum + (bonusTotals[e.email] ?? 0), 0),
+                                deptEmployees.reduce((sum, e) => sum + getEffectiveBonus(e.email), 0),
                               )}
                             </span>
                           )}
@@ -6601,7 +6662,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                           <span className="font-mono font-bold text-zinc-900 dark:text-white">
                             {formatPHP(
                               deptEmployees.reduce(
-                                (sum, e) => sum + (e.initialPay ?? 0) + (bonusTotals[e.email] ?? 0),
+                                (sum, e) => sum + (e.initialPay ?? 0) + getEffectiveBonus(e.email),
                                 0,
                               ),
                             )}
@@ -6637,8 +6698,12 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
           if (r.name) nameByEmailOrph.set(em, r.name);
         }
 
+        // Session-only delete key for visit rows (no DB id available).
+        const visitKey = (row: { work_email: string; dispute_date: string }) =>
+          `${(row.work_email ?? '').trim().toLowerCase()}|${row.dispute_date}`;
         // Section 1 rows — every dispute in the range, with a normalized email key.
         const orphanageVisitRows = orphanageRows
+          .filter((row) => !hiddenVisitIds.has(visitKey(row)))
           .map((row) => {
             const em = (row.work_email ?? '').trim().toLowerCase();
             return {
@@ -6646,6 +6711,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
               email: em,
               name: nameByEmailOrph.get(em) ?? '—',
               isApproved: isApprovedOrphanage(row.status),
+              _key: visitKey(row),
             };
           })
           .filter((r) => {
@@ -6694,9 +6760,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
             });
           }
         }
-        const orphanageWageRows = Array.from(wageMap.values()).sort((a, b) =>
-          (a.name || '').localeCompare(b.name || ''),
-        );
+        const orphanageWageRows = Array.from(wageMap.values())
+          .filter((w) => !hiddenWageEmails.has(w.email))
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         const totalOrphanageHours = orphanageWageRows.reduce((s, r) => s + r.totalHours, 0);
         const totalOrphanageWages = orphanageWageRows.reduce(
           (s, r) => s + (r.wages ?? 0),
@@ -6706,8 +6772,10 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
         const totalPendingVisits = orphanageVisitRows.length - totalApprovedVisits;
 
         // Budget request totals — only Accounting-approved rows are payable.
-        const approvedBudgetRequestRows = budgetRequestRows.filter((r) => r.status === 'approved');
-        const pendingBudgetRequestRows = budgetRequestRows.filter((r) => r.status === 'pending');
+        // Session-deleted rows are excluded from both display totals and dispatch.
+        const visibleBudgetRequestRows = budgetRequestRows.filter((r) => !hiddenBudgetIds.has(r.id));
+        const approvedBudgetRequestRows = visibleBudgetRequestRows.filter((r) => r.status === 'approved');
+        const pendingBudgetRequestRows = visibleBudgetRequestRows.filter((r) => r.status === 'pending');
         const totalBudgetRequestsPHP = approvedBudgetRequestRows.reduce((s, r) => {
           const amount = Number(r.final_amount ?? 0);
           return s + (Number.isFinite(amount) ? amount : 0);
@@ -6765,12 +6833,6 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                     {pendingBudgetRequestRows.length} budget pending approval
                   </span>
                 )}
-                <span className="rounded-full border border-fuchsia-300/70 bg-fuchsia-50 px-2.5 py-0.5 font-medium text-fuchsia-800 dark:border-fuchsia-700/60 dark:bg-fuchsia-950/40 dark:text-fuchsia-200">
-                  {giftPaymentRows.length} gift payment{giftPaymentRows.length === 1 ? '' : 's'} · {formatPHP(totalGiftsPHP)}
-                </span>
-                <span className="rounded-full border border-pink-300/70 bg-pink-50 px-2.5 py-0.5 font-medium text-pink-800 dark:border-pink-700/60 dark:bg-pink-950/40 dark:text-pink-200">
-                  {tenureGiftRows.length} tenure gift{tenureGiftRows.length === 1 ? '' : 's'} · {formatPHP(totalTenureGiftsPHP)}
-                </span>
               </div>
             </div>
 
@@ -6797,20 +6859,6 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                   icon: <DollarSign className="h-3.5 w-3.5" />,
                   count: budgetRequestRows.length,
                   accent: 'rose',
-                },
-                {
-                  key: 'gifts',
-                  label: 'Gift payments',
-                  icon: <Gift className="h-3.5 w-3.5" />,
-                  count: giftPaymentRows.length,
-                  accent: 'fuchsia',
-                },
-                {
-                  key: 'tenure',
-                  label: 'Tenure gifts',
-                  icon: <Gift className="h-3.5 w-3.5" />,
-                  count: tenureGiftRows.length,
-                  accent: 'pink',
                 },
               ];
               return (
@@ -6902,6 +6950,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                           <th className="px-4 py-2.5">Reason</th>
                           <th className="px-4 py-2.5 text-right">Hours</th>
                           <th className="px-4 py-2.5">Status</th>
+                          <th className="w-10 px-2 py-2.5" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-rose-50 dark:divide-rose-950/30">
@@ -6939,6 +6988,16 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                               >
                                 {r.status.replace(/_/g, ' ')}
                               </span>
+                            </td>
+                            <td className="px-2 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => setHiddenVisitIds((prev) => new Set(prev).add(r._key))}
+                                title="Remove from this payroll run"
+                                className="text-zinc-400 hover:text-red-500"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -6978,6 +7037,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                           <th className="px-4 py-2.5 text-right">Hours</th>
                           <th className="px-4 py-2.5 text-right">Reg rate</th>
                           <th className="px-4 py-2.5 text-right">Wages</th>
+                          <th className="w-10 px-2 py-2.5" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-rose-50 dark:divide-rose-950/30">
@@ -7004,6 +7064,16 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                             <td className="px-4 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white">
                               {r.wages != null ? formatPHP(r.wages) : '—'}
                             </td>
+                            <td className="px-2 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => setHiddenWageEmails((prev) => new Set(prev).add(r.email))}
+                                title="Remove this employee's wages from this payroll run"
+                                className="text-zinc-400 hover:text-red-500"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -7019,6 +7089,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                           <td className="px-4 py-2.5 text-right font-mono font-bold tabular-nums text-zinc-900 dark:text-white">
                             {formatPHP(totalOrphanageWages)}
                           </td>
+                          <td />
                         </tr>
                       </tfoot>
                     </table>
@@ -7049,7 +7120,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                   <p className="p-6 text-center text-xs text-rose-600 dark:text-rose-400">
                     {budgetRequestsError}
                   </p>
-                ) : budgetRequestRows.length === 0 ? (
+                ) : visibleBudgetRequestRows.length === 0 ? (
                   <p className="p-8 text-center text-xs text-zinc-400">
                     No budget requests ready for this payroll period.
                   </p>
@@ -7069,7 +7140,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-rose-50 dark:divide-rose-950/30">
-                        {budgetRequestRows.map((r) => {
+                        {visibleBudgetRequestRows.map((r) => {
                           const displayDate = r.decided_at ?? r.submitted_at;
                           const isDeciding = budgetRequestDecidingId === r.id;
                           return (
@@ -7118,39 +7189,49 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                                 {formatPHP(Number(r.final_amount ?? 0))}
                               </td>
                               <td className="px-4 py-2 text-right">
-                                {r.status === 'pending' ? (
-                                  <div className="flex justify-end gap-1.5">
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      className="h-7 gap-1 bg-emerald-600 px-2 text-[11px] text-white hover:bg-emerald-700"
-                                      disabled={isDeciding}
-                                      onClick={() => void decideBudgetRequest(r.id, 'approved')}
-                                    >
-                                      {isDeciding ? (
-                                        <Loader2 className="h-3 w-3 animate-spin" />
-                                      ) : (
-                                        <Check className="h-3 w-3" />
-                                      )}
-                                      Approve
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-7 gap-1 px-2 text-[11px] text-rose-700 hover:text-rose-800 dark:text-rose-300"
-                                      disabled={isDeciding}
-                                      onClick={() => void decideBudgetRequest(r.id, 'rejected')}
-                                    >
-                                      <X className="h-3 w-3" />
-                                      Reject
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <span className="text-[11px] text-zinc-400">
-                                    {r.decided_by ? `by ${r.decided_by}` : 'closed'}
-                                  </span>
-                                )}
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {r.status === 'pending' ? (
+                                    <>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        className="h-7 gap-1 bg-emerald-600 px-2 text-[11px] text-white hover:bg-emerald-700"
+                                        disabled={isDeciding}
+                                        onClick={() => void decideBudgetRequest(r.id, 'approved')}
+                                      >
+                                        {isDeciding ? (
+                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                        ) : (
+                                          <Check className="h-3 w-3" />
+                                        )}
+                                        Approve
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 gap-1 px-2 text-[11px] text-rose-700 hover:text-rose-800 dark:text-rose-300"
+                                        disabled={isDeciding}
+                                        onClick={() => void decideBudgetRequest(r.id, 'rejected')}
+                                      >
+                                        <X className="h-3 w-3" />
+                                        Reject
+                                      </Button>
+                                    </>
+                                  ) : (
+                                    <span className="text-[11px] text-zinc-400">
+                                      {r.decided_by ? `by ${r.decided_by}` : 'closed'}
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setHiddenBudgetIds((prev) => new Set(prev).add(r.id))}
+                                    title="Remove from this payroll run"
+                                    className="text-zinc-400 hover:text-red-500"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );
@@ -7174,272 +7255,176 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
             </Card>
             )}
 
-            {/* Section 4 — Gift payments (sent/paid) in the PAB month */}
-            {orphanageTab === 'gifts' && (
-            <Card className="overflow-hidden shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800">
-              <CardHeader className="border-b border-zinc-200/90 bg-zinc-50/60 pb-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-                <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                  <Gift className="h-4 w-4 text-fuchsia-600 dark:text-fuchsia-400" />
-                  Gift payments · sent or paid
-                </CardTitle>
-                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                  Vendor payouts dated inside this PAB month. USD → PHP at {usdToPhpRate.toLocaleString()}.
-                </p>
-              </CardHeader>
-              <CardContent className="p-0">
-                {giftPaymentsLoading ? (
-                  <div className="flex items-center justify-center py-10 text-zinc-500">
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
-                  </div>
-                ) : giftPaymentsError ? (
-                  <p className="p-6 text-center text-xs text-rose-600 dark:text-rose-400">
-                    {giftPaymentsError}
-                  </p>
-                ) : giftPaymentRows.length === 0 ? (
-                  <p className="p-8 text-center text-xs text-zinc-400">
-                    No sent or paid gift payments in this period.
-                  </p>
-                ) : (
-                  <div className="max-h-[420px] overflow-y-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="sticky top-0 z-[1] border-b border-fuchsia-100 bg-fuchsia-50/80 text-[11px] font-semibold uppercase tracking-wider text-fuchsia-700 backdrop-blur dark:border-fuchsia-900/40 dark:bg-fuchsia-950/40 dark:text-fuchsia-300">
-                        <tr>
-                          <th className="px-4 py-2.5">Date sent</th>
-                          <th className="px-4 py-2.5">Vendor</th>
-                          <th className="px-4 py-2.5">Batch</th>
-                          <th className="px-4 py-2.5">Status</th>
-                          <th className="px-4 py-2.5 text-right">USD</th>
-                          <th className="px-4 py-2.5 text-right">PHP</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-fuchsia-50 dark:divide-fuchsia-950/30">
-                        {giftPaymentRows.map((r) => (
-                          <tr
-                            key={r.id}
-                            className="transition-colors hover:bg-fuchsia-50/40 dark:hover:bg-fuchsia-950/15"
-                          >
-                            <td className="px-4 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
-                              {(r.date_sent ?? r.created_at).slice(0, 10)}
-                            </td>
-                            <td className="px-4 py-2 font-medium text-zinc-800 dark:text-zinc-200">
-                              {r.vendor_name}
-                            </td>
-                            <td className="px-4 py-2 text-zinc-500 dark:text-zinc-400">
-                              {r.batch_label || r.period_label || '—'}
-                            </td>
-                            <td className="px-4 py-2">
-                              <span className="inline-flex items-center rounded-full bg-fuchsia-100 px-2 py-0.5 text-[10px] font-medium text-fuchsia-800 dark:bg-fuchsia-950/50 dark:text-fuchsia-300">
-                                {r.status}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
-                              ${r.total_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </td>
-                            <td className="px-4 py-2 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-white">
-                              {formatPHP(r.total_usd * usdToPhpRate)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot className="border-t-2 border-fuchsia-200/60 bg-fuchsia-50/40 dark:border-fuchsia-800/40 dark:bg-fuchsia-950/30">
-                        <tr>
-                          <td className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-fuchsia-700 dark:text-fuchsia-300" colSpan={4}>
-                            Total ({giftPaymentRows.length})
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-mono font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
-                            ${totalGiftsUSD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-mono font-bold tabular-nums text-zinc-900 dark:text-white">
-                            {formatPHP(totalGiftsPHP)}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            )}
-
-            {/* Section 5 — Tenure gifts approved in this PAB month, rendered in their own
-                dedicated tab inside the Payroll Wizard → Orphanage step. Each gift is shown
-                as a paper-receipt card, with a register-tape grand total at the bottom. */}
-            {orphanageTab === 'tenure' && (
-            <Card className="overflow-hidden shadow-sm ring-1 ring-zinc-200 dark:ring-zinc-800">
-              <CardHeader className="border-b border-zinc-200/90 bg-zinc-50/60 pb-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-                <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                  <Gift className="h-4 w-4 text-pink-600 dark:text-pink-400" />
-                  Tenure gifts · receipts
-                </CardTitle>
-                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                  One receipt per gift approved by the Orphanage team this PAB month. Each line
-                  rolls up into the weekly outflow at validation.
-                </p>
-              </CardHeader>
-              <CardContent className="p-4">
-                {tenureGiftsLoading ? (
-                  <div className="flex items-center justify-center py-10 text-zinc-500">
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
-                  </div>
-                ) : tenureGiftsError ? (
-                  <p className="p-6 text-center text-xs text-rose-600 dark:text-rose-400">
-                    {tenureGiftsError}
-                  </p>
-                ) : tenureGiftRows.length === 0 ? (
-                  <p className="p-8 text-center text-xs text-zinc-400">
-                    No tenure gifts approved in this period.
-                  </p>
-                ) : (
-                  <div className="flex flex-col gap-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {tenureGiftRows.map((r) => {
-                        const receiptId = r.id.replace(/-/g, '').slice(0, 8).toUpperCase();
-                        return (
-                          <div
-                            key={r.id}
-                            className="relative overflow-hidden bg-[#fdfaf3] font-mono text-[11px] text-zinc-800 shadow-sm dark:bg-zinc-900 dark:text-zinc-200"
-                            style={{
-                              // Zig-zag perforation top + bottom — looks like a torn receipt.
-                              maskImage:
-                                'radial-gradient(circle at 6px 0, transparent 4px, black 4.5px), radial-gradient(circle at 6px 100%, transparent 4px, black 4.5px)',
-                              WebkitMaskImage:
-                                'radial-gradient(circle at 6px 0, transparent 4px, black 4.5px), radial-gradient(circle at 6px 100%, transparent 4px, black 4.5px)',
-                              maskComposite: 'intersect',
-                              WebkitMaskComposite: 'source-in',
-                              maskSize: '12px 100%, 12px 100%',
-                              maskRepeat: 'repeat-x, repeat-x',
-                              maskPosition: 'top, bottom',
-                              backgroundImage:
-                                'repeating-linear-gradient(0deg, transparent 0 22px, rgba(0,0,0,0.025) 22px 23px)',
-                            }}
-                          >
-                            <div className="px-5 pb-4 pt-5">
-                              {/* Receipt header */}
-                              <div className="text-center">
-                                <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-pink-700 dark:text-pink-400">
-                                  Tenure Gift Receipt
-                                </div>
-                                <div className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-500">
-                                  No. {receiptId}
-                                </div>
-                              </div>
-
-                              {/* Dashed divider */}
-                              <div className="my-3 border-t border-dashed border-zinc-300 dark:border-zinc-700" />
-
-                              {/* Metadata */}
-                              <div className="grid gap-1">
-                                <div className="flex items-baseline justify-between gap-3">
-                                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
-                                    Issued
-                                  </span>
-                                  <span className="tabular-nums">
-                                    {new Date(r.decided_at).toLocaleDateString(undefined, {
-                                      year: 'numeric',
-                                      month: 'short',
-                                      day: 'numeric',
-                                    })}
-                                  </span>
-                                </div>
-                                <div className="flex items-baseline justify-between gap-3">
-                                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
-                                    Recipient
-                                  </span>
-                                  <span className="truncate text-right">{r.personal_email}</span>
-                                </div>
-                                <div className="flex items-baseline justify-between gap-3">
-                                  <span className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
-                                    Milestone
-                                  </span>
-                                  <span>
-                                    {r.milestone_index * 6}-month · #{r.milestone_index}
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div className="my-3 border-t border-dashed border-zinc-300 dark:border-zinc-700" />
-
-                              {/* Itemized line */}
-                              <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-500">
-                                <span>Item</span>
-                                <span>Amount</span>
-                              </div>
-                              <div className="mt-1 flex items-baseline justify-between gap-3 text-[12px] font-medium">
-                                <span className="flex-1 truncate text-zinc-900 dark:text-zinc-100">
-                                  {r.gift_name}
-                                </span>
-                                <span className="tabular-nums text-zinc-900 dark:text-zinc-100">
-                                  {formatPHP(r.gift_price_php)}
-                                </span>
-                              </div>
-
-                              <div className="my-3 border-t border-dashed border-zinc-300 dark:border-zinc-700" />
-
-                              {/* Total */}
-                              <div className="flex items-baseline justify-between gap-3">
-                                <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-700 dark:text-zinc-300">
-                                  Total
-                                </span>
-                                <span className="text-[15px] font-bold tabular-nums text-zinc-900 dark:text-white">
-                                  {formatPHP(r.gift_price_php)}
-                                </span>
-                              </div>
-
-                              <div className="my-3 border-t border-dashed border-zinc-300 dark:border-zinc-700" />
-
-                              {/* Footer */}
-                              <div className="text-center text-[10px] text-zinc-500 dark:text-zinc-500">
-                                <div>Approved by {r.decided_by || '—'}</div>
-                                <div className="mt-1 text-[9px] tracking-widest text-zinc-400 dark:text-zinc-600">
-                                  ★ THANK YOU ★
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Grand total strip — looks like a register tape summary at the bottom */}
-                    <div
-                      className="relative overflow-hidden bg-zinc-900 px-5 py-4 font-mono text-zinc-50 shadow-md dark:bg-zinc-100 dark:text-zinc-900"
-                      style={{
-                        maskImage:
-                          'radial-gradient(circle at 6px 0, transparent 4px, black 4.5px), radial-gradient(circle at 6px 100%, transparent 4px, black 4.5px)',
-                        WebkitMaskImage:
-                          'radial-gradient(circle at 6px 0, transparent 4px, black 4.5px), radial-gradient(circle at 6px 100%, transparent 4px, black 4.5px)',
-                        maskComposite: 'intersect',
-                        WebkitMaskComposite: 'source-in',
-                        maskSize: '12px 100%, 12px 100%',
-                        maskRepeat: 'repeat-x, repeat-x',
-                        maskPosition: 'top, bottom',
-                      }}
-                    >
-                      <div className="flex flex-col gap-1.5 text-xs">
-                        <div className="flex items-baseline justify-between gap-3">
-                          <span className="text-[10px] uppercase tracking-widest opacity-75">Receipts</span>
-                          <span className="tabular-nums">{tenureGiftRows.length}</span>
-                        </div>
-                        <div className="border-t border-dashed border-current/30" />
-                        <div className="flex items-baseline justify-between gap-3">
-                          <span className="text-[12px] font-bold uppercase tracking-[0.18em]">
-                            Period Total
-                          </span>
-                          <span className="text-lg font-bold tabular-nums">
-                            {formatPHP(totalTenureGiftsPHP)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            )}
           </div>
         );
       }
       case 5: {
+        // ── Tenure Gifts ───────────────────────────────────────────────────────
+        const totalTenureGiftsPHP = tenureGiftRows.reduce(
+          (s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0),
+          0,
+        );
+        const setTenureStatus = (id: string, status: 'approved' | 'rejected' | 'pending') => {
+          setTenureGiftAccountingStatus((prev) => {
+            const next = { ...prev };
+            if (status === 'pending') delete next[id];
+            else next[id] = status;
+            return next;
+          });
+        };
+        const approvedCount = tenureGiftRows.filter((r) => tenureGiftAccountingStatus[r.id] === 'approved').length;
+        const pendingCount = tenureGiftRows.filter((r) => !tenureGiftAccountingStatus[r.id]).length;
+        const approvedTotalPHP = tenureGiftRows
+          .filter((r) => tenureGiftAccountingStatus[r.id] === 'approved')
+          .reduce((s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0), 0);
+        const monthLabelTenure = pabMonthRange
+          ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
+          : 'Active PAB month';
+        return (
+          <div className="flex min-w-0 flex-col gap-5">
+            {/* Header banner */}
+            <div className="flex flex-col gap-1 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 p-5 shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-emerald-950/15">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
+                <Gift className="h-3.5 w-3.5" /> Tenure Gifts · {monthLabelTenure}
+              </div>
+              <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                HR-approved tenure gifts queued for this payroll
+              </h2>
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                Each gift needs an Accounting <span className="font-mono">approve</span> to reach dispatch. Rejected and pending gifts are skipped at validation.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+                <span className="rounded-full border border-emerald-300/70 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  {approvedCount} of {tenureGiftRows.length} approved · {formatPHP(approvedTotalPHP)}
+                </span>
+                {pendingCount > 0 && (
+                  <span className="rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-0.5 font-medium text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+                    {pendingCount} pending
+                  </span>
+                )}
+                <span className="text-zinc-500 dark:text-zinc-400">
+                  Period total: {formatPHP(totalTenureGiftsPHP)}
+                </span>
+              </div>
+            </div>
+
+            {tenureGiftsLoading ? (
+              <div className="flex items-center justify-center gap-2 py-16 text-zinc-500">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-sm">Loading tenure gifts…</span>
+              </div>
+            ) : tenureGiftsError ? (
+              <p className="p-6 text-center text-xs text-rose-600 dark:text-rose-400">
+                {tenureGiftsError}
+              </p>
+            ) : tenureGiftRows.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 py-16 text-center text-zinc-500 dark:text-zinc-400">
+                <Gift className="h-10 w-10 opacity-25" />
+                <p className="text-sm">No tenure gifts approved in this period.</p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-emerald-200/70 ring-1 ring-emerald-500/8 dark:border-emerald-900/50 dark:ring-emerald-400/10">
+                <table className="w-full text-sm">
+                  <thead className="border-b border-emerald-100 bg-emerald-50/80 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 backdrop-blur dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-300">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left">Recipient</th>
+                      <th className="px-3 py-2.5 text-left">Milestone</th>
+                      <th className="px-3 py-2.5 text-left">Gift</th>
+                      <th className="px-3 py-2.5 text-left">Approved by</th>
+                      <th className="px-3 py-2.5 text-left">Issued</th>
+                      <th className="px-3 py-2.5 text-right">Amount</th>
+                      <th className="px-3 py-2.5 text-center">Status</th>
+                      <th className="px-3 py-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-emerald-50 bg-white dark:divide-emerald-950/30 dark:bg-zinc-950/40">
+                    {tenureGiftRows.map((r) => {
+                      const status: 'approved' | 'rejected' | 'pending' =
+                        (tenureGiftAccountingStatus[r.id] as 'approved' | 'rejected' | undefined) ?? 'pending';
+                      return (
+                        <tr key={r.id} className="transition-colors hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15">
+                          <td className="px-4 py-3 font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.personal_email}</td>
+                          <td className="px-3 py-3 text-xs text-zinc-600 dark:text-zinc-400">
+                            {r.milestone_index * 6}-month · #{r.milestone_index}
+                          </td>
+                          <td className="px-3 py-3 text-sm text-zinc-800 dark:text-zinc-200">{r.gift_name}</td>
+                          <td className="px-3 py-3 text-xs text-zinc-600 dark:text-zinc-400">{r.decided_by || '—'}</td>
+                          <td className="px-3 py-3 text-xs text-zinc-600 dark:text-zinc-400 tabular-nums">
+                            {new Date(r.decided_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+                          </td>
+                          <td className="px-3 py-3 text-right font-medium text-zinc-900 dark:text-white">
+                            {formatPHP(r.gift_price_php)}
+                          </td>
+                          <td className="px-3 py-3 text-center">
+                            <span className={cn(
+                              'rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                              status === 'approved'
+                                ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300'
+                                : status === 'rejected'
+                                ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-700/50 dark:bg-red-950/30 dark:text-red-300'
+                                : 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300',
+                            )}>
+                              {status}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex items-center justify-end gap-2">
+                              {status !== 'approved' && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 border-emerald-500/40 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                                  onClick={() => setTenureStatus(r.id, 'approved')}
+                                >
+                                  Approve
+                                </Button>
+                              )}
+                              {status !== 'rejected' && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 border-red-500/40 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+                                  onClick={() => setTenureStatus(r.id, 'rejected')}
+                                >
+                                  Reject
+                                </Button>
+                              )}
+                              {status !== 'pending' && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-zinc-500"
+                                  onClick={() => setTenureStatus(r.id, 'pending')}
+                                >
+                                  Reset
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="border-t-2 border-emerald-200/60 bg-emerald-50/40 dark:border-emerald-800/40 dark:bg-emerald-950/30">
+                    <tr>
+                      <td colSpan={5} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                        Approved total ({approvedCount} of {tenureGiftRows.length})
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                        {formatPHP(approvedTotalPHP)}
+                      </td>
+                      <td colSpan={2} className="px-3 py-2.5 text-right text-[11px] text-zinc-500 dark:text-zinc-500 tabular-nums">
+                        Period total: {formatPHP(totalTenureGiftsPHP)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      }
+      case 6: {
         // ── Contractors ────────────────────────────────────────────────────────
         const updateInvoiceStatus = async (id: string, status: 'approved' | 'rejected' | 'pending') => {
           setContractorInvoicesUpdating(id);
@@ -7465,25 +7450,36 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
         const rejectedInvoices = contractorInvoices.filter((i) => i.status === 'rejected');
         const approvedTotal = approvedInvoices.reduce((s, i) => s + (i.total ?? 0), 0);
 
+        const monthLabelContractors = pabMonthRange
+          ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
+          : 'Active PAB month';
         return (
           <div className="flex min-w-0 flex-col gap-5">
-            {/* Header */}
-            <div className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-white via-zinc-50/80 to-blue-50/25 p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:from-zinc-950/50 dark:via-zinc-900/40 dark:to-blue-950/15">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Contractor Invoices</h3>
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400">Review and approve invoices before dispatch</p>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  {pendingInvoices.length > 0 && (
-                    <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                      {pendingInvoices.length} pending
-                    </Badge>
-                  )}
-                  <Badge className="border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                    {formatPHP(approvedTotal)} approved
-                  </Badge>
-                </div>
+            {/* Header banner */}
+            <div className="flex flex-col gap-1 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 p-5 shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-emerald-950/15">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
+                <HardHat className="h-3.5 w-3.5" /> Contractors · {monthLabelContractors}
+              </div>
+              <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+                Contractor invoices queued for this payroll
+              </h2>
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                Review pending invoices and approve them before dispatch. Rejected and pending invoices are skipped.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+                <span className="rounded-full border border-emerald-300/70 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  {approvedInvoices.length} approved · {formatPHP(approvedTotal)}
+                </span>
+                {pendingInvoices.length > 0 && (
+                  <span className="rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-0.5 font-medium text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+                    {pendingInvoices.length} pending
+                  </span>
+                )}
+                {rejectedInvoices.length > 0 && (
+                  <span className="rounded-full border border-rose-300/70 bg-rose-50 px-2.5 py-0.5 font-medium text-rose-800 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-200">
+                    {rejectedInvoices.length} rejected
+                  </span>
+                )}
               </div>
             </div>
 
@@ -7498,21 +7494,21 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                 <p className="text-sm">No contractor invoices have been submitted yet.</p>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+              <div className="overflow-hidden rounded-xl border border-emerald-200/70 ring-1 ring-emerald-500/8 dark:border-emerald-900/50 dark:ring-emerald-400/10">
                 <table className="w-full text-sm">
-                  <thead className="bg-zinc-900 text-white dark:bg-zinc-800">
+                  <thead className="border-b border-emerald-100 bg-emerald-50/80 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 backdrop-blur dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-300">
                     <tr>
-                      <th className="px-4 py-2.5 text-left text-xs font-semibold">Contractor</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold">Invoice #</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold">Date</th>
-                      <th className="px-3 py-2.5 text-right text-xs font-semibold">Total</th>
-                      <th className="px-3 py-2.5 text-center text-xs font-semibold">Status</th>
-                      <th className="px-3 py-2.5 text-right text-xs font-semibold">Actions</th>
+                      <th className="px-4 py-2.5 text-left">Contractor</th>
+                      <th className="px-3 py-2.5 text-left">Invoice #</th>
+                      <th className="px-3 py-2.5 text-left">Date</th>
+                      <th className="px-3 py-2.5 text-right">Total</th>
+                      <th className="px-3 py-2.5 text-center">Status</th>
+                      <th className="px-3 py-2.5 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800 dark:bg-zinc-900">
+                  <tbody className="divide-y divide-emerald-50 bg-white dark:divide-emerald-950/30 dark:bg-zinc-950/40">
                     {contractorInvoices.map((inv) => (
-                      <tr key={inv.id} className="transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50">
+                      <tr key={inv.id} className="transition-colors hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15">
                         <td className="px-4 py-3">
                           <div className="font-medium text-zinc-900 dark:text-white">{inv.from_entity_name || inv.from_name || '—'}</div>
                           <div className="font-mono text-[11px] text-zinc-500">{inv.contractor_email}</div>
@@ -7573,12 +7569,12 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                     ))}
                   </tbody>
                   {approvedInvoices.length > 0 && (
-                    <tfoot>
-                      <tr className="border-t border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
-                        <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+                    <tfoot className="border-t-2 border-emerald-200/60 bg-emerald-50/40 dark:border-emerald-800/40 dark:bg-emerald-950/30">
+                      <tr>
+                        <td colSpan={3} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
                           Approved total ({approvedInvoices.length} invoice{approvedInvoices.length !== 1 ? 's' : ''})
                         </td>
-                        <td className="px-3 py-2.5 text-right text-sm font-bold text-emerald-700 dark:text-emerald-400">
+                        <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                           {formatPHP(approvedTotal)}
                         </td>
                         <td colSpan={2} />
@@ -7591,7 +7587,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
           </div>
         );
       }
-      case 6: {
+      case 7: {
         const finalPayRows = effectiveCalcResults
           .map(r => {
           const rr = ratesByEmail.get(normEmail(r.email) ?? '');
@@ -7600,9 +7596,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
             ...r,
             deptKey: employeeDepts[r.email] ?? null,
             deptName: DEPARTMENTS.find(d => d.key === employeeDepts[r.email])?.name ?? '—',
-            bonusTotal: bonusTotals[r.email] ?? 0,
+            bonusTotal: getEffectiveBonus(r.email),
             mesaDeduction: mesaDed,
-            finalPay: (r.initialPay ?? 0) + (bonusTotals[r.email] ?? 0) - mesaDed,
+            finalPay: (r.initialPay ?? 0) + getEffectiveBonus(r.email) - mesaDed,
           };
           })
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -7628,6 +7624,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
             if (row.status !== 'accounting_approved' && row.status !== 'approved') continue;
             const em = (row.work_email ?? '').trim().toLowerCase();
             if (!em) continue;
+            // Session-only deletes from the Orphanage step.
+            if (hiddenVisitIds.has(`${em}|${row.dispute_date}`)) continue;
+            if (hiddenWageEmails.has(em)) continue;
             hoursByEmail.set(em, (hoursByEmail.get(em) ?? 0) + (row.override_hours ?? 8));
           }
           let total = 0;
@@ -7637,7 +7636,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
           }
           return total;
         })();
-        const approvedStepBudgetRequestRows = budgetRequestRows.filter((r) => r.status === 'approved');
+        const approvedStepBudgetRequestRows = budgetRequestRows.filter(
+          (r) => r.status === 'approved' && !hiddenBudgetIds.has(r.id),
+        );
         const stepBudgetRequestsPHP = approvedStepBudgetRequestRows.reduce((s, r) => {
           const amount = Number(r.final_amount ?? 0);
           return s + (Number.isFinite(amount) ? amount : 0);
@@ -7647,10 +7648,12 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
             (s, r) => s + (Number.isFinite(r.total_usd) ? r.total_usd : 0),
             0,
           ) * usdToPhpRate;
-        const stepTenureGiftsPHP = tenureGiftRows.reduce(
-          (s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0),
-          0,
-        );
+        const stepTenureGiftsPHP = tenureGiftRows
+          .filter((r) => tenureGiftAccountingStatus[r.id] === 'approved')
+          .reduce(
+            (s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0),
+            0,
+          );
         const stepContractorsPHP = contractorInvoices
           .filter((i) => i.status === 'approved')
           .reduce((s, i) => s + (i.total ?? 0), 0);
@@ -7740,7 +7743,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                       <span className="font-mono tabular-nums">{formatPHP(stepGiftsPHP)}</span>
                     </div>
                     <div className="flex items-center justify-between gap-2">
-                      <span>Tenure gifts ({tenureGiftRows.length})</span>
+                      <span>Tenure gifts ({tenureGiftRows.filter((r) => tenureGiftAccountingStatus[r.id] === 'approved').length} approved)</span>
                       <span className="font-mono tabular-nums">{formatPHP(stepTenureGiftsPHP)}</span>
                     </div>
                     {stepContractorsPHP > 0 && (
@@ -7935,7 +7938,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
           </div>
         );
       }
-      case 7:
+      case 8:
         return (
           <div
             className={cn(
@@ -8067,13 +8070,13 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                       startedAt: wizardStartedAt,
                       dispatchedAt: new Date(),
                       employees: dispatchData.rows,
-                      budgetRequests: budgetRequestRows.filter(r => r.status === 'approved'),
+                      budgetRequests: budgetRequestRows.filter(r => r.status === 'approved' && !hiddenBudgetIds.has(r.id)),
                       giftPayments: giftPaymentRows,
-                      tenureGifts: tenureGiftRows,
+                      tenureGifts: tenureGiftRows.filter((r) => tenureGiftAccountingStatus[r.id] === 'approved'),
                       usdToPhpRate,
                     });
                     setReportsTab('salaries');
-                    setCurrentStep(8);
+                    setCurrentStep(9);
                   } catch (err) {
                     toast.error('Dispatch failed', {
                       description: err instanceof Error ? err.message : String(err),
@@ -8089,17 +8092,24 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
             </div>
           </div>
         );
-      case 8: {
-        const snap = reportSnapshot;
-        if (!snap) {
-          return (
-            <div className="flex flex-col items-center justify-center gap-4 py-20 text-zinc-400">
-              <BarChart3 className="size-10 opacity-40" />
-              <p className="text-sm">No dispatch report yet. Complete a payroll run to see the summary here.</p>
-              <Button variant="outline" size="sm" onClick={() => setCurrentStep(1)}>Back to Start</Button>
-            </div>
-          );
-        }
+      case 9: {
+        const isDraft = reportSnapshot == null;
+        // When dispatch hasn't happened, synthesize a live preview from the same
+        // sources the dispatch call would package up. Displayed with a DRAFT
+        // watermark — once dispatch fires, the real snapshot replaces it.
+        const snap = reportSnapshot ?? {
+          startedAt: wizardStartedAt,
+          dispatchedAt: new Date(),
+          employees: dispatchData.rows,
+          budgetRequests: budgetRequestRows.filter(
+            (r) => r.status === 'approved' && !hiddenBudgetIds.has(r.id),
+          ),
+          giftPayments: giftPaymentRows,
+          tenureGifts: tenureGiftRows.filter(
+            (r) => tenureGiftAccountingStatus[r.id] === 'approved',
+          ),
+          usdToPhpRate,
+        };
 
         const durationMs = snap.dispatchedAt.getTime() - snap.startedAt.getTime();
         const durationMins = Math.floor(durationMs / 60000);
@@ -8125,27 +8135,66 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
         ] as const;
 
         return (
-          <div className="flex min-w-0 flex-col gap-5">
+          <div className={cn("relative flex min-w-0 flex-col gap-5", isDraft && "isolate")}>
+            {/* Simple Biz logo watermark — visible only in draft mode */}
+            {isDraft && (
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 -z-0 select-none overflow-hidden"
+              >
+                <div
+                  className="absolute inset-0 grid place-items-center opacity-[0.06] dark:opacity-[0.08]"
+                  style={{ transform: 'rotate(-22deg) scale(1.4)', transformOrigin: 'center' }}
+                >
+                  <div className="grid grid-cols-3 gap-x-32 gap-y-24">
+                    {Array.from({ length: 12 }).map((_, i) => (
+                      <img
+                        key={i}
+                        src="/simple-logo.png"
+                        alt=""
+                        className="h-24 w-auto object-contain"
+                        draggable={false}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Timestamp banner */}
-            <Card className="border-indigo-200/60 bg-indigo-50/60 dark:border-indigo-800/30 dark:bg-indigo-950/20">
+            <Card className={cn(
+              isDraft
+                ? "border-amber-300/70 bg-amber-50/60 dark:border-amber-700/40 dark:bg-amber-950/20"
+                : "border-indigo-200/60 bg-indigo-50/60 dark:border-indigo-800/30 dark:bg-indigo-950/20",
+            )}>
               <CardContent className="flex flex-wrap items-center gap-6 px-5 py-4">
-                <div className="flex items-center gap-2 text-xs text-indigo-700 dark:text-indigo-300">
+                {isDraft && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/70 bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.18em] text-amber-800 dark:border-amber-600/50 dark:bg-amber-950/60 dark:text-amber-200">
+                    <Clock className="size-3 shrink-0" />
+                    Draft · not yet dispatched
+                  </span>
+                )}
+                <div className={cn("flex items-center gap-2 text-xs", isDraft ? "text-amber-800 dark:text-amber-300" : "text-indigo-700 dark:text-indigo-300")}>
                   <Clock className="size-3.5 shrink-0" />
                   <span className="font-medium">Started</span>
                   <span className="font-mono">{fmt(snap.startedAt)}</span>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-indigo-700 dark:text-indigo-300">
-                  <Send className="size-3.5 shrink-0" />
-                  <span className="font-medium">Dispatched</span>
-                  <span className="font-mono">{fmt(snap.dispatchedAt)}</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300">
-                  <Timer className="size-3.5 shrink-0" />
-                  <span className="font-medium">Duration</span>
-                  <span className="font-mono font-semibold">{durationLabel}</span>
-                </div>
-                <div className="ml-auto flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400">
-                  <span className="font-medium">Total Outflow</span>
+                {!isDraft && (
+                  <>
+                    <div className="flex items-center gap-2 text-xs text-indigo-700 dark:text-indigo-300">
+                      <Send className="size-3.5 shrink-0" />
+                      <span className="font-medium">Dispatched</span>
+                      <span className="font-mono">{fmt(snap.dispatchedAt)}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-300">
+                      <Timer className="size-3.5 shrink-0" />
+                      <span className="font-medium">Duration</span>
+                      <span className="font-mono font-semibold">{durationLabel}</span>
+                    </div>
+                  </>
+                )}
+                <div className={cn("ml-auto flex items-center gap-2 text-xs", isDraft ? "text-amber-700 dark:text-amber-300" : "text-indigo-600 dark:text-indigo-400")}>
+                  <span className="font-medium">{isDraft ? 'Projected Outflow' : 'Total Outflow'}</span>
                   <span className="font-mono font-bold text-sm">{formatPHP(totalSalaries + totalBudget + totalGifts + totalTenureGifts)}</span>
                 </div>
               </CardContent>
@@ -8175,12 +8224,91 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
               ))}
             </div>
 
+            {/* Export toolbar — CSV download for the active sub-tab */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                {isDraft
+                  ? 'Draft preview · numbers reflect current wizard state.'
+                  : `Dispatched ${fmt(snap.dispatchedAt)}.`}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-2 border-emerald-300/70 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+                onClick={() => {
+                  const salariesAoa: (string | number | null)[][] = [
+                    ['Employee', 'Email', 'Department', 'Hours', 'Regular', 'OT', 'Bonuses', 'MESA', 'Net Pay'],
+                    ...snap.employees.map((e) => [
+                      e.name ?? '',
+                      e.email,
+                      e.department_name ?? '',
+                      e.hours.total,
+                      e.pay_php.regular ?? null,
+                      e.pay_php.ot ?? null,
+                      e.pay_php.bonuses_total,
+                      e.pay_php.mesa_deduction,
+                      e.pay_php.final,
+                    ]),
+                  ];
+                  const budgetAoa: (string | number | null)[][] = [
+                    ['Submitter', 'Visit Type', 'Submitted', 'Approved By', 'Approved On', 'Amount (PHP)'],
+                    ...snap.budgetRequests.map((r) => [
+                      r.submitter_email,
+                      r.visit_type,
+                      r.submitted_at,
+                      r.decided_by ?? '',
+                      r.decided_at ?? '',
+                      Number(r.final_amount ?? 0),
+                    ]),
+                  ];
+                  const giftsAoa: (string | number | null)[][] = [
+                    ['Kind', 'Recipient/Vendor', 'Detail', 'Date', 'Status/Approved By', 'Amount (USD)', 'Amount (PHP)'],
+                    ...snap.giftPayments.map((g) => [
+                      'vendor',
+                      g.vendor_name,
+                      `${g.period_label} · ${g.batch_label}`,
+                      g.date_sent ?? '',
+                      g.status,
+                      g.total_usd,
+                      g.total_usd * snap.usdToPhpRate,
+                    ]),
+                    ...snap.tenureGifts.map((t) => [
+                      'tenure',
+                      t.personal_email,
+                      t.gift_name ?? '',
+                      t.decided_at,
+                      t.decided_by ?? '',
+                      null,
+                      t.gift_price_php ?? null,
+                    ]),
+                  ];
+
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(salariesAoa), 'Salaries');
+                  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(budgetAoa), 'Budget Requests');
+                  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(giftsAoa), 'Gifts');
+
+                  // Timestamp like "2026-05-14 09-32-18" — filesystem-safe (no colons).
+                  const d = snap.startedAt;
+                  const pad = (n: number) => String(n).padStart(2, '0');
+                  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+                  const filename = `Payroll Wizard - ${isDraft ? 'Draft' : 'Official'} - ${stamp}.xlsx`;
+                  XLSX.writeFile(wb, filename);
+                  toast.success(`Downloaded ${filename}`);
+                }}
+              >
+                <Download className="size-3.5" />
+                Export XLSX{isDraft && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">Draft</span>}
+              </Button>
+            </div>
+
             {/* Salaries / Wages */}
             {reportsTab === 'salaries' && (
               <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-                <div className="overflow-x-auto">
+                <div className="max-h-[520px] overflow-auto">
                   <table className="w-full border-collapse text-[12.5px]">
-                    <thead>
+                    <thead className="sticky top-0 z-10">
                       <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
                         {['Employee', 'Department', 'Hours', 'Regular', 'OT', 'Bonuses', 'MESA', 'Net Pay'].map(h => (
                           <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
@@ -8224,9 +8352,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                     <p className="text-sm">No approved budget requests this cycle.</p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <div className="max-h-[520px] overflow-auto">
                     <table className="w-full border-collapse text-[12.5px]">
-                      <thead>
+                      <thead className="sticky top-0 z-10">
                         <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
                           {['Submitter', 'Visit Type', 'Submitted', 'Approved By', 'Approved On', 'Amount'].map(h => (
                             <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
@@ -8269,9 +8397,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                   {snap.giftPayments.length === 0 ? (
                     <p className="px-4 py-8 text-center text-sm text-zinc-400">No gift payments this cycle.</p>
                   ) : (
-                    <div className="overflow-x-auto">
+                    <div className="max-h-[360px] overflow-auto">
                       <table className="w-full border-collapse text-[12.5px]">
-                        <thead>
+                        <thead className="sticky top-0 z-10">
                           <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
                             {['Vendor', 'Period', 'Batch', 'Date Sent', 'Status', 'Amount (USD)', 'Amount (PHP)'].map(h => (
                               <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
@@ -8305,9 +8433,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
                   {snap.tenureGifts.length === 0 ? (
                     <p className="px-4 py-8 text-center text-sm text-zinc-400">No tenure gifts this cycle.</p>
                   ) : (
-                    <div className="overflow-x-auto">
+                    <div className="max-h-[360px] overflow-auto">
                       <table className="w-full border-collapse text-[12.5px]">
-                        <thead>
+                        <thead className="sticky top-0 z-10">
                           <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
                             {['Employee', 'Gift', 'Milestone', 'Approved By', 'Approved On', 'Amount'].map(h => (
                               <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>

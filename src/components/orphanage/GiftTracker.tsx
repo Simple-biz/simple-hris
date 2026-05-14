@@ -580,25 +580,25 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
-        <header className="relative overflow-hidden rounded-2xl border border-pink-100/90 bg-gradient-to-br from-pink-600 via-rose-600 to-zinc-900 px-5 py-7 text-white shadow-lg shadow-pink-600/20 dark:border-pink-900/50 dark:from-pink-700 dark:via-rose-900 dark:to-black sm:px-7">
+        <header className="relative overflow-hidden rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-500 via-teal-600 to-zinc-900 px-5 py-7 text-white shadow-lg shadow-emerald-600/20 dark:border-emerald-900/50 dark:from-emerald-600 dark:via-teal-900 dark:to-black sm:px-7">
           <div
             className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/15 blur-3xl"
             aria-hidden
           />
           <div
-            className="absolute -bottom-12 left-8 h-32 w-32 rounded-full bg-rose-300/25 blur-2xl"
+            className="absolute -bottom-12 left-8 h-32 w-32 rounded-full bg-teal-300/25 blur-2xl"
             aria-hidden
           />
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
             <div className="flex min-w-0 flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-pink-100/95">
+              <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-emerald-100/95">
                 <Sparkles className="h-3 w-3 shrink-0" />
                 Gift tracker
               </div>
               <h1 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
                 Six-month gifts &amp; tenure milestones
               </h1>
-              <p className="max-w-2xl text-sm leading-relaxed text-pink-100/90">
+              <p className="max-w-2xl text-sm leading-relaxed text-emerald-100/90">
                 Every 6 months an employee stays with the company they earn a gift. Color-coded badges flag who&apos;s
                 close — green at 3 months out, orange at 1 month, red within a week.
               </p>
@@ -622,7 +622,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
 
         {/* Sub-tab toggle — Roster vs editable Catalog. */}
         <nav
-          className="inline-flex w-full flex-wrap items-center gap-1 rounded-lg border border-pink-100/80 bg-white/80 p-1 sm:w-fit dark:border-pink-950/45 dark:bg-zinc-950/60"
+          className="inline-flex w-full flex-wrap items-center gap-1 rounded-lg border border-emerald-100/80 bg-white/80 p-1 sm:w-fit dark:border-emerald-950/45 dark:bg-zinc-950/60"
           aria-label="Gift Tracker sections"
         >
           <SubTabButton
@@ -743,10 +743,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           />
         </section>
 
-        <Card className="border-pink-100/80 bg-gradient-to-br from-white via-pink-50/30 to-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:from-zinc-950 dark:via-pink-950/12 dark:to-zinc-950 dark:ring-pink-400/10">
-          <CardHeader className="flex flex-col gap-1 border-b border-pink-100/60 pb-4 dark:border-pink-900/40">
+        <Card className="border-emerald-100/80 bg-gradient-to-br from-white via-emerald-50/30 to-white shadow-md ring-1 ring-emerald-500/8 dark:border-emerald-950/55 dark:from-zinc-950 dark:via-emerald-950/12 dark:to-zinc-950 dark:ring-emerald-400/10">
+          <CardHeader className="flex flex-col gap-1 border-b border-emerald-100/60 pb-4 dark:border-emerald-900/40">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-600/25">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25">
                 <Gift className="h-4 w-4" />
               </div>
               <CardTitle className="text-base font-semibold">Tenure gift roster</CardTitle>
@@ -762,7 +762,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(0); }}
                 placeholder="Search by name, email, or department..."
-                className="border-pink-100/70 bg-white/90 pl-9 dark:border-pink-900/50 dark:bg-zinc-900/70"
+                className="border-emerald-100/70 bg-white/90 pl-9 dark:border-emerald-900/50 dark:bg-zinc-900/70"
               />
             </div>
 
@@ -771,11 +771,11 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading roster…
               </div>
             ) : filteredRows.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-pink-200/80 bg-white/70 py-10 text-center text-sm text-zinc-600 dark:border-pink-900/50 dark:bg-zinc-950/40 dark:text-zinc-400">
+              <div className="rounded-xl border border-dashed border-emerald-200/80 bg-white/70 py-10 text-center text-sm text-zinc-600 dark:border-emerald-900/50 dark:bg-zinc-950/40 dark:text-zinc-400">
                 {rows.length === 0 ? 'No employees in the master list yet.' : 'No rows match your search.'}
               </div>
             ) : (
-              <div className="overflow-hidden rounded-xl border border-pink-100/90 ring-1 ring-pink-500/10 dark:border-pink-900/60 dark:ring-pink-400/10">
+              <div className="overflow-hidden rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
                 <AnimatePresence mode="wait" initial={false} custom={pageDir}>
                 <motion.table
                   key={page}
@@ -791,7 +791,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                   transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                   className="w-full min-w-[760px] text-left text-sm"
                 >
-                  <thead className="bg-gradient-to-r from-pink-50 via-white to-pink-50/80 text-xs text-zinc-600 dark:from-pink-950/50 dark:via-zinc-950 dark:to-pink-950/40 dark:text-zinc-400">
+                  <thead className="bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
                     <tr>
                       <th className="px-4 py-3 font-semibold">Employee</th>
                       <th className="px-4 py-3 font-semibold">Start date</th>
@@ -800,7 +800,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                       <th className="px-4 py-3 font-semibold w-[1%]" />
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-pink-100/70 bg-white/80 dark:divide-pink-900/35 dark:bg-zinc-950/40">
+                  <tbody className="divide-y divide-emerald-100/70 bg-white/80 dark:divide-emerald-900/35 dark:bg-zinc-950/40">
                     {filteredRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((row) => {
                       const isOpen = expanded.has(row.key);
                       const noteVal = noteValue(row.key);
@@ -838,7 +838,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                 </motion.table>
                 </AnimatePresence>
                 {filteredRows.length > PAGE_SIZE && (
-                  <div className="flex items-center justify-between border-t border-pink-100/60 bg-white/70 px-4 py-3 dark:border-pink-900/40 dark:bg-zinc-950/40">
+                  <div className="flex items-center justify-between border-t border-emerald-100/60 bg-white/70 px-4 py-3 dark:border-emerald-900/40 dark:bg-zinc-950/40">
                     <span className="text-xs text-zinc-500 dark:text-zinc-400">
                       Page {page + 1} of {Math.ceil(filteredRows.length / PAGE_SIZE)}
                       {' · '}{filteredRows.length} total
@@ -847,7 +847,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-7 px-3 text-xs border-pink-100/70 dark:border-pink-900/50"
+                        className="h-7 px-3 text-xs border-emerald-100/70 dark:border-emerald-900/50"
                         disabled={page === 0}
                         onClick={() => { setPageDir(-1); setPage((p) => Math.max(0, p - 1)); }}
                       >
@@ -856,7 +856,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-7 px-3 text-xs border-pink-100/70 dark:border-pink-900/50"
+                        className="h-7 px-3 text-xs border-emerald-100/70 dark:border-emerald-900/50"
                         disabled={(page + 1) * PAGE_SIZE >= filteredRows.length}
                         onClick={() => { setPageDir(1); setPage((p) => p + 1); }}
                       >
@@ -889,7 +889,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           </DialogHeader>
           {editDraft && (
             <div className="grid gap-3">
-              <div className="rounded-md border border-pink-100 bg-pink-50/40 px-3 py-2 text-[11px] dark:border-pink-900/40 dark:bg-pink-950/15">
+              <div className="rounded-md border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-[11px] dark:border-emerald-900/40 dark:bg-emerald-950/15">
                 <div className="font-mono text-zinc-600 dark:text-zinc-400">
                   {editDraft.row.personal_email}
                 </div>
@@ -935,7 +935,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                     setEditDraft((d) => (d ? { ...d, notes: e.target.value } : d))
                   }
                   disabled={editDraft.saving}
-                  className="min-h-[72px] w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm shadow-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-pink-400/40 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-950"
+                  className="min-h-[72px] w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm shadow-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/40 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-950"
                 />
               </div>
               <div className="flex justify-end gap-2 pt-1">
@@ -949,7 +949,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                 <Button
                   onClick={() => void submitEditDialog()}
                   disabled={editDraft.saving}
-                  className="bg-pink-600 text-white hover:bg-pink-700"
+                  className="bg-emerald-600 text-white hover:bg-emerald-700"
                 >
                   {editDraft.saving && (
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -986,8 +986,8 @@ function SubTabButton({
       className={cn(
         'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors',
         active
-          ? 'bg-gradient-to-r from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-600/25'
-          : 'text-zinc-600 hover:bg-pink-50 hover:text-pink-900 dark:text-zinc-300 dark:hover:bg-pink-950/40 dark:hover:text-pink-100',
+          ? 'bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25'
+          : 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
       )}
     >
       <Icon className="h-3.5 w-3.5" />
@@ -997,8 +997,8 @@ function SubTabButton({
           className={cn(
             'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
             active
-              ? 'bg-white text-pink-700'
-              : 'bg-pink-600 text-white',
+              ? 'bg-white text-emerald-700'
+              : 'bg-emerald-600 text-white',
           )}
         >
           {badge}
@@ -1044,7 +1044,7 @@ function RowItem({
   return (
     <>
       <tr
-        className="cursor-pointer align-top transition-colors hover:bg-pink-50/35 dark:hover:bg-pink-950/25"
+        className="cursor-pointer align-top transition-colors hover:bg-emerald-50/35 dark:hover:bg-emerald-950/25"
         onClick={onToggle}
       >
         <td className="px-4 py-3">
@@ -1052,7 +1052,7 @@ function RowItem({
             <span className="font-medium text-zinc-900 dark:text-zinc-100">{row.name}</span>
             <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{row.email}</span>
             {row.department ? (
-              <span className="mt-0.5 text-[11px] text-pink-600/80 dark:text-pink-400/80">{row.department}</span>
+              <span className="mt-0.5 text-[11px] text-emerald-600/80 dark:text-emerald-400/80">{row.department}</span>
             ) : null}
           </div>
         </td>
@@ -1103,7 +1103,7 @@ function RowItem({
       <AnimatePresence initial={false}>
         {isOpen && (
           <tr>
-            <td colSpan={5} className="bg-pink-50/30 p-0 dark:bg-pink-950/15">
+            <td colSpan={5} className="bg-emerald-50/30 p-0 dark:bg-emerald-950/15">
               <motion.div
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
@@ -1114,16 +1114,16 @@ function RowItem({
                 <div className="grid gap-5 px-5 py-5 lg:grid-cols-3">
                   {/* History */}
                   <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-pink-700 dark:text-pink-300">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
                       <Sparkles className="h-3.5 w-3.5" />
                       Milestone history
                     </div>
                     {row.history.length === 0 ? (
-                      <p className="rounded-md border border-dashed border-pink-200 bg-white/60 px-3 py-3 text-xs text-zinc-500 dark:border-pink-900/50 dark:bg-zinc-950/40">
+                      <p className="rounded-md border border-dashed border-emerald-200 bg-white/60 px-3 py-3 text-xs text-zinc-500 dark:border-emerald-900/50 dark:bg-zinc-950/40">
                         No 6-month milestones reached yet.
                       </p>
                     ) : (
-                      <ol className="relative ml-1 flex flex-col gap-2 border-l-2 border-pink-200/70 pl-4 dark:border-pink-800/70">
+                      <ol className="relative ml-1 flex flex-col gap-2 border-l-2 border-emerald-200/70 pl-4 dark:border-emerald-800/70">
                         {row.history.map((m, idx) => (
                           <motion.li
                             key={m.index}
@@ -1132,7 +1132,7 @@ function RowItem({
                             transition={{ delay: idx * 0.03, duration: 0.25 }}
                             className="relative"
                           >
-                            <span className="absolute -left-[22px] top-1 h-3 w-3 rounded-full bg-gradient-to-br from-pink-500 to-rose-700 ring-2 ring-white dark:ring-zinc-950" />
+                            <span className="absolute -left-[22px] top-1 h-3 w-3 rounded-full bg-gradient-to-br from-emerald-500 to-teal-700 ring-2 ring-white dark:ring-zinc-950" />
                             <div className="flex items-baseline justify-between gap-3 rounded-md bg-white/80 px-3 py-1.5 text-xs shadow-sm dark:bg-zinc-950/55">
                               <span className="font-medium text-zinc-800 dark:text-zinc-200">
                                 {m.index * 6} months · #{m.index}
@@ -1147,7 +1147,7 @@ function RowItem({
 
                   {/* Notes */}
                   <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-pink-700 dark:text-pink-300">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
                       <Gift className="h-3.5 w-3.5" />
                       Notes
                     </div>
@@ -1157,7 +1157,7 @@ function RowItem({
                       onClick={(e) => e.stopPropagation()}
                       rows={5}
                       placeholder="Gift preferences, allergies, sizing, delivery address quirks…"
-                      className="w-full rounded-md border border-pink-100 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-pink-400 focus:outline-none focus:ring-2 focus:ring-pink-200 dark:border-pink-900/50 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-pink-700 dark:focus:ring-pink-900/50"
+                      className="w-full rounded-md border border-emerald-100 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:border-emerald-900/50 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-emerald-700 dark:focus:ring-emerald-900/50"
                     />
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -1170,7 +1170,7 @@ function RowItem({
                       </span>
                       <Button
                         size="sm"
-                        className="h-8 bg-gradient-to-r from-pink-600 to-rose-700 text-white shadow-sm shadow-pink-600/25 hover:from-pink-700 hover:to-rose-800"
+                        className="h-8 bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25 hover:from-emerald-700 hover:to-teal-800"
                         onClick={(e) => {
                           e.stopPropagation();
                           onNoteSave();
@@ -1189,12 +1189,12 @@ function RowItem({
 
                   {/* Shipping submissions */}
                   <div className="flex flex-col gap-2" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-pink-700 dark:text-pink-300">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
                       <Truck className="h-3.5 w-3.5" />
                       Shipping submissions
                     </div>
                     {shippingRows.length === 0 ? (
-                      <p className="rounded-md border border-dashed border-pink-200 bg-white/60 px-3 py-3 text-xs text-zinc-500 dark:border-pink-900/50 dark:bg-zinc-950/40">
+                      <p className="rounded-md border border-dashed border-emerald-200 bg-white/60 px-3 py-3 text-xs text-zinc-500 dark:border-emerald-900/50 dark:bg-zinc-950/40">
                         No shipping details submitted yet. Employees fill these out
                         starting 30 days before each milestone.
                       </p>
@@ -1207,7 +1207,7 @@ function RowItem({
                           return (
                             <li
                               key={s.id}
-                              className="rounded-md border border-pink-100 bg-white/85 p-2.5 text-xs shadow-sm dark:border-pink-900/50 dark:bg-zinc-950/55"
+                              className="rounded-md border border-emerald-100 bg-white/85 p-2.5 text-xs shadow-sm dark:border-emerald-900/50 dark:bg-zinc-950/55"
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <span className="font-semibold text-zinc-800 dark:text-zinc-200">
@@ -1295,7 +1295,7 @@ function RowItem({
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-7 border-pink-300 text-pink-700 hover:bg-pink-50 dark:border-pink-900/50 dark:text-pink-300 dark:hover:bg-pink-950/30"
+                                    className="h-7 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
                                     disabled={isDeciding || isDeleting}
                                     onClick={() => onDecideShipping(s.id, 'approved')}
                                   >
@@ -1362,13 +1362,13 @@ function StatTile({
   tone: 'pink' | 'red' | 'orange' | 'green';
 }) {
   const tones: Record<'pink' | 'red' | 'orange' | 'green', string> = {
-    pink: 'from-pink-500 to-rose-700 shadow-pink-500/30',
+    pink: 'from-emerald-500 to-teal-700 shadow-emerald-500/30',
     red: 'from-rose-500 to-rose-800 shadow-rose-500/35',
     orange: 'from-orange-500 to-amber-600 shadow-orange-500/35',
     green: 'from-emerald-500 to-emerald-700 shadow-emerald-500/35',
   };
   return (
-    <div className="group relative flex items-center gap-4 overflow-hidden rounded-xl border border-pink-100/80 bg-white/90 px-4 py-4 ring-1 ring-pink-500/5 backdrop-blur-sm transition-shadow hover:shadow-md hover:shadow-pink-500/10 dark:border-pink-950/50 dark:bg-zinc-950/75 dark:ring-pink-400/10">
+    <div className="group relative flex items-center gap-4 overflow-hidden rounded-xl border border-emerald-100/80 bg-white/90 px-4 py-4 ring-1 ring-emerald-500/5 backdrop-blur-sm transition-shadow hover:shadow-md hover:shadow-emerald-500/10 dark:border-emerald-950/50 dark:bg-zinc-950/75 dark:ring-emerald-400/10">
       <div
         className={cn(
           'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white shadow-md',
@@ -1378,10 +1378,10 @@ function StatTile({
         <Icon className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-pink-600/85 dark:text-pink-400/85">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600/85 dark:text-emerald-400/85">
           {label}
         </div>
-        <div className="mt-0.5 bg-gradient-to-br from-zinc-900 via-rose-900 to-zinc-800 bg-clip-text text-xl font-bold tabular-nums text-transparent dark:from-white dark:via-pink-200 dark:to-zinc-200 sm:text-2xl">
+        <div className="mt-0.5 bg-gradient-to-br from-zinc-900 via-teal-900 to-zinc-800 bg-clip-text text-xl font-bold tabular-nums text-transparent dark:from-white dark:via-emerald-200 dark:to-zinc-200 sm:text-2xl">
           {value}
         </div>
         <div className="mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">{hint}</div>
@@ -1488,7 +1488,7 @@ function SubmissionsPanel({
               amber: 'border-amber-500/40 bg-amber-500/15 text-amber-800 dark:text-amber-200',
               emerald: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200',
               rose: 'border-rose-500/40 bg-rose-500/15 text-rose-800 dark:text-rose-200',
-              pink: 'border-pink-500/40 bg-pink-500/15 text-pink-800 dark:text-pink-200',
+              pink: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-800 dark:text-emerald-200',
             };
             return (
               <button
@@ -1527,7 +1527,7 @@ function SubmissionsPanel({
       </div>
 
       {/* List */}
-      <Card className="overflow-hidden ring-1 ring-pink-200/60 dark:ring-pink-900/40">
+      <Card className="overflow-hidden ring-1 ring-emerald-200/60 dark:ring-emerald-900/40">
         <CardContent className="p-0">
           {filtered.length === 0 ? (
             <p className="px-6 py-14 text-center text-sm text-zinc-500 dark:text-zinc-400">
@@ -1536,7 +1536,7 @@ function SubmissionsPanel({
                 : `No ${filter === 'all' ? '' : filter} submissions match your search.`}
             </p>
           ) : (
-            <ul className="divide-y divide-pink-100/70 dark:divide-pink-900/35">
+            <ul className="divide-y divide-emerald-100/70 dark:divide-emerald-900/35">
               {filtered.map(({ sub, emailKey, name, department }) => {
                 const isDeciding = decidingId === sub.id;
                 const isDeleting = deletingId === sub.id;
@@ -1563,7 +1563,7 @@ function SubmissionsPanel({
                       </div>
                       <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-400 break-all">{emailKey}</div>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
-                        <span className="rounded-full bg-pink-600/10 px-2 py-0.5 font-semibold text-pink-700 dark:text-pink-300">
+                        <span className="rounded-full bg-emerald-600/10 px-2 py-0.5 font-semibold text-emerald-700 dark:text-emerald-300">
                           {sub.milestone_index * 6}-month gift · #{sub.milestone_index}
                         </span>
                         <span className="text-zinc-500 dark:text-zinc-400">
@@ -1574,7 +1574,7 @@ function SubmissionsPanel({
                           })}
                         </span>
                         {department && (
-                          <span className="text-pink-600/80 dark:text-pink-400/80">{department}</span>
+                          <span className="text-emerald-600/80 dark:text-emerald-400/80">{department}</span>
                         )}
                       </div>
                       <div className="mt-1 text-[10.5px] text-zinc-400 dark:text-zinc-500">
@@ -1586,7 +1586,7 @@ function SubmissionsPanel({
                     </div>
 
                     {/* Shipping payload */}
-                    <div className="min-w-0 rounded-lg border border-pink-100 bg-pink-50/40 px-3 py-2 text-xs dark:border-pink-900/40 dark:bg-pink-950/15">
+                    <div className="min-w-0 rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-xs dark:border-emerald-900/40 dark:bg-emerald-950/15">
                       <div className="grid gap-1">
                         <div>
                           <span className="font-semibold text-zinc-700 dark:text-zinc-300">Address:</span>{' '}
@@ -1676,7 +1676,7 @@ function SubmissionsPanel({
                           <Button
                             size="sm"
                             variant="outline"
-                            className="h-7 border-pink-300 text-pink-700 hover:bg-pink-50 dark:border-pink-900/50 dark:text-pink-300 dark:hover:bg-pink-950/30"
+                            className="h-7 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
                             disabled={isDeciding || isDeleting}
                             onClick={() => onDecide(sub.id, 'approved', emailKey)}
                           >

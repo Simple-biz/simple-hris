@@ -1014,8 +1014,64 @@ function SWallComposer({
 
   const canSubmit = (body.trim().length > 0 || imagePreviews.length > 0) && !posting;
 
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounterRef = useRef(0);
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.types.includes('Files')) setIsDragOver(true);
+  };
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current === 0) setIsDragOver(false);
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      setFocused(true);
+      addImages(files);
+    }
+  };
+
   return (
-    <div className="overflow-hidden rounded-2xl border border-[#ececec] bg-white shadow-[0_2px_12px_-6px_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-zinc-950">
+    <div
+      className={cn(
+        'relative overflow-hidden rounded-2xl border bg-white shadow-[0_2px_12px_-6px_rgba(0,0,0,0.06)] transition-colors duration-150 dark:bg-zinc-950',
+        isDragOver
+          ? 'border-violet-400 dark:border-violet-500'
+          : 'border-[#ececec] dark:border-zinc-800',
+      )}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drop overlay */}
+      {isDragOver && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 rounded-2xl bg-violet-50/90 dark:bg-violet-950/80">
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+            className="flex flex-col items-center gap-2"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-100 ring-2 ring-violet-300 dark:bg-violet-900/60 dark:ring-violet-600">
+              <ImagePlus className="h-6 w-6 text-violet-600 dark:text-violet-300" />
+            </div>
+            <p className="text-[13px] font-semibold text-violet-700 dark:text-violet-300">Drop to add image</p>
+          </motion.div>
+        </div>
+      )}
+
       <input
         ref={fileInputRef}
         type="file"
@@ -1038,24 +1094,23 @@ function SWallComposer({
             </button>
           ) : (
             <>
-              <div className="relative">
-                <textarea
-                  ref={textareaRef}
-                  value={body}
-                  onChange={handleBodyChange}
-                  onKeyDown={handleKeyDown}
-                  onPaste={handlePaste}
-                  onFocus={() => setFocused(true)}
-                  placeholder="Share something with the company…"
-                  rows={3}
-                  maxLength={2000}
-                  className="w-full resize-none rounded-xl border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-[13px] leading-relaxed placeholder:text-zinc-400 focus:border-violet-300 focus:outline-none focus:ring-1 focus:ring-violet-200 dark:border-zinc-800 dark:bg-zinc-900 dark:placeholder:text-zinc-600 dark:focus:border-violet-700 dark:focus:ring-violet-900/40"
-                />
+              <textarea
+                ref={textareaRef}
+                value={body}
+                onChange={handleBodyChange}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onFocus={() => setFocused(true)}
+                placeholder="Share something with the company…"
+                rows={3}
+                maxLength={2000}
+                className="w-full resize-none rounded-xl border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-[13px] leading-relaxed placeholder:text-zinc-400 focus:border-violet-300 focus:outline-none focus:ring-1 focus:ring-violet-200 dark:border-zinc-800 dark:bg-zinc-900 dark:placeholder:text-zinc-600 dark:focus:border-violet-700 dark:focus:ring-violet-900/40"
+              />
 
-              {/* @mention dropdown */}
+              {/* @mention list — inline, shows 3 rows then scrolls */}
               {mentionQuery !== null && mentionMatches.length > 0 && (
-                <div className="absolute left-0 top-full z-50 mt-1 w-72 max-h-64 overflow-y-auto overflow-x-hidden rounded-xl border border-[#ececec] bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
-                  {mentionMatches.map((profile, i) => (
+                <div className="mt-1.5 overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-lg dark:border-zinc-700/80 dark:bg-zinc-900">
+                  {mentionMatches.slice(0, 3).map((profile, i) => (
                     <button
                       key={profile.work_email}
                       type="button"
@@ -1064,26 +1119,36 @@ function SWallComposer({
                         insertMention(profile);
                       }}
                       className={cn(
-                        'flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors',
+                        'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors',
+                        'border-b border-zinc-100 last:border-0 dark:border-zinc-800',
                         i === mentionDropdownIdx
-                          ? 'bg-violet-50 dark:bg-violet-950/30'
-                          : 'hover:bg-zinc-50 dark:hover:bg-zinc-800',
+                          ? 'bg-violet-50 dark:bg-violet-950/40'
+                          : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60',
                       )}
                     >
-                      <SwallAvatar email={profile.work_email} name={profile.name} size={28} />
-                      <div className="min-w-0">
-                        <p className="truncate text-[12px] font-semibold text-zinc-900 dark:text-zinc-100">
+                      <SwallAvatar email={profile.work_email} name={profile.name} size={30} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
                           {profile.name ?? profile.work_email.split('@')[0]}
                         </p>
-                        <p className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+                        <p className="truncate text-[11px] text-zinc-400 dark:text-zinc-500">
                           {profile.work_email}
                         </p>
                       </div>
+                      {i === mentionDropdownIdx && (
+                        <span className="shrink-0 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:bg-violet-900/40 dark:text-violet-300">
+                          ↵
+                        </span>
+                      )}
                     </button>
                   ))}
+                  {mentionMatches.length > 3 && (
+                    <p className="px-3 py-1.5 text-[11px] text-zinc-400 dark:text-zinc-600">
+                      +{mentionMatches.length - 3} more — keep typing to narrow
+                    </p>
+                  )}
                 </div>
               )}
-              </div>
 
               {/* Image previews */}
               {imagePreviews.length > 0 && (

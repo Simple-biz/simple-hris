@@ -7,6 +7,7 @@ import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
   Bell,
   CalendarDays,
+  Gift,
   LayoutDashboard,
   LogIn,
   LogOut,
@@ -27,7 +28,7 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 's-wall' | 'notifications';
+export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 'gift-tracker' | 's-wall' | 'notifications';
 
 interface HrSidebarProps {
   activeTab: HrTab;
@@ -139,6 +140,7 @@ export default function HrSidebar({
             {navBtn('onboarding', 'Onboarding', LogIn)}
             {navBtn('offboarding', 'Offboarding', UserMinus)}
             {navBtn('leaves', 'Leave Requests', CalendarDays)}
+            {navBtn('gift-tracker', 'Gift Tracker', Gift)}
             {navBtn(
               'notifications',
               'Notifications',
