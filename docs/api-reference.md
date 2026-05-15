@@ -327,7 +327,8 @@ Updates the regular and overtime pay rates for an employee.
   "workEmail": "john@company.com",
   "personalEmail": "john@gmail.com",
   "regularRate": 150.00,
-  "otRate": 225.00
+  "otRate": 225.00,
+  "effectiveDate": "2026-05-21"
 }
 ```
 
@@ -337,14 +338,21 @@ Updates the regular and overtime pay rates for an employee.
 | `personalEmail` | string | At least one email required |
 | `regularRate` | number/string | Yes |
 | `otRate` | number/string | Yes |
+| `effectiveDate` | string (YYYY-MM-DD) | No — defaults to today |
+
+**Effective-date semantics** *(added 2026-05-15)*:
+- Always inserts a row into `employee_rate_history` with the given `effective_from`. Past dates are allowed (retroactive prorating).
+- If `effectiveDate <= today` → also updates the `employee_hourly_rates."Regular Rate"`/`"OT Rate"` cache + invalidates the rate-profiles cache.
+- If `effectiveDate > today` → cache stays old; payroll compute (`current-pay.ts`, `member-monthly-pay.ts`) reads from history table per day, so the new rate naturally kicks in on the effective date.
+- Notification (`employee_notifications`) is always written; tone is `positive` when any rate ticked up, `neutral` otherwise. Message reflects scheduled vs. immediate.
 
 **Response** `200`:
 ```json
-{ "success": true }
+{ "success": true, "effective_from": "2026-05-21", "applied_to_cache": false }
 ```
 
-**Tables**: Updates `employee_hourly_rates`
-**Service Role**: Depends on utility function
+**Tables**: `employee_hourly_rates` (conditional), `employee_rate_history` (always), `employee_notifications`, `audit_log`
+**Service Role**: Yes
 
 ---
 
@@ -1655,6 +1663,66 @@ Most common cause: the column-add migration (`references/add_employee_id_to_glob
 
 **Tables**: `global_master_list` (read full roster + write `employee_id`)
 **Service Role**: Required.
+
+---
+
+## 12.8 Employee Notifications *(added 2026-05-15)*
+
+### `GET /api/employee-notifications`
+
+Returns the 50 most recent notifications for `?email=`. Admin-or-self.
+
+**Response**: `{ notifications: Array<{ id, type, tone, title, message, details, read_at, created_at }> }`.
+
+### `PATCH /api/employee-notifications`
+
+Marks rows read. Body: `{ id?, ids?, email? }` — if `ids` given, marks those; otherwise marks every unread row for `email`. The `NotificationsPanel` calls this with `{ email }` 2 seconds after the panel renders so badges clear automatically.
+
+### `DELETE /api/employee-notifications?id=…`
+
+Removes a single notification row. Powers the trash-can icon on each card.
+
+**Tables**: `employee_notifications`
+**Service Role**: Yes
+
+---
+
+## 12.9 Feature Permissions *(added 2026-05-15)*
+
+Per-user, per-view, per-feature access overlay on top of `employee_roles`. See [`data-sources.md` → `employee_feature_permissions`](./data-sources.md#8-employee_feature_permissions-added-2026-05-15) for table schema.
+
+### `GET /api/employee-feature-permissions?email=…`
+
+Admin-only. Lists every active feature grant for the email. Response: `{ rows: Array<{ id, work_email, view_key, feature, access, granted_by, granted_at }> }`.
+
+### `POST /api/employee-feature-permissions`
+
+Admin-only. Upsert one permission. Body:
+```json
+{ "email": "kane@simple.biz", "view": "accounting", "feature": "rates", "access": "view" }
+```
+- `access` is one of `"hidden"` (revoke any active row — default state), `"view"`, or `"edit"`.
+- Writes an `audit_log` entry (action `feature_permission.grant` or `.revoke`).
+- Auto-bumps `auth.force_logout_map` for the affected user so their JWT reflects the new permission set on the next request — **except** when the admin is editing their own row (would self-403 the in-flight session).
+
+**Tables**: `employee_feature_permissions`, `app_settings`, `audit_log`
+**Service Role**: Yes
+
+---
+
+## 12.10 Force Logout *(added 2026-05-15)*
+
+### `POST /api/auth/force-logout`
+
+Admin-only. Stamps the target email in `app_settings.auth.force_logout_map`; the NextAuth `jwt` callback then wipes any token for that email whose `iat` is older. Used by `AdminRoles` after a role revoke. Body:
+```json
+{ "email": "carla@simple.biz", "reason": "revoked finance" }
+```
+
+Refuses self-targeted force-logouts (returns `{ success: true, skipped: 'self' }`) so admins can't lock themselves out of their own browser session.
+
+**Tables**: `app_settings`, `audit_log`
+**Service Role**: Yes
 
 ---
 

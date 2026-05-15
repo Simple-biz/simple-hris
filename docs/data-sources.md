@@ -224,7 +224,100 @@ Flat analytic table — one row per (Hubstaff cycle, employee). Backs the Weekly
 
 ---
 
-### 6. Extra Profile Tables (optional, configurable)
+### 6. `employee_rate_history` *(added 2026-05-15)*
+
+Authoritative per-employee rate history. Powers mid-cycle rate prorating: when an accountant saves a rate change with `effectiveDate = 2026-05-21` (a Wednesday), the history table records the new pair effective that date, and the payroll compute path looks up the rate as-of *each calendar day* — Mon–Tue use the old row, Wed–Sat use the new one.
+
+**Migration:** `references/create_employee_rate_history.sql` (idempotent).
+
+**Columns:**
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | gen_random_uuid() |
+| `employee_email` | text | Lower-cased by the shared `normalize_email_column` trigger |
+| `regular_rate` | text | Stringly-typed to mirror `employee_hourly_rates."Regular Rate"` |
+| `ot_rate` | text | Same |
+| `effective_from` | date | Day this row's rates start applying |
+| `note` | text | Free-text |
+| `created_by` | text | Admin email or `'system'` |
+| `created_at` | timestamptz | default now() |
+
+**Indexes:** `(lower(employee_email), effective_from desc)` + `effective_from`.
+
+**Backfill:** every existing `employee_hourly_rates` row gets a baseline history row with `effective_from = '1970-01-01'`, so `resolveRateAsOfDate(any-date)` always finds a match.
+
+**Relationship to `employee_hourly_rates`:** the `"Regular Rate"` / `"OT Rate"` columns on `employee_hourly_rates` are now a **denormalized cache of today's rate**. They're only updated when `effectiveDate <= today` — future-dated changes leave the cache stale until the date arrives. Payroll compute uses the history table.
+
+**Who reads it:**
+- `src/lib/payroll/rate-history.ts → fetchAllRateHistory()` returns a `Map<email, sorted-desc-history-rows[]>`.
+- `src/lib/payroll/current-pay.ts → computeProratedRowPay()` resolves per-day rates during Payment Dispatch compute (40h/week regular cap applied chronologically).
+- `src/lib/payroll/member-monthly-pay.ts` — same per-day prorating in the per-week loop for the Manager Dashboard member modal.
+
+**Who writes it:**
+- `POST /api/update-employee-rates` (now accepts `effectiveDate`) calls `insertRateHistoryRow()` on every save.
+
+### 7. `employee_notifications` *(added 2026-05-15)*
+
+Per-employee message feed shown in the global `NotificationsPanel` (sidebar tab). Currently surfaces rate-change notifications; reserved for future promotion (`type='promotion'`) events that combine salary + title changes.
+
+**Migration:** `references/create_employee_notifications.sql`. Adds the table to the `supabase_realtime` publication so the panel can live-update via Realtime postgres_changes.
+
+**Columns:**
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `recipient_email` | text | Lower-cased via trigger |
+| `type` | text | CHECK `'rate.change' | 'promotion'` |
+| `tone` | text | CHECK `'positive' | 'neutral'` (drives green vs gray card chrome) |
+| `title` | text | Short headline |
+| `message` | text | Body |
+| `details` | jsonb | `{ before, after, effective_from, scheduled, before_title?, after_title? }` |
+| `read_at` | timestamptz | Set by `PATCH /api/employee-notifications` (auto-fires 2s after panel render) |
+| `created_at` | timestamptz | default now() |
+
+**Tone logic** (in `POST /api/update-employee-rates`): `positive` when at least one rate ticked up, `neutral` when same/lowered. Message reflects whether the change is immediate vs. scheduled for a future date.
+
+**Sidebar badge:** `src/hooks/useEmployeeNotificationsUnread.ts` polls `/api/employee-notifications?email=…` (+ Realtime sub) and feeds the count to `EmployeeSidebar`. Badge auto-clears when the user opens the Notifications tab (panel marks unread as read 2s after display).
+
+### 8. `employee_feature_permissions` *(added 2026-05-15)*
+
+Per-user, per-view, per-feature access overlay on top of the coarse `employee_roles` grants. Granting a role like `finance` gives access to a *view* (the whole Accounting shell). This table then says which **tabs** inside that view the user can see (`'view'`) or fully use (`'edit'`). A missing row means the tab is hidden — default deny.
+
+**Migration:** `references/create_employee_feature_permissions.sql`.
+
+**Columns:**
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | |
+| `work_email` | text | Lower-cased via trigger |
+| `view_key` | text | `'accounting' | 'hr' | 'manager' | 'orphanage' | 'ceo' | 'contractor'` |
+| `feature` | text | Tab key (e.g. `'rates'`, `'payroll_wizard'`, `'payment_dispatch'`) |
+| `access` | text | CHECK `'view' | 'edit'` |
+| `granted_by`, `granted_at`, `revoked_at` | | Audit trail |
+
+**Unique constraint:** active row per `(lower(work_email), view_key, feature)` via partial index.
+
+**Catalog:** `src/lib/rbac/feature-permissions.ts → FEATURE_CATALOG` is the single source of truth for which tabs each view has. Adding a tab? Append it there and the AdminRoles grid + JWT shape pick it up automatically.
+
+**Who reads it:**
+- NextAuth `jwt` callback at sign-in: stashes `featurePerms` on the token; `session.user.featurePerms` is the runtime accessor.
+- `App.tsx` (Accounting view) fetches the same map via `/api/employee-feature-permissions?email=…` and filters tabs via `allowedAccountingTabsForUser()` / `canAccessAccountingTabForUser()`.
+
+**Who writes it:** `POST /api/employee-feature-permissions` (admin-only). Bumps `auth.force_logout_map` for the affected user so their session reloads with the new permission set — **except when the admin edits their own row** (would self-403 the in-flight session).
+
+**Admin bypass:** users with the `admin` role bypass per-tab gates entirely (`BYPASS_PERMS_ROLES` in `src/lib/rbac/accounting-tabs.ts`).
+
+### 9. `app_settings.auth.force_logout_map` *(added 2026-05-15)*
+
+Single `app_settings` key (`auth.force_logout_map`) holding a JSON map of `{ "email": "ISO-timestamp" }`. Stamps invalidate every JWT for that email whose `iat` precedes the stamp. Used to force-log-out users after a role revoke or feature-permission change. 30-second in-memory cache (`src/lib/auth/force-logout.ts`); entries auto-prune after 30 days.
+
+**JWT enforcement:** `auth-options.ts → jwt()` callback returns `{}` (an empty token) when force-logout applies. `middleware.ts` then redirects to `/login` because the decoded cookie has no email/sub.
+
+**Self-edit guards:**
+- `POST /api/auth/force-logout` returns `{ skipped: 'self' }` instead of bumping when the target equals the caller's email.
+- `POST /api/employee-feature-permissions` skips the bump in the same scenario.
+
+### 10. Extra Profile Tables (optional, configurable)
 
 Any number of additional tables can be merged into the employee profile view by listing them in `SUPABASE_PROFILE_TABLES` (comma-separated). The `import-daily-report` route creates tables in a separate `hubstaff_hours` schema, which may also be merged.
 

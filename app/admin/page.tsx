@@ -75,7 +75,7 @@ function AdminPageInner() {
           fetch('/api/app-settings?key=webhooks.config', { cache: 'no-store' }),
         ]);
         const empJson = (await empRes.json()) as { employees?: unknown[] };
-        const rolesJson = (await rolesRes.json()) as { rows?: unknown[] };
+        const rolesJson = (await rolesRes.json()) as { rows?: Array<{ work_email?: string | null }> };
         const hookJson = (await hookRes.json()) as { value: string | null };
         let hooks: WebhookEntry[] = [];
         if (hookJson.value) {
@@ -87,10 +87,17 @@ function AdminPageInner() {
           }
         }
         const webhookAlert = hooks.filter((w) => w.active && !String(w.url ?? '').trim()).length;
+        // Roles badge counts unique people with at least one role, not total
+        // role grants — matches the "With roles" stat in AdminRoles.
+        const uniqueEmailsWithRoles = new Set(
+          (rolesJson.rows ?? [])
+            .map((r) => (r?.work_email ?? '').trim().toLowerCase())
+            .filter(Boolean),
+        );
         if (!cancelled) {
           setNavCounts({
             employees: (empJson.employees ?? []).length,
-            roles: (rolesJson.rows ?? []).length,
+            roles: uniqueEmailsWithRoles.size,
             webhookAlert,
           });
         }

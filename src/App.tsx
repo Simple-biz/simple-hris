@@ -19,7 +19,8 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import AnnouncementWall from './components/announcements/AnnouncementWall';
 import AnnouncementComposer from './components/announcements/AnnouncementComposer';
 import SWall from './components/swall/SWall';
-import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForRoles, canAccessAccountingTab } from '@/lib/rbac/accounting-tabs';
+import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForUser, canAccessAccountingTabForUser } from '@/lib/rbac/accounting-tabs';
+import type { FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 
@@ -32,6 +33,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [focusRatesEmail, setFocusRatesEmail] = useState<string | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
+  const [featurePerms, setFeaturePerms] = useState<FeaturePermissionsMap>({});
   const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -58,30 +60,46 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
     const e = (sessionEmail || '').trim();
     if (!e) {
       setRoles([]);
+      setFeaturePerms({});
       return;
     }
     let cancelled = false;
-    fetch(`/api/employee-roles?email=${encodeURIComponent(e)}`, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { rows?: { role: string }[] }) => {
-        if (cancelled) return;
-        setRoles((j.rows ?? []).map((row) => row.role));
-      })
-      .catch(() => {
-        if (!cancelled) setRoles([]);
-      });
+    // Roles + per-feature permissions are fetched in parallel; the tab-gating
+    // logic needs both to decide what to show.
+    Promise.all([
+      fetch(`/api/employee-roles?email=${encodeURIComponent(e)}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j: { rows?: { role: string }[] }) => (j.rows ?? []).map((row) => row.role))
+        .catch(() => [] as string[]),
+      fetch(`/api/employee-feature-permissions?email=${encodeURIComponent(e)}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j: { rows?: Array<{ view_key: string; feature: string; access: 'view' | 'edit' }> }) => {
+          const out: FeaturePermissionsMap = {};
+          for (const row of j.rows ?? []) {
+            const view = row.view_key as keyof FeaturePermissionsMap;
+            if (!out[view]) out[view] = {};
+            (out[view] as Record<string, 'view' | 'edit'>)[row.feature] = row.access;
+          }
+          return out;
+        })
+        .catch(() => ({} as FeaturePermissionsMap)),
+    ]).then(([r, p]) => {
+      if (cancelled) return;
+      setRoles(r);
+      setFeaturePerms(p);
+    });
     return () => {
       cancelled = true;
     };
   }, [sessionEmail]);
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
-  const allowedTabs = allowedAccountingTabsForRoles(roles);
+  const allowedTabs = allowedAccountingTabsForUser(roles, featurePerms);
 
   const tabDirRef = useRef<1 | -1>(1);
 
   const navigate = (tab: string) => {
-    if (!canAccessAccountingTab(tab, roles)) {
+    if (!canAccessAccountingTabForUser(tab, roles, featurePerms)) {
       setActiveTab(allowedTabs[0] ?? 'payment-dispatch');
       setMobileNavOpen(false);
       return;
@@ -108,10 +126,10 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   }, [mobileNavOpen]);
 
   useEffect(() => {
-    if (!canAccessAccountingTab(activeTab, roles)) {
+    if (!canAccessAccountingTabForUser(activeTab, roles, featurePerms)) {
       setActiveTab(allowedTabs[0] ?? 'payment-dispatch');
     }
-  }, [activeTab, allowedTabs, roles]);
+  }, [activeTab, allowedTabs, roles, featurePerms]);
 
   const renderContent = () => {
     switch (activeTab) {

@@ -26,6 +26,8 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
+import { FEATURE_CATALOG, ROLE_TO_FEATURE_VIEW, type FeatureAccess, type FeatureViewKey } from '@/lib/rbac/feature-permissions';
 import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 
 // All known role keys — kept so legacy assignments in the DB (e.g. `viewer`,
@@ -157,10 +159,16 @@ export default function AdminRoles() {
   const [selected, setSelected] = useState<EmployeeRow | null>(null);
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [allAssignments, setAllAssignments] = useState<RoleRow[]>([]);
+  // Per-feature access for the currently selected user. Keyed view -> feature.
+  // Default `{}` is read as "every feature hidden" by the gating helpers.
+  const [featurePerms, setFeaturePerms] = useState<Partial<Record<FeatureViewKey, Record<string, FeatureAccess>>>>({});
+  const [featurePermsLoading, setFeaturePermsLoading] = useState(false);
+  const [featurePermMutating, setFeaturePermMutating] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [mutating, setMutating] = useState<RoleKey | null>(null);
   const [page, setPage] = useState(1);
+  const [viewFilter, setViewFilter] = useState<'all' | 'with_roles'>('all');
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptAssignments, setDeptAssignments] = useState<DepartmentManagerRow[]>([]);
   const [deptMutating, setDeptMutating] = useState<string | null>(null);
@@ -286,25 +294,84 @@ export default function AdminRoles() {
     if (!email) {
       setRoles([]);
       setRolesLoading(false);
+      setFeaturePerms({});
+      setFeaturePermsLoading(false);
       return;
     }
     let cancelled = false;
     setRolesLoading(true);
-    fetch(`/api/employee-roles?email=${encodeURIComponent(email)}`, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { rows?: RoleRow[] }) => {
-        if (!cancelled) setRoles(j.rows ?? []);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load roles');
-      })
-      .finally(() => {
-        if (!cancelled) setRolesLoading(false);
-      });
+    setFeaturePermsLoading(true);
+    Promise.all([
+      fetch(`/api/employee-roles?email=${encodeURIComponent(email)}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j: { rows?: RoleRow[] }) => j.rows ?? [])
+        .catch((e: unknown) => {
+          if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load roles');
+          return [] as RoleRow[];
+        }),
+      fetch(`/api/employee-feature-permissions?email=${encodeURIComponent(email)}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j: { rows?: Array<{ view_key: string; feature: string; access: FeatureAccess }> }) => {
+          const out: Partial<Record<FeatureViewKey, Record<string, FeatureAccess>>> = {};
+          for (const row of j.rows ?? []) {
+            const view = row.view_key as FeatureViewKey;
+            if (!out[view]) out[view] = {};
+            (out[view] as Record<string, FeatureAccess>)[row.feature] = row.access;
+          }
+          return out;
+        })
+        .catch(() => ({} as Partial<Record<FeatureViewKey, Record<string, FeatureAccess>>>)),
+    ]).then(([rs, perms]) => {
+      if (cancelled) return;
+      setRoles(rs);
+      setFeaturePerms(perms);
+    }).finally(() => {
+      if (!cancelled) {
+        setRolesLoading(false);
+        setFeaturePermsLoading(false);
+      }
+    });
     return () => {
       cancelled = true;
     };
   }, [selWork, selPersonal]);
+
+  /** Write a single feature-permission and refresh local state. */
+  async function setFeatureAccess(view: FeatureViewKey, feature: string, access: 'hidden' | FeatureAccess) {
+    const email = (selWork?.trim() || selPersonal?.trim() || '').trim();
+    if (!email) return;
+    const key = `${view}:${feature}`;
+    setFeaturePermMutating(key);
+    try {
+      const res = await fetch('/api/employee-feature-permissions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, view, feature, access }),
+      });
+      const j = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || !j.success) {
+        toast.error(j.error || 'Failed to update permission');
+        return;
+      }
+      setFeaturePerms((prev) => {
+        const next = { ...prev };
+        const bucket = { ...(next[view] ?? {}) };
+        if (access === 'hidden') delete bucket[feature];
+        else bucket[feature] = access;
+        next[view] = bucket;
+        return next;
+      });
+      toast.success(
+        access === 'hidden'
+          ? `Hid ${feature}`
+          : `${access === 'edit' ? 'Edit' : 'View'} access on ${feature}`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setFeaturePermMutating(null);
+    }
+  }
 
   const uniqueEmployees = useMemo(() => {
     const seen = new Set<string>();
@@ -318,23 +385,35 @@ export default function AdminRoles() {
     return out;
   }, [employees]);
 
+  const emailsWithRolesSet = useMemo(
+    () => new Set(allAssignments.map((a) => a.work_email.trim().toLowerCase())),
+    [allAssignments],
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const base = q
-      ? uniqueEmployees.filter((e) => {
-          const hay = [e.name, e.work_email, e.personal_email, e.department, e.employee_id, e.start_date]
-            .filter(Boolean)
-            .join(' ')
-            .toLowerCase();
-          return hay.includes(q);
-        })
-      : uniqueEmployees;
+    const withRolesOnly = viewFilter === 'with_roles';
+    const base = uniqueEmployees.filter((e) => {
+      if (withRolesOnly) {
+        const we = (e.work_email ?? '').trim().toLowerCase();
+        const pe = (e.personal_email ?? '').trim().toLowerCase();
+        if (!emailsWithRolesSet.has(we) && !emailsWithRolesSet.has(pe)) return false;
+      }
+      if (q) {
+        const hay = [e.name, e.work_email, e.personal_email, e.department, e.employee_id, e.start_date]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
     return [...base].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
-  }, [uniqueEmployees, search]);
+  }, [uniqueEmployees, search, viewFilter, emailsWithRolesSet]);
 
   useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [search, viewFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -511,6 +590,25 @@ export default function AdminRoles() {
         return;
       }
       toast.success(currentlyHas ? `Revoked ${ROLE_BY_KEY[role].label}` : `Granted ${ROLE_BY_KEY[role].label}`);
+
+      // Revoking access should kick the user out of any active session so
+      // they can't keep using a stale JWT that still carries the revoked role.
+      // Fire-and-forget — the role mutation succeeded regardless.
+      if (currentlyHas) {
+        void fetch('/api/auth/force-logout', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email, reason: `revoked ${role}` }),
+        }).then(async (r) => {
+          if (!r.ok) {
+            const j = (await r.json().catch(() => ({}))) as { error?: string };
+            toast.warning('Role revoked, but force-logout failed', {
+              description: j.error || `Status ${r.status}`,
+            });
+          }
+        });
+      }
+
       const r = await fetch(`/api/employee-roles?email=${encodeURIComponent(email)}`, {
         cache: 'no-store',
       });
@@ -597,6 +695,45 @@ export default function AdminRoles() {
                     {customEmails.size} custom
                   </Badge>
                 )}
+                {/* View tabs — All vs people who already hold at least one role. */}
+                <div
+                  role="tablist"
+                  aria-label="People view"
+                  className="ml-1 inline-flex items-center rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
+                >
+                  {(['all', 'with_roles'] as const).map((mode) => {
+                    const active = viewFilter === mode;
+                    const label = mode === 'all' ? 'All' : 'With roles';
+                    const count = mode === 'all' ? stats.people : stats.withRoles;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setViewFilter(mode)}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors',
+                          active
+                            ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
+                            : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                        )}
+                      >
+                        {label}
+                        <span
+                          className={cn(
+                            'inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1 py-px font-mono text-[9.5px] font-semibold tabular-nums',
+                            active
+                              ? 'bg-white/20 text-white dark:bg-zinc-900/20 dark:text-zinc-900'
+                              : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+                          )}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <Button
                 type="button"
@@ -724,22 +861,33 @@ export default function AdminRoles() {
                           : 'border-zinc-200/90 bg-white/60 hover:border-zinc-300 hover:bg-white dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/70',
                       )}
                     >
-                      <div
-                        className={cn(
-                          'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold',
-                          isSel
-                            ? 'bg-orange-500 text-white shadow-sm'
-                            : isCustom
-                              ? 'bg-orange-50/70 text-orange-700 ring-2 ring-orange-300/60 dark:bg-orange-950/30 dark:text-orange-300 dark:ring-orange-700/45'
-                              : 'bg-gradient-to-br from-zinc-100 to-zinc-200/80 text-zinc-700 dark:from-zinc-800 dark:to-zinc-900 dark:text-zinc-200',
-                        )}
-                      >
-                        {isCustom && !isSel ? (
+                      {isCustom && !isSel ? (
+                        <div
+                          className={cn(
+                            'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold',
+                            'bg-orange-50/70 text-orange-700 ring-2 ring-orange-300/60 dark:bg-orange-950/30 dark:text-orange-300 dark:ring-orange-700/45',
+                          )}
+                        >
                           <AtSign className="h-4 w-4" aria-hidden />
-                        ) : (
-                          initialsFromEmployee(e)
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <div
+                          className={cn(
+                            'shrink-0 rounded-xl ring-2',
+                            isSel
+                              ? 'ring-orange-400/70 dark:ring-orange-500/55'
+                              : 'ring-zinc-200/70 dark:ring-zinc-800',
+                          )}
+                        >
+                          <EmployeeAvatar
+                            photoUrl={e.profile_photo_url ?? null}
+                            googlePhotoUrl={e.google_photo_url ?? null}
+                            email={e.work_email ?? e.personal_email ?? null}
+                            initials={initialsFromEmployee(e)}
+                            className="!rounded-xl h-10 w-10 text-xs"
+                          />
+                        </div>
+                      )}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
@@ -809,8 +957,14 @@ export default function AdminRoles() {
             {selected && (
               <div className="flex flex-wrap items-center gap-2 pt-2">
                 <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-zinc-200/90 bg-zinc-50/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white font-semibold shadow-sm dark:bg-zinc-800">
-                    {initialsFromEmployee(selected)}
+                  <div className="shrink-0 rounded-lg ring-1 ring-zinc-200/70 dark:ring-zinc-800">
+                    <EmployeeAvatar
+                      photoUrl={selected.profile_photo_url ?? null}
+                      googlePhotoUrl={selected.google_photo_url ?? null}
+                      email={selected.work_email ?? selected.personal_email ?? null}
+                      initials={initialsFromEmployee(selected)}
+                      className="rounded-lg h-9 w-9 text-xs"
+                    />
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
@@ -993,13 +1147,14 @@ export default function AdminRoles() {
                           <li
                             key={key}
                             className={cn(
-                              'flex flex-col gap-3 rounded-xl border border-l-4 bg-white/80 p-3 shadow-sm transition-all sm:flex-row sm:items-center sm:justify-between dark:bg-zinc-900/35',
+                              'flex flex-col gap-3 rounded-xl border border-l-4 bg-white/80 p-3 shadow-sm transition-all dark:bg-zinc-900/35',
                               active
                                 ? 'border-zinc-200/90 dark:border-zinc-700/90'
                                 : 'border-zinc-200/90 dark:border-zinc-800/90',
                               roleRowAccent(key),
                             )}
                           >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div className="flex min-w-0 flex-1 items-start gap-3">
                               <div
                                 className={cn(
@@ -1057,6 +1212,30 @@ export default function AdminRoles() {
                                 </>
                               )}
                             </button>
+                            </div>
+
+                            {/* Per-tab access grid — appears for any granted
+                                role whose dashboard has a feature catalog
+                                (finance, hr_coordinator, manager,
+                                orphanage_manager, ceo, contractor). Admins
+                                bypass per-tab gates entirely so we deliberately
+                                don't show a grid for the admin row. */}
+                            {(() => {
+                              const view = ROLE_TO_FEATURE_VIEW[key];
+                              if (!active || !view) return null;
+                              const features = FEATURE_CATALOG[view];
+                              if (!features || features.length === 0) return null;
+                              return (
+                                <FeaturePermissionGrid
+                                  view={view}
+                                  features={features}
+                                  perms={featurePerms[view] ?? {}}
+                                  loading={featurePermsLoading}
+                                  mutatingKey={featurePermMutating}
+                                  onChange={(feature, access) => void setFeatureAccess(view, feature, access)}
+                                />
+                              );
+                            })()}
                           </li>
                         );
                       })}
@@ -1068,6 +1247,101 @@ export default function AdminRoles() {
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Per-tab access grid. Each row is one feature (catalog-driven) with three
+ * pill buttons: Hidden / View / Edit. Clicking a button writes the
+ * permission and toasts the result; the parent owns the perms map and
+ * mutation state.
+ */
+function FeaturePermissionGrid({
+  view,
+  features,
+  perms,
+  loading,
+  mutatingKey,
+  onChange,
+}: {
+  view: FeatureViewKey;
+  features: readonly { key: string; label: string }[];
+  perms: Record<string, FeatureAccess>;
+  loading: boolean;
+  mutatingKey: string | null;
+  onChange: (feature: string, access: 'hidden' | FeatureAccess) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-zinc-200/80 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
+          Tab access
+        </p>
+        <p className="text-[10px] text-zinc-400 dark:text-zinc-500">Hidden by default — pick a level per tab</p>
+      </div>
+      {loading ? (
+        <div className="flex items-center gap-2 py-3 text-[11px] text-zinc-500 dark:text-zinc-400">
+          <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+          Loading permissions…
+        </div>
+      ) : (
+        <ul className="grid grid-cols-1 gap-1.5">
+          {features.map((f) => {
+            const current = perms[f.key] ?? 'hidden';
+            const busyKey = `${view}:${f.key}`;
+            const busy = mutatingKey === busyKey;
+            return (
+              <li
+                key={f.key}
+                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-900/40"
+              >
+                <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-zinc-800 dark:text-zinc-200">
+                  {f.label}
+                </span>
+                <div
+                  role="radiogroup"
+                  aria-label={`${f.label} access`}
+                  className="inline-flex items-center rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
+                >
+                  {(['hidden', 'view', 'edit'] as const).map((level) => {
+                    const isActive = current === level;
+                    const label = level === 'hidden' ? 'Hidden' : level === 'view' ? 'View' : 'Edit';
+                    const palette =
+                      level === 'hidden'
+                        ? 'data-[active=true]:bg-zinc-200 data-[active=true]:text-zinc-900 dark:data-[active=true]:bg-zinc-700 dark:data-[active=true]:text-zinc-100'
+                        : level === 'view'
+                        ? 'data-[active=true]:bg-amber-500/15 data-[active=true]:text-amber-700 dark:data-[active=true]:bg-amber-500/20 dark:data-[active=true]:text-amber-300'
+                        : 'data-[active=true]:bg-emerald-500/15 data-[active=true]:text-emerald-700 dark:data-[active=true]:bg-emerald-500/20 dark:data-[active=true]:text-emerald-300';
+                    return (
+                      <button
+                        key={level}
+                        type="button"
+                        role="radio"
+                        aria-checked={isActive}
+                        data-active={isActive}
+                        disabled={busy || isActive}
+                        onClick={() => onChange(f.key, level)}
+                        className={cn(
+                          'inline-flex items-center justify-center gap-1 rounded px-2 py-1 text-[10.5px] font-semibold transition-colors disabled:cursor-default',
+                          'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                          palette,
+                          busy && 'opacity-60',
+                        )}
+                      >
+                        {busy && isActive ? (
+                          <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden />
+                        ) : null}
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

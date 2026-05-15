@@ -20,6 +20,8 @@ import {
   createSupabaseServiceRoleClient,
 } from '@/lib/supabase/server';
 import { hasElevatedRole } from './elevated-roles';
+import { getForceLogoutEpochFor } from './force-logout';
+import { fetchFeaturePermissionsForEmail, type FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
 
 const ALLOWED_HD = 'simple.biz';
 
@@ -111,6 +113,10 @@ export const authOptions: NextAuthOptions = {
         const roles = emailLower ? await fetchRolesForEmail(emailLower) : [];
         (token as { roles?: string[] }).roles = roles;
         (token as { elevated?: boolean }).elevated = hasElevatedRole(roles);
+        // Per-feature access overlay (e.g. accounting tabs: hidden/view/edit).
+        // Missing => default deny when the consumer asks `resolveFeatureAccess`.
+        const featurePerms = emailLower ? await fetchFeaturePermissionsForEmail(emailLower) : {};
+        (token as { featurePerms?: FeaturePermissionsMap }).featurePerms = featurePerms;
 
         // Persist the Google profile photo URL so the rest of the org can see this
         // user's avatar in roster lists. Fire-and-forget — never block sign-in.
@@ -119,6 +125,25 @@ export const authOptions: NextAuthOptions = {
           void persistGooglePhoto(emailLower, picture);
         }
       }
+
+      // Force-logout enforcement. Admins can revoke a user's session via
+      // POST /api/auth/force-logout — this stamps a per-email timestamp in
+      // app_settings. JWTs whose `iat` is before that stamp are wiped so the
+      // session callback sees no email/roles, and the middleware redirects
+      // to /login on the next request. Fresh sign-ins (newer `iat`) survive.
+      const emailLower = (token.email ?? '').toString().trim().toLowerCase();
+      if (emailLower) {
+        try {
+          const cutoff = await getForceLogoutEpochFor(emailLower);
+          const issuedAt = typeof token.iat === 'number' ? token.iat : 0;
+          if (cutoff != null && issuedAt > 0 && cutoff >= issuedAt) {
+            return {};
+          }
+        } catch {
+          /* never fail auth on force-logout lookup failure */
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {
@@ -127,10 +152,12 @@ export const authOptions: NextAuthOptions = {
           hd?: string | null;
           roles?: string[];
           elevated?: boolean;
+          featurePerms?: FeaturePermissionsMap;
         };
         extra.hd = (token as { hd?: string }).hd ?? null;
         extra.roles = (token as { roles?: string[] }).roles ?? [];
         extra.elevated = (token as { elevated?: boolean }).elevated ?? false;
+        extra.featurePerms = (token as { featurePerms?: FeaturePermissionsMap }).featurePerms ?? {};
       }
       return session;
     },
