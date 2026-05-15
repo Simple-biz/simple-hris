@@ -297,6 +297,20 @@ export async function promoteHrPendingEmployee(
   if (promoteErr)
     return { row, masterId, error: `Status update failed: ${promoteErr.message}` };
 
+  // Stamp the new hire's employee_id (YYMM-NNNN). Best-effort: a failure here
+  // doesn't unwind the promotion — the next master-list upload or the admin
+  // backfill route will pick the row up.
+  try {
+    const { backfillEmployeeIds } = await import("./backfill-employee-ids");
+    await backfillEmployeeIds(sb);
+  } catch (e) {
+    console.warn(
+      `[promoteHrPendingEmployee] employee_id stamp skipped: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
+
   return { row: promoted as HrPendingEmployeeRow, masterId, error: null };
 }
 

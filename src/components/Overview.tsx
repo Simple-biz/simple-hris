@@ -2132,8 +2132,16 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     }
   }, []);
 
-  // Initial load
+  // Initial load — skip when the server already prefetched the roster.
+  // (See app/accounting/page.tsx → prefetchAccountingData.) The visibility
+  // and 60s-poll effects below will still refresh on tab focus / interval,
+  // so the prefetched data isn't stale forever.
+  const skippedInitialFetchRef = React.useRef(Boolean(initialData?.employees?.length));
   useEffect(() => {
+    if (skippedInitialFetchRef.current) {
+      skippedInitialFetchRef.current = false;
+      return;
+    }
     const ctrl = new AbortController();
     void fetchEmployees(ctrl.signal);
     return () => ctrl.abort();

@@ -12,9 +12,34 @@ import {
   sortHubstaffColumnsForDisplay,
 } from "@/lib/supabase/hubstaff-hours-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { normEmail } from "@/lib/email/norm-email";
 import { NextRequest, NextResponse } from "next/server";
 
 const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
+
+// Columns on the hubstaff_hours row that may carry an employee's email.
+// Mirrors `HUBSTAFF_EMAIL_KEYS` + the case-insensitive aliases used client-side
+// in src/components/employee/EmployeeDashboard.tsx — keep in sync.
+const HUBSTAFF_ROW_EMAIL_KEYS = [
+  'Email', 'email',
+  'Work Email', 'work_email',
+  'Personal Email', 'personal_email',
+  'user_email',
+] as const;
+
+function rowMatchesEmail(row: Record<string, unknown>, normTarget: string): boolean {
+  const lowerIdx = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(row)) lowerIdx.set(k.toLowerCase(), v);
+  for (const key of HUBSTAFF_ROW_EMAIL_KEYS) {
+    const v = Object.prototype.hasOwnProperty.call(row, key)
+      ? row[key]
+      : lowerIdx.get(key.toLowerCase());
+    if (v == null) continue;
+    const n = normEmail(String(v));
+    if (n && n === normTarget) return true;
+  }
+  return false;
+}
 
 function clientIp(req: NextRequest): string | null {
   const fwd = req.headers.get('x-forwarded-for');
@@ -63,13 +88,60 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Return rows filtered by a specific source file
+  // Cross-file merge for a single employee. Server-side replacement for the
+  // client's old N-parallel `?source_file=...` fan-out — see
+  // src/components/employee/EmployeeDashboard.tsx (PAB merge useEffect).
+  // Returns the union of columns across uploads + this employee's rows keyed
+  // by source_file. The client still resolves canonical weekday columns to ISO
+  // dates from the filename, so we don't duplicate that logic here.
+  const mergeEmail = searchParams.get("email")?.trim();
+  if (searchParams.get("merge_all") === "1" && mergeEmail) {
+    try {
+      const norm = normEmail(mergeEmail) ?? mergeEmail.toLowerCase();
+      const uploads = await listHubstaffUploads().catch(() => []);
+      const files = uploads.length > 0
+        ? [...new Set(uploads.map((u) => (u.source_file ?? "").trim()).filter(Boolean))]
+        : await getUploadedSourceFiles();
+
+      const allCols = new Set<string>();
+      const perFile: { source_file: string; row: Record<string, unknown> | null }[] = [];
+
+      await Promise.all(
+        files.map(async (file) => {
+          const { columns, rows } = await fetchHubstaffRowsBySourceFile(file);
+          for (const c of columns) allCols.add(c);
+          const myRow = rows.find((r) => rowMatchesEmail(r, norm)) ?? null;
+          perFile.push({ source_file: file, row: myRow });
+        }),
+      );
+
+      return NextResponse.json({
+        columns: [...allCols],
+        perFile,
+        error: null,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ columns: [], perFile: [], error: msg });
+    }
+  }
+
+  // Return rows filtered by a specific source file. Accepts optional `email`
+  // to return only the matching employee's row (used by the employee portal
+  // so it doesn't download the whole roster for every weekly file).
   const sourceFileFilter = searchParams.get("source_file");
   if (sourceFileFilter) {
     try {
       const { columns, rows } = await fetchHubstaffRowsBySourceFile(sourceFileFilter);
-      const payrollRows = rowsToPayrollRows(rows);
-      return NextResponse.json({ columns, rows, payrollRows, error: null });
+      const emailFilter = searchParams.get("email")?.trim();
+      let outRows = rows;
+      if (emailFilter) {
+        const norm = normEmail(emailFilter) ?? emailFilter.toLowerCase();
+        const match = rows.find((r) => rowMatchesEmail(r, norm));
+        outRows = match ? [match] : [];
+      }
+      const payrollRows = rowsToPayrollRows(outRows);
+      return NextResponse.json({ columns, rows: outRows, payrollRows, error: null });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return NextResponse.json({ columns: null, rows: null, payrollRows: [], error: msg });

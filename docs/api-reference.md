@@ -34,7 +34,8 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 
 Fetches all employees from the `global_master_list` table.
 
-**Query Parameters**: None
+**Query Parameters**:
+- `email` *(optional, added 2026-05-14)* — when provided, returns just the matching employee (1-row array) instead of the full roster. Matched against Work Email then Personal Email (case-insensitive). Tries the active roster first so `employee_id` reflects the same-month serial numbering; falls back to `global_master_list` for people not on the current upload. Used by the employee portal to avoid downloading the whole table for self-lookup.
 
 **Response** `200`:
 ```json
@@ -292,7 +293,8 @@ Updates employee demographic fields (not rates) in both tables.
 
 Fetches all rows from the `employee_hourly_rates` table.
 
-**Query Parameters**: None
+**Query Parameters**:
+- `email` *(optional, added 2026-05-14)* — server-side ilike filter on `"Work Email"` then `"Personal Email"`. Returns a 1-row array (or empty). Used by the employee portal to avoid downloading every rate row just to read its own.
 
 **Response** `200`:
 ```json
@@ -395,7 +397,8 @@ Audit log entry `csv.rates.sync` (or `csv.rates.sync.error` on failure). See [cs
 
 Fetches all employee IDs and bank information from the `employee_ids` table.
 
-**Query Parameters**: None
+**Query Parameters**:
+- `email` *(optional, added 2026-05-14)* — server-side ilike filter on `work_email` then `personal_email`. Returns a 1-row array (or empty). Used by the employee portal (Profile page) to avoid downloading every employee_ids row.
 
 **Response** `200`:
 ```json
@@ -594,7 +597,7 @@ Uploads or replaces an employee's profile photo.
 
 ### `GET /api/hubstaff-hours`
 
-Three modes depending on query parameters:
+Four modes depending on query parameters:
 
 #### Mode 1: List source files
 
@@ -613,7 +616,9 @@ Three modes depending on query parameters:
 
 #### Mode 2: Fetch by source file
 
-**Query Parameters**: `?source_file=simple-biz_daily_report_2026-03-01_to_2026-03-07.csv`
+**Query Parameters**: `?source_file=…` + optional `&email=…` *(added 2026-05-14)*.
+
+When `email` is supplied the route post-filters the file's rows down to the one matching that employee (case-insensitive across `Email`, `Work Email`, `work_email`, `Personal Email`, `personal_email`, `user_email`). `columns` is unchanged; `rows` is `[match]` or `[]`. Used by the employee portal so each weekly file ships a single row instead of the full roster.
 
 **Response** `200`:
 ```json
@@ -641,8 +646,31 @@ Returns all rows ordered, with OpenAPI column discovery when service role is ava
 
 **Response** `200`: Same shape as Mode 2.
 
-**Tables**: Reads `hubstaff_hours`
-**Service Role**: Required for Mode 3 full fetch; Modes 1-2 use service role if available, fall back to anon
+#### Mode 4: All-files merge for one employee *(added 2026-05-14)*
+
+**Query Parameters**: `?merge_all=1&email=…`
+
+Server-side replacement for the employee portal's old N-parallel `?source_file=…` fan-out. Iterates every upload in `hubstaff_uploads` (falling back to `getUploadedSourceFiles()`), filters each file's rows by `email` server-side, and returns this one employee's row per file plus the union of columns. The client still resolves canonical weekday columns (`monday`, `tuesday`, …) to ISO dates using each filename's embedded date range — the response preserves `source_file` tagging for that.
+
+**Response** `200`:
+```json
+{
+  "columns": ["id", "Email", "Member", "monday", "...", "source_file"],
+  "perFile": [
+    {
+      "source_file": "simple-biz_daily_report_2026-03-01_to_2026-03-07.csv",
+      "row": { "Email": "franm@simple.biz", "monday": "8:30:00", "...": "..." }
+    },
+    { "source_file": "simple-biz_daily_report_2026-03-08_to_2026-03-14.csv", "row": null }
+  ],
+  "error": null
+}
+```
+
+`row` is `null` when the employee didn't appear in that file.
+
+**Tables**: Reads `hubstaff_hours`, `hubstaff_uploads`
+**Service Role**: Required for Mode 3 full fetch and Mode 4 merge; Modes 1-2 use service role if available, fall back to anon
 
 ---
 
@@ -702,13 +730,16 @@ Deletes all rows from a specific source file.
 
 ### `GET /api/app-settings`
 
-Reads a single application setting.
+Reads application settings — single key or bulk.
 
 **Query Parameters**:
 
 | Param | Type | Required |
 |---|---|---|
-| `key` | string | Yes |
+| `key` | string | One of `key` or `keys` |
+| `keys` | string (comma-separated) | One of `key` or `keys` |
+
+**Bulk mode** *(added 2026-05-14)* — pass `?keys=a,b,c` for a single round-trip. Response shape: `{ values: { a, b, c }, error }`, with `null` for any key that isn't in the table. Added to collapse the Payroll Wizard's ~10 parallel single-key fetches (global + per-dept OT flags) into one.
 
 **Known keys**:
 - `usd_to_php_rate` — USD to PHP exchange rate
@@ -719,9 +750,14 @@ Reads a single application setting.
 - `pab_period_manual`, `pab_period_start`, `pab_period_end` — **legacy** single-range override. Still read for back-compat; auto-migrated into `pab_period_overrides` on first load when the new map is empty. New code should write to `pab_period_overrides` instead.
 - `pab_dispute_reason_codes` — JSON array of permitted reason codes for `/api/pab-disputes`.
 
-**Response** `200`:
+**Response** `200` (single-key):
 ```json
 { "value": "56.00", "error": null }
+```
+
+**Response** `200` (bulk):
+```json
+{ "values": { "ot_global_suspended": "false", "ot_dept_hsl": "true" }, "error": null }
 ```
 
 Returns `null` value if key doesn't exist.
@@ -1587,6 +1623,38 @@ Live health probe powering the Admin → Diagnostics tab. Runs server-side probe
 **Service Role**: Required (for read-through past RLS on operational tables)
 
 See [docs/system-diagnostics.md](../docs/system-diagnostics.md) for the architecture, edge animation system, and how to extend with new probes.
+
+---
+
+### `POST /api/admin/backfill-employee-ids` *(added 2026-05-14)*
+
+One-shot backfill that stamps the `employee_id` column on every `global_master_list` row currently lacking one. Mirrors the in-memory YYMM-NNNN assignment the UI has always shown (`generateEmployeeIds()` in `src/lib/supabase/employees.ts`), so persisted IDs match what users already see — the first run shouldn't change any visible numbers.
+
+**Why this exists**: until 2026-05-14 the `employee_id` field was computed in-memory on every read and renumbered whenever a same-month starter joined, left, or had their name changed. The column was added by `references/add_employee_id_to_global_master_list.sql` and this route is the one-shot populator. From then on, every master-list upload + every HR Promote call fills the column for any new rows automatically (`backfillEmployeeIds()` is invoked after both).
+
+**Authorization**: NextAuth session must hold an elevated role (admin / payroll_manager / hr_coordinator).
+
+**Request Body**: none.
+
+**Response** `200`:
+```json
+{ "assigned": 27, "skipped": 893, "error": null }
+```
+
+- `assigned` — rows that had a NULL `employee_id` and got one stamped this run.
+- `skipped` — rows that already had an ID (left untouched).
+
+**Error Response** `500`:
+```json
+{ "assigned": 0, "skipped": 0, "error": "column employee_id does not exist" }
+```
+
+Most common cause: the column-add migration (`references/add_employee_id_to_global_master_list.sql`) hasn't been run yet.
+
+**Idempotent**: re-running only fills nulls, never renumbers an existing ID. Safe to invoke any time.
+
+**Tables**: `global_master_list` (read full roster + write `employee_id`)
+**Service Role**: Required.
 
 ---
 

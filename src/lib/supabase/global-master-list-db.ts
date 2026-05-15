@@ -634,6 +634,26 @@ export async function replaceGlobalMasterListFromCsvText(
 
   await promoteMasterListUploadToCurrent(supabase, uploadId);
 
+  // Stamp employee_id onto any row still missing one. New hires from this
+  // upload land without an ID; persisted rows pass through unchanged. Failures
+  // are logged but do not abort the upload — the admin backfill route can
+  // retry. See src/lib/supabase/backfill-employee-ids.ts.
+  try {
+    const { backfillEmployeeIds } = await import("./backfill-employee-ids");
+    const result = await backfillEmployeeIds(supabase);
+    if (result.error) {
+      console.warn(
+        `[replaceGlobalMasterListFromCsvText] employee_id backfill skipped: ${result.error}`,
+      );
+    }
+  } catch (e) {
+    console.warn(
+      `[replaceGlobalMasterListFromCsvText] employee_id backfill threw: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
+
   return {
     rowCount: inserted + updated,
     uploadId,

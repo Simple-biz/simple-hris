@@ -8,10 +8,21 @@ import {
   getUploadedSourceFiles,
 } from '@/lib/supabase/hubstaff-hours-db';
 
+export type HubstaffUploadMeta = {
+  id: string;
+  source_file: string | null;
+  uploaded_at: string;
+  uploaded_by: string | null;
+  row_count: number | null;
+  is_current: boolean;
+};
+
 export type InitialAccountingData = {
   employees: EmployeeRow[];
   hourlyRates: EmployeeHourlyRateRow[];
   sourceFiles: string[];
+  /** Rich uploads list. Same shape PayrollWizard consumes via /api/hubstaff-hours?source_files=1. */
+  hubstaffUploads: HubstaffUploadMeta[];
 };
 
 const ACCOUNTING_ROLES = new Set([
@@ -52,5 +63,6 @@ export async function prefetchAccountingData(): Promise<InitialAccountingData> {
     employees: employeesResult.employees ?? [],
     hourlyRates: ratesResult.rows ?? [],
     sourceFiles,
+    hubstaffUploads: uploadsResult,
   };
 }

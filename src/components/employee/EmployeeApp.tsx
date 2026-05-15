@@ -132,8 +132,8 @@ export default function EmployeeApp() {
       try {
         const [photoRes, empRes, rateRes] = await Promise.all([
           fetch(`/api/employee-profile-photo?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' }),
-          fetch('/api/employees', { cache: 'no-store' }),
-          fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
+          fetch(`/api/employees?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' }),
+          fetch(`/api/employee-hourly-rates?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' }),
         ]);
         const photoJson = (await photoRes.json()) as { profilePhotoUrl?: string | null };
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[] };

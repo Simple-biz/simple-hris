@@ -100,13 +100,16 @@ function getFirstName(name: string | null): string {
  *
  * Algorithm:
  *  1. Group employees by YYMM derived from their start_date.
- *  2. Within each group sort alphabetically by first name (then full name as
- *     a tie-breaker so the result is stable).
- *  3. Assign serial numbers 001, 002, … in that order.
+ *  2. Within each group, partition by who already has a persisted ID. Persisted
+ *     IDs are NEVER changed — they're the stable identity (see
+ *     references/add_employee_id_to_global_master_list.sql). The remaining
+ *     un-numbered rows fill in the next available NNNN slots, sorted by first
+ *     name (then full name as tie-breaker) for deterministic results.
+ *  3. Assign serial numbers starting after the existing max within the bucket.
  *
  * Employees without a parseable start_date receive employee_id = null.
  *
- * Example: Kane, started 2025-11-10 → "2511-001"
+ * Example: Kane, started 2025-11-10 → "2511-0001"
  */
 export function generateEmployeeIds(employees: EmployeeRow[]): void {
   const groups = new Map<string, EmployeeRow[]>();
@@ -114,7 +117,9 @@ export function generateEmployeeIds(employees: EmployeeRow[]): void {
   for (const emp of employees) {
     const yymm = extractYYMM(emp.start_date);
     if (!yymm) {
-      emp.employee_id = null;
+      // Don't clobber a persisted ID even if start_date is unparseable now —
+      // it may have been computed against a valid prior value.
+      if (!emp.employee_id) emp.employee_id = null;
       continue;
     }
     if (!groups.has(yymm)) groups.set(yymm, []);
@@ -122,7 +127,19 @@ export function generateEmployeeIds(employees: EmployeeRow[]): void {
   }
 
   for (const [yymm, group] of groups) {
-    group.sort((a, b) => {
+    // Highest NNNN already claimed in this bucket — new rows start one above.
+    let maxSeq = 0;
+    for (const emp of group) {
+      if (!emp.employee_id) continue;
+      const match = /^(\d{4})-(\d{4})$/.exec(emp.employee_id);
+      if (match && match[1] === yymm) {
+        const n = parseInt(match[2], 10);
+        if (Number.isFinite(n) && n > maxSeq) maxSeq = n;
+      }
+    }
+
+    const unassigned = group.filter((e) => !e.employee_id);
+    unassigned.sort((a, b) => {
       const firstCmp = getFirstName(a.name).localeCompare(
         getFirstName(b.name),
         undefined,
@@ -134,8 +151,8 @@ export function generateEmployeeIds(employees: EmployeeRow[]): void {
       });
     });
 
-    group.forEach((emp, idx) => {
-      emp.employee_id = `${yymm}-${String(idx + 1).padStart(4, "0")}`;
+    unassigned.forEach((emp, idx) => {
+      emp.employee_id = `${yymm}-${String(maxSeq + idx + 1).padStart(4, "0")}`;
     });
   }
 }
@@ -143,6 +160,7 @@ export function generateEmployeeIds(employees: EmployeeRow[]): void {
 // ─── Row mapping ──────────────────────────────────────────────────────────────
 
 export function mapEmployeeRow(row: RawRow): EmployeeRow {
+  const employee_id = pick(row, ["employee_id", "Employee ID", "Employee_ID"]);
   const department = pick(row, ["Department", "department"]);
   const name = pick(row, ["Name", "name"]);
   const personal_email = pick(row, ["Personal Email", "personal_email", "Personal_Email", "personal email"]);
@@ -168,7 +186,10 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
   const google_photo_url = pick(row, ["google_photo_url", "Google Photo URL", "google_picture"]);
 
   return {
-    employee_id: null, // populated later by generateEmployeeIds
+    // Persisted YYMM-NNNN from global_master_list.employee_id. When the column
+    // is null (legacy rows that pre-date the persistence migration), the value
+    // stays null here and generateEmployeeIds() fills it in downstream.
+    employee_id: employee_id != null ? String(employee_id).trim() || null : null,
     department: department != null ? String(department) : null,
     name: name != null ? String(name) : null,
     personal_email: personal_email != null ? String(personal_email) : null,
@@ -204,14 +225,16 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
 const GLOBAL_MASTER_SELECT_BASE =
   'Department,Name,"Personal Email","Work Email","Start Date","Profile Photo URL"';
 
-/** Includes the home-address columns added 2026-05-02 and the Google SSO photo
- *  column added 2026-05-02. The active_employees view must be refreshed
- *  (see references/seed_global_master_list_addresses.sql and
- *  references/seed_global_master_list_google_photo.sql) before this select
+/** Includes the home-address columns added 2026-05-02, the Google SSO photo
+ *  column added 2026-05-02, and the persisted employee_id column added
+ *  2026-05-14. The active_employees view must be refreshed
+ *  (see references/seed_global_master_list_addresses.sql,
+ *  references/seed_global_master_list_google_photo.sql, and
+ *  references/add_employee_id_to_global_master_list.sql) before this select
  *  shape resolves successfully against the view. */
 const GLOBAL_MASTER_SELECT =
   GLOBAL_MASTER_SELECT_BASE +
-  ',street,city,province,postal_code,full_address,google_photo_url';
+  ',street,city,province,postal_code,full_address,google_photo_url,employee_id';
 
 /** True when every field is null, empty, or whitespace-only. */
 function isRowEmptyOrWhitespace(row: EmployeeRow): boolean {

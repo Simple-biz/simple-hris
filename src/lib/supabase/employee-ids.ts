@@ -63,6 +63,40 @@ function explainEmployeeIdsReadError(message: string): string {
   return msg;
 }
 
+/**
+ * Single-row lookup by email — used by the employee portal so it doesn't have
+ * to download the full `employee_ids` table just to read its own row. Matches
+ * `work_email` first, then `personal_email` (case-insensitive).
+ */
+export async function getEmployeeIdRowByEmail(
+  email: string,
+): Promise<{ row: EmployeeIdRow | null; error: string | null }> {
+  const target = email.trim();
+  if (!target) return { row: null, error: null };
+
+  const supabase = createSupabaseServerClient();
+  if (!supabase) {
+    return { row: null, error: "Supabase client not initialised." };
+  }
+
+  const cols =
+    "employee_id, name, work_email, personal_email, preferred_bank_slot, bank_name, account_holder_name, account_number, routing_number, alt_bank_name, alt_account_holder_name, alt_account_number, alt_routing_number, preferred_processor, hurupay_email, wepay_email, higlobe_email, higlobe_account_name, wise_email, wise_tag, phone_number, swift_code, full_address";
+
+  const tryColumn = async (col: string) =>
+    supabase.from("employee_ids").select(cols).ilike(col, target).limit(1).maybeSingle();
+
+  let res = await tryColumn("work_email");
+  if (!res.data && !res.error) {
+    res = await tryColumn("personal_email");
+  }
+  if (res.error) return { row: null, error: explainEmployeeIdsReadError(res.error.message) };
+  if (!res.data) return { row: null, error: null };
+
+  const row = res.data as EmployeeIdRow;
+  if (!row.employee_id || !row.name) return { row: null, error: null };
+  return { row, error: null };
+}
+
 export async function getEmployeeIds(): Promise<{
   rows: EmployeeIdRow[];
   error: string | null;

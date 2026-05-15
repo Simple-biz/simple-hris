@@ -361,7 +361,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/employees', { cache: 'no-store' });
+        const res = await fetch(`/api/employees?email=${encodeURIComponent(email)}`, { cache: 'no-store' });
         const json = (await res.json()) as {
           employees?: {
             name?: string | null;
@@ -372,11 +372,8 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
           }[];
         };
         if (cancelled) return;
-        const me = (json.employees ?? []).find((e) => {
-          const we = normEmail(e.work_email ?? '');
-          const pe = normEmail(e.personal_email ?? '');
-          return we === email || pe === email;
-        });
+        // Server already filtered to this employee; just take the first row.
+        const me = (json.employees ?? [])[0];
         const aliases = new Set<string>([email]);
         if (me) {
           const we = normEmail(me.work_email ?? '');
@@ -415,7 +412,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
       setDataError(null);
       try {
         const [ratesRes, fxRes, filesRes] = await Promise.all([
-          fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
+          fetch(`/api/employee-hourly-rates?email=${encodeURIComponent(email)}`, { cache: 'no-store' }),
           fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
           fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, { cache: 'no-store' }),
         ]);
@@ -433,12 +430,8 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
         if (ratesJson.error) {
           setDataError(ratesJson.error);
         }
-        const allRates = ratesJson.rows ?? [];
-        const myRate = allRates.find((r) => {
-          const we = normEmail(r.work_email);
-          const pe = normEmail(r.personal_email);
-          return we === email || pe === email;
-        });
+        // Server already filtered to this employee.
+        const myRate = (ratesJson.rows ?? [])[0];
         if (myRate) setRate(myRate);
 
         const files = filesJson.files ?? [];
@@ -467,8 +460,11 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
     async (file: string | null, cancelled?: boolean, aliasOverride?: string[]) => {
     const emailsForMatch = aliasOverride ?? (aliasEmails.length ? aliasEmails : [email]);
     try {
+      // Server-side email filter shrinks the response from the full weekly
+      // roster to one row — pass any of the matched aliases (work/personal).
+      const emailParam = `&email=${encodeURIComponent(emailsForMatch[0] ?? email)}`;
       const url = file
-        ? `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`
+        ? `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}${emailParam}&_=${Date.now()}`
         : `/api/hubstaff-hours?_=${Date.now()}`;
       const res = await fetch(url, { cache: 'no-store' });
       const json = (await res.json()) as {
@@ -552,9 +548,11 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
   }, [selectedFile, loadHoursData]);
 
   // Fetch ALL source files and merge this employee's daily columns for full-month PAB.
-  // When columns are canonical (`monday`, `tuesday`, …) we resolve them to ISO dates
-  // using the date range embedded in each source filename so weeks don't overwrite each other.
-  // Requests run in parallel so the calendar is not blocked on N sequential round-trips.
+  // The server does the fan-out and ships just this employee's row per file
+  // (see app/api/hubstaff-hours/route.ts `merge_all` mode). Canonical weekday
+  // columns are still resolved client-side because the resolver depends on the
+  // filename's embedded date range — the merge endpoint preserves source_file
+  // tagging so we can resolve per row here.
   useEffect(() => {
     if (sourceFiles.length === 0) {
       setPabMergeLoading(false);
@@ -567,40 +565,30 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
     }
     let cancelled = false;
     setPabMergeLoading(true);
-    const emailsMatch = aliasEmails.length ? aliasEmails : [email];
+    const emailForServer = (aliasEmails.length ? aliasEmails[0] : email);
     (async () => {
       try {
-        const responses = await Promise.all(
-          sourceFiles.map((file) =>
-            fetch(
-              `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
-              { cache: 'no-store' },
-            ).then(async (res) => {
-              const json = (await res.json()) as {
-                columns?: string[] | null;
-                rows?: Record<string, unknown>[] | null;
-              };
-              return { file, json };
-            }),
-          ),
+        const res = await fetch(
+          `/api/hubstaff-hours?merge_all=1&email=${encodeURIComponent(emailForServer)}&_=${Date.now()}`,
+          { cache: 'no-store' },
         );
+        const json = (await res.json()) as {
+          columns?: string[] | null;
+          perFile?: { source_file: string; row: Record<string, unknown> | null }[] | null;
+        };
         if (cancelled) return;
 
-        const allCols = new Set<string>();
+        const allCols = new Set<string>(json.columns ?? []);
         let merged: Record<string, unknown> = {};
         let found = false;
         let cumulativeSeconds = 0;
         let cumulativeRegSec = 0;
         let cumulativeOtSec = 0;
 
-        for (const { file, json } of responses) {
-          if (!json.columns || !json.rows) continue;
-
-          const myRow = json.rows.find((r) => hubstaffRowMatchesEmployee(r, emailsMatch));
+        for (const { source_file: file, row: myRow } of json.perFile ?? []) {
           if (!myRow) continue;
           found = true;
 
-          // Accumulate per-file hours, split into regular/OT independently per file
           const tw = getTotalWorkedRaw(myRow);
           if (tw != null && String(tw).trim() !== '') {
             const fileSec = parseHMS(tw);
@@ -611,11 +599,11 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
             cumulativeOtSec += split.otSec;
           }
 
-          // Resolve canonical day columns to ISO dates using the source filename
-          const needsResolve = columnsAreAllCanonical(json.columns);
+          const rowCols = Object.keys(myRow);
+          const needsResolve = columnsAreAllCanonical(rowCols);
           const resolved = needsResolve ? resolveCanonicalColumnsToIso(myRow, file) : myRow;
 
-          for (const col of (needsResolve ? Object.keys(resolved) : json.columns)) allCols.add(col);
+          for (const col of Object.keys(resolved)) allCols.add(col);
           merged = { ...merged, ...resolved };
         }
 
@@ -831,8 +819,8 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
     setRefreshing(true);
     try {
       const [empRes, ratesRes, fxRes, filesRes] = await Promise.all([
-        fetch('/api/employees', { cache: 'no-store' }),
-        fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
+        fetch(`/api/employees?email=${encodeURIComponent(email)}`, { cache: 'no-store' }),
+        fetch(`/api/employee-hourly-rates?email=${encodeURIComponent(email)}`, { cache: 'no-store' }),
         fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
         fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, { cache: 'no-store' }),
       ]);
@@ -845,11 +833,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
           department?: string | null;
         }[];
       };
-      const me = (empJson.employees ?? []).find((e) => {
-        const we = normEmail(e.work_email ?? '');
-        const pe = normEmail(e.personal_email ?? '');
-        return we === email || pe === email;
-      });
+      const me = (empJson.employees ?? [])[0];
       const aliasSet = new Set<string>([email]);
       if (me) {
         const we = normEmail(me.work_email ?? '');
@@ -880,12 +864,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
       if (ratesJson.error) {
         setDataError(ratesJson.error);
       }
-      const allRates = ratesJson.rows ?? [];
-      const myRate = allRates.find((r) => {
-        const we = normEmail(r.work_email);
-        const pe = normEmail(r.personal_email);
-        return we === email || pe === email;
-      });
+      const myRate = (ratesJson.rows ?? [])[0];
       if (myRate) setRate(myRate);
 
       const files = filesJson.files ?? [];

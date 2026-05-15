@@ -225,6 +225,45 @@ export async function getEmployeeHourlyRatesRows(): Promise<{
   return { rows, error: null };
 }
 
+/**
+ * Server-side single-row lookup by email — used by the employee portal so it
+ * doesn't have to download the entire rates table just to find itself.
+ * Matches on `"Work Email"` first, then `"Personal Email"` (case-insensitive).
+ */
+export async function getEmployeeHourlyRateRowByEmail(
+  email: string,
+): Promise<{ row: EmployeeHourlyRateRow | null; error: string | null }> {
+  const target = email.trim();
+  if (!target) return { row: null, error: null };
+
+  const supabase =
+    createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return {
+      row: null,
+      error:
+        "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to your .env file.",
+    };
+  }
+
+  const table =
+    process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() ||
+    "employee_hourly_rates";
+
+  const tryColumn = async (col: string) =>
+    supabase.from(table).select("*").ilike(col, target).limit(1).maybeSingle();
+
+  let res = await tryColumn('"Work Email"');
+  if (!res.data && !res.error) {
+    res = await tryColumn('"Personal Email"');
+  }
+  if (res.error) return { row: null, error: res.error.message };
+  if (!res.data) return { row: null, error: null };
+
+  const mapped = mapEmployeeHourlyRateRow(res.data as RawRow);
+  return { row: isRowEmpty(mapped) ? null : mapped, error: null };
+}
+
 export async function updateEmployeeRates(params: {
   workEmail?: string | null;
   personalEmail?: string | null;

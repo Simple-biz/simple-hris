@@ -483,12 +483,25 @@ function pickEmployeeId(
   personalEmail: string | null,
   primaryEmail: string | null,
   employeeIdMap: Map<string, string>,
+  masterRow?: RawRow | null,
 ): string | null {
+  // First preference: the dedicated employee_ids table (bank-info / payment
+  // routing). When it has a row for this person, that's the canonical answer.
   for (const email of [workEmail, personalEmail, primaryEmail]) {
     const normalized = normEmail(email);
     if (!normalized) continue;
     const found = employeeIdMap.get(normalized);
     if (found) return found;
+  }
+  // Fallback: the persisted `employee_id` column on global_master_list (added
+  // 2026-05-14 — see references/add_employee_id_to_global_master_list.sql).
+  // Most employees don't have an `employee_ids` row yet, so without this fallback
+  // the Rates & Profiles ID column shows blank even though we've stamped the
+  // master-list column. The column is filled by the backfill route + every
+  // upload, so once migrated this resolves universally.
+  if (masterRow) {
+    const masterId = toStr(getField(masterRow, ["employee_id", "Employee ID", "Employee_ID"]));
+    if (masterId) return masterId;
   }
   return null;
 }
@@ -1229,7 +1242,7 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
       organization,
       workEmail,
       personalEmail,
-      employeeId: pickEmployeeId(workEmail, personalEmail, primaryEmail, employeeIdMap),
+      employeeId: pickEmployeeId(workEmail, personalEmail, primaryEmail, employeeIdMap, master),
       regularRate:
         toStr(getField(mergedRates, ["Regular Rate", "regular_rate", "Regular_Rate"])) || null,
       otRate:
@@ -1334,7 +1347,7 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
       organization,
       workEmail,
       personalEmail,
-      employeeId: pickEmployeeId(workEmail, personalEmail, primaryEmail, employeeIdMap),
+      employeeId: pickEmployeeId(workEmail, personalEmail, primaryEmail, employeeIdMap, masterRow),
       regularRate:
         toStr(getField(mergedRates, ["Regular Rate", "regular_rate", "Regular_Rate"])) || null,
       otRate:

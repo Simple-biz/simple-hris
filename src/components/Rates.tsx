@@ -1068,13 +1068,13 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
             <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">/</span>
             Roster
           </p>
-          <h1 className="mt-1 font-mono text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl lg:text-[2.25rem] lg:leading-none dark:text-white">
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl lg:text-[2.25rem] lg:leading-none dark:text-white">
             Rates &amp; Profiles
           </h1>
           <p className="mt-1.5 text-xs leading-snug text-zinc-500 dark:text-zinc-500">
             Merged from{" "}
-            <span className="font-mono text-zinc-600 dark:text-zinc-400">employee_hourly_rates</span>{" "}
-            and <span className="font-mono text-zinc-600 dark:text-zinc-400">global_master_list</span>{" "}
+            <span className="text-zinc-600 dark:text-zinc-400">employee_hourly_rates</span>{" "}
+            and <span className="text-zinc-600 dark:text-zinc-400">global_master_list</span>{" "}
             — rows match by work/personal email or name. Open any row for the full profile.
           </p>
         </div>
@@ -1099,7 +1099,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
             <span className="hidden sm:inline">
               Export CSV
               {!isExporting && filtered.length > 0 && (
-                <span className="ml-1 font-mono text-[10px] text-zinc-500 dark:text-zinc-500">
+                <span className="ml-1 text-[10px] text-zinc-500 dark:text-zinc-500">
                   ({filtered.length})
                 </span>
               )}
@@ -1131,7 +1131,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
           <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
             Employees
           </span>
-          <span className="font-mono text-lg font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
+          <span className="text-lg font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
             {stats.total}
           </span>
         </div>
@@ -1139,7 +1139,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
           <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-amber-700 dark:text-amber-400">
             Missing rates
           </span>
-          <span className="font-mono text-lg font-bold tabular-nums leading-none text-amber-800 dark:text-amber-300">
+          <span className="text-lg font-bold tabular-nums leading-none text-amber-800 dark:text-amber-300">
             {stats.missingAny}
             {stats.missingBoth > 0 && (
               <span className="ml-1.5 align-middle text-[10px] font-medium text-amber-600 dark:text-amber-500">
@@ -1152,7 +1152,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
           <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
             Suspended
           </span>
-          <span className="font-mono text-lg font-bold tabular-nums leading-none text-zinc-700 dark:text-zinc-300">
+          <span className="text-lg font-bold tabular-nums leading-none text-zinc-700 dark:text-zinc-300">
             {stats.suspended}
           </span>
         </div>
@@ -1160,7 +1160,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
           <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-blue-700 dark:text-blue-400">
             USD → PHP
           </span>
-          <span className="font-mono text-base font-bold tabular-nums leading-none text-blue-900 dark:text-blue-300">
+          <span className="text-base font-bold tabular-nums leading-none text-blue-900 dark:text-blue-300">
             ₱{usdToPhpRate.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
           </span>
         </div>
@@ -1312,11 +1312,11 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
               <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-500">
                 <span>
                   Showing{" "}
-                  <span className="font-mono text-zinc-800 dark:text-zinc-300">
+                  <span className="text-zinc-800 dark:text-zinc-300">
                     {filtered.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1}–
                     {Math.min(safePage * PAGE_SIZE, filtered.length)}
                   </span>{" "}
-                  of <span className="font-mono text-zinc-800 dark:text-zinc-300">{filtered.length}</span>
+                  of <span className="text-zinc-800 dark:text-zinc-300">{filtered.length}</span>
                 </span>
                 <div className="flex items-center gap-1">
                   <Button
@@ -1330,7 +1330,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   >
                     <ChevronLeft className="size-4" />
                   </Button>
-                  <span className="px-2 font-mono text-zinc-600 dark:text-zinc-400">
+                  <span className="px-2 text-zinc-600 dark:text-zinc-400">
                     {safePage} / {totalPages}
                   </span>
                   <Button
@@ -1422,7 +1422,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                 </td>
                                 <td className="px-3 py-2.5">
                                   {row.employeeId ? (
-                                    <span className="inline-flex items-center rounded border border-orange-200 bg-orange-50 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                                    <span className="inline-flex items-center rounded border border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[11px] font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
                                       {row.employeeId}
                                     </span>
                                   ) : (
@@ -1466,13 +1466,13 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                   )}
                                 </td>
                                 <td className="px-3 py-2.5">
-                                  <span className="block max-w-[220px] truncate font-mono text-[11.5px] text-zinc-600 dark:text-zinc-400">
+                                  <span className="block max-w-[220px] truncate text-[11.5px] text-zinc-600 dark:text-zinc-400">
                                     {row.workEmail}
                                   </span>
                                 </td>
                                 <td className="px-3 py-2.5 text-right">
                                   <span className={cn(
-                                    "font-mono text-[12.5px] font-semibold tabular-nums",
+                                    "text-[12.5px] font-semibold tabular-nums",
                                     row.regularRate === "—" ? "text-zinc-400 dark:text-zinc-600" : "text-zinc-800 dark:text-zinc-200",
                                   )}>
                                     {row.regularRate}
@@ -1480,7 +1480,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                 </td>
                                 <td className="px-3 py-2.5 text-right">
                                   <span className={cn(
-                                    "font-mono text-[12.5px] font-semibold tabular-nums",
+                                    "text-[12.5px] font-semibold tabular-nums",
                                     row.otRate === "—" ? "text-zinc-400 dark:text-zinc-600" : "text-zinc-800 dark:text-zinc-200",
                                   )}>
                                     {row.otRate}
@@ -1643,7 +1643,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         {/* Chips: employee ID + department + HSL role + org */}
                         <div className="flex flex-wrap gap-1.5">
                           {row.employeeId && (
-                            <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 font-mono text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                            <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
                               {row.employeeId}
                             </span>
                           )}
@@ -1683,7 +1683,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         </div>
 
                         {/* Work email */}
-                        <p className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
+                        <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
                           {row.workEmail}
                         </p>
 
@@ -1691,11 +1691,11 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         <div className="grid grid-cols-2 gap-2">
                           <div className="flex flex-col gap-0.5 rounded-lg border border-zinc-200/80 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
                             <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">Regular</span>
-                            <span className="font-mono text-sm font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">{row.regularRate}</span>
+                            <span className="text-sm font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">{row.regularRate}</span>
                           </div>
                           <div className="flex flex-col gap-0.5 rounded-lg border border-zinc-200/80 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
                             <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">OT</span>
-                            <span className="font-mono text-sm font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">{row.otRate}</span>
+                            <span className="text-sm font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">{row.otRate}</span>
                           </div>
                         </div>
 
@@ -1811,8 +1811,8 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                 {deleteTarget?.displayName}
               </span>
               ? Their record will be removed from{" "}
-              <span className="font-mono text-xs">employee_hourly_rates</span> and{" "}
-              <span className="font-mono text-xs">global_master_list</span>.
+              <span className="text-xs">employee_hourly_rates</span> and{" "}
+              <span className="text-xs">global_master_list</span>.
             </p>
           </div>
           <DialogFooter className="border-t border-red-100/60 bg-gradient-to-r from-red-50/50 to-orange-50/30 px-6 py-4 dark:border-red-950/40 dark:from-red-950/20 dark:to-[#0d1117]">
@@ -1884,16 +1884,16 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-700/80 dark:text-amber-500/70">
                     New Profile
                   </p>
-                  <DialogTitle className="mt-0.5 font-mono text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
+                  <DialogTitle className="mt-0.5 text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
                     Add Employee
                   </DialogTitle>
                 </div>
               </div>
               <DialogDescription className="mt-2 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-500">
                 Writes to{' '}
-                <span className="font-mono text-zinc-700 dark:text-zinc-300">employee_hourly_rates</span>{' '}
+                <span className="text-zinc-700 dark:text-zinc-300">employee_hourly_rates</span>{' '}
                 and{' '}
-                <span className="font-mono text-zinc-700 dark:text-zinc-300">global_master_list</span>.
+                <span className="text-zinc-700 dark:text-zinc-300">global_master_list</span>.
               </DialogDescription>
             </DialogHeader>
 
@@ -1959,7 +1959,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         placeholder="name@company.com"
                         value={addForm.workEmail}
                         onChange={(e) => setAddForm((f) => ({ ...f, workEmail: e.target.value }))}
-                        className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                        className="h-9 border-zinc-200 bg-white pl-8 text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                       />
                     </div>
                   </div>
@@ -1975,7 +1975,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         placeholder="personal@email.com"
                         value={addForm.personalEmail}
                         onChange={(e) => setAddForm((f) => ({ ...f, personalEmail: e.target.value }))}
-                        className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                        className="h-9 border-zinc-200 bg-white pl-8 text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                       />
                     </div>
                   </div>
@@ -2002,7 +2002,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                       value={addForm.startDate}
                       onChange={(e) => setAddForm((f) => ({ ...f, startDate: e.target.value }))}
                       max={new Date().toISOString().slice(0, 10)}
-                      className="h-9 w-full border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                      className="h-9 w-full border-zinc-200 bg-white pl-8 text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                     />
                   </div>
                 </div>
@@ -2015,7 +2015,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
                     Compensation
                   </span>
-                  <span className="ml-auto font-mono text-[10px] tabular-nums text-blue-700 dark:text-blue-400">
+                  <span className="ml-auto text-[10px] tabular-nums text-blue-700 dark:text-blue-400">
                     ₱{usdToPhpRate.toFixed(5)} / $1
                   </span>
                 </legend>
@@ -2034,7 +2034,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         inputMode="decimal"
                         value={addForm.regularRate}
                         onChange={(e) => setAddForm((f) => ({ ...f, regularRate: e.target.value }))}
-                        className="h-9 border-zinc-200 bg-white pl-7 font-mono tabular-nums text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                        className="h-9 border-zinc-200 bg-white pl-7 tabular-nums text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                       />
                     </div>
                   </div>
@@ -2052,7 +2052,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         inputMode="decimal"
                         value={addForm.otRate}
                         onChange={(e) => setAddForm((f) => ({ ...f, otRate: e.target.value }))}
-                        className="h-9 border-zinc-200 bg-white pl-7 font-mono tabular-nums text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                        className="h-9 border-zinc-200 bg-white pl-7 tabular-nums text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                       />
                     </div>
                   </div>
@@ -2152,11 +2152,11 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           {empId ? (
                             <>
                               <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">/</span>
-                              <span className="font-mono text-zinc-600 dark:text-zinc-400">{empId}</span>
+                              <span className="text-zinc-600 dark:text-zinc-400">{empId}</span>
                             </>
                           ) : null}
                         </p>
-                        <DialogTitle className="mt-0.5 truncate font-mono text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
+                        <DialogTitle className="mt-0.5 truncate text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
                           {activeProfile.displayName}
                         </DialogTitle>
                         {(activeProfile.department || activeProfile.organization) ? (
@@ -2172,7 +2172,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                               </span>
                             ) : null}
                             {activeProfile.subtitle ? (
-                              <span className="font-mono text-zinc-400 dark:text-zinc-600">
+                              <span className="text-zinc-400 dark:text-zinc-600">
                                 · {activeProfile.subtitle}
                               </span>
                             ) : null}
@@ -2215,11 +2215,11 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           <Input
                             value={editRegularRate}
                             onChange={(e) => setEditRegularRate(e.target.value)}
-                            className="h-9 w-32 border-zinc-200 bg-white pl-7 font-mono tabular-nums text-base font-semibold text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                            className="h-9 w-32 border-zinc-200 bg-white pl-7 tabular-nums text-base font-semibold text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
                           />
                         </div>
                       ) : (
-                        <p className="font-mono text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
+                        <p className="text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
                           {formatRateDisplay(editRegularRate)}
                         </p>
                       )}
@@ -2237,11 +2237,11 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           <Input
                             value={editOtRate}
                             onChange={(e) => setEditOtRate(e.target.value)}
-                            className="h-9 w-32 border-zinc-200 bg-white pl-7 font-mono tabular-nums text-base font-semibold text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                            className="h-9 w-32 border-zinc-200 bg-white pl-7 tabular-nums text-base font-semibold text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
                           />
                         </div>
                       ) : (
-                        <p className="font-mono text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
+                        <p className="text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
                           {formatRateDisplay(editOtRate)}
                         </p>
                       )}
@@ -2251,7 +2251,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                       <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-blue-600 dark:text-blue-400">
                         USD → PHP
                       </p>
-                      <p className="font-mono text-sm font-medium tabular-nums leading-none text-blue-900 dark:text-blue-300">
+                      <p className="text-sm font-medium tabular-nums leading-none text-blue-900 dark:text-blue-300">
                         ₱{usdToPhpRate.toFixed(5)}
                       </p>
                     </div>
@@ -2443,7 +2443,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                               placeholder="name@company.com"
                               value={editProfileForm.workEmail}
                               onChange={(e) => setEditProfileForm((f) => ({ ...f, workEmail: e.target.value }))}
-                              className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                              className="h-9 border-zinc-200 bg-white pl-8 text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                             />
                           </div>
                         </div>
@@ -2458,7 +2458,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                               placeholder="personal@email.com"
                               value={editProfileForm.personalEmail}
                               onChange={(e) => setEditProfileForm((f) => ({ ...f, personalEmail: e.target.value }))}
-                              className="h-9 border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors placeholder:font-sans placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                              className="h-9 border-zinc-200 bg-white pl-8 text-sm text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                             />
                           </div>
                         </div>
@@ -2483,7 +2483,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                             type="date"
                             value={editProfileForm.startDate}
                             onChange={(e) => setEditProfileForm((f) => ({ ...f, startDate: e.target.value }))}
-                            className="h-9 w-full border-zinc-200 bg-white pl-8 font-mono text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+                            className="h-9 w-full border-zinc-200 bg-white pl-8 text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-zinc-700 dark:focus:border-orange-400"
                           />
                         </div>
                       </div>
@@ -2539,7 +2539,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                               Employee ID
                             </dt>
                             <dd className="mt-1.5">
-                              <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2.5 py-0.5 font-mono text-sm font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
+                              <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2.5 py-0.5 text-sm font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
                                 {empId}
                               </span>
                             </dd>

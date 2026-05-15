@@ -125,7 +125,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
           />
         );
       case 'payroll-wizard':
-        return <PayrollWizard sessionEmail={sessionEmail} />;
+        return <PayrollWizard sessionEmail={sessionEmail} initialData={initialData} />;
       case 'payment-dispatch':
         return <PayrollDispatch />;
       case 'disputes':

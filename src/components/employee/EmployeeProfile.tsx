@@ -127,7 +127,7 @@ function Row({
       <div
         className={[
           'min-w-0 text-[14px] text-zinc-900 dark:text-zinc-100',
-          mono ? 'font-mono text-[13px] tracking-tight' : '',
+          mono ? 'text-[13px] tracking-tight' : '',
         ].join(' ')}
       >
         {status === 'active' && (
@@ -158,7 +158,7 @@ function CompactStat({
       <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
         {label}
       </span>
-      <span className="font-mono text-[22px] font-medium tracking-tight text-zinc-900 dark:text-zinc-100">
+      <span className="text-[22px] font-medium tracking-tight text-zinc-900 dark:text-zinc-100">
         {value}
       </span>
       {hint && (
@@ -347,10 +347,14 @@ export default function EmployeeProfile({
       setError(null);
       setLoading(true);
       try {
+        // Server-side `?email=` filter: each route returns just this employee's
+        // row instead of the full table. Same pattern documented in
+        // memory/project_employee_portal_filtered_endpoints.md.
+        const emailParam = `email=${encodeURIComponent(employeeEmail)}`;
         const [empRes, rateRes, idsRes, fxRes] = await Promise.all([
-          fetch('/api/employees', { cache: 'no-store' }),
-          fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
-          fetch('/api/employee-ids', { cache: 'no-store' }),
+          fetch(`/api/employees?${emailParam}`, { cache: 'no-store' }),
+          fetch(`/api/employee-hourly-rates?${emailParam}`, { cache: 'no-store' }),
+          fetch(`/api/employee-ids?${emailParam}`, { cache: 'no-store' }),
           fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
         ]);
 
@@ -366,7 +370,8 @@ export default function EmployeeProfile({
         }
 
         if (empJson.error) setError(empJson.error);
-        const me = (empJson.employees ?? []).find((e) => matchesEmployeeEmail(e, norm));
+        // Server already filtered to this employee; just take the first row.
+        const me = (empJson.employees ?? [])[0];
 
         // Always also fetch /api/employee-master-record. It queries `global_master_list`
         // directly (where the address columns live) and works as both:
@@ -402,23 +407,13 @@ export default function EmployeeProfile({
         }
 
         if (rateJson.error && !empJson.error) setError(rateJson.error ?? null);
-        const rates = rateJson.rows ?? [];
-        const myRate = rates.find((r) => {
-          const we = normEmail(r.work_email ?? '');
-          const pe = normEmail(r.personal_email ?? '');
-          return we === norm || pe === norm;
-        });
+        const myRate = (rateJson.rows ?? [])[0];
         setRate(myRate ?? null);
 
-        const idRows = idsJson.rows ?? [];
         if (idsJson.error && !empJson.error && !rateJson.error) {
           setError(idsJson.error);
         }
-        const myId = idRows.find((r) => {
-          const we = normEmail(r.work_email ?? '');
-          const pe = normEmail(r.personal_email ?? '');
-          return we === norm || pe === norm;
-        });
+        const myId = (idsJson.rows ?? [])[0];
         setBankInfo(myId ?? null);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load profile');
@@ -528,14 +523,12 @@ export default function EmployeeProfile({
       const json = (await res.json()) as { error?: string | null; success?: boolean };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
 
-      const idsRes = await fetch('/api/employee-ids', { cache: 'no-store' });
+      const idsRes = await fetch(
+        `/api/employee-ids?email=${encodeURIComponent(employeeEmail)}`,
+        { cache: 'no-store' },
+      );
       const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[] };
-      const idRows = idsJson.rows ?? [];
-      const myId = idRows.find((r) => {
-        const we = normEmail(r.work_email ?? '');
-        const pe = normEmail(r.personal_email ?? '');
-        return we === norm || pe === norm;
-      });
+      const myId = (idsJson.rows ?? [])[0];
       setBankInfo(myId ?? null);
       setPayoutSavedAt(new Date().toLocaleTimeString());
       setPayoutEditing(false);
@@ -621,7 +614,7 @@ export default function EmployeeProfile({
                 <span className="text-zinc-300 dark:text-zinc-700">·</span>
               )}
               {master?.employee_id && (
-                <span className="font-mono text-[12.5px] text-zinc-500 dark:text-zinc-400">
+                <span className="text-[12.5px] text-zinc-500 dark:text-zinc-400">
                   ID {master.employee_id}
                 </span>
               )}
@@ -675,8 +668,8 @@ export default function EmployeeProfile({
             <p className="leading-relaxed text-zinc-600 dark:text-zinc-400">
               {rate ? (
                 <>
-                  No <span className="font-mono">global_master_list</span> entry for{' '}
-                  <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">
+                  No <span className="font-medium text-zinc-700 dark:text-zinc-300">global_master_list</span> entry for{' '}
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
                     {employeeEmail}
                   </span>{' '}
                   — rates only. Identity will appear once HR adds you to the roster.
@@ -684,7 +677,7 @@ export default function EmployeeProfile({
               ) : (
                 <>
                   No directory or payroll record on file for{' '}
-                  <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
                     {employeeEmail}
                   </span>
                   .
@@ -804,7 +797,7 @@ export default function EmployeeProfile({
                         })}`}
                         hint="= USD 1.00"
                       />
-                      <span className="font-mono text-[11px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                      <span className="text-[11px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
                         Live · payroll
                       </span>
                     </div>

@@ -869,7 +869,13 @@ const steps = [
   { id: 9, label: 'Reports', icon: BarChart3, description: 'Dispatch summary — salaries, budget requests, and gift payments' },
 ];
 
-export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string | null }) {
+export default function PayrollWizard({
+  sessionEmail,
+  initialData,
+}: {
+  sessionEmail?: string | null;
+  initialData?: import('@/lib/accounting/prefetch').InitialAccountingData | null;
+}) {
   const [currentStep, setCurrentStep] = useState(1);
   const [wizardStartedAt] = useState<Date>(() => new Date());
   const [reportSnapshot, setReportSnapshot] = useState<{
@@ -888,7 +894,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   const [hubstaffData, setHubstaffData] = useState<HubstaffRow[]>([]);
   const [issues, setIssues] = useState<ReconciliationIssue[]>([]);
   const [isHoganCycle, setIsHoganCycle] = useState(false);
-  const [masterEmployees, setMasterEmployees] = useState<EmployeeRow[]>([]);
+  const [masterEmployees, setMasterEmployees] = useState<EmployeeRow[]>(
+    initialData?.employees ?? [],
+  );
   const [hubstaffDisplayColumns, setHubstaffDisplayColumns] = useState<string[] | null>(null);
   const [hubstaffDisplayRows, setHubstaffDisplayRows] = useState<Record<string, unknown>[] | null>(null);
   /** All rows across ALL uploaded CSVs — used for full-month PAB eligibility check. */
@@ -929,7 +937,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
 
   // ── Uploaded-files browser tab state ──
   const [hubstaffActiveTab, setHubstaffActiveTab] = useState<'files' | 'upload'>('upload');
-  const [uploadedSourceFiles, setUploadedSourceFiles] = useState<string[]>([]);
+  const [uploadedSourceFiles, setUploadedSourceFiles] = useState<string[]>(
+    initialData?.sourceFiles ?? [],
+  );
   const [hubstaffUploads, setHubstaffUploads] = useState<
     {
       id: string;
@@ -938,7 +948,7 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
       row_count: number | null;
       is_current: boolean;
     }[]
-  >([]);
+  >(initialData?.hubstaffUploads ?? []);
 
   // Look up upload metadata (timestamp, row count, is_current) by filename. If
   // multiple uploads share the same source_file, the newest wins (backend orders
@@ -986,7 +996,9 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
   /** True while fetching unfiltered hubstaff_hours (no source_file column / replace-only uploads). */
   const [unfilteredHubstaffLoading, setUnfilteredHubstaffLoading] = useState(false);
 
-  const [hourlyRateRows, setHourlyRateRows] = useState<EmployeeHourlyRateRow[]>([]);
+  const [hourlyRateRows, setHourlyRateRows] = useState<EmployeeHourlyRateRow[]>(
+    initialData?.hourlyRates ?? [],
+  );
   const [hourlyRatesLoading, setHourlyRatesLoading] = useState(false);
   const [hourlyRatesError, setHourlyRatesError] = useState<string | null>(null);
 
@@ -1373,7 +1385,15 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
     }
   }, []);
 
+  // Skip the first reload when the server already shipped employees via
+  // initialData. Step navigation / sync buttons still call reloadMasterEmployees
+  // directly when they need fresh data.
+  const skipInitialEmployeesFetchRef = useRef(Boolean(initialData?.employees?.length));
   useEffect(() => {
+    if (skipInitialEmployeesFetchRef.current) {
+      skipInitialEmployeesFetchRef.current = false;
+      return;
+    }
     void reloadMasterEmployees();
   }, [reloadMasterEmployees]);
 
@@ -1396,22 +1416,25 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
     };
   }, []);
 
-  // Fetch overtime settings (global + per-department) from System Settings
+  // Fetch overtime settings (global + per-department) — single bulk call to
+  // /api/app-settings?keys=… instead of one round-trip per key.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const allKeys = ['ot_global_suspended', ...DEPARTMENTS.map(d => `ot_dept_${d.key}`)];
-        const responses = await Promise.all(
-          allKeys.map(key => fetch(`/api/app-settings?key=${encodeURIComponent(key)}`, { cache: 'no-store' })),
+        const res = await fetch(
+          `/api/app-settings?keys=${encodeURIComponent(allKeys.join(','))}`,
+          { cache: 'no-store' },
         );
+        const json = (await res.json()) as { values?: Record<string, string | null> };
         if (cancelled) return;
-        const jsons = (await Promise.all(responses.map(r => r.json()))) as { value: string | null }[];
-        setOtGlobalSuspended(jsons[0].value === 'true');
+        const values = json.values ?? {};
+        setOtGlobalSuspended(values['ot_global_suspended'] === 'true');
         const deptMap: Record<string, boolean> = {};
-        DEPARTMENTS.forEach((d, i) => {
-          const val = jsons[i + 1].value;
-          deptMap[`ot_dept_${d.key}`] = val === null ? true : val === 'true';
+        DEPARTMENTS.forEach((d) => {
+          const val = values[`ot_dept_${d.key}`];
+          deptMap[`ot_dept_${d.key}`] = val == null ? true : val === 'true';
         });
         setOtDeptEnabled(deptMap);
       } catch {
@@ -1436,10 +1459,16 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
     }
   }, []);
 
+  // Step 2 needs the rates table. Skip the first call when initialData
+  // already shipped it — manual re-load buttons inside step 2 still re-fetch.
+  const skipInitialRatesFetchRef = useRef(Boolean(initialData?.hourlyRates?.length));
   useEffect(() => {
-    if (currentStep === 2) {
-      void loadEmployeeHourlyRates();
+    if (currentStep !== 2) return;
+    if (skipInitialRatesFetchRef.current) {
+      skipInitialRatesFetchRef.current = false;
+      return;
     }
+    void loadEmployeeHourlyRates();
   }, [currentStep, loadEmployeeHourlyRates]);
 
   // Auto-select latest uploaded source file as soon as the list is available.
@@ -3203,7 +3232,17 @@ export default function PayrollWizard({ sessionEmail }: { sessionEmail?: string 
     }
   }, []);
 
+  // Skip the initial load when initialData already shipped both the file list
+  // and the rich uploads metadata. Manual refresh buttons + post-upload reloads
+  // still call loadUploadedSourceFiles() directly.
+  const skipInitialSourceFilesFetchRef = useRef(
+    Boolean(initialData?.sourceFiles?.length && initialData?.hubstaffUploads?.length),
+  );
   useEffect(() => {
+    if (skipInitialSourceFilesFetchRef.current) {
+      skipInitialSourceFilesFetchRef.current = false;
+      return;
+    }
     void loadUploadedSourceFiles();
   }, [loadUploadedSourceFiles]);
 

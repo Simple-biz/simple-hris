@@ -29,7 +29,7 @@ import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
 import HrOffboarding from './HrOffboarding';
-import HrFpuEnrollments from './HrFpuEnrollments';
+import HrMesa from './HrMesa';
 import GiftTracker from '@/components/orphanage/GiftTracker';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
 import SWall from '@/components/swall/SWall';
@@ -156,7 +156,7 @@ export default function HrApp() {
               {activeTab === 'offboarding' && <HrOffboarding />}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
               {activeTab === 'gift-tracker' && <GiftTracker viewerEmail={viewerEmail} />}
-              {activeTab === 'fpu' && <HrFpuEnrollments />}
+              {activeTab === 'mesa' && <HrMesa />}
               {activeTab === 'notifications' && (
                 <NotificationsPanel viewerEmail={viewerEmail} accent="emerald" />
               )}

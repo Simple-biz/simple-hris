@@ -15,13 +15,14 @@ import {
   Sparkles,
   GraduationCap,
   ArrowRight,
+  History as HistoryIcon,
+  Lock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
-import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import EmployeeFpu from './EmployeeFpu';
 
@@ -32,10 +33,13 @@ interface Props {
   startDate?: string | null;
 }
 
-type SubTab = 'about' | 'fpu';
+type SubTab = 'about' | 'fpu' | 'history';
 
+// Weekly contribution shape — employee ₱100, company (Simple.biz) ₱400.
+// The "matched four times over" copy in About is the source of truth here:
+// 4× the employee's ₱100 = ₱400 from the company → ₱500 total per week.
 const WEEKLY_EMPLOYEE_CONTRIB = 100;
-const WEEKLY_COMPANY_MATCH = 300;
+const WEEKLY_COMPANY_MATCH = 400;
 const WEEKLY_TOTAL = WEEKLY_EMPLOYEE_CONTRIB + WEEKLY_COMPANY_MATCH;
 
 const formatPHP = (n: number) =>
@@ -50,23 +54,22 @@ export default function EmployeeMesa({
   const [isMember, setIsMember] = useState<boolean | null>(null);
   const [subTab, setSubTab] = useState<SubTab>('about');
 
-  // Look up the current user's mesa_member flag from their rates row.
+  // Look up the current user's mesa_member flag — server-side ?email= filter
+  // returns just this employee's row. See memory/project_employee_portal_filtered_endpoints.md.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/employee-hourly-rates', { cache: 'no-store' });
+        const res = await fetch(
+          `/api/employee-hourly-rates?email=${encodeURIComponent(employeeEmail)}`,
+          { cache: 'no-store' },
+        );
         if (!res.ok) {
           if (!cancelled) setIsMember(false);
           return;
         }
         const json = (await res.json()) as { rows?: EmployeeHourlyRateRow[] };
-        const target = normEmail(employeeEmail);
-        const mine = (json.rows ?? []).find((r) => {
-          const w = normEmail(r.work_email ?? null);
-          const p = normEmail(r.personal_email ?? null);
-          return (w && w === target) || (p && p === target);
-        });
+        const mine = (json.rows ?? [])[0];
         if (!cancelled) setIsMember(!!mine?.mesa_member);
       } catch {
         if (!cancelled) setIsMember(false);
@@ -98,6 +101,13 @@ export default function EmployeeMesa({
             label="FPU Enrollment"
             tabKey="fpu"
           />
+          <SubTabButton
+            active={subTab === 'history'}
+            onClick={() => setSubTab('history')}
+            icon={HistoryIcon}
+            label="History"
+            tabKey="history"
+          />
         </div>
 
         <AnimatePresence mode="wait" initial={false}>
@@ -115,6 +125,12 @@ export default function EmployeeMesa({
                 department={department ?? null}
                 startDate={startDate ?? null}
                 embedded
+              />
+            ) : subTab === 'history' ? (
+              <MesaHistory
+                isMember={isMember}
+                startDate={startDate ?? null}
+                onGoToFpu={() => setSubTab('fpu')}
               />
             ) : (
               <AboutMesa
@@ -561,4 +577,276 @@ function Rule({
       </div>
     </div>
   );
+}
+
+// ── History ────────────────────────────────────────────────────────────────
+//
+// Weekly contribution ledger: ₱100 employee + ₱400 Simple.biz = ₱500 per week
+// from the employee's start_date through today. Display-only — the program
+// doesn't persist per-week rows yet, so this is a projection of "what your
+// savings would look like if you've been enrolled since you joined".
+//
+// Gated on the `mesa_member` flag. Non-members see a "not enrolled" panel
+// with a deep link into the FPU tab (FPU is the only path into MESA).
+//
+// Mon → Sun weeks. The current (in-progress) week is rendered with an
+// "in progress" pill and excluded from cumulative totals — only fully-elapsed
+// weeks count toward the ledger so we don't promise contributions that
+// haven't been deducted yet.
+function MesaHistory({
+  isMember,
+  startDate,
+  onGoToFpu,
+}: {
+  isMember: boolean | null;
+  startDate: string | null;
+  onGoToFpu: () => void;
+}) {
+  if (isMember === null) {
+    return (
+      <div className="rounded-2xl border border-teal-100/80 bg-white/80 p-8 text-center text-sm text-zinc-500 shadow-sm dark:border-teal-900/40 dark:bg-zinc-900/40 dark:text-zinc-400">
+        Loading your MESA history…
+      </div>
+    );
+  }
+
+  if (!isMember) {
+    return (
+      <div className="space-y-4">
+        <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-gradient-to-br from-zinc-50/80 via-white to-zinc-100/40 p-6 shadow-sm dark:border-zinc-800 dark:from-zinc-900/60 dark:via-[#0d1117] dark:to-zinc-900/30 sm:p-8">
+          <div className="flex items-start gap-4">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-zinc-500 shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-700">
+              <Lock className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                Not enrolled yet
+              </p>
+              <h2 className="mt-1 text-xl font-bold tracking-tight text-zinc-900 dark:text-white">
+                No MESA history to show
+              </h2>
+              <p className="mt-2 max-w-xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+                Contributions begin once you've completed Financial Peace University and
+                enrolled in MESA. Until then, this tab will be empty.
+              </p>
+              <div className="mt-4">
+                <Button
+                  type="button"
+                  onClick={onGoToFpu}
+                  className="bg-orange-500 text-white shadow-sm hover:bg-orange-600 focus-visible:ring-orange-500/40 dark:bg-orange-500 dark:hover:bg-orange-400"
+                >
+                  Sign up for FPU
+                  <ArrowRight className="ml-1.5 h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Member — compute the ledger from start_date to today.
+  const start = parseStartDate(startDate);
+  if (!start) {
+    return (
+      <div className="rounded-2xl border border-amber-200/80 bg-amber-50/70 p-6 text-sm text-amber-900 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+        We couldn't read your hire date, so the contribution history can't be calculated yet.
+        Please ask HR to update your start date.
+      </div>
+    );
+  }
+
+  const weeks = buildWeeklyLedger(start, new Date());
+  const completed = weeks.filter((w) => !w.inProgress);
+  const cumulativeEmployee = completed.length * WEEKLY_EMPLOYEE_CONTRIB;
+  const cumulativeCompany = completed.length * WEEKLY_COMPANY_MATCH;
+  const cumulativeTotal = completed.length * WEEKLY_TOTAL;
+
+  return (
+    <div className="space-y-6">
+      {/* Hero — cumulative totals */}
+      <div className="overflow-hidden rounded-2xl border border-teal-100/80 bg-gradient-to-br from-teal-50/80 via-white to-emerald-50/60 p-6 shadow-sm dark:border-teal-900/40 dark:from-teal-950/40 dark:via-[#0d1117] dark:to-emerald-950/30 sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-700 dark:text-teal-300">
+              Contribution history
+            </p>
+            <h2 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl dark:text-white">
+              Your MESA balance
+            </h2>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+              {completed.length} completed week{completed.length === 1 ? '' : 's'} since{' '}
+              <span className="font-semibold text-zinc-900 dark:text-white">
+                {formatDateLong(start)}
+              </span>
+              .
+            </p>
+          </div>
+          <Badge
+            variant="outline"
+            className="border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200"
+          >
+            <CheckCircle2 className="mr-1 h-3 w-3" />
+            Enrolled
+          </Badge>
+        </div>
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          <ContribCard
+            label="You've contributed"
+            amount={formatPHP(cumulativeEmployee)}
+            sub={`${completed.length} × ${formatPHP(WEEKLY_EMPLOYEE_CONTRIB)}`}
+            tone="muted"
+          />
+          <ContribCard
+            label="Simple.biz has matched"
+            amount={formatPHP(cumulativeCompany)}
+            sub={`${completed.length} × ${formatPHP(WEEKLY_COMPANY_MATCH)}`}
+            tone="accent"
+          />
+          <ContribCard
+            label="Total saved"
+            amount={formatPHP(cumulativeTotal)}
+            sub="Cumulative"
+            tone="hero"
+          />
+        </div>
+      </div>
+
+      {/* Weekly ledger */}
+      <Section
+        icon={CalendarClock}
+        eyebrow="Weekly ledger"
+        title="Week-by-week contributions"
+      >
+        <div className="overflow-hidden rounded-lg border border-zinc-100 dark:border-zinc-800/80">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50/80 text-[11px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
+              <tr>
+                <th className="px-3 py-2 text-left font-semibold">Week of</th>
+                <th className="px-3 py-2 text-right font-semibold">You</th>
+                <th className="px-3 py-2 text-right font-semibold">Simple.biz</th>
+                <th className="px-3 py-2 text-right font-semibold">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800/80 dark:bg-zinc-900/30">
+              {weeks
+                .slice()
+                .reverse()
+                .map((w) => (
+                  <tr
+                    key={w.weekStart.toISOString()}
+                    className={cn(
+                      'transition-colors',
+                      w.inProgress
+                        ? 'bg-amber-50/30 dark:bg-amber-500/5'
+                        : 'hover:bg-teal-50/40 dark:hover:bg-teal-950/20',
+                    )}
+                  >
+                    <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300" data-label="Week of">
+                      <span className="font-medium">{formatDateShort(w.weekStart)}</span>
+                      {w.inProgress && (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+                          In progress
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300"
+                      data-label="You"
+                    >
+                      {w.inProgress ? '—' : formatPHP(WEEKLY_EMPLOYEE_CONTRIB)}
+                    </td>
+                    <td
+                      className="px-3 py-2 text-right tabular-nums text-zinc-700 dark:text-zinc-300"
+                      data-label="Simple.biz"
+                    >
+                      {w.inProgress ? '—' : formatPHP(WEEKLY_COMPANY_MATCH)}
+                    </td>
+                    <td
+                      className="px-3 py-2 text-right font-semibold tabular-nums text-zinc-900 dark:text-white"
+                      data-label="Total"
+                    >
+                      {w.inProgress ? '—' : formatPHP(WEEKLY_TOTAL)}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-xs italic text-zinc-500 dark:text-zinc-500">
+          This is a projected ledger based on your hire date and current enrollment — the
+          program doesn't store individual weekly entries yet, so totals are computed from
+          fully-elapsed weeks only.
+        </p>
+      </Section>
+    </div>
+  );
+}
+
+/**
+ * Parses an arbitrary `start_date` string into a Date. Accepts ISO
+ * (`YYYY-MM-DD`), US (`MM/DD/YYYY` or `MM/DD/YY`), and anything Date() understands.
+ * Returns null for empty/unparseable input.
+ */
+function parseStartDate(input: string | null | undefined): Date | null {
+  const s = input?.trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d;
+  // Fallback for MM/DD/YY → JS Date doesn't always parse 2-digit years correctly.
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s);
+  if (m) {
+    const yy = parseInt(m[3], 10);
+    const year = yy < 100 ? 2000 + yy : yy;
+    const d2 = new Date(year, parseInt(m[1], 10) - 1, parseInt(m[2], 10));
+    if (!Number.isNaN(d2.getTime())) return d2;
+  }
+  return null;
+}
+
+type LedgerWeek = { weekStart: Date; inProgress: boolean };
+
+/**
+ * Builds the Monday-anchored weekly ledger from `start` through `today`.
+ * The week containing `today` is flagged `inProgress` and excluded from
+ * cumulative totals upstream — we don't surface contributions that haven't
+ * been collected yet.
+ */
+function buildWeeklyLedger(start: Date, today: Date): LedgerWeek[] {
+  const firstMonday = mondayOf(start);
+  const todayMonday = mondayOf(today);
+  const weeks: LedgerWeek[] = [];
+  const cursor = new Date(firstMonday);
+  // Safety cap: 20 years of weeks. Stops any infinite-loop accidents from
+  // a corrupted start_date (e.g. "1900") blowing up the page.
+  const MAX_WEEKS = 52 * 20;
+  let i = 0;
+  while (cursor.getTime() <= todayMonday.getTime() && i < MAX_WEEKS) {
+    weeks.push({
+      weekStart: new Date(cursor),
+      inProgress: cursor.getTime() === todayMonday.getTime(),
+    });
+    cursor.setDate(cursor.getDate() + 7);
+    i += 1;
+  }
+  return weeks;
+}
+
+function mondayOf(d: Date): Date {
+  const c = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  // JS: Sunday = 0, Monday = 1 … Saturday = 6. Shift back to Monday.
+  const dow = c.getDay();
+  const delta = dow === 0 ? -6 : 1 - dow;
+  c.setDate(c.getDate() + delta);
+  return c;
+}
+
+function formatDateShort(d: Date): string {
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatDateLong(d: Date): string {
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
