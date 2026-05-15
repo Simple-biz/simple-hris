@@ -21,7 +21,6 @@ import {
 } from '@/lib/supabase/server';
 import { hasElevatedRole } from './elevated-roles';
 import { getForceLogoutEpochFor } from './force-logout';
-import { fetchFeaturePermissionsForEmail, type FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
 
 const ALLOWED_HD = 'simple.biz';
 
@@ -113,10 +112,11 @@ export const authOptions: NextAuthOptions = {
         const roles = emailLower ? await fetchRolesForEmail(emailLower) : [];
         (token as { roles?: string[] }).roles = roles;
         (token as { elevated?: boolean }).elevated = hasElevatedRole(roles);
-        // Per-feature access overlay (e.g. accounting tabs: hidden/view/edit).
-        // Missing => default deny when the consumer asks `resolveFeatureAccess`.
-        const featurePerms = emailLower ? await fetchFeaturePermissionsForEmail(emailLower) : {};
-        (token as { featurePerms?: FeaturePermissionsMap }).featurePerms = featurePerms;
+        // NOTE: feature permissions are intentionally NOT stashed on the token.
+        // Encoding a per-tab access map into the JWT pushes the session cookie
+        // past Node's default 8 KB header limit once a user has 20+ entries
+        // (request fails with 431). Surfaces that need per-tab gating
+        // fetch /api/employee-feature-permissions?email=... directly.
 
         // Persist the Google profile photo URL so the rest of the org can see this
         // user's avatar in roster lists. Fire-and-forget — never block sign-in.
@@ -152,12 +152,10 @@ export const authOptions: NextAuthOptions = {
           hd?: string | null;
           roles?: string[];
           elevated?: boolean;
-          featurePerms?: FeaturePermissionsMap;
         };
         extra.hd = (token as { hd?: string }).hd ?? null;
         extra.roles = (token as { roles?: string[] }).roles ?? [];
         extra.elevated = (token as { elevated?: boolean }).elevated ?? false;
-        extra.featurePerms = (token as { featurePerms?: FeaturePermissionsMap }).featurePerms ?? {};
       }
       return session;
     },

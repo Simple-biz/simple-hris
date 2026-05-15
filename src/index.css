@@ -272,6 +272,31 @@
 }
 
 /* ────────────────────────────────────────────────────────────────────────
+   Manager → My Team wallpaper banner — futuristic loader keyframes used
+   while a new image is uploading or a department wallpaper is being
+   fetched. Combined in `ManagerApp.tsx`:
+     - `wallpaper-scan` drives a thin cyan scan-line that sweeps top→bottom.
+     - `wallpaper-shimmer` drives a diagonal gradient sweep over the panel.
+     - `wallpaper-pulse` softly breathes the placeholder grid.
+   ──────────────────────────────────────────────────────────────────── */
+@keyframes wallpaper-scan {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+@keyframes wallpaper-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes wallpaper-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.75; }
+}
+
+/* ────────────────────────────────────────────────────────────────────────
    Global responsive tables — below the sm breakpoint (<640px) every
    <table> collapses into a vertical stack of "card" rows. Each <tr>
    becomes a bordered card and each <td> becomes a label/value pair.

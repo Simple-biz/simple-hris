@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CalendarDays, CalendarHeart, ChevronLeft, ChevronRight, Loader2, RefreshCw, Wallet } from 'lucide-react';
+import { CalendarDays, CalendarHeart, ChevronLeft, ChevronRight, Hourglass, Loader2, RefreshCw, Wallet } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -893,6 +893,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                         const todayMid = new Date(nowMid.getFullYear(), nowMid.getMonth(), nowMid.getDate());
                         const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
                         const isFutureOrToday = cellMid.getTime() >= todayMid.getTime();
+                        const isToday = cellMid.getTime() === todayMid.getTime();
                         const canDispute =
                           inMonth &&
                           !weekend &&
@@ -1027,9 +1028,27 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                             <span className="text-[7px] font-medium leading-none tabular-nums text-zinc-400 dark:text-zinc-500 sm:text-[8px]">
                               {day.dateStr}
                             </span>
-                            <span className={`font-mono text-[11px] font-bold leading-none tabular-nums sm:text-[13px] ${hourText}`}>
-                              {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
-                            </span>
+                            {isToday && !day.hasData ? (
+                              <div className="flex flex-col items-center gap-0.5">
+                                <Hourglass
+                                  className="h-3 w-3 text-orange-400 dark:text-orange-300"
+                                  style={{ animation: 'hourglass-flip 2s ease-in-out infinite' }}
+                                />
+                                <span className="text-[6.5px] font-semibold uppercase tracking-wider leading-none text-orange-400 dark:text-orange-300 sm:text-[7.5px]">
+                                  In Progress
+                                </span>
+                              </div>
+                            ) : (
+                              <span className={`font-mono text-[11px] font-bold leading-none tabular-nums sm:text-[13px] ${hourText}`}>
+                                {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
+                              </span>
+                            )}
+                            {isToday && (
+                              <span className="pointer-events-none absolute right-1 top-1 flex h-1.5 w-1.5">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
+                                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-orange-500" />
+                              </span>
+                            )}
                             {showRateBadge && (
                               <span
                                 className={`pointer-events-none absolute bottom-0 left-0.5 rounded px-0.5 text-[7px] font-semibold leading-tight tabular-nums sm:text-[8px] ${

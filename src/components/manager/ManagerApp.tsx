@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -17,6 +18,7 @@ import {
   Menu,
   Search,
   Sparkles,
+  Trash2,
   UserRound,
   Users,
 } from 'lucide-react';
@@ -607,7 +609,7 @@ function AnimatedRate({
   );
 }
 
-const TEAM_PAGE_SIZE = 15;
+const TEAM_PAGE_SIZE = 10;
 
 function memberHourlyRate(member: EmployeeRow): number | null {
   return member.hsl_hourly_rate ?? member.regular_rate ?? null;
@@ -635,6 +637,263 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
   const showRateCol = members.some(
     (m) => memberHourlyRate(m) != null || memberOtRate(m) != null,
   );
+
+  // ── My Team wallpaper banner — saved per-department in Supabase. The
+  //    scope follows the **department filter dropdown** the manager picks
+  //    above the roster table, so switching the filter swaps the wallpaper
+  //    accordingly. When the filter is "All departments" we fall back to a
+  //    `__all__` scope shared by every department.
+  const wallpaperDept = useMemo(() => {
+    return deptFilter && deptFilter !== 'all' ? deptFilter : '__all__';
+  }, [deptFilter]);
+  const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
+  // True while the wallpaper for the active department is being fetched
+  // (department switch or first mount). Drives the futuristic overlay so
+  // there's no flash of stale image or empty gradient.
+  const [wallpaperLoading, setWallpaperLoading] = useState(true);
+  const [wallpaperPos, setWallpaperPos] = useState<string>('50% 50%');
+  // Last position that's been persisted to the server. Used to compute the
+  // "dirty" state so the Save button only appears after a real drag, and the
+  // Reset button can roll back unsaved tweaks.
+  const [savedWallpaperPos, setSavedWallpaperPos] = useState<string>('50% 50%');
+  const [wallpaperPosSaving, setWallpaperPosSaving] = useState(false);
+  // Position is locked by default. The manager clicks "Reposition" to enter
+  // edit mode (enables dragging + Save/Reset buttons). Saving or resetting
+  // exits edit mode and re-locks the banner.
+  const [isPositionEditing, setIsPositionEditing] = useState(false);
+  // Two-step delete: first click flips this on and shows a Confirm button so
+  // a stray click doesn't wipe the wallpaper. Auto-resets after 4s.
+  const [confirmDeleteWallpaper, setConfirmDeleteWallpaper] = useState(false);
+  const [wallpaperSaving, setWallpaperSaving] = useState(false);
+  const wallpaperInputRef = React.useRef<HTMLInputElement | null>(null);
+  // Drag-to-reposition state. We track numeric % offsets during drag so the
+  // CSS string is rebuilt cheaply on every mousemove; the server PATCH only
+  // fires once on mouseup.
+  const wallpaperBannerRef = React.useRef<HTMLDivElement | null>(null);
+  const dragStateRef = React.useRef<{
+    startX: number;
+    startY: number;
+    startPosX: number;
+    startPosY: number;
+    bannerW: number;
+    bannerH: number;
+  } | null>(null);
+  const [isDraggingWallpaper, setIsDraggingWallpaper] = useState(false);
+
+  // Load the saved wallpaper for the current department on mount + whenever the
+  // department scope changes. Falls back silently when the migration hasn't
+  // been run.
+  useEffect(() => {
+    let cancelled = false;
+    if (!wallpaperDept) {
+      setWallpaperUrl(null);
+      setWallpaperLoading(false);
+      return;
+    }
+    setWallpaperLoading(true);
+    // Drop the old image immediately so the overlay sits on top of an empty
+    // panel instead of a stale image from the previous department. Feels
+    // snappier and visually communicates "loading new department".
+    setWallpaperUrl(null);
+    fetch(`/api/manager/team-wallpaper?department=${encodeURIComponent(wallpaperDept)}`, {
+      cache: 'no-store',
+    })
+      .then((r) => r.json())
+      .then((j: { url?: string | null; position?: string | null }) => {
+        if (cancelled) return;
+        setWallpaperUrl(j.url ?? null);
+        const pos = j.position ?? '50% 50%';
+        setWallpaperPos(pos);
+        setSavedWallpaperPos(pos);
+        // New department / fresh fetch → always start locked.
+        setIsPositionEditing(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWallpaperUrl(null);
+          setWallpaperPos('50% 50%');
+          setSavedWallpaperPos('50% 50%');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setWallpaperLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [wallpaperDept]);
+
+  const onPickWallpaper = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please pick an image file');
+      return;
+    }
+    // 10 MB pre-encode cap. Base64 adds ~33% so the data URL stays under the
+    // API's matching 10 MB encoded cap for anything not right at the edge —
+    // larger files are rejected here before we spend cycles reading them.
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Image must be under 10 MB — pick a smaller file.');
+      return;
+    }
+    // Upload via multipart/form-data — JSON bodies of this size get
+    // truncated mid-stream by Next.js App Router and parse-fail server-side.
+    // Multipart streams the binary cleanly.
+    setWallpaperSaving(true);
+    (async () => {
+      try {
+        const fd = new FormData();
+        fd.append('department', wallpaperDept);
+        fd.append('file', file, file.name);
+        const res = await fetch('/api/manager/team-wallpaper', {
+          method: 'POST',
+          body: fd,
+        });
+        const j = (await res.json()) as { success?: boolean; error?: string };
+        if (!res.ok || !j.success) {
+          toast.error(j.error || 'Failed to save wallpaper');
+          return;
+        }
+        // Read the encoded data URL locally for an instant preview rather
+        // than refetching from the server.
+        const reader = new FileReader();
+        reader.onload = () => setWallpaperUrl(String(reader.result ?? ''));
+        reader.readAsDataURL(file);
+        toast.success(`Wallpaper saved for ${wallpaperDept === '__all__' ? 'all departments' : wallpaperDept}`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to save wallpaper');
+      } finally {
+        setWallpaperSaving(false);
+      }
+    })();
+  };
+
+  const clearWallpaper = async () => {
+    setWallpaperSaving(true);
+    setConfirmDeleteWallpaper(false);
+    try {
+      await fetch(`/api/manager/team-wallpaper?department=${encodeURIComponent(wallpaperDept)}`, {
+        method: 'DELETE',
+      });
+      setWallpaperUrl(null);
+      setWallpaperPos('50% 50%');
+      setSavedWallpaperPos('50% 50%');
+      setIsPositionEditing(false);
+      toast.success('Wallpaper deleted');
+    } catch {
+      toast.error('Failed to remove wallpaper');
+    } finally {
+      setWallpaperSaving(false);
+    }
+  };
+
+  // Auto-cancel the delete confirmation after 4s so a forgotten Confirm
+  // button doesn't sit there forever.
+  useEffect(() => {
+    if (!confirmDeleteWallpaper) return;
+    const id = window.setTimeout(() => setConfirmDeleteWallpaper(false), 4000);
+    return () => window.clearTimeout(id);
+  }, [confirmDeleteWallpaper]);
+  // Reset confirmation when the department changes (so a pending confirm on
+  // one department doesn't carry over to another).
+  useEffect(() => {
+    setConfirmDeleteWallpaper(false);
+  }, [wallpaperDept]);
+
+  // Persist a new background-position string for the current department's
+  // wallpaper. Called explicitly from the Save Position button — drags no
+  // longer auto-save so the manager can preview the framing before
+  // committing.
+  const persistWallpaperPosition = React.useCallback(async (pos: string) => {
+    if (!wallpaperUrl) return;
+    setWallpaperPosSaving(true);
+    try {
+      const res = await fetch('/api/manager/team-wallpaper', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ department: wallpaperDept, position: pos }),
+      });
+      const j = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || !j.success) {
+        toast.error(j.error || 'Failed to save position');
+        return;
+      }
+      setSavedWallpaperPos(pos);
+      // Successful save → lock the position so future clicks on the banner
+      // don't pan it accidentally.
+      setIsPositionEditing(false);
+      toast.success('Position saved');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save position');
+    } finally {
+      setWallpaperPosSaving(false);
+    }
+  }, [wallpaperDept, wallpaperUrl]);
+
+  // Parse the current background-position CSS string into numbers we can
+  // adjust during a drag. Defaults gracefully to 50/50 on bad input.
+  const parseBgPos = (s: string): { x: number; y: number } => {
+    const parts = s.split(/\s+/);
+    const x = parseFloat(parts[0] ?? '50');
+    const y = parseFloat(parts[1] ?? '50');
+    return {
+      x: Number.isFinite(x) ? x : 50,
+      y: Number.isFinite(y) ? y : 50,
+    };
+  };
+
+  const onWallpaperDragStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!wallpaperUrl) return;
+    // Position is locked by default — dragging is only allowed in edit mode,
+    // entered via the "Reposition" button.
+    if (!isPositionEditing) return;
+    const banner = wallpaperBannerRef.current;
+    if (!banner) return;
+    // Only initiate drag on left mouse / primary pointer; ignore clicks that
+    // land on the Set/Change/✕ controls (they have their own handlers and
+    // call stopPropagation via the button).
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('button, input, [data-no-drag]')) return;
+
+    const { x, y } = parseBgPos(wallpaperPos);
+    const rect = banner.getBoundingClientRect();
+    dragStateRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startPosX: x,
+      startPosY: y,
+      bannerW: rect.width,
+      bannerH: rect.height,
+    };
+    setIsDraggingWallpaper(true);
+    banner.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  };
+
+  const onWallpaperDragMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag) return;
+    // `background-position: X% Y%` interprets the % relative to *(image - container)*.
+    // For a draggable banner, moving the pointer right should pan the image
+    // right too — that means the position % goes DOWN (image overflow moves
+    // left under the viewport). We invert delta to match user intuition.
+    const dxPct = ((e.clientX - drag.startX) / drag.bannerW) * 100;
+    const dyPct = ((e.clientY - drag.startY) / drag.bannerH) * 100;
+    const nextX = Math.max(0, Math.min(100, drag.startPosX - dxPct));
+    const nextY = Math.max(0, Math.min(100, drag.startPosY - dyPct));
+    setWallpaperPos(`${nextX.toFixed(1)}% ${nextY.toFixed(1)}%`);
+  };
+
+  const onWallpaperDragEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag) return;
+    dragStateRef.current = null;
+    setIsDraggingWallpaper(false);
+    try { wallpaperBannerRef.current?.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    // No auto-save — leave the new position dirty. The Save Position button
+    // becomes visible below and the manager commits explicitly.
+  };
 
   // Unique department list for the filter dropdown — sorted, blanks stripped.
   const deptOptions = useMemo(() => {
@@ -732,6 +991,214 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
 
   return (
     <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      {/* My Team wallpaper banner — sits above the section header. Click
+          "Change" to upload an image (kept in localStorage so it persists per
+          browser). When no image is set, a soft blue gradient is shown. */}
+      <div
+        ref={wallpaperBannerRef}
+        onPointerDown={onWallpaperDragStart}
+        onPointerMove={onWallpaperDragMove}
+        onPointerUp={onWallpaperDragEnd}
+        onPointerCancel={onWallpaperDragEnd}
+        className={cn(
+          'group relative -mx-4 sm:-mx-6 lg:-mx-8 overflow-hidden touch-none select-none',
+          'h-32 sm:h-40 lg:h-44',
+          'border-b border-blue-100/70 dark:border-blue-950/40',
+          // Cursor + edit-mode ring only show when the banner is actively
+          // unlocked for repositioning. Locked banners look static.
+          wallpaperUrl && isPositionEditing
+            ? isDraggingWallpaper
+              ? 'cursor-grabbing ring-2 ring-emerald-400/60 ring-inset'
+              : 'cursor-grab ring-2 ring-emerald-400/40 ring-inset'
+            : '',
+        )}
+        style={
+          wallpaperUrl
+            ? {
+                backgroundImage: `url(${wallpaperUrl})`,
+                backgroundSize: 'cover',
+                backgroundPosition: wallpaperPos,
+                backgroundRepeat: 'no-repeat',
+              }
+            : undefined
+        }
+      >
+        {!wallpaperUrl && (
+          <div className="absolute inset-0 bg-gradient-to-br from-blue-100 via-indigo-50 to-white dark:from-blue-950/60 dark:via-indigo-950/30 dark:to-zinc-950" />
+        )}
+        {/* Subtle bottom fade so any text below stays legible */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-white/40 to-transparent dark:from-zinc-950/40" />
+
+        {/* ── Futuristic loading overlay ──────────────────────────────────
+            Renders while the wallpaper is being fetched (department switch
+            or first mount) OR uploaded (POST in flight). Composed of three
+            layers:
+              1. A muted backdrop with a faint grid pattern
+              2. A cyan scan-line sweeping top→bottom
+              3. A diagonal shimmer wiping across left→right
+            Disappears automatically once both flags clear. */}
+        {(wallpaperLoading || wallpaperSaving) && (
+          <div
+            className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            {/* Backdrop — semi-transparent darken so layers below stay readable */}
+            <div className="absolute inset-0 bg-gradient-to-br from-slate-950/85 via-blue-950/80 to-cyan-950/80 dark:from-slate-950/90 dark:via-blue-950/85 dark:to-cyan-950/85" />
+            {/* Grid pattern — gives the panel a "data-loading" texture */}
+            <div
+              className="absolute inset-0 opacity-30 mix-blend-screen"
+              style={{
+                backgroundImage:
+                  'linear-gradient(rgba(34,211,238,0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.15) 1px, transparent 1px)',
+                backgroundSize: '32px 32px',
+                animation: 'wallpaper-pulse 2.2s ease-in-out infinite',
+              }}
+            />
+            {/* Diagonal shimmer sweep — gives a sense of forward motion */}
+            <div
+              className="absolute inset-0 opacity-50"
+              style={{
+                background:
+                  'linear-gradient(115deg, transparent 30%, rgba(34,211,238,0.35) 50%, transparent 70%)',
+                animation: 'wallpaper-shimmer 2.4s linear infinite',
+                width: '200%',
+                left: '-50%',
+              }}
+            />
+            {/* Cyan scan-line — the signature "futuristic" cue */}
+            <div
+              className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-transparent via-cyan-300 to-transparent shadow-[0_0_18px_4px_rgba(34,211,238,0.7)]"
+              style={{ animation: 'wallpaper-scan 1.8s ease-in-out infinite' }}
+            />
+            {/* Status pill — labelled with the current action */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="inline-flex items-center gap-2 rounded-full border border-cyan-400/50 bg-cyan-950/60 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200 shadow-[0_0_24px_rgba(34,211,238,0.35)] backdrop-blur">
+                <span className="relative inline-flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-300" />
+                </span>
+                {wallpaperSaving ? 'Uploading wallpaper' : 'Loading wallpaper'}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Scope label — bottom-left so it's clear which department this image
+            belongs to. Stays subtle on a busy background thanks to the frosted
+            backdrop. */}
+        <div className="pointer-events-none absolute bottom-2 left-3 inline-flex items-center gap-1.5 rounded-md bg-white/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-700 backdrop-blur dark:bg-zinc-900/60 dark:text-zinc-300">
+          <span className="opacity-70">Wallpaper</span>
+          <span className="text-zinc-300 dark:text-zinc-600">·</span>
+          <span>{wallpaperDept === '__all__' ? 'All departments' : wallpaperDept}</span>
+        </div>
+
+        <div className="absolute right-3 top-3 flex items-center gap-1.5" data-no-drag>
+          <input
+            ref={wallpaperInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={onPickWallpaper}
+          />
+          {/* When locked: a single "Reposition" button unlocks the banner for
+              dragging. When editing: Save + Cancel buttons commit or roll
+              back the drag. */}
+          {wallpaperUrl && !isPositionEditing && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5 border-white/70 bg-white/80 px-2 text-[11px] font-medium text-zinc-700 backdrop-blur transition hover:bg-white dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-200 dark:hover:bg-zinc-900"
+              onClick={() => setIsPositionEditing(true)}
+              title="Unlock the banner to drag the image into a new position"
+            >
+              Reposition
+            </Button>
+          )}
+          {wallpaperUrl && isPositionEditing && (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={wallpaperPosSaving || wallpaperPos === savedWallpaperPos}
+                className="h-7 gap-1.5 border-emerald-300/80 bg-emerald-50/90 px-2 text-[11px] font-semibold text-emerald-800 backdrop-blur transition hover:bg-emerald-100 disabled:opacity-60 dark:border-emerald-700/60 dark:bg-emerald-950/60 dark:text-emerald-200 dark:hover:bg-emerald-900/60"
+                onClick={() => void persistWallpaperPosition(wallpaperPos)}
+                title="Save the current drag position for this department"
+              >
+                {wallpaperPosSaving ? 'Saving…' : 'Save position'}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={wallpaperPosSaving}
+                className="h-7 gap-1.5 border-white/70 bg-white/80 px-2 text-[11px] font-medium text-zinc-600 backdrop-blur transition hover:bg-white disabled:opacity-60 dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                onClick={() => {
+                  // Revert any in-flight drag and exit edit mode.
+                  setWallpaperPos(savedWallpaperPos);
+                  setIsPositionEditing(false);
+                }}
+                title="Discard drag changes and lock the banner"
+              >
+                Cancel
+              </Button>
+            </>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={wallpaperSaving}
+            className="h-7 gap-1.5 border-white/70 bg-white/80 px-2 text-[11px] font-medium text-zinc-700 backdrop-blur transition hover:bg-white disabled:opacity-60 dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-200 dark:hover:bg-zinc-900"
+            onClick={() => wallpaperInputRef.current?.click()}
+          >
+            {wallpaperSaving ? 'Saving…' : wallpaperUrl ? 'Change' : 'Set wallpaper'}
+          </Button>
+          {wallpaperUrl && (
+            confirmDeleteWallpaper ? (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={wallpaperSaving}
+                  className="h-7 gap-1.5 border-red-300/80 bg-red-50/90 px-2 text-[11px] font-semibold text-red-700 backdrop-blur transition hover:bg-red-100 disabled:opacity-60 dark:border-red-700/60 dark:bg-red-950/60 dark:text-red-300 dark:hover:bg-red-900/60"
+                  onClick={() => void clearWallpaper()}
+                  title="Confirm — this removes the wallpaper for this department"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Confirm delete
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1.5 border-white/70 bg-white/80 px-2 text-[11px] font-medium text-zinc-600 backdrop-blur transition hover:bg-white dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                  onClick={() => setConfirmDeleteWallpaper(false)}
+                >
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={wallpaperSaving}
+                className="h-7 gap-1.5 border-white/70 bg-white/80 px-2 text-[11px] font-medium text-red-600 backdrop-blur transition hover:bg-red-50 hover:text-red-700 disabled:opacity-60 dark:border-zinc-700/70 dark:bg-zinc-900/70 dark:text-red-400 dark:hover:bg-red-950/30 dark:hover:text-red-300"
+                onClick={() => setConfirmDeleteWallpaper(true)}
+                title="Delete the wallpaper for this department"
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete
+              </Button>
+            )
+          )}
+        </div>
+      </div>
+
       <header className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="bg-gradient-to-r from-blue-700 via-zinc-900 to-zinc-900 bg-clip-text text-xl font-bold tracking-tight text-transparent dark:from-blue-400 dark:via-white dark:to-white">
