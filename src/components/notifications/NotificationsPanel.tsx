@@ -1,9 +1,49 @@
 'use client';
 
-import React from 'react';
-import { Bell, CheckCheck, Lock, AlertTriangle } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Bell, CheckCheck, Lock, AlertTriangle, PartyPopper, BadgeDollarSign, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
+
+interface EmployeeNotification {
+  id: string;
+  type: 'rate.change' | 'promotion' | string;
+  tone: 'positive' | 'neutral' | string;
+  title: string;
+  message: string;
+  details: {
+    before?: { regular_rate?: string | number | null; ot_rate?: string | number | null };
+    after?:  { regular_rate?: string | number | null; ot_rate?: string | number | null };
+    before_title?: string | null;
+    after_title?: string | null;
+  } | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+function formatRelative(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const diffMs = Date.now() - d.getTime();
+    const min = Math.floor(diffMs / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min} min ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h ago`;
+    const day = Math.floor(hr / 24);
+    if (day < 7) return `${day}d ago`;
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(d);
+  } catch {
+    return '';
+  }
+}
+
+function formatRate(v: unknown): string {
+  if (v == null || v === '') return '—';
+  const n = parseFloat(String(v).replace(/,/g, ''));
+  return Number.isFinite(n) ? n.toFixed(2) : String(v);
+}
 
 interface NotificationsPanelProps {
   viewerEmail?: string | null;
@@ -25,10 +65,86 @@ function formatLockedAt(iso: string | null): string | null {
 }
 
 export default function NotificationsPanel({
-  viewerEmail: _viewerEmail,
+  viewerEmail,
   accent = 'orange',
 }: NotificationsPanelProps) {
   const { state: lockState, loading } = useDispatchLock();
+  const [items, setItems] = useState<EmployeeNotification[]>([]);
+  const [itemsLoading, setItemsLoading] = useState<boolean>(!!viewerEmail);
+
+  const normEmail = useMemo(
+    () => (viewerEmail ? viewerEmail.trim().toLowerCase() : null),
+    [viewerEmail],
+  );
+
+  const refetch = useCallback(async () => {
+    if (!normEmail) return;
+    try {
+      const res = await fetch(
+        `/api/employee-notifications?email=${encodeURIComponent(normEmail)}`,
+        { cache: 'no-store' },
+      );
+      const json = (await res.json()) as { notifications?: EmployeeNotification[] };
+      setItems(json.notifications ?? []);
+    } catch {
+      /* keep prior list */
+    } finally {
+      setItemsLoading(false);
+    }
+  }, [normEmail]);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  // Realtime: refetch on any insert/update for this recipient.
+  useEffect(() => {
+    if (!normEmail) return;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const channel = supabase
+      .channel(`employee-notifications-${normEmail}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'employee_notifications',
+          filter: `recipient_email=eq.${normEmail}`,
+        },
+        () => { void refetch(); },
+      )
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [normEmail, refetch]);
+
+  // Mark unread as read once the panel has displayed them.
+  useEffect(() => {
+    if (!normEmail) return;
+    const hasUnread = items.some(n => !n.read_at);
+    if (!hasUnread) return;
+    const t = window.setTimeout(() => {
+      void fetch('/api/employee-notifications', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normEmail }),
+      });
+    }, 2000);
+    return () => window.clearTimeout(t);
+  }, [items, normEmail]);
+
+  const unreadCount = items.filter(n => !n.read_at).length + (lockState.locked ? 1 : 0);
+  const hasAny = items.length > 0 || lockState.locked;
+
+  const handleDelete = useCallback(async (id: string) => {
+    // Optimistic removal; refetch will reconcile if the API rejects.
+    setItems(prev => prev.filter(n => n.id !== id));
+    try {
+      await fetch(`/api/employee-notifications?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    } catch {
+      void refetch();
+    }
+  }, [refetch]);
 
   const ring: Record<typeof accent, string> = {
     orange: 'ring-orange-200 dark:ring-orange-900/40',
@@ -66,9 +182,9 @@ export default function NotificationsPanel({
           <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
             Notifications
           </h1>
-          {lockState.locked && (
+          {unreadCount > 0 && (
             <span className="ml-1 inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700 dark:bg-red-950/50 dark:text-red-400">
-              1 active
+              {unreadCount} active
             </span>
           )}
         </div>
@@ -79,7 +195,7 @@ export default function NotificationsPanel({
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50/60 dark:bg-[#0d1117]">
-        {loading ? (
+        {(loading || itemsLoading) ? (
           /* Loading skeleton */
           <div className="space-y-3 px-4 py-5 sm:px-6">
             {[1, 2].map((i) => (
@@ -98,9 +214,10 @@ export default function NotificationsPanel({
               </div>
             ))}
           </div>
-        ) : lockState.locked ? (
-          /* Active payroll notification */
-          <div className="px-4 py-5 sm:px-6">
+        ) : hasAny ? (
+          <div className="space-y-4 px-4 py-5 sm:px-6">
+            {lockState.locked && (
+            <>
             <div className="overflow-hidden rounded-xl border border-amber-200/80 bg-white shadow-sm dark:border-amber-900/40 dark:bg-zinc-900/80">
               {/* Coloured top stripe */}
               <div className="h-1 w-full bg-gradient-to-r from-amber-400 to-orange-500" />
@@ -173,6 +290,119 @@ export default function NotificationsPanel({
             <p className="mt-3 px-1 text-[11.5px] text-zinc-400 dark:text-zinc-600">
               This notification will clear automatically when processing is complete.
             </p>
+            </>
+            )}
+
+            {items.map((n) => {
+              const positive = n.tone === 'positive';
+              const isRate = n.type === 'rate.change';
+              const stripe = positive
+                ? 'bg-gradient-to-r from-emerald-400 to-teal-500'
+                : 'bg-gradient-to-r from-zinc-300 to-zinc-400 dark:from-zinc-700 dark:to-zinc-600';
+              const ringCls = positive
+                ? 'border-emerald-200/80 dark:border-emerald-900/40'
+                : 'border-zinc-200 dark:border-zinc-800';
+              const iconWrap = positive
+                ? 'bg-emerald-50 ring-emerald-200 dark:bg-emerald-950/30 dark:ring-emerald-900/50'
+                : 'bg-zinc-100 ring-zinc-200 dark:bg-zinc-800/60 dark:ring-zinc-700';
+              const iconCls = positive
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : 'text-zinc-500 dark:text-zinc-400';
+              const Icon = positive ? PartyPopper : BadgeDollarSign;
+              const beforeReg = n.details?.before?.regular_rate;
+              const afterReg  = n.details?.after?.regular_rate;
+              const beforeOt  = n.details?.before?.ot_rate;
+              const afterOt   = n.details?.after?.ot_rate;
+              const beforeTitle = n.details?.before_title ?? null;
+              const afterTitle  = n.details?.after_title ?? null;
+              const showTitleRow = !!(beforeTitle || afterTitle);
+
+              return (
+                <div
+                  key={n.id}
+                  className={cn(
+                    'overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-zinc-900/80',
+                    ringCls,
+                    !n.read_at && 'ring-1 ring-emerald-200/50 dark:ring-emerald-900/30',
+                  )}
+                >
+                  <div className={cn('h-1 w-full', stripe)} />
+                  <div className="p-4 sm:p-5">
+                    <div className="flex items-start gap-3.5">
+                      <div className={cn(
+                        'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-1',
+                        iconWrap,
+                      )}>
+                        <Icon className={cn('h-4 w-4', iconCls)} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[14px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
+                            {n.title}
+                          </p>
+                          {!n.read_at && (
+                            <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10.5px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
+                              New
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => void handleDelete(n.id)}
+                            aria-label="Delete notification"
+                            className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 transition hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/40 dark:text-zinc-500 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <p className="mt-1.5 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                          {n.message}
+                        </p>
+
+                        {isRate && (
+                          <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-zinc-100 bg-zinc-50/60 p-3 text-[12px] dark:border-zinc-800 dark:bg-zinc-900/40">
+                            <div>
+                              <div className="text-[10.5px] uppercase tracking-wide text-zinc-400">Regular</div>
+                              <div className="mt-0.5 font-medium text-zinc-700 dark:text-zinc-300">
+                                ₱{formatRate(beforeReg)} <span className="text-zinc-400">→</span>{' '}
+                                <span className={positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-900 dark:text-zinc-100'}>
+                                  ₱{formatRate(afterReg)}
+                                </span>
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-[10.5px] uppercase tracking-wide text-zinc-400">Overtime</div>
+                              <div className="mt-0.5 font-medium text-zinc-700 dark:text-zinc-300">
+                                ₱{formatRate(beforeOt)} <span className="text-zinc-400">→</span>{' '}
+                                <span className={positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-900 dark:text-zinc-100'}>
+                                  ₱{formatRate(afterOt)}
+                                </span>
+                              </div>
+                            </div>
+                            {showTitleRow && (
+                              <div className="col-span-2">
+                                <div className="text-[10.5px] uppercase tracking-wide text-zinc-400">Title</div>
+                                <div className="mt-0.5 font-medium text-zinc-700 dark:text-zinc-300">
+                                  {beforeTitle || '—'} <span className="text-zinc-400">→</span>{' '}
+                                  <span className={positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-900 dark:text-zinc-100'}>
+                                    {afterTitle || '—'}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="mt-3 border-t border-zinc-100 pt-2 dark:border-zinc-800">
+                          <span className="text-[11.5px] text-zinc-400 dark:text-zinc-500">
+                            {formatRelative(n.created_at)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : (
           /* Empty state */

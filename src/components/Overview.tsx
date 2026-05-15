@@ -1,6 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect as useLayoutEffectImpl, useMemo, useState } from 'react';
+
+// `useLayoutEffect` warns on the server (no DOM). Map to `useEffect` during SSR
+// so the warning stays silent; on the client both behave identically for our
+// purposes (we only use it to read localStorage right after mount).
+const useLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffectImpl;
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Users,
@@ -1962,20 +1967,29 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
    *  render, so the component never momentarily renders 'simple' and then
    *  flips to 'expanded' on a follow-up effect. That flash was what made the
    *  toggle look like it was "switching by itself" on remount. */
-  const [viewMode, setViewMode] = useState<'simple' | 'expanded'>(() => {
-    if (typeof window === 'undefined') return 'simple';
+  // Initial render MUST match the server output ('simple') — reading
+  // localStorage in the useState initializer flipped the first client render
+  // to 'expanded' for users with a saved preference, which threw a
+  // hydration mismatch on the tablist's aria-selected + class strings.
+  // We then sync from localStorage in a layout effect so the swap happens
+  // before paint and there's no visible flash for most users.
+  const [viewMode, setViewMode] = useState<'simple' | 'expanded'>('simple');
+  const hydratedRef = React.useRef(false);
+
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined') return;
     try {
       const saved = window.localStorage.getItem('overview.viewMode');
-      if (saved === 'simple' || saved === 'expanded') return saved;
+      if (saved === 'simple' || saved === 'expanded') {
+        setViewMode(saved);
+      }
     } catch {
       /* ignore */
     }
-    return 'simple';
-  });
+  }, []);
 
-  // Persist on change. Guarded by a hydrated flag so the first commit (which
-  // already matches storage) doesn't clobber it before the user toggles.
-  const hydratedRef = React.useRef(false);
+  // Persist on change. Guarded by a hydrated flag so the first commit
+  // (which already matches storage) doesn't clobber it before the user toggles.
   useEffect(() => {
     if (!hydratedRef.current) {
       hydratedRef.current = true;

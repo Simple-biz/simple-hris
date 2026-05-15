@@ -161,6 +161,8 @@ type MemberMonthlyPaySummary = {
     pabBonusPHP: number;
     techBonusPHP: number;
     bonusTotalPHP: number;
+    mesaDeductionPHP: number;
+    mesaMember: boolean;
     grandTotalPayPHP: number | null;
   };
   weeks: {
@@ -615,9 +617,17 @@ export default function ManagerMemberHoursMini({
                 // + Tech bonus gates). Fall back to client-side numbers while
                 // the server fetch is in flight or if it failed.
                 const sp = serverPay;
-                const mesaDeduction = rate?.mesa_member ? 100 : 0;
-                const _rawTotalPay = sp?.totals.grandTotalPayPHP ?? monthPay.totalPay;
-                const totalPayPhp = _rawTotalPay != null ? _rawTotalPay - mesaDeduction : null;
+                // Server total already nets out MESA contributions across all
+                // active weeks; only fall back to client-side flat-100 when
+                // server data isn't loaded yet.
+                const clientMesaFallback = rate?.mesa_member ? 100 : 0;
+                const mesaDeduction = sp ? sp.totals.mesaDeductionPHP : clientMesaFallback;
+                const isMesaMember = sp ? sp.totals.mesaMember : rate?.mesa_member === true;
+                const totalPayPhp = sp
+                  ? sp.totals.grandTotalPayPHP
+                  : monthPay.totalPay != null
+                    ? monthPay.totalPay - clientMesaFallback
+                    : null;
                 const regularSec = sp?.totals.regularSec ?? monthPay.regularSec;
                 const otSec = sp?.totals.otSec ?? monthPay.otSec;
                 const weekendSec = sp?.totals.weekendSec ?? monthPay.weekendTotalSec;
@@ -711,13 +721,13 @@ export default function ManagerMemberHoursMini({
                                     : null
                           }
                         />
-                        {rate?.mesa_member && (
+                        {isMesaMember && (
                           <div className="mt-1 flex items-center justify-between gap-2 rounded-md bg-teal-50/60 px-2 py-1 dark:bg-teal-950/30">
                             <span className="text-[10px] font-medium uppercase tracking-wider text-teal-700/85 dark:text-teal-300/80">
-                              MESA
+                              MESA <span className="text-[9px] font-normal normal-case tracking-normal text-teal-600/70 dark:text-teal-400/70">(₱100/wk)</span>
                             </span>
                             <span className="font-mono text-[10.5px] font-semibold tabular-nums text-teal-800 dark:text-teal-200">
-                              −₱100.00
+                              {ratesHidden ? <span className="tracking-widest text-zinc-400 dark:text-zinc-600">••••</span> : `−${formatPhp(mesaDeduction)}`}
                             </span>
                           </div>
                         )}

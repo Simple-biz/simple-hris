@@ -22,6 +22,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { Lock, Menu, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
@@ -69,6 +70,7 @@ export default function EmployeeApp() {
   // Live payroll-processing lock — drives the global banner, sidebar lock
   // indicator, and one-time toast notifications when the state flips.
   const { state: lockState, loading: lockLoading } = useDispatchLock();
+  const unreadNotifications = useEmployeeNotificationsUnread(employeeEmail);
   const previousLocked = useRef<boolean | null>(null);
 
   // Detect transitions (only after first hydration so we don't toast on mount).
@@ -327,6 +329,7 @@ export default function EmployeeApp() {
         profilePhotoUrl={profilePhotoUrl}
         googlePhotoUrl={googlePhotoUrl}
         payrollLocked={lockState.locked}
+        unreadNotifications={unreadNotifications}
       />
       <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-orange-100 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-blue-950/60 dark:bg-[#0d1117]/95 md:hidden">

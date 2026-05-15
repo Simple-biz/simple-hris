@@ -1,5 +1,6 @@
 import { normEmail } from "@/lib/email/norm-email";
 import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "./server";
+import { invalidateRateProfilesCache } from "./employee-rate-profiles";
 
 export const EMPLOYEE_AVATAR_BUCKET = "employee-avatars";
 
@@ -140,6 +141,10 @@ export async function uploadEmployeeProfilePhotoAndUpdateRow(
     .from(EMPLOYEE_AVATAR_BUCKET)
     .upload(path, body, {
       contentType: "image/jpeg",
+      // Tell the Supabase CDN + browsers not to hold onto the previous JPEG.
+      // Without this, an overwrite at the same deterministic path (avatar.jpg)
+      // keeps serving the stale image for up to an hour via the public URL.
+      cacheControl: "no-cache",
       upsert: true,
     });
 
@@ -148,8 +153,14 @@ export async function uploadEmployeeProfilePhotoAndUpdateRow(
   }
 
   const {
-    data: { publicUrl },
+    data: { publicUrl: bareUrl },
   } = supabase.storage.from(EMPLOYEE_AVATAR_BUCKET).getPublicUrl(path);
+
+  // Belt-and-braces cache buster baked into the canonical URL — every reader
+  // (employee dashboard, Rates & Profiles, manager modal, etc.) now sees a
+  // fresh querystring whenever the photo changes, so neither Supabase CDN nor
+  // the browser's in-memory image cache can serve the old object.
+  const publicUrl = `${bareUrl}${bareUrl.includes("?") ? "&" : "?"}v=${Date.now()}`;
 
   const table = masterTable();
   const { error: dbErr } = await supabase
@@ -160,6 +171,10 @@ export async function uploadEmployeeProfilePhotoAndUpdateRow(
   if (dbErr) {
     return { error: dbErr.message };
   }
+
+  // The accounting Rates & Profiles roster memoizes profile photo URLs for
+  // 60s; bust it so the new avatar appears immediately for admins too.
+  invalidateRateProfilesCache();
 
   return { publicUrl };
 }

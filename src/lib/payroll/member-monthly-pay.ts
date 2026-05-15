@@ -42,6 +42,7 @@ import {
   pabDateKey,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import { phpHourlyPayFromSeconds } from '@/lib/payroll/money-php';
+import { fetchAllRateHistory, resolveRateAsOfDate } from '@/lib/payroll/rate-history';
 
 const NON_DATE_COLS = new Set([
   'id',
@@ -264,6 +265,9 @@ export interface MemberMonthlyPayWeek {
   techSalaryReached: boolean;
   pabBonusPHP: number;
   techBonusPHP: number;
+  /** ₱100 MESA contribution deducted from this week's paycheck when the employee
+   *  is a MESA member and worked any in-month hours. 0 otherwise. */
+  mesaDeductionPHP: number;
   weekTotalPayPHP: number | null;
 }
 
@@ -291,6 +295,10 @@ export interface MemberMonthlyPay {
     pabBonusPHP: number;
     techBonusPHP: number;
     bonusTotalPHP: number;
+    /** Sum of every week's ₱100 MESA deduction. 0 when the employee isn't a member. */
+    mesaDeductionPHP: number;
+    /** True iff the employee is currently a MESA program member. */
+    mesaMember: boolean;
     grandTotalPayPHP: number | null;
   };
 }
@@ -346,10 +354,11 @@ export async function computeMemberMonthlyPay(args: {
 
   // Step 1: Fetch master + rates + PAB overrides in parallel. We need the master
   // row first to know this employee's alias emails before querying Hubstaff.
-  const [masterMin, rates, pabOverridesValue] = await Promise.all([
+  const [masterMin, rates, pabOverridesValue, rateHistory] = await Promise.all([
     fetchMasterRowsForEmail(new Set([emailNorm])),
     getEmployeeHourlyRatesRows(),
     getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
+    fetchAllRateHistory(),
   ]);
 
   const masterRow = masterMin.row;
@@ -376,6 +385,16 @@ export async function computeMemberMonthlyPay(args: {
   const regularRate = rateRow ? parseRateText(rateRow.regular_rate) : null;
   const otRate = rateRow ? parseRateText(rateRow.ot_rate) : null;
   const hasRates = regularRate != null || otRate != null;
+  const mesaMember = rateRow?.mesa_member === true;
+  // Per-week MESA contribution. When the `mesa_start_date` column lands on
+  // `employee_hourly_rates`, gate this by `week_start >= mesa_start_date` —
+  // for now every MESA member with rates contributes ₱100 every active week.
+  const MESA_DEDUCTION_PHP = 100;
+  // Per-email rate-history list (sorted desc by effective_from), used by the
+  // per-day prorating loop. May be undefined when no history exists yet.
+  const empHist = rateHistory.get(emailNorm)
+    ?? (we ? rateHistory.get(we) : undefined)
+    ?? (pe ? rateHistory.get(pe) : undefined);
 
   // Per-day seconds map covering every row (any month). We slice per-week
   // below to compute pay.
@@ -437,6 +456,7 @@ export async function computeMemberMonthlyPay(args: {
   let totalWeekendOtSec = 0;
   let totalPabPHP = 0;
   let totalTechPHP = 0;
+  let totalMesaPHP = 0;
 
   for (const weekMon of weekMondays) {
     const weekSun = new Date(weekMon);
@@ -463,6 +483,16 @@ export async function computeMemberMonthlyPay(args: {
     let weekWeekendReg = 0;
     let weekWeekendOt = 0;
     let usedThisWeek = 0;
+    // Per-day prorating accumulators. When `empHist` covers this employee,
+    // each day's hours are paid at the rate effective on that calendar date —
+    // mirrors `current-pay.ts → computeProratedRowPay`. Without history (or
+    // for days with no resolution) we fall back to the employee's current
+    // regularRate/otRate cache.
+    let proratedRegPay = 0;
+    let proratedOtPay = 0;
+    let proratedWeekendPay = 0;
+    let anyRegRateThisWeek = false;
+    let anyOtRateThisWeek = false;
     // Only process in-month days — adjacent-month days in straddling weeks must NOT
     // consume the 40h regular cap for this month (matches My Hours behaviour).
     for (const cell of dayCells) {
@@ -480,28 +510,33 @@ export async function computeMemberMonthlyPay(args: {
         weekWeekendReg += dayReg;
         weekWeekendOt += dayOt;
       }
+
+      const resolved = resolveRateAsOfDate(empHist, cell.date);
+      const dayReg$ = resolved?.regularRate ?? regularRate;
+      const dayOt$  = resolved?.otRate      ?? otRate;
+      if (dayReg$ != null) {
+        anyRegRateThisWeek = true;
+        const pay = phpHourlyPayFromSeconds(dayReg$, dayReg);
+        proratedRegPay += pay;
+        if (isWeekend) proratedWeekendPay += pay;
+      }
+      if (dayOt$ != null) {
+        anyOtRateThisWeek = true;
+        const pay = phpHourlyPayFromSeconds(dayOt$, dayOt);
+        proratedOtPay += pay;
+        if (isWeekend) proratedWeekendPay += pay;
+      }
     }
 
-    const regularPayPHP =
-      regularRate != null ? round2(phpHourlyPayFromSeconds(regularRate, regSec)) : null;
-    const otPayPHP =
-      otRate != null ? round2(phpHourlyPayFromSeconds(otRate, weekOtSec)) : null;
-    const weekendPayPHP =
-      regularRate != null
-        ? round2(
-            phpHourlyPayFromSeconds(regularRate, weekWeekendReg) +
-              (otRate != null ? phpHourlyPayFromSeconds(otRate, weekWeekendOt) : 0),
-          )
-        : null;
-    const weekdayRegSec = regSec - weekWeekendReg;
-    const weekdayOtSec = weekOtSec - weekWeekendOt;
+    const regularPayPHP = anyRegRateThisWeek ? round2(proratedRegPay) : null;
+    const otPayPHP      = anyOtRateThisWeek  ? round2(proratedOtPay)  : null;
+    const weekendPayPHP = anyRegRateThisWeek ? round2(proratedWeekendPay) : null;
     const weekdayPayPHP =
-      regularRate != null
-        ? round2(
-            phpHourlyPayFromSeconds(regularRate, weekdayRegSec) +
-              (otRate != null ? phpHourlyPayFromSeconds(otRate, weekdayOtSec) : 0),
-          )
-        : null;
+      regularPayPHP != null && otPayPHP != null && weekendPayPHP != null
+        ? round2(regularPayPHP + otPayPHP - weekendPayPHP)
+        : regularPayPHP != null && weekendPayPHP != null
+          ? round2(regularPayPHP - weekendPayPHP)
+          : null;
 
     // Bonus gates.
     const pabMonth = pabMonthFromWeekStart(weekMon);
@@ -539,9 +574,17 @@ export async function computeMemberMonthlyPay(args: {
       hasThirtyDays: has30,
     });
 
+    // MESA deduction: ₱100 per week, applied only to weeks where the
+    // employee has rates AND actually worked some in-month hours. Future
+    // refinement (TODO): gate by an `employee_hourly_rates.mesa_start_date`
+    // column so contributions don't accrue for weeks before the employee
+    // joined the program.
+    const mesaDeductionPHP =
+      mesaMember && hasRates && weekTotalSec > 0 ? MESA_DEDUCTION_PHP : 0;
+
     const weekTotalPay =
       regularPayPHP != null && otPayPHP != null
-        ? round2(regularPayPHP + otPayPHP + bonus.totalPHP)
+        ? round2(regularPayPHP + otPayPHP + bonus.totalPHP - mesaDeductionPHP)
         : null;
 
     const inMonth = dayCells.some((c) => c.inMonth);
@@ -567,6 +610,7 @@ export async function computeMemberMonthlyPay(args: {
       techSalaryReached,
       pabBonusPHP: bonus.pabBonusPHP,
       techBonusPHP: bonus.techBonusPHP,
+      mesaDeductionPHP,
       weekTotalPayPHP: weekTotalPay,
     });
 
@@ -578,32 +622,29 @@ export async function computeMemberMonthlyPay(args: {
     totalWeekendOtSec += weekWeekendOt;
     totalPabPHP += bonus.pabBonusPHP;
     totalTechPHP += bonus.techBonusPHP;
+    totalMesaPHP += mesaDeductionPHP;
   }
 
-  const totalRegPay =
-    regularRate != null ? round2(phpHourlyPayFromSeconds(regularRate, totalRegSec)) : null;
-  const totalOtPay =
-    otRate != null ? round2(phpHourlyPayFromSeconds(otRate, totalOtSec)) : null;
-  const totalWeekendPay =
-    regularRate != null
-      ? round2(
-          phpHourlyPayFromSeconds(regularRate, totalWeekendRegSec) +
-            (otRate != null ? phpHourlyPayFromSeconds(otRate, totalWeekendOtSec) : 0),
-        )
-      : null;
-  const totalWeekdayRegSec = totalRegSec - totalWeekendRegSec;
-  const totalWeekdayOtSec = totalOtSec - totalWeekendOtSec;
-  const totalWeekdayPay =
-    regularRate != null
-      ? round2(
-          phpHourlyPayFromSeconds(regularRate, totalWeekdayRegSec) +
-            (otRate != null ? phpHourlyPayFromSeconds(otRate, totalWeekdayOtSec) : 0),
-        )
-      : null;
+  // Sum totals from the per-week values so prorating carries through.
+  const sumNullable = (vals: Array<number | null>): number | null => {
+    let any = false;
+    let s = 0;
+    for (const v of vals) {
+      if (v != null) {
+        any = true;
+        s += v;
+      }
+    }
+    return any ? round2(s) : null;
+  };
+  const totalRegPay = sumNullable(weeks.map((w) => w.regularPayPHP));
+  const totalOtPay  = sumNullable(weeks.map((w) => w.otPayPHP));
+  const totalWeekendPay = sumNullable(weeks.map((w) => w.weekendPayPHP));
+  const totalWeekdayPay = sumNullable(weeks.map((w) => w.weekdayPayPHP));
   const bonusTotalPHP = totalPabPHP + totalTechPHP;
   const grandTotalPayPHP =
     totalRegPay != null && totalOtPay != null
-      ? round2(totalRegPay + totalOtPay + bonusTotalPHP)
+      ? round2(totalRegPay + totalOtPay + bonusTotalPHP - totalMesaPHP)
       : null;
 
   return {
@@ -631,6 +672,8 @@ export async function computeMemberMonthlyPay(args: {
         pabBonusPHP: totalPabPHP,
         techBonusPHP: totalTechPHP,
         bonusTotalPHP,
+        mesaDeductionPHP: totalMesaPHP,
+        mesaMember,
         grandTotalPayPHP,
       },
     },

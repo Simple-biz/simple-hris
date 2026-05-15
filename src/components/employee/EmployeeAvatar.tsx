@@ -23,12 +23,11 @@ type EmployeeAvatarProps = {
 };
 
 /**
- * Order: Google SSO photo → uploaded photo → initials.
+ * Order: manually-uploaded photo → Google SSO photo → initials.
  *
- * The Gravatar layer was removed: this is an internal HRIS where ~nobody
- * has a Gravatar registered, so every avatar render fired a 404 (by design,
- * for the `<img onError>` fallback) and spammed the browser console. Initials
- * are the universal fallback now.
+ * An explicit upload via the Employee Profile is a user choice and beats the
+ * automatic Google SSO photo. Without this priority, uploading a new avatar
+ * never visibly propagates for anyone who signed in with Google.
  */
 export default function EmployeeAvatar({
   photoUrl,
@@ -47,7 +46,7 @@ export default function EmployeeAvatar({
   }, [google, uploaded]);
 
   const showInitials =
-    (!google || failedGoogle) && (!uploaded || failedUploaded);
+    (!uploaded || failedUploaded) && (!google || failedGoogle);
 
   if (showInitials) {
     return (
@@ -63,26 +62,26 @@ export default function EmployeeAvatar({
     );
   }
 
-  if (google && !failedGoogle) {
+  if (uploaded && !failedUploaded) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element -- googleusercontent.com (no Next image config needed for one-off avatar)
+      // eslint-disable-next-line @next/next/no-img-element -- Supabase public URL
       <img
-        src={google}
+        src={uploaded}
         alt=""
-        referrerPolicy="no-referrer"
         className={cn('shrink-0 rounded-full object-cover', className)}
-        onError={() => setFailedGoogle(true)}
+        onError={() => setFailedUploaded(true)}
       />
     );
   }
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- Supabase public URL
+    // eslint-disable-next-line @next/next/no-img-element -- googleusercontent.com (no Next image config needed for one-off avatar)
     <img
-      src={uploaded}
+      src={google}
       alt=""
+      referrerPolicy="no-referrer"
       className={cn('shrink-0 rounded-full object-cover', className)}
-      onError={() => setFailedUploaded(true)}
+      onError={() => setFailedGoogle(true)}
     />
   );
 }

@@ -49,6 +49,7 @@ import {
   isTechBonusWeek as gateIsTechBonusWeek,
   pabMonthFromWeekStart,
 } from "@/lib/payroll/dispatch-bonuses";
+import { fetchAllRateHistory, resolveRateAsOfDate, type RateHistoryByEmail } from "@/lib/payroll/rate-history";
 
 export interface PayrollPeriod {
   /** UUID of the active hubstaff_uploads row — null if no upload exists yet. */
@@ -172,6 +173,91 @@ async function fetchMasterMin(
 }
 
 /** Parse a YYYY-MM-DD or longer ISO string to a local Date, null on failure. */
+// 40 hours/week regular cap, in seconds, mirroring member-monthly-pay.ts.
+const REGULAR_WEEK_CAP_SEC = 40 * 3600;
+
+const NON_DATE_COLS_FOR_DAILY = new Set([
+  'id', 'organization', 'time zone', 'member', 'email', 'job title', 'job type',
+  'employee id', 'tax info', 'location', 'date added', 'total worked', 'activity',
+  'spent total', 'currency', 'source_file', 'upload_id',
+]);
+
+function isPerDayCol(col: string): boolean {
+  const lower = col.trim().toLowerCase();
+  if (NON_DATE_COLS_FOR_DAILY.has(lower)) return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(col.trim());
+}
+
+function parseHmsToSec(v: unknown): number {
+  if (v == null) return 0;
+  const s = String(v).trim();
+  if (!s) return 0;
+  const hms = /^(\d+):(\d{2}):(\d{2})$/.exec(s);
+  if (hms) return parseInt(hms[1], 10) * 3600 + parseInt(hms[2], 10) * 60 + parseInt(hms[3], 10);
+  const hm = /^(\d+):(\d{2})$/.exec(s);
+  if (hm) return parseInt(hm[1], 10) * 3600 + parseInt(hm[2], 10) * 60;
+  const dec = parseFloat(s);
+  return Number.isFinite(dec) ? Math.round(dec * 3600) : 0;
+}
+
+/**
+ * Per-day prorated pay for a single hubstaff cycle row. Resolves the rate
+ * as-of each day via the history table, applies the 40h/week regular cap
+ * chronologically, and falls back to `fallbackRate` when no history row
+ * is found for a date.
+ *
+ * Returns null when the row has no per-day ISO date columns (i.e. canonical
+ * weekday CSV that couldn't be resolved) — caller should fall back to the
+ * legacy single-rate × aggregate-hours formula in that case.
+ */
+function computeProratedRowPay(
+  rowResolved: Record<string, unknown>,
+  history: RateHistoryByEmail,
+  email: string,
+  fallbackRate: { reg: number | null; ot: number | null } | undefined,
+): { regularPayPHP: number | null; otPayPHP: number | null } | null {
+  const days: Array<{ date: Date; seconds: number }> = [];
+  for (const [k, v] of Object.entries(rowResolved)) {
+    if (!isPerDayCol(k)) continue;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(k.trim());
+    if (!m) continue;
+    const sec = parseHmsToSec(v);
+    if (sec <= 0) continue;
+    days.push({ date: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])), seconds: sec });
+  }
+  if (days.length === 0) return null;
+  days.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  const empHist = history.get(email);
+
+  let usedRegSec = 0;
+  let regularPayPHP = 0;
+  let otPayPHP = 0;
+  let anyRegRate = false;
+  let anyOtRate = false;
+
+  for (const d of days) {
+    const resolved = resolveRateAsOfDate(empHist, d.date);
+    const reg = resolved?.regularRate ?? fallbackRate?.reg ?? null;
+    const ot = resolved?.otRate ?? fallbackRate?.ot ?? null;
+    if (reg != null) anyRegRate = true;
+    if (ot != null) anyOtRate = true;
+
+    const remaining = Math.max(0, REGULAR_WEEK_CAP_SEC - usedRegSec);
+    const dayRegSec = Math.min(d.seconds, remaining);
+    const dayOtSec = d.seconds - dayRegSec;
+    usedRegSec += dayRegSec;
+
+    if (reg != null) regularPayPHP += (dayRegSec / 3600) * reg;
+    if (ot != null) otPayPHP += (dayOtSec / 3600) * ot;
+  }
+
+  return {
+    regularPayPHP: anyRegRate ? Math.round(regularPayPHP * 100) / 100 : null,
+    otPayPHP: anyOtRate ? Math.round(otPayPHP * 100) / 100 : null,
+  };
+}
+
 function parseLocalIso(iso: string | null | undefined): Date | null {
   if (!iso) return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
@@ -194,6 +280,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     allHubstaffRows,
     masterRows,
     pabOverridesValue,
+    rateHistory,
     budgetRequestsResult,
     giftPaymentsResult,
   ] = await Promise.all([
@@ -206,6 +293,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       : Promise.resolve<Record<string, unknown>[]>([]),
     supabase ? fetchMasterMin(supabase) : Promise.resolve<MasterEmployeeMin[]>([]),
     getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
+    fetchAllRateHistory(),
     listOrphanageBudgetRequests({ status: "approved" }),
     listGiftPayments({}),
   ]);
@@ -367,8 +455,27 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     const reg = rate?.reg ?? null;
     const ot = rate?.ot ?? null;
 
-    const regularPayPHP = reg != null ? regularHours * reg : null;
-    const otPayPHP = ot != null ? otHours * ot : null;
+    // Prorate pay per day using the rate-history table — handles mid-cycle
+    // promotions / department transfers where the rate flipped on a specific
+    // weekday. Falls back to the legacy single-rate formula when this row
+    // has no per-day ISO columns (canonical weekday CSV that couldn't be
+    // resolved to dates).
+    const sourceFileForRow =
+      typeof raw['source_file'] === 'string' ? (raw['source_file'] as string) : '';
+    const rowResolved = sourceFileForRow
+      ? resolveCanonicalColumnsToIso(raw, sourceFileForRow)
+      : raw;
+    const prorated = computeProratedRowPay(rowResolved, rateHistory, em, rate);
+
+    let regularPayPHP: number | null;
+    let otPayPHP: number | null;
+    if (prorated) {
+      regularPayPHP = prorated.regularPayPHP;
+      otPayPHP = prorated.otPayPHP;
+    } else {
+      regularPayPHP = reg != null ? regularHours * reg : null;
+      otPayPHP = ot != null ? otHours * ot : null;
+    }
     const initialPayPHP =
       regularPayPHP != null && otPayPHP != null ? regularPayPHP + otPayPHP : null;
 

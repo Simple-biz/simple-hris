@@ -44,6 +44,8 @@ interface EmployeeSidebarProps {
   googlePhotoUrl?: string | null;
   /** True while payroll dispatch is locked (read-only / limited actions). */
   payrollLocked?: boolean;
+  /** Unread employee notifications count — drives the Notifications nav badge. */
+  unreadNotifications?: number;
 }
 
 const navItems = [
@@ -69,6 +71,7 @@ export default function EmployeeSidebar({
   profilePhotoUrl = null,
   googlePhotoUrl = null,
   payrollLocked = false,
+  unreadNotifications = 0,
 }: EmployeeSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
@@ -156,7 +159,31 @@ export default function EmployeeSidebar({
                   )}
                 />
                 {item.label}
-                {item.id === 'notifications' && payrollLocked && (
+                {item.id === 'notifications' && unreadNotifications > 0 && activeTab !== 'notifications' && (
+                  <span className="relative ml-auto inline-flex">
+                    {/* Outer pulsing halo */}
+                    <span className="absolute inset-0 -m-0.5 animate-ping rounded-full bg-rose-500/60" />
+                    {/* Inner glow halo (slower, softer) */}
+                    <span className="absolute inset-0 animate-pulse rounded-full bg-rose-500/30 blur-[2px]" />
+                    <motion.span
+                      initial={{ opacity: 0, scale: 0.4, y: -4 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      transition={{ type: 'spring', stiffness: 420, damping: 14 }}
+                      key={unreadNotifications}
+                      className={cn(
+                        'relative inline-flex min-w-[1.35rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[10.5px] font-bold tabular-nums text-white',
+                        'bg-gradient-to-br from-rose-500 via-red-500 to-orange-500',
+                        'shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_4px_12px_-2px_rgba(244,63,94,0.6)]',
+                        'dark:shadow-[0_0_0_2px_rgba(13,17,23,0.95),0_4px_14px_-2px_rgba(244,63,94,0.7)]',
+                        'ring-1 ring-rose-300/70 dark:ring-rose-400/40',
+                      )}
+                      aria-label={`${unreadNotifications} unread notifications`}
+                    >
+                      {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                    </motion.span>
+                  </span>
+                )}
+                {item.id === 'notifications' && unreadNotifications === 0 && payrollLocked && (
                   <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
                 )}
                 {item.id === 'disputes' && payrollLocked && (
@@ -176,7 +203,8 @@ export default function EmployeeSidebar({
                     Paused
                   </motion.span>
                 )}
-                {activeTab === item.id && !(item.id === 'disputes' && payrollLocked) && (
+                {activeTab === item.id
+                  && !(item.id === 'disputes' && payrollLocked) && (
                   <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70" />
                 )}
               </button>

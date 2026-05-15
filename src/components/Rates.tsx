@@ -14,6 +14,7 @@ import {
   IdCard,
   LayoutGrid,
   Loader2,
+  Lock,
   Mail,
   Plus,
   Rows3,
@@ -426,7 +427,8 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [rateFilter, setRateFilter] = useState<"all" | "missing_any" | "missing_regular" | "missing_ot" | "missing_both" | "mesa_eligible">("all");
+  const [rateFilter, setRateFilter] = useState<"all" | "mesa_eligible">("all");
+  const [departmentFilter, setDepartmentFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   // Persist view-mode preference per browser. On mobile we always render cards
   // (table doesn't fit), so the toggle only appears on md+.
@@ -441,6 +443,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     }
   }, [viewMode]);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [avatarViewerUrl, setAvatarViewerUrl] = useState<string | null>(null);
   const [activeProfile, setActiveProfile] = useState<EmployeeRateProfile | null>(null);
   const [activeProfileSummary, setActiveProfileSummary] = useState<EmployeeRateProfileSummary | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -453,6 +456,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   const [isEditing, setIsEditing] = useState(false);
   const [editRegularRate, setEditRegularRate] = useState("");
   const [editOtRate, setEditOtRate] = useState("");
+  const [editEffectiveDate, setEditEffectiveDate] = useState<string>(""); // YYYY-MM-DD
   const [isSaving, setIsSaving] = useState(false);
 
   // Profile editing state
@@ -771,22 +775,29 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     });
   }, [profiles]);
 
+  const departmentOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of profiles) {
+      const d = (p.department ?? "").trim();
+      if (d) set.add(d);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [profiles]);
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const result: EmployeeRateProfileSummary[] = [];
     for (const { profile, row, blob } of searchIndex) {
-      const missingRegular = row.regularRate === "—";
-      const missingOt = row.otRate === "—";
-      if (rateFilter === "missing_regular" && !missingRegular) continue;
-      if (rateFilter === "missing_ot" && !missingOt) continue;
-      if (rateFilter === "missing_both" && !(missingRegular && missingOt)) continue;
-      if (rateFilter === "missing_any" && !(missingRegular || missingOt)) continue;
       if (rateFilter === "mesa_eligible" && !row.mesaMember) continue;
+      if (
+        departmentFilter !== "all" &&
+        (profile.department ?? "").trim().toLowerCase() !== departmentFilter.toLowerCase()
+      ) continue;
       if (q && !blob.includes(q)) continue;
       result.push(profile);
     }
     return result;
-  }, [searchIndex, searchQuery, rateFilter]);
+  }, [searchIndex, searchQuery, rateFilter, departmentFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -809,7 +820,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, rateFilter]);
+  }, [searchQuery, rateFilter, departmentFilter]);
 
   useEffect(() => {
     setPage((p) => Math.min(p, totalPages));
@@ -886,13 +897,20 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
           personalEmail: personalEmail !== "—" ? personalEmail : null,
           regularRate: sanitizeRateForApi(editRegularRate),
           otRate: sanitizeRateForApi(editOtRate),
+          effectiveDate: editEffectiveDate || null,
         }),
       });
 
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to update rates");
 
-      toast.success("Rates updated successfully");
+      const today = new Date();
+      const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      if (editEffectiveDate && editEffectiveDate > todayIso) {
+        toast.success(`Rate change scheduled for ${editEffectiveDate}`);
+      } else {
+        toast.success("Rates updated successfully");
+      }
       setIsEditing(false);
 
       // We need to update the local activeProfile state and the profiles list
@@ -1193,17 +1211,25 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
             />
           </div>
           <select
+            id="rates-department-filter"
+            value={departmentFilter}
+            onChange={(e) => setDepartmentFilter(e.target.value)}
+            disabled={loading || !!error}
+            className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50 sm:w-56 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+          >
+            <option value="all">All departments</option>
+            {departmentOptions.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+          <select
             id="rates-filter"
             value={rateFilter}
             onChange={(e) => setRateFilter(e.target.value as typeof rateFilter)}
             disabled={loading || !!error}
-            className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50 sm:w-56 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:hover:border-zinc-700 dark:focus:border-orange-400"
+            className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50 sm:w-48 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:hover:border-zinc-700 dark:focus:border-orange-400"
           >
             <option value="all">All employees</option>
-            <option value="missing_any">Missing any rate</option>
-            <option value="missing_regular">Missing Regular Rate</option>
-            <option value="missing_ot">Missing OT Rate</option>
-            <option value="missing_both">Missing both rates</option>
             <option value="mesa_eligible">MESA Eligible</option>
           </select>
 
@@ -2136,16 +2162,37 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   const empId = activeProfileSummary?.employeeId ?? null;
                   return (
                     <div className="flex items-start gap-4">
-                      <div className="shrink-0 rounded-full ring-2 ring-zinc-100 dark:ring-zinc-800">
-                        <EmployeeAvatar
-                          photoUrl={av.photoUrl}
-                          googlePhotoUrl={av.googlePhotoUrl}
-                          email={av.email}
-                          initials={av.initials}
-                          className="h-12 w-12 text-base"
-                          pixelSize={96}
-                        />
-                      </div>
+                      {(() => {
+                        const enlargeUrl =
+                          (av.photoUrl?.trim() || av.googlePhotoUrl?.trim() || '').trim() || null;
+                        const sharedAvatar = (
+                          <EmployeeAvatar
+                            photoUrl={av.photoUrl}
+                            googlePhotoUrl={av.googlePhotoUrl}
+                            email={av.email}
+                            initials={av.initials}
+                            className="h-12 w-12 text-base"
+                            pixelSize={96}
+                          />
+                        );
+                        return enlargeUrl ? (
+                          <button
+                            type="button"
+                            onClick={() => setAvatarViewerUrl(enlargeUrl)}
+                            aria-label={`View ${activeProfile.displayName}'s profile photo`}
+                            className="group relative shrink-0 rounded-full ring-2 ring-zinc-100 transition hover:ring-orange-300 focus-visible:outline-none focus-visible:ring-orange-400 dark:ring-zinc-800 dark:hover:ring-orange-500/60"
+                          >
+                            {sharedAvatar}
+                            <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100">
+                              <Eye className="h-4 w-4 text-white drop-shadow" />
+                            </span>
+                          </button>
+                        ) : (
+                          <div className="shrink-0 rounded-full ring-2 ring-zinc-100 dark:ring-zinc-800">
+                            {sharedAvatar}
+                          </div>
+                        );
+                      })()}
                       <div className="min-w-0 flex-1">
                         <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-amber-700/80 dark:text-amber-500/70">
                           Profile
@@ -2246,6 +2293,22 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         </p>
                       )}
                     </div>
+                    {isEditing && (
+                      <>
+                        <div className="w-px self-stretch bg-zinc-200 dark:bg-zinc-800" />
+                        <div className="flex flex-col gap-1">
+                          <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-400">
+                            Effective From
+                          </p>
+                          <Input
+                            type="date"
+                            value={editEffectiveDate}
+                            onChange={(e) => setEditEffectiveDate(e.target.value)}
+                            className="h-9 w-40 border-zinc-200 bg-white tabular-nums text-sm font-medium text-zinc-900 transition-colors hover:border-zinc-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                          />
+                        </div>
+                      </>
+                    )}
                     <div className="w-px self-stretch bg-zinc-200 dark:bg-zinc-800" />
                     <div className="flex flex-col gap-1">
                       <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-blue-600 dark:text-blue-400">
@@ -2302,16 +2365,38 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           <UserCog className="size-3.5" />
                           Edit Profile
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-8 gap-1.5 border-orange-200 text-orange-700 hover:border-orange-300 hover:bg-orange-50 dark:border-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-950/30"
-                          onClick={() => setIsEditing(true)}
-                          disabled={profileLoading}
-                        >
-                          <Edit2 className="size-3.5" />
-                          Edit Rates
-                        </Button>
+                        {activeProfileSummary?.hslRole ? (
+                          <div
+                            className="flex h-8 items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50/70 px-2.5 text-[11px] font-medium text-violet-700 dark:border-violet-900/50 dark:bg-violet-950/30 dark:text-violet-300"
+                            title="HSL agents' rates come from the HOGAN pay plan sheet. Use the HSL Sync button to refresh them."
+                          >
+                            <Lock className="size-3" />
+                            Managed by HOGAN pay plan sync
+                          </div>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1.5 border-orange-200 text-orange-700 hover:border-orange-300 hover:bg-orange-50 dark:border-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-950/30"
+                            onClick={() => {
+                              // Default effective date = next Monday so the
+                              // current pay week stays on the OLD rate. The
+                              // accountant can move it earlier (today, mid-cycle)
+                              // to trigger prorating, or later to schedule ahead.
+                              const d = new Date();
+                              const dow = d.getDay(); // 0=Sun..6=Sat
+                              const daysToMon = ((1 - dow + 7) % 7) || 7;
+                              d.setDate(d.getDate() + daysToMon);
+                              const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                              setEditEffectiveDate(iso);
+                              setIsEditing(true);
+                            }}
+                            disabled={profileLoading}
+                          >
+                            <Edit2 className="size-3.5" />
+                            Edit Rates
+                          </Button>
+                        )}
                         <Button
                           size="sm"
                           variant="outline"
@@ -2572,6 +2657,39 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
               </div>
             </motion.div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* Avatar lightbox — click the header avatar to enlarge the photo. */}
+      <Dialog open={!!avatarViewerUrl} onOpenChange={(o) => { if (!o) setAvatarViewerUrl(null); }}>
+        <DialogContent
+          showCloseButton={false}
+          className="border-none bg-transparent p-0 shadow-none sm:max-w-[min(80vw,380px)]"
+        >
+          <DialogTitle className="sr-only">Profile photo</DialogTitle>
+          <DialogDescription className="sr-only">
+            Enlarged profile photo. Click outside or press Escape to close.
+          </DialogDescription>
+          <button
+            type="button"
+            onClick={() => setAvatarViewerUrl(null)}
+            className="group relative block w-full overflow-hidden rounded-2xl bg-zinc-900/90 ring-1 ring-white/10 shadow-2xl shadow-black/50"
+            aria-label="Close enlarged photo"
+          >
+            {avatarViewerUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={avatarViewerUrl}
+                alt="Profile photo"
+                className="h-auto w-full select-none object-contain"
+                draggable={false}
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <span className="pointer-events-none absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white opacity-80 backdrop-blur transition group-hover:opacity-100">
+              <X className="h-4 w-4" />
+            </span>
+          </button>
         </DialogContent>
       </Dialog>
     </div>

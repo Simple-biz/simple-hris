@@ -256,15 +256,60 @@ async function fetchActiveEmployees(
     supabase.from(ACTIVE_EMPLOYEES_VIEW).select(sel).range(0, 9999);
 
   let res = await queryView(GLOBAL_MASTER_SELECT);
+  let select = GLOBAL_MASTER_SELECT;
   if (res.error && /does not exist/i.test(res.error.message ?? "")) {
     res = await queryView(GLOBAL_MASTER_SELECT_BASE);
+    select = GLOBAL_MASTER_SELECT_BASE;
   }
 
   if (res.error) {
     return { employees: [], error: res.error.message };
   }
 
-  const raw = (res.data ?? []) as unknown as RawRow[];
+  const raw = ((res.data ?? []) as unknown as RawRow[]).slice();
+
+  // UNION in every US-prefixed employee from global_master_list. They were
+  // seeded manually (migration #18) and aren't part of the Google Sheet master
+  // sync, so the view's upload filter drops them on every re-sync — yet they
+  // need to appear in Roles & Permissions, HR, and every other surface that
+  // calls /api/employees. Identified by `employee_ids.employee_id LIKE 'US-%'`,
+  // cross-referenced to master rows by Work/Personal Email. Deduped by id.
+  const { data: usIds } = await supabase
+    .from("employee_ids")
+    .select("work_email, personal_email")
+    .like("employee_id", "US-%");
+  if (usIds && usIds.length > 0) {
+    const usEmails = new Set<string>();
+    for (const r of usIds as Array<{ work_email?: string | null; personal_email?: string | null }>) {
+      const we = r.work_email?.trim();
+      const pe = r.personal_email?.trim();
+      if (we) usEmails.add(we);
+      if (pe) usEmails.add(pe);
+    }
+    if (usEmails.size > 0) {
+      const list = [...usEmails];
+      const orClause = [
+        `"Work Email".in.(${list.map((e) => `"${e}"`).join(",")})`,
+        `"Personal Email".in.(${list.map((e) => `"${e}"`).join(",")})`,
+      ].join(",");
+      const { data: usMasters, error: usErr } = await supabase
+        .from('global_master_list')
+        .select(select)
+        .or(orClause)
+        .is("off_boarded_at", null);
+      if (!usErr && usMasters) {
+        const seen = new Set(
+          raw.map((r) => (r as { id?: unknown }).id).filter((v) => v != null),
+        );
+        for (const r of usMasters as unknown as RawRow[]) {
+          const id = (r as { id?: unknown }).id;
+          if (id != null && seen.has(id)) continue;
+          raw.push(r);
+        }
+      }
+    }
+  }
+
   const employees = raw
     .map(mapEmployeeRow)
     .filter((row) => !isRowEmptyOrWhitespace(row));

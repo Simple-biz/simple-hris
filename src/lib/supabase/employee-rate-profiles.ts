@@ -595,8 +595,15 @@ async function fetchRatesRowsForProfiles(
 /**
  * Master list rows for the currently-active roster. Reads from the `active_employees`
  * view (filters `global_master_list` down to rows whose `last_seen_upload_id` matches
- * the current `master_list_uploads` entry). `masterTable` arg is retained for symmetry
- * with callers that pass the configured table name, but we ignore it in favor of the view.
+ * the current `master_list_uploads` entry), then UNIONs in `US Manager Bonus` rows
+ * directly from `global_master_list` — those US employees were seeded manually
+ * (migration #18) and aren't part of the Google Sheet sync, so the view's upload
+ * filter excludes them on every re-sync. We always want them visible in Rates &
+ * Profiles regardless of sync state.
+ *
+ * `masterTable` arg is retained for symmetry with callers that pass the configured
+ * table name, but we ignore it in favor of the view + explicit US Manager Bonus
+ * fetch.
  */
 async function fetchMasterRowsForProfiles(masterTable: string): Promise<{
   rows: RawRow[];
@@ -629,6 +636,51 @@ async function fetchMasterRowsForProfiles(masterTable: string): Promise<{
     if (page.length < PAGE) break;
     from += PAGE;
   }
+
+  // Pull every US-prefixed employee from global_master_list that isn't already
+  // covered by active_employees (dedupe by row id). They're not in the master
+  // sheet sync so the view's upload filter drops them on every re-sync — but
+  // they're real active employees we must always surface. We identify them by
+  // cross-referencing `employee_ids` for IDs starting with `US-` (the seed
+  // convention from migration #17), spanning every department (Hogan Smith Law,
+  // US Manager Bonus, HR, etc.) — not just "US Manager Bonus".
+  const { data: usIds, error: usIdsErr } = await supabase
+    .from("employee_ids")
+    .select("work_email, personal_email")
+    .like("employee_id", "US-%");
+  if (!usIdsErr && usIds && usIds.length > 0) {
+    const usEmails = new Set<string>();
+    for (const row of usIds as Array<{ work_email?: string | null; personal_email?: string | null }>) {
+      const we = row.work_email?.trim();
+      const pe = row.personal_email?.trim();
+      if (we) usEmails.add(we);
+      if (pe) usEmails.add(pe);
+    }
+    if (usEmails.size > 0) {
+      const emailList = [...usEmails];
+      // PostgREST `in.()` payload size scales linearly — 12 emails today, no
+      // pagination needed. If this ever grows large, chunk via `.in()` calls.
+      const { data: usMasters, error: usMastersErr } = await supabase
+        .from(masterTable)
+        .select("*")
+        .or(
+          [
+            `"Work Email".in.(${emailList.map((e) => `"${e}"`).join(",")})`,
+            `"Personal Email".in.(${emailList.map((e) => `"${e}"`).join(",")})`,
+          ].join(","),
+        )
+        .is("off_boarded_at", null);
+      if (!usMastersErr && usMasters) {
+        const seen = new Set(rows.map((r) => (r as { id?: unknown }).id).filter((v) => v != null));
+        for (const r of usMasters as RawRow[]) {
+          const id = (r as { id?: unknown }).id;
+          if (id != null && seen.has(id)) continue;
+          rows.push(r);
+        }
+      }
+    }
+  }
+
   return { rows, error: null };
 }
 
@@ -702,7 +754,10 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
 
   const mergeNotes: string[] = [];
   const byTable = new Map<string, RawRow[]>();
-  const currentRatesUploadId = await getCurrentRatesUploadIdForProfiles();
+  const [currentRatesUploadId, hslRes] = await Promise.all([
+    getCurrentRatesUploadIdForProfiles(),
+    fetchActiveHslDetailsByEmail(),
+  ]);
 
   const fetched = await Promise.all(
     tablesToFetch.map(async (t) => {
@@ -784,6 +839,22 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
     if (!toStr(getField(master, ["Name", "name"]))) continue;
     matchedMasters.add(master);
     const identity = buildIdentity(mergedRates, master);
+
+    // HSL override for hourly + OT rates: when this employee appears in
+    // `active_hsl_agents`, that sheet is the source of truth. Inject into
+    // mergedRates so downstream consumers (fields list, edit modal) see the
+    // same numbers as the Manager Dashboard.
+    if (hslRes.byEmail.size > 0) {
+      const we = normEmail(toStr(getField(mergedRates, ["Work Email", "work_email", "Work_Email"])))
+        ?? normEmail(toStr(getField(master, ["Work Email", "work_email", "Work_Email"])));
+      const pe = normEmail(toStr(getField(mergedRates, ["Personal Email", "personal_email", "Personal_Email"])))
+        ?? normEmail(toStr(getField(master, ["Personal Email", "personal_email", "Personal_Email"])));
+      const hit = (we && hslRes.byEmail.get(we)) || (pe && hslRes.byEmail.get(pe)) || null;
+      if (hit) {
+        if (hit.hourlyRate != null) mergedRates["Regular Rate"] = String(hit.hourlyRate);
+        if (hit.otRate != null) mergedRates["OT Rate"] = String(hit.otRate);
+      }
+    }
 
     const sources: RawRow[] = [mergedRates, master ?? {}];
 
@@ -1055,10 +1126,11 @@ export async function getEmployeeRateProfileByEmail(
     "employee_hourly_rates";
 
   // Step 1: parallel focused fetch — rates + master rows that match the input email.
-  const [ratesInitial, masterInitial, currentRatesUploadId] = await Promise.all([
+  const [ratesInitial, masterInitial, currentRatesUploadId, hslRes] = await Promise.all([
     fetchRowsByEmails(supabase, ratesTable, [norm], ["Work Email", "Personal Email"]),
-    fetchRowsByEmails(supabase, "active_employees", [norm], ["Work Email", "Personal Email"]),
+    fetchRowsByEmails(supabase, "global_master_list",[norm], ["Work Email", "Personal Email"]),
     getCurrentRatesUploadIdForProfiles(),
+    fetchActiveHslDetailsByEmail(),
   ]);
 
   // Step 2: discover alternate emails from those rows.
@@ -1076,7 +1148,7 @@ export async function getEmployeeRateProfileByEmail(
   if (altEmails.length > 0) {
     const [moreRates, moreMasters] = await Promise.all([
       fetchRowsByEmails(supabase, ratesTable, altEmails, ["Work Email", "Personal Email"]),
-      fetchRowsByEmails(supabase, "active_employees", altEmails, ["Work Email", "Personal Email"]),
+      fetchRowsByEmails(supabase, "global_master_list",altEmails, ["Work Email", "Personal Email"]),
     ]);
     if (moreRates.rows.length > 0) {
       const seen = new Set<string>();
@@ -1114,6 +1186,21 @@ export async function getEmployeeRateProfileByEmail(
   );
   const mergedRates =
     orderedRates.length > 0 ? mergeRowsUniqueFieldOrder(orderedRates) : ({} as RawRow);
+
+  // HSL override: for agents in `active_hsl_agents`, the HSL pay-plan sheet is
+  // the source of truth for hourly + OT rates. Inject them into the merged
+  // record so downstream consumers (display, edit modal pre-fill) see the same
+  // numbers the Manager Dashboard uses.
+  if (hslRes.byEmail.size > 0) {
+    const hit =
+      hslRes.byEmail.get(norm) ||
+      [...allEmails].map((e) => hslRes.byEmail.get(e)).find(Boolean) ||
+      null;
+    if (hit) {
+      if (hit.hourlyRate != null) mergedRates["Regular Rate"] = String(hit.hourlyRate);
+      if (hit.otRate != null) mergedRates["OT Rate"] = String(hit.otRate);
+    }
+  }
 
   const { byEmail, byName } = buildMasterIndexes(masters);
   const master =
@@ -1363,15 +1450,29 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
   }
 
   // ── Decorate every summary with their role-within-HSL when the email matches
-  // an active_hsl_agents row. Misses leave hslRole undefined; the Rates card
-  // hides the chip then. Runs over the full profiles array (both branches that
-  // built it above) so we don't have to touch each push site individually.
+  // an active_hsl_agents row. For HSL agents, the HSL pay-plan sheet is the
+  // source of truth for hourly + OT rates — we override the
+  // `employee_hourly_rates` values here so Rates & Profiles matches what the
+  // Manager Dashboard displays (which uses `hsl_hourly_rate ?? regular_rate`).
   if (hslRes.byEmail.size > 0) {
     for (const p of profiles) {
       const w = normEmail(p.workEmail ?? null);
       const pe = normEmail(p.personalEmail ?? null);
       const hit = (w && hslRes.byEmail.get(w)) || (pe && hslRes.byEmail.get(pe)) || null;
-      if (hit && hit.role) p.hslRole = hit.role;
+      if (!hit) continue;
+      if (hit.role) p.hslRole = hit.role;
+      if (hit.hourlyRate != null) p.regularRate = String(hit.hourlyRate);
+      if (hit.otRate != null) p.otRate = String(hit.otRate);
+    }
+  }
+
+  // Group every US-prefixed employee under the "US Manager Bonus" department
+  // for filter purposes — the seed migration spread them across HSL / HR /
+  // US Manager Bonus, but the user wants them all to surface under a single
+  // filter. Doesn't affect the underlying global_master_list row.
+  for (const p of profiles) {
+    if (p.employeeId && p.employeeId.startsWith("US-")) {
+      p.department = "US Manager Bonus";
     }
   }
 
