@@ -314,6 +314,14 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
   const [columns, setColumns] = useState<string[]>([]);
   const [row, setRow] = useState<Record<string, unknown> | null>(null);
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
+  // Rate history for the inline PAB Calendar badge — fetched once per email
+  // change so the per-day rate is shown as an emerald-ringed pill on the day
+  // a rate change took effect, and as a faint label on every other day.
+  const [rateHistory, setRateHistory] = useState<Array<{
+    effectiveFrom: Date;
+    regularRate: number | null;
+    otRate: number | null;
+  }>>([]);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
   const [dataError, setDataError] = useState<string | null>(null);
   const [sourceFiles, setSourceFiles] = useState<string[]>([]);
@@ -333,6 +341,63 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
   const pabPeriodSettings = usePabPeriodSettings();
 
   const email = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
+
+  // Fetch the viewer's rate history once per email change. Powers the per-day
+  // rate badge on the inline PAB Calendar in the Overview tab.
+  useEffect(() => {
+    let cancelled = false;
+    if (!email) {
+      setRateHistory([]);
+      return;
+    }
+    fetch(`/api/employee-rate-history?email=${encodeURIComponent(email)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { rows?: Array<{ regular_rate: string | null; ot_rate: string | null; effective_from: string }> }) => {
+        if (cancelled) return;
+        const parsed: typeof rateHistory = [];
+        for (const r of j.rows ?? []) {
+          const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.effective_from ?? '');
+          if (!m) continue;
+          const num = (s: string | null) => {
+            if (s == null) return null;
+            const v = parseFloat(String(s).replace(/,/g, ''));
+            return Number.isFinite(v) ? v : null;
+          };
+          parsed.push({
+            effectiveFrom: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
+            regularRate: num(r.regular_rate),
+            otRate: num(r.ot_rate),
+          });
+        }
+        parsed.sort((a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime());
+        setRateHistory(parsed);
+      })
+      .catch(() => { if (!cancelled) setRateHistory([]); });
+    return () => { cancelled = true; };
+  }, [email]);
+
+  // Resolve the rate row effective on a given calendar date. Caller passes the
+  // local-time Date for the cell. Marks `isFlipDay` so the badge can highlight
+  // the exact day a mid-cycle rate change took effect.
+  const resolveDayRate = React.useCallback(
+    (date: Date): { reg: number | null; ot: number | null; isFlipDay: boolean } => {
+      const t = date.getTime();
+      for (let i = 0; i < rateHistory.length; i += 1) {
+        const row = rateHistory[i];
+        if (row.effectiveFrom.getTime() <= t) {
+          const isFlipDay = row.effectiveFrom.getTime() === t && i < rateHistory.length - 1;
+          return { reg: row.regularRate, ot: row.otRate, isFlipDay };
+        }
+      }
+      return { reg: null, ot: null, isFlipDay: false };
+    },
+    [rateHistory],
+  );
+
+  const fmtDayRate = React.useCallback((n: number | null): string => {
+    if (n == null) return '—';
+    return '₱' + n.toLocaleString('en-PH', { maximumFractionDigits: 0 });
+  }, []);
 
   const [myDisputes, setMyDisputes] = useState<import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow[]>([]);
   /** Mobile: PAB rules, bonus status, and pay numbers live in this sheet (charts stay on the main view). */
@@ -2268,11 +2333,22 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                                 'border-red-300 bg-red-50 dark:border-red-700/70 dark:bg-red-950/40';
                             }
 
+                            const dayRate = resolveDayRate(day.date);
+                            // Rate badge shows on every day with hours AND on
+                            // any flip-day (even today/empty cells) so a new
+                            // effective date is immediately visible.
+                            const showRateBadge =
+                              dayRate.reg != null && (day.hasData || dayRate.isFlipDay);
+                            const rateTooltipSuffix =
+                              dayRate.reg != null || dayRate.ot != null
+                                ? ` · Rate ${fmtDayRate(dayRate.reg)} / OT ${fmtDayRate(dayRate.ot)}${dayRate.isFlipDay ? ' (new today)' : ''}`
+                                : '';
+
                             return (
                               <div
                                 key={di}
                                 className={`relative flex h-10 flex-col overflow-hidden rounded-md border transition-all duration-300 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
+                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltipSuffix}`}
                                 style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
                                 onClick={cellClickable ? () => {
                                   onNavigateToDisputes?.({ date: dayIso, seconds: day.seconds });
@@ -2324,6 +2400,20 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                                     <XCircle className="h-2.5 w-2.5 text-red-400" />
                                   ) : null}
                                 </div>
+                                {/* Per-day rate badge — bottom-left so it
+                                    doesn't collide with the dispute/check
+                                    indicator. Flip-day gets the green ring. */}
+                                {showRateBadge && (
+                                  <span
+                                    className={`pointer-events-none absolute bottom-0 left-0.5 rounded px-0.5 text-[7px] font-semibold leading-tight tabular-nums ${
+                                      dayRate.isFlipDay
+                                        ? 'bg-emerald-500/20 text-emerald-700 ring-1 ring-emerald-500/50 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/40'
+                                        : 'text-zinc-400 dark:text-zinc-500'
+                                    }`}
+                                  >
+                                    {fmtDayRate(dayRate.reg)}
+                                  </span>
+                                )}
                               </div>
                             );
                           })}

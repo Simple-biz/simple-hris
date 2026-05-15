@@ -155,6 +155,11 @@ export default function EmployeePabCalendar({
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
+  const [rateHistory, setRateHistory] = useState<Array<{
+    effectiveFrom: Date;
+    regularRate: number | null;
+    otRate: number | null;
+  }>>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -191,6 +196,63 @@ export default function EmployeePabCalendar({
       cancelled = true;
     };
   }, [email]);
+
+  // ── Rate history (drives per-day rate badges + tooltips) ────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/employee-rate-history?email=${encodeURIComponent(email)}&_=${Date.now()}`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as {
+          rows?: Array<{ regular_rate: string | null; ot_rate: string | null; effective_from: string }>;
+        };
+        if (cancelled) return;
+        const parsed: typeof rateHistory = [];
+        for (const r of json.rows ?? []) {
+          const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.effective_from ?? '');
+          if (!m) continue;
+          const num = (s: string | null) => {
+            if (s == null) return null;
+            const v = parseFloat(String(s).replace(/,/g, ''));
+            return Number.isFinite(v) ? v : null;
+          };
+          parsed.push({
+            effectiveFrom: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
+            regularRate: num(r.regular_rate),
+            otRate: num(r.ot_rate),
+          });
+        }
+        parsed.sort((a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime());
+        setRateHistory(parsed);
+      } catch {
+        if (!cancelled) setRateHistory([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [email]);
+
+  const resolveRateForDate = useCallback(
+    (date: Date): { reg: number | null; ot: number | null; isFlipDay: boolean } => {
+      const t = date.getTime();
+      for (let i = 0; i < rateHistory.length; i += 1) {
+        const row = rateHistory[i];
+        if (row.effectiveFrom.getTime() <= t) {
+          const isFlipDay = row.effectiveFrom.getTime() === t && i < rateHistory.length - 1;
+          return { reg: row.regularRate, ot: row.otRate, isFlipDay };
+        }
+      }
+      return { reg: null, ot: null, isFlipDay: false };
+    },
+    [rateHistory],
+  );
+
+  const formatRatePHP = useCallback((n: number | null): string => {
+    if (n == null) return '—';
+    return '₱' + n.toLocaleString('en-PH', { maximumFractionDigits: 0 });
+  }, []);
 
   // ── Source files → merged row + columns ─────────────────────────────────
   const fetchMerged = useCallback(async () => {
@@ -530,11 +592,24 @@ export default function EmployeePabCalendar({
                         'border-red-300 bg-red-50 dark:border-red-700/70 dark:bg-red-950/40';
                     }
 
+                    const dayRate = resolveRateForDate(day.date);
+                    // Show the rate badge whenever this day actually has data
+                    // (faint gray), OR when this is the day a rate change took
+                    // effect (always — emerald-ringed, even on today/empty
+                    // cells, so a brand-new rate is immediately visible).
+                    const rateBadge =
+                      dayRate.reg != null && (day.hasData || dayRate.isFlipDay)
+                        ? formatRatePHP(dayRate.reg)
+                        : null;
+                    const rateTooltip = dayRate.reg != null || dayRate.ot != null
+                      ? ` • Rate: ${formatRatePHP(dayRate.reg)} / OT ${formatRatePHP(dayRate.ot)}${dayRate.isFlipDay ? ' (new today)' : ''}`
+                      : '';
+
                     return (
                       <div
                         key={di}
                         className={`relative flex h-14 flex-col overflow-hidden rounded-md border transition-all duration-200 sm:h-16 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                        title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}`}
+                        title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltip}`}
                         onClick={
                           cellClickable
                             ? () =>
@@ -585,6 +660,21 @@ export default function EmployeePabCalendar({
                             </span>
                           )}
                         </div>
+                        {/* Per-day rate badge — surfaces the rate-history row in
+                            effect on this date. Flip-day (effective_from = this
+                            day) gets a green ring so a mid-cycle rate change is
+                            visible at a glance. */}
+                        {rateBadge && (
+                          <span
+                            className={`pointer-events-none absolute bottom-0.5 right-1 max-w-[calc(100%-0.5rem)] truncate rounded-sm px-1 text-[8px] font-semibold leading-tight tabular-nums ${
+                              dayRate.isFlipDay
+                                ? 'bg-emerald-500/15 text-emerald-700 ring-1 ring-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30'
+                                : 'text-zinc-400 dark:text-zinc-500'
+                            }`}
+                          >
+                            {rateBadge}
+                          </span>
+                        )}
                       </div>
                     );
                   })}

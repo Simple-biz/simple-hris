@@ -459,6 +459,22 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   const [editEffectiveDate, setEditEffectiveDate] = useState<string>(""); // YYYY-MM-DD
   const [isSaving, setIsSaving] = useState(false);
 
+  // Rate-history list for the open profile — drives the revoke UI inside the
+  // detail modal. Refetches whenever the active profile email changes or a
+  // save / revoke completes.
+  type RateHistoryRow = {
+    id: string;
+    regular_rate: string | null;
+    ot_rate: string | null;
+    effective_from: string;
+    note: string | null;
+    created_by: string | null;
+    created_at: string;
+  };
+  const [rateHistory, setRateHistory] = useState<RateHistoryRow[]>([]);
+  const [rateHistoryLoading, setRateHistoryLoading] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
   // Profile editing state
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editProfileForm, setEditProfileForm] = useState({
@@ -842,6 +858,62 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     setEditRegularRate(normalizeRateForEdit(p.regularRate ?? "â€”"));
     setEditOtRate(normalizeRateForEdit(p.otRate ?? "â€”"));
     void fetchProfileDetail(p);
+    void fetchRateHistoryFor(p);
+  }
+
+  /** Fetch the active profile's rate-history rows for the revoke UI. Skips
+   *  the baseline row (1970-01-01) on display so the list only shows real
+   *  human-authored changes. */
+  async function fetchRateHistoryFor(p: EmployeeRateProfileSummary | null) {
+    if (!p) { setRateHistory([]); return; }
+    const lookup = (p.workEmail || p.personalEmail || '').trim();
+    if (!lookup) { setRateHistory([]); return; }
+    setRateHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/employee-rate-history?email=${encodeURIComponent(lookup)}`, {
+        cache: 'no-store',
+      });
+      const json = (await res.json()) as { rows?: RateHistoryRow[]; error?: string };
+      setRateHistory(json.rows ?? []);
+    } catch {
+      setRateHistory([]);
+    } finally {
+      setRateHistoryLoading(false);
+    }
+  }
+
+  async function handleRevokeRateRow(rowId: string) {
+    if (!activeProfileSummary) return;
+    setRevokingId(rowId);
+    try {
+      const res = await fetch(`/api/employee-rate-history/${encodeURIComponent(rowId)}`, {
+        method: 'DELETE',
+      });
+      const json = (await res.json()) as { success?: boolean; error?: string; resyncedCacheTo?: { regular_rate: string | null; ot_rate: string | null } | null };
+      if (!res.ok || !json.success) {
+        toast.error(json.error || 'Failed to revoke rate change');
+        return;
+      }
+      toast.success('Rate change revoked');
+      // Refresh both the history list AND the active rate display so the
+      // resynced cache value flows through immediately.
+      await fetchRateHistoryFor(activeProfileSummary);
+      if (json.resyncedCacheTo) {
+        const r = json.resyncedCacheTo.regular_rate;
+        const o = json.resyncedCacheTo.ot_rate;
+        setEditRegularRate(normalizeRateForEdit(r ?? '—'));
+        setEditOtRate(normalizeRateForEdit(o ?? '—'));
+        setActiveProfileSummary((prev) =>
+          prev ? { ...prev, regularRate: r, otRate: o } : prev,
+        );
+      }
+      // Refresh the roster so the rate column refreshes too.
+      await fetchProfiles();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setRevokingId(null);
+    }
   }
 
   useEffect(() => {
@@ -911,6 +983,10 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
       } else {
         toast.success("Rates updated successfully");
       }
+
+      // Refresh the rate-history list so the revoke UI reflects the new row
+      // and any superseded pending changes are gone.
+      void fetchRateHistoryFor(activeProfileSummary);
       setIsEditing(false);
 
       // We need to update the local activeProfile state and the profiles list
@@ -2462,6 +2538,89 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                   </div>
                 </div>
               </div>
+              {/* Rate history — every change to this employee's rate. Each row
+                  has a revoke button (except the 1970-01-01 baseline). Saving
+                  a new rate supersedes any existing row whose effective_from
+                  is today or later, so the "pending" slot only ever holds one
+                  entry at a time. Hidden when the role is HSL-managed (rates
+                  live in the HOGAN pay-plan sheet). */}
+              {!activeProfileSummary?.hslRole && (
+                <div className="shrink-0 border-b border-zinc-200/80 px-6 py-3 dark:border-zinc-800/80">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+                      Rate History
+                    </p>
+                    {rateHistoryLoading && (
+                      <Loader2 className="size-3 animate-spin text-zinc-400" />
+                    )}
+                  </div>
+                  {(() => {
+                    const visible = rateHistory.filter(
+                      (r) => r.effective_from !== '1970-01-01' && !/baseline/i.test(r.note ?? ''),
+                    );
+                    if (visible.length === 0) {
+                      return (
+                        <p className="text-[11px] text-zinc-400 dark:text-zinc-600">
+                          No changes recorded yet — first edit will land here.
+                        </p>
+                      );
+                    }
+                    const todayIso = (() => {
+                      const t = new Date();
+                      return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+                    })();
+                    return (
+                      <ul className="space-y-1">
+                        {visible.map((row) => {
+                          const isFuture = row.effective_from > todayIso;
+                          const isRevoking = revokingId === row.id;
+                          return (
+                            <li
+                              key={row.id}
+                              className="flex items-center justify-between gap-2 rounded-md border border-zinc-200/70 bg-white/60 px-2.5 py-1.5 text-[11px] dark:border-zinc-800 dark:bg-zinc-900/40"
+                            >
+                              <div className="flex min-w-0 flex-1 items-center gap-2">
+                                <span
+                                  className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ${
+                                    isFuture
+                                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  }`}
+                                >
+                                  {isFuture ? 'Pending' : 'Active'}
+                                </span>
+                                <span className="font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
+                                  {row.effective_from}
+                                </span>
+                                <span className="truncate text-zinc-500 dark:text-zinc-500">
+                                  ₱{row.regular_rate ?? '—'}
+                                  <span className="mx-1 text-zinc-300 dark:text-zinc-700">/</span>
+                                  ₱{row.ot_rate ?? '—'} OT
+                                </span>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 gap-1 px-1.5 text-[10px] text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/30 dark:hover:text-red-300"
+                                onClick={() => void handleRevokeRateRow(row.id)}
+                                disabled={isRevoking}
+                                title="Revoke this rate change — cache rolls back to the previous row"
+                              >
+                                {isRevoking ? (
+                                  <Loader2 className="size-3 animate-spin" />
+                                ) : (
+                                  <X className="size-3" />
+                                )}
+                                Revoke
+                              </Button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    );
+                  })()}
+                </div>
+              )}
               {profileLoading ? (
                 <div className="mx-6 mt-3 inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
                   <Loader2 className="size-3 animate-spin" />

@@ -24,11 +24,7 @@ import {
   OFFICIAL_USD_TO_PHP_RATE,
   effectiveUsdToPhpRateFromStored,
 } from '@/lib/fx/usd-php';
-import {
-  phpHourlyPayFromSeconds,
-  roundWorkedHoursForPay,
-  splitRegularOvertimeSeconds,
-} from '@/lib/payroll/money-php';
+import { phpHourlyPayFromSeconds } from '@/lib/payroll/money-php';
 import {
   buildCalendarMonthWeeksIncludingWeekends,
   columnsAreAllCanonical,
@@ -177,6 +173,37 @@ type EmployeeMyHoursProps = {
   onNavigateToDisputes?: (prefill?: { date: string; seconds?: number }) => void;
 };
 
+/** One row from `/api/employee-rate-history`. */
+type RateHistoryEntry = {
+  effectiveFrom: Date;
+  regularRate: number | null;
+  otRate: number | null;
+};
+
+function parseRateText(v: unknown): number | null {
+  if (v == null) return null;
+  const s = String(v).trim().replace(/,/g, '');
+  if (!s) return null;
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Resolve the rate row that was in effect on `date`. Caller passes the
+ *  per-employee history list sorted desc by `effectiveFrom`. */
+function resolveRateAsOfLocal(
+  history: RateHistoryEntry[],
+  date: Date,
+): { regularRate: number | null; otRate: number | null } | null {
+  if (history.length === 0) return null;
+  const t = date.getTime();
+  for (const row of history) {
+    if (row.effectiveFrom.getTime() <= t) {
+      return { regularRate: row.regularRate, otRate: row.otRate };
+    }
+  }
+  return null;
+}
+
 export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }: EmployeeMyHoursProps) {
   const [aliasEmails, setAliasEmails] = useState<string[]>([]);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
@@ -188,6 +215,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
+  const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
   const [ratesLoading, setRatesLoading] = useState(true);
 
@@ -312,12 +340,18 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
   const fetchRatesAndFx = useCallback(async () => {
     setRatesLoading(true);
     try {
-      const [ratesRes, fxRes] = await Promise.all([
+      const [ratesRes, fxRes, historyRes] = await Promise.all([
         fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
         fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
+        // Per-employee rate history — drives per-day prorating in the pay calc
+        // so mid-cycle rate changes show up immediately in My Hours totals.
+        fetch(`/api/employee-rate-history?email=${encodeURIComponent(email)}`, { cache: 'no-store' }),
       ]);
       const ratesJson = (await ratesRes.json()) as { rows?: EmployeeHourlyRateRow[] };
       const fxJson = (await fxRes.json()) as { value: string | null };
+      const historyJson = (await historyRes.json()) as {
+        rows?: Array<{ regular_rate: string | null; ot_rate: string | null; effective_from: string }>;
+      };
       setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
       const allRates = ratesJson.rows ?? [];
       const myRate = allRates.find((r) => {
@@ -326,8 +360,22 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
         return we === email || pe === email;
       });
       setRate(myRate ?? null);
+      const parsed: RateHistoryEntry[] = [];
+      for (const r of historyJson.rows ?? []) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.effective_from ?? '');
+        if (!m) continue;
+        parsed.push({
+          effectiveFrom: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
+          regularRate: parseRateText(r.regular_rate),
+          otRate: parseRateText(r.ot_rate),
+        });
+      }
+      // API already sorts desc, but be defensive.
+      parsed.sort((a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime());
+      setRateHistory(parsed);
     } catch {
       setRate(null);
+      setRateHistory([]);
     } finally {
       setRatesLoading(false);
     }
@@ -503,38 +551,65 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
    * contains **only this month’s days**, then the usual 40h regular cap applies per bucket.
    */
   const monthPayEstimate = useMemo(() => {
-    const parseRate = (v: string | null | undefined): number | null => {
-      if (v == null) return null;
-      const n = parseFloat(String(v).replace(/,/g, ''));
-      return Number.isFinite(n) ? n : null;
-    };
-    const regularRate = parseRate(rate?.regular_rate);
-    const otRate = parseRate(rate?.ot_rate);
+    const cacheRegularRate = parseRateText(rate?.regular_rate);
+    const cacheOtRate = parseRateText(rate?.ot_rate);
 
-    const weekTotals = new Map<number, number>();
+    // Group every in-month day under its Mon–Sun week so the 40h regular cap
+    // applies per week — matches `member-monthly-pay.ts` semantics.
+    const weekDays = new Map<number, Array<{ date: Date; sec: number }>>();
     const cur = new Date(monthStart);
     while (cur.getTime() <= monthEnd.getTime()) {
       const key = pabDateKey(cur);
       const sec = mergedHoursByDateKey.get(key) ?? 0;
-      const mon = mondayOfWeekContaining(cur);
-      const wk = mon.getTime();
-      weekTotals.set(wk, (weekTotals.get(wk) ?? 0) + sec);
+      const mon = mondayOfWeekContaining(cur).getTime();
+      const list = weekDays.get(mon);
+      const entry = { date: new Date(cur.getFullYear(), cur.getMonth(), cur.getDate()), sec };
+      if (list) list.push(entry);
+      else weekDays.set(mon, [entry]);
       cur.setDate(cur.getDate() + 1);
     }
 
     let regularSec = 0;
     let otSec = 0;
-    for (const sec of weekTotals.values()) {
-      if (sec <= 0) continue;
-      const split = splitRegularOvertimeSeconds(roundWorkedHoursForPay(sec / 3600));
-      regularSec += split.regularSec;
-      otSec += split.otSec;
+    let regularPayAcc = 0;
+    let otPayAcc = 0;
+    let anyRegRate = false;
+    let anyOtRate = false;
+
+    const REG_CAP_SEC = 40 * 3600;
+
+    for (const days of weekDays.values()) {
+      // Sort chronologically so the 40h cap fills earliest days first — the
+      // standard "you hit 40h on Friday afternoon, the rest is OT" model.
+      days.sort((a, b) => a.date.getTime() - b.date.getTime());
+      let usedRegSec = 0;
+      for (const d of days) {
+        if (d.sec <= 0) continue;
+        const remaining = Math.max(0, REG_CAP_SEC - usedRegSec);
+        const dayReg = Math.min(d.sec, remaining);
+        const dayOt = d.sec - dayReg;
+        usedRegSec += dayReg;
+        regularSec += dayReg;
+        otSec += dayOt;
+
+        // Per-day rate resolution: history wins; fall back to the cache row
+        // (today's rate) when no history entry covers this day.
+        const resolved = resolveRateAsOfLocal(rateHistory, d.date);
+        const dayRegRate = resolved?.regularRate ?? cacheRegularRate;
+        const dayOtRate  = resolved?.otRate      ?? cacheOtRate;
+        if (dayRegRate != null) {
+          anyRegRate = true;
+          regularPayAcc += phpHourlyPayFromSeconds(dayRegRate, dayReg);
+        }
+        if (dayOtRate != null) {
+          anyOtRate = true;
+          otPayAcc += phpHourlyPayFromSeconds(dayOtRate, dayOt);
+        }
+      }
     }
 
-    const regularPay =
-      regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
-    const otPay =
-      otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
+    const regularPay = anyRegRate ? regularPayAcc : null;
+    const otPay = otSec > 0 ? (anyOtRate ? otPayAcc : null) : 0;
     const totalPay =
       regularPay != null && otPay != null
         ? Math.round((regularPay + otPay) * 100) / 100
@@ -546,10 +621,12 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
       regularPay,
       otPay,
       totalPay,
-      otRate,
+      // `otRate` was previously used downstream just to detect whether the OT
+      // rate is on file. Mirror that semantic by reporting the cache rate.
+      otRate: cacheOtRate,
       hasHours: monthAllDaysTotalSeconds > 0,
     };
-  }, [rate, mergedHoursByDateKey, monthStart, monthEnd, monthAllDaysTotalSeconds]);
+  }, [rate, rateHistory, mergedHoursByDateKey, monthStart, monthEnd, monthAllDaysTotalSeconds]);
 
   const isPAEligible = useMemo(() => {
     const days = hoursCalendar?.flat() ?? [];
@@ -906,11 +983,37 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                                   ? ' — no data'
                                   : '';
 
+                        // Per-day rate badge for the My Hours calendar — matches
+                        // the Overview / PAB Calendar / Manager modal styling.
+                        // Faint gray on normal days, emerald-ringed on the flip
+                        // day (the day a new rate took effect).
+                        const dayRateResolved = resolveRateAsOfLocal(rateHistory, day.date);
+                        const isRateFlipDay = (() => {
+                          if (rateHistory.length < 2) return false;
+                          const t = day.date.getTime();
+                          for (let i = 0; i < rateHistory.length; i += 1) {
+                            const r = rateHistory[i];
+                            if (r.effectiveFrom.getTime() <= t) {
+                              return r.effectiveFrom.getTime() === t && i < rateHistory.length - 1;
+                            }
+                          }
+                          return false;
+                        })();
+                        const dayRegRate = dayRateResolved?.regularRate ?? null;
+                        const showRateBadge =
+                          dayRegRate != null && (day.hasData || isRateFlipDay);
+                        const rateLabel = dayRegRate != null
+                          ? '₱' + dayRegRate.toLocaleString('en-PH', { maximumFractionDigits: 0 })
+                          : '';
+                        const rateTooltip = dayRegRate != null
+                          ? ` · Rate ${rateLabel}${isRateFlipDay ? ' (new today)' : ''}`
+                          : '';
+
                         return (
                           <div
                             key={di}
-                            className={`flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-200 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                            title={`${titleBody}${titleDispute}`}
+                            className={`relative flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-200 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
+                            title={`${titleBody}${titleDispute}${rateTooltip}`}
                             onClick={
                               cellClickable
                                 ? () =>
@@ -927,6 +1030,17 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                             <span className={`font-mono text-[11px] font-bold leading-none tabular-nums sm:text-[13px] ${hourText}`}>
                               {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
                             </span>
+                            {showRateBadge && (
+                              <span
+                                className={`pointer-events-none absolute bottom-0 left-0.5 rounded px-0.5 text-[7px] font-semibold leading-tight tabular-nums sm:text-[8px] ${
+                                  isRateFlipDay
+                                    ? 'bg-emerald-500/20 text-emerald-700 ring-1 ring-emerald-500/50 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/40'
+                                    : 'text-zinc-400 dark:text-zinc-500'
+                                }`}
+                              >
+                                {rateLabel}
+                              </span>
+                            )}
                           </div>
                         );
                       })}

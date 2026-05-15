@@ -77,6 +77,27 @@ export async function POST(req: Request) {
     // Always record the change in the history table (authoritative source for
     // payroll prorating). Email lower-casing handled by the table trigger.
     const recipient = workEmail || personalEmail;
+
+    // Supersede any existing rate-history row whose effective_from is today or
+    // later for this email. Rationale: there should only be ONE active or
+    // pending rate change per person at any moment — accountants who mis-set
+    // a rate and re-save should overwrite the bad row, not stack a new one
+    // on top. Historical rows (effective_from < today) are preserved so past
+    // payroll cycles keep their correct per-day rates.
+    if (supabase) {
+      const todayIso = fmtIsoDate(today);
+      const recipientNorm = String(recipient).trim().toLowerCase();
+      const { error: supersedeErr } = await supabase
+        .from('employee_rate_history')
+        .delete()
+        .eq('employee_email', recipientNorm)
+        .gte('effective_from', todayIso);
+      if (supersedeErr) {
+        // eslint-disable-next-line no-console
+        console.warn('[update-employee-rates] supersede failed:', supersedeErr.message);
+      }
+    }
+
     const { error: histErr } = await insertRateHistoryRow({
       email: recipient,
       regularRate,

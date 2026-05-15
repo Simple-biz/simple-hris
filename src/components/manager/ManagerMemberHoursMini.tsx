@@ -202,6 +202,11 @@ export default function ManagerMemberHoursMini({
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
+  const [rateHistory, setRateHistory] = useState<Array<{
+    effectiveFrom: Date;
+    regularRate: number | null;
+    otRate: number | null;
+  }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Authoritative server-side pay summary including PAB + Tech bonus gates.
@@ -308,6 +313,45 @@ export default function ManagerMemberHoursMini({
       cancelled = true;
     };
   }, [aliasNorms]);
+
+  // Fetch the member's rate-history once per opened employee. Drives the
+  // per-day rate badge on the calendar cells so the manager can see exactly
+  // which day a mid-cycle rate change took effect (matches My Hours).
+  useEffect(() => {
+    const lookupEmail = workEmail?.trim() || personalEmail?.trim() || '';
+    if (!lookupEmail) {
+      setRateHistory([]);
+      return;
+    }
+    let cancelled = false;
+    // Use the manager-namespaced endpoint — the generic /api/employee-rate-
+    // history is self-or-elevated and 403s for plain manager sessions. This
+    // one mirrors /api/manager/member-monthly-pay's session-only model.
+    fetch(`/api/manager/member-rate-history?email=${encodeURIComponent(lookupEmail)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { rows?: Array<{ regular_rate: string | null; ot_rate: string | null; effective_from: string }> }) => {
+        if (cancelled) return;
+        const parsed: typeof rateHistory = [];
+        for (const r of j.rows ?? []) {
+          const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.effective_from ?? '');
+          if (!m) continue;
+          const num = (s: string | null) => {
+            if (s == null) return null;
+            const v = parseFloat(String(s).replace(/,/g, ''));
+            return Number.isFinite(v) ? v : null;
+          };
+          parsed.push({
+            effectiveFrom: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
+            regularRate: num(r.regular_rate),
+            otRate: num(r.ot_rate),
+          });
+        }
+        parsed.sort((a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime());
+        setRateHistory(parsed);
+      })
+      .catch(() => { if (!cancelled) setRateHistory([]); });
+    return () => { cancelled = true; };
+  }, [workEmail, personalEmail]);
 
   // Fetch the authoritative server-side pay summary (regular + OT + PAB +
   // Tech bonus + 40h overtime cap, all gated against dispatch logic). Re-runs
@@ -587,7 +631,13 @@ export default function ManagerMemberHoursMini({
                 No Hubstaff data for this month.
               </p>
             ) : (
-              <CalendarBody weeks={calendarWeeks} viewYear={viewYear} viewMonth={viewMonth} />
+              <CalendarBody
+                weeks={calendarWeeks}
+                viewYear={viewYear}
+                viewMonth={viewMonth}
+                rateHistory={rateHistory}
+                ratesHidden={ratesHidden}
+              />
             )}
           </motion.div>
         </AnimatePresence>
@@ -925,15 +975,38 @@ function CalendarBody({
   weeks,
   viewYear,
   viewMonth,
+  rateHistory,
+  ratesHidden,
 }: {
   weeks: PabCalendarDay[][];
   viewYear: number;
   viewMonth: number;
+  rateHistory: Array<{ effectiveFrom: Date; regularRate: number | null; otRate: number | null }>;
+  ratesHidden: boolean;
 }) {
   // Cache today midnight once — reading Date inside every cell is wasteful.
   const todayMid = useMemo(() => {
     const t = new Date();
     return new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
+  }, []);
+
+  const resolveRate = useCallback(
+    (date: Date): { reg: number | null; ot: number | null; isFlipDay: boolean } => {
+      const t = date.getTime();
+      for (let i = 0; i < rateHistory.length; i += 1) {
+        const row = rateHistory[i];
+        if (row.effectiveFrom.getTime() <= t) {
+          const isFlipDay = row.effectiveFrom.getTime() === t && i < rateHistory.length - 1;
+          return { reg: row.regularRate, ot: row.otRate, isFlipDay };
+        }
+      }
+      return { reg: null, ot: null, isFlipDay: false };
+    },
+    [rateHistory],
+  );
+  const fmtRate = useCallback((n: number | null): string => {
+    if (n == null) return '—';
+    return '₱' + n.toLocaleString('en-PH', { maximumFractionDigits: 0 });
   }, []);
 
   return (
@@ -1012,16 +1085,28 @@ function CalendarBody({
               hourText = 'text-rose-600 dark:text-rose-400';
             }
 
+            const dayRate = resolveRate(day.date);
+            const rateTooltip = !ratesHidden && (dayRate.reg != null || dayRate.ot != null)
+              ? ` · Rate ${fmtRate(dayRate.reg)} / OT ${fmtRate(dayRate.ot)}${dayRate.isFlipDay ? ' (new today)' : ''}`
+              : '';
+            // Faint badge whenever the day has hours; emerald-ringed flip-day
+            // badge always renders, even on empty/today cells, so a brand-new
+            // effective date is immediately visible on the calendar.
+            const showRate =
+              !ratesHidden &&
+              dayRate.reg != null &&
+              (day.hasData || dayRate.isFlipDay);
+
             return (
               <div
                 key={di}
                 className={cn(
-                  'flex h-9 flex-col items-center justify-center gap-px rounded-md border',
+                  'relative flex h-9 flex-col items-center justify-center gap-px rounded-md border',
                   cellBorder,
                 )}
                 title={`${day.dayLabel} ${day.dateStr}: ${(day.seconds / 3600).toFixed(2)}h${
                   inMonth ? '' : ' · adj. month'
-                }`}
+                }${rateTooltip}`}
               >
                 <span className="text-[7px] leading-none text-zinc-400 dark:text-zinc-500">
                   {day.dateStr}
@@ -1034,6 +1119,18 @@ function CalendarBody({
                 >
                   {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
                 </span>
+                {showRate && (
+                  <span
+                    className={cn(
+                      'pointer-events-none absolute -bottom-0.5 right-0.5 rounded px-0.5 text-[7px] font-semibold leading-tight tabular-nums',
+                      dayRate.isFlipDay
+                        ? 'bg-emerald-500/20 text-emerald-700 ring-1 ring-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30'
+                        : 'text-zinc-400 dark:text-zinc-500',
+                    )}
+                  >
+                    {fmtRate(dayRate.reg)}
+                  </span>
+                )}
               </div>
             );
           })}

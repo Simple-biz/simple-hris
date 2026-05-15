@@ -702,3 +702,117 @@ Computed by `comparePayrollToMaster()` in Step 4. Reports:
 - **Sample unmatched emails**: up to 75 Hubstaff-only email addresses for review
 
 The coverage ratio (on master with hours ÷ total master) is shown in the grand total card in Step 4.
+
+---
+
+## Mid-cycle rate prorating *(added 2026-05-15)*
+
+Rate changes now carry an **effective date** instead of taking effect instantly. This lets HR/Accounting promote someone on a Wednesday and have the same payroll cycle pay them at the old rate Mon–Tue and the new rate Wed–Sat.
+
+**Storage:** `employee_rate_history` is authoritative. Every save inserts a row with `effective_from`. The legacy `employee_hourly_rates."Regular Rate"` / `"OT Rate"` columns become a denormalized cache of *today's rate*, only updated when `effective_from <= today`.
+
+**Compute:**
+- `src/lib/payroll/current-pay.ts → computeProratedRowPay` (Payment Dispatch) — for each employee's Hubstaff row, resolves canonical→ISO via `source_file`, walks days chronologically, looks up the rate as-of each day from history, applies the 40h/week regular cap to allocate reg vs OT, and sums. Falls back to the single-rate × aggregate formula only when the row has no per-day ISO columns.
+- `src/lib/payroll/member-monthly-pay.ts` — same per-day prorating in the per-week loop powering the Manager Dashboard member modal. Month totals roll up from the weekly prorated values.
+
+**UI:** `Rates.tsx` edit modal adds an **Effective From** date picker (default = next Monday so the current cycle stays on the old rate). Accountants can shift it earlier (today / yesterday) to trigger prorating within the current cycle, or further out to schedule ahead of a promotion.
+
+**Notification:** `POST /api/update-employee-rates` always writes a row to `employee_notifications`. Tone is `positive` when any rate ticked up, `neutral` otherwise. Message reflects scheduled vs. immediate.
+
+**HSL override (still in effect):** for `active_hsl_agents` rows, the HOGAN pay-plan sheet is the source of truth for hourly + OT. The rate-history table is bypassed on display for those agents — the HSL sync writes the canonical rate, and Rates & Profiles surfaces it directly. The Edit Rates button is replaced with a "Managed by HOGAN pay plan sync" lock chip.
+
+## MESA contributions — per-week deduction *(added 2026-05-15)*
+
+MESA members contribute **₱100 per pay week**, not a flat ₱100 per month. The Manager Dashboard member modal now shows the full monthly total (e.g. `−₱400.00` for 4 weeks) instead of the previous hardcoded single-week amount.
+
+- `member-monthly-pay.ts` deducts ₱100 from `weekTotalPayPHP` and accumulates into `totals.mesaDeductionPHP` on every week where `mesa_member && hasRates && weekTotalSec > 0`.
+- `grandTotalPayPHP` subtracts the monthly total.
+- `MemberMonthlyPaySummary` type carries `totals.mesaDeductionPHP` and `totals.mesaMember`.
+
+**TODO (called out in code):** once an `employee_hourly_rates.mesa_start_date` column lands, gate the weekly deduction with `weekStart >= mesa_start_date` so contributions do not accrue retroactively for weeks before the member joined.
+
+## Notifications system *(added 2026-05-15)*
+
+Per-employee message feed surfaced in the global `NotificationsPanel` (sidebar tab). Currently carries rate-change notifications; reserved for future promotion (`type='promotion'`) events that combine salary + title changes.
+
+- **Storage:** `employee_notifications` table (see data-sources doc). Added to the `supabase_realtime` publication for live updates.
+- **Sidebar badge:** `useEmployeeNotificationsUnread(email)` hook returns the unread count with a Realtime subscription + 60s poll fallback. Badge auto-clears once the user opens the Notifications tab (panel marks unread as read 2s after display).
+- **Avatar/visual hierarchy:** positive notifications get a green/teal gradient stripe and a `PartyPopper` icon; neutral ones use a muted gradient and a `BadgeDollarSign` icon.
+- **Trash button:** per-card delete via `DELETE /api/employee-notifications?id=…`.
+
+## RBAC v2: Feature Permissions *(added 2026-05-15)*
+
+The original role grants were coarse — granting `finance` unlocked the entire Accounting view. The new system layers a per-tab access overlay on top so admins can give someone "see the Accounting view but only Edit the Rates tab; everything else is hidden."
+
+**Three-state model per tab:**
+- **Hidden** (default — no row in `employee_feature_permissions`): tab is removed from the sidebar nav.
+- **View**: tab is visible but components opt into read-only mode.
+- **Edit**: full access.
+
+**Catalog** lives in `src/lib/rbac/feature-permissions.ts → FEATURE_CATALOG`. Each view (`accounting`, `hr`, `manager`, `orphanage`, `ceo`, `contractor`) has its own tab list — single source of truth for both the admin UI and the JWT shape.
+
+**Role → view mapping** in `ROLE_TO_FEATURE_VIEW`:
+
+| Role | View |
+|---|---|
+| `finance` | accounting |
+| `hr_coordinator` | hr |
+| `manager` | manager |
+| `orphanage_manager` | orphanage |
+| `ceo` | ceo |
+| `contractor` | contractor |
+| `admin` | *(bypass — admins always have full access)* |
+
+**Enforcement:**
+- **Tab visibility:** `allowedAccountingTabsForUser(roles, perms)` filters the nav. Currently wired only into the Accounting view (`App.tsx`, `Sidebar.tsx`). HR/Manager/Orphanage/CEO/Contractor apps still show all tabs — enforcement is the pending follow-up.
+- **In-tab edit gating:** not yet wired. The `useFeatureAccess(view, feature)` client hook is the planned surface for individual components to disable Edit buttons when access is `view`.
+
+**Admin UI:** `AdminRoles.tsx` shows a per-tab Hidden/View/Edit radio grid below each granted role card whose dashboard has a feature catalog. Every click writes to `POST /api/employee-feature-permissions` and force-logs out the target user so the change takes effect on their next page load.
+
+**Self-edit safety:** the admin editing their own row skips force-logout — otherwise the in-flight session gets wiped and every subsequent click in the same browser 403s.
+
+## Force-logout on role revoke *(added 2026-05-15)*
+
+When `AdminRoles → toggleRole` revokes a role, it fires `POST /api/auth/force-logout` for the affected email so their stale JWT (which still carries the revoked role) cannot keep granting access.
+
+**Mechanism:**
+- `auth.force_logout_map` in `app_settings` is a JSON map of `{ "email": "ISO-timestamp" }` (30-day TTL; auto-pruned on write).
+- NextAuth `jwt` callback (`src/lib/auth/auth-options.ts`) reads the map on every fire. If the user's stamp is ≥ token `iat`, the callback returns `{}` (empty token). NextAuth re-encodes the cookie with the empty token.
+- `middleware.ts` rejects tokens that decode to no `email` and no `sub` → redirects to `/login`.
+- The map is cached in-memory for 30s (`src/lib/auth/force-logout.ts`) to bound DB load.
+
+**Self-edit guard:** the API refuses self-targeted force-logouts and the AdminRoles handler treats the response as a no-op when the admin is acting on their own row.
+
+**Grants are NOT force-logged-out.** Granting a role only adds capabilities; leaving the old session alone is safe. Only revokes invalidate.
+
+## Avatar priority + cache busting *(added 2026-05-15)*
+
+`EmployeeAvatar` now prefers the **manually-uploaded** photo over the Google SSO photo when both exist. Previously the order was reversed, which meant uploads never visibly propagated for anyone who signed in with Google.
+
+**Upload pipeline:**
+- `cacheControl: 'no-cache'` set on the Supabase Storage upload so the CDN does not serve a stale blob after overwrite.
+- The public URL written to `global_master_list."Profile Photo URL"` is suffixed with `?v=<timestamp>` so every reader (employee dashboard, Rates & Profiles, manager modal, Admin Roles people list) gets a fresh querystring on every upload.
+- `invalidateRateProfilesCache()` is called immediately after the DB write so accounting roster avatars refresh without waiting on the 60s in-memory cache.
+
+**Lightbox:** Rates & Profiles profile-header avatar is clickable; opens a max-380px-wide lightbox dialog showing the photo. Clicking the image or pressing Escape closes it.
+
+## Rates & Profiles — US-employee inclusion *(added 2026-05-15)*
+
+US-based employees (Carla, Jeff, Thomas, Brandon, etc.) were seeded into `global_master_list` manually (migration #18) and are not part of the Google Sheet master sync. The `active_employees` view's `last_seen_upload_id = current` filter drops them on every re-sync.
+
+**Fix in `getEmployeeRateProfileSummaries` and `getEmployeeRateProfileByEmail`:**
+- After fetching `active_employees`, also pull every `global_master_list` row whose `Work Email` or `Personal Email` matches an `employee_ids.employee_id LIKE 'US-%'` entry (and is not off-boarded).
+- Deduped against active rows by row id.
+- For these 12 US employees, the `Department` field on the summary is **overridden to "US Manager Bonus"** so the department dropdown in the rates roster can surface them all under a single filter, regardless of their actual `global_master_list."Department"` value (which spans Hogan Smith Law / US Manager Bonus / HR).
+
+Same widening was applied to `/api/employees` (`fetchActiveEmployees` in `src/lib/supabase/employees.ts`) so Roles & Permissions, HR, and the manager team list also surface them.
+
+## Roles & Permissions UI tabs *(added 2026-05-15)*
+
+The People panel in `AdminRoles` now has a two-tab strip:
+- **All** — every employee in the directory (count matches the "Directory" stat).
+- **With roles** — only employees who currently hold at least one role grant (matches the "With roles" stat).
+
+The sidebar badge on the **Roles & permissions** nav item used to count total role grants (e.g. 66). It now counts unique emails with at least one role (e.g. 14), matching the "With roles" stat. Wired in `app/admin/page.tsx`.
+
+Avatars in the People list and the selected-employee summary now render through `EmployeeAvatar`, so they pick up the manually-uploaded Supabase photo first, Google SSO photo as fallback, then initials.

@@ -429,3 +429,51 @@ Phase 9 (Comms inbox) is parked unless v2 scope is approved.
 - Existing RBAC plan: `docs/implementation-plan-rbac.md`.
 - HR dashboard plan: `docs/implementation-plan-hr-dashboard.md`.
 - Role check constraint precedent: `references/grant_manager_roles.sql`.
+
+---
+
+## 2026-05-15 Delta — Feature Permissions Overlay (implemented)
+
+Coarse role grants like `finance` now layer a **per-tab access overlay** on top so admins can give someone "see the Accounting view but only Edit the Rates tab; everything else is hidden."
+
+### Storage
+- New table `employee_feature_permissions` (migration `references/create_employee_feature_permissions.sql`, pending #43).
+- Three-state model: missing row = `hidden`, plus `'view'` and `'edit'` enum values.
+
+### Catalog
+`src/lib/rbac/feature-permissions.ts → FEATURE_CATALOG` enumerates the tabs per view:
+- **accounting** — overview, rates, payroll_wizard, payment_dispatch, disputes, announcements, s_wall, settings
+- **hr** — overview, onboarding, offboarding, leaves, gift_tracker, mesa, s_wall, notifications
+- **manager** — overview, time_adjustments, leaves, team, announcements, s_wall, hsl_bonus, bonus_history, notifications
+- **orphanage** — overview, queue, budget, budget_history, s_wall, notifications
+- **ceo** — overview, announcements, s_wall, notifications
+- **contractor** — overview, profile, invoices
+
+`ROLE_TO_FEATURE_VIEW` maps each assignable role to its catalog view; `admin` deliberately has no entry (full-access bypass).
+
+### JWT integration
+- `auth-options.ts` jwt callback now fetches the user's perms on sign-in (`fetchFeaturePermissionsForEmail`) and stashes them on the token as `featurePerms`.
+- Session exposes `session.user.featurePerms`.
+
+### Enforcement
+- `allowedAccountingTabsForUser(roles, perms)` and `canAccessAccountingTabForUser(tab, roles, perms)` in `src/lib/rbac/accounting-tabs.ts` filter the accounting sidebar nav.
+- Wired into `App.tsx` (Accounting shell) — fetches roles + perms in parallel and feeds both into the gating functions.
+- **Not yet wired** into HR/Manager/Orphanage/CEO/Contractor sidebars. Those apps still show all their tabs regardless of perms; the picker UI records the choices but the nav doesn't filter yet. Follow-up.
+
+### Admin UI
+- `AdminRoles.tsx` shows a Hidden / View / Edit radio grid below each granted role card whose dashboard has a feature catalog.
+- Every click POSTs to `/api/employee-feature-permissions`, refreshes local state, and force-logs out the affected user so their next page load picks up the new perm set.
+- **Self-edit skip**: when the admin is editing their own row, both the feature-permissions POST and the role-revoke force-logout endpoint skip the bump (`POST /api/auth/force-logout` returns `{ skipped: 'self' }`). Without this, the admin's own JWT got wiped on the first click and every subsequent click 403'd.
+
+### Force-logout machinery
+- `auth.force_logout_map` in `app_settings` — JSON map of `{ email: ISO-timestamp }`.
+- `bumpForceLogoutFor(email)` in `src/lib/auth/force-logout.ts` writes the stamp (30-day TTL, auto-pruned).
+- `getForceLogoutEpochFor(email)` reads the stamp, cached in-memory for 30s.
+- `auth-options.ts` jwt callback returns `{}` (empty token) when the user's stamp ≥ token `iat`.
+- `middleware.ts` rejects tokens with no `email` and no `sub`, redirecting to `/login`.
+- Triggered on: role revoke (`AdminRoles → toggleRole`), every feature-permission write.
+- Suppressed on: self-edits (both endpoints).
+
+### Open follow-ups
+- Wire the Hidden/View/Edit filter into the HR / Manager / Orphanage / CEO / Contractor sidebar nav items (mechanical work across each `*App.tsx` + `*Sidebar.tsx` pair).
+- Build the `useFeatureAccess(view, feature)` client hook so individual components (Rates edit button, PayrollWizard run button, Payment Dispatch send button, etc.) can gate their mutation controls when access is `view`. Currently access defaults to `edit` for any visible tab.
