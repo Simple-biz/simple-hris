@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clock,
   AlertCircle,
@@ -94,6 +94,30 @@ function formatPHP(n: number): string {
 /** Full calendar date for PAB range labels (locale: en-US). */
 function formatPabCalendarDate(d: Date): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
+ * Compact label for a source CSV. Input filenames look like
+ * `simple-biz_daily_report_2026-05-03_to_2026-05-09.csv` — we surface that as
+ * "May 3 to 9, 2026" (same month) / "May 28 to Jun 3, 2026" (cross-month) /
+ * "Dec 30, 2025 to Jan 5, 2026" (cross-year). Falls back to the raw filename
+ * for anything that doesn't match the daily-report pattern.
+ */
+const MONTHS_FULL = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+function formatSourceFileLabel(file: string): string {
+  const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(file);
+  if (!m) return file;
+  const [, y1, mo1, d1, y2, mo2, d2] = m;
+  const y1n = Number(y1), mo1n = Number(mo1), d1n = Number(d1);
+  const y2n = Number(y2), mo2n = Number(mo2), d2n = Number(d2);
+  const M1 = MONTHS_FULL[mo1n - 1] ?? mo1;
+  const M2 = MONTHS_FULL[mo2n - 1] ?? mo2;
+  if (y1n !== y2n) return `${M1} ${d1n}, ${y1n} to ${M2} ${d2n}, ${y2n}`;
+  if (mo1n !== mo2n) return `${M1} ${d1n} to ${M2} ${d2n}, ${y1n}`;
+  return `${M1} ${d1n} to ${d2n}, ${y1n}`;
 }
 
 /** Matches PayrollWizard COMMON_BONUSES / BUSINESS_LOGIC.md */
@@ -327,6 +351,23 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
   const [sourceFiles, setSourceFiles] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [manualFileSelect, setManualFileSelect] = useState(false);
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const sourceMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!sourceMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (sourceMenuRef.current && !sourceMenuRef.current.contains(e.target as Node)) {
+        setSourceMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSourceMenuOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [sourceMenuOpen]);
   const [fileLoading, setFileLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   /** Merged row for this employee across ALL uploaded CSVs — used for full-month PAB. */
@@ -1565,7 +1606,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
   const _greeting = _rawFirst.charAt(0).toUpperCase() + _rawFirst.slice(1);
 
   return (
-    <div className="box-border flex h-full min-h-0 flex-col gap-2 overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [@media(max-height:900px)]:gap-1.5 sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:py-3 dark:bg-none dark:bg-[#0d1117]">
+    <div className="box-border flex h-full min-h-0 flex-col gap-2 overflow-y-auto bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [@media(max-height:900px)]:gap-1.5 sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:overflow-hidden lg:py-3 dark:bg-none dark:bg-[#0d1117]">
       {/* ── Hero intro card ── */}
       <header className="relative shrink-0 overflow-hidden rounded-2xl border border-orange-200/80 bg-gradient-to-br from-orange-500 via-amber-500 to-zinc-900 px-5 py-6 text-white shadow-lg shadow-orange-500/20 dark:border-orange-900/50 dark:from-orange-600 dark:via-amber-800 dark:to-black sm:px-7">
         <style>{`
@@ -1687,28 +1728,56 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
           </div>
           {/* Source file selector — minimal, inline */}
           {sourceFiles.length > 0 && (
-            <div className="mt-3 flex max-w-xl items-center gap-2">
+            <div className="mt-3 flex items-center gap-2">
               <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
               <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
                 Source
               </span>
-              <div className="relative min-w-0 flex-1">
-                <select
-                  value={selectedFile ?? ''}
-                  onChange={(e) => {
-                    setSelectedFile(e.target.value || null);
-                    setManualFileSelect(true);
-                  }}
-                  className="h-7 w-full appearance-none rounded-md border border-zinc-200/90 bg-white pl-2.5 pr-7 font-mono text-[11px] text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:focus:border-orange-500/60"
+              <div ref={sourceMenuRef} className="relative min-w-0 max-w-[18rem] flex-1">
+                <button
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded={sourceMenuOpen}
+                  onClick={() => setSourceMenuOpen((o) => !o)}
+                  className="flex h-7 w-full items-center justify-between rounded-md border border-zinc-200/90 bg-white pl-2.5 pr-2 text-left text-[11px] text-zinc-700 shadow-sm transition-colors hover:border-zinc-300 focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-400/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:border-zinc-600 dark:focus:border-orange-500/60"
                 >
-                  <option value="__all__">All Time · combined</option>
-                  {sourceFiles.map((file, i) => (
-                    <option key={file} value={file}>
-                      {file}{i === 0 ? ' (latest)' : ''}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
+                  <span className="truncate">
+                    {selectedFile === null || selectedFile === '__all__'
+                      ? 'All Time · combined'
+                      : `${formatSourceFileLabel(selectedFile)}${sourceFiles[0] === selectedFile ? ' (latest)' : ''}`}
+                  </span>
+                  <ChevronDown className="ml-1 h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
+                </button>
+                {sourceMenuOpen && (
+                  <div
+                    role="listbox"
+                    className="absolute left-0 right-0 top-full z-20 mt-1 max-h-[8.75rem] overflow-y-auto rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                  >
+                    {[{ value: '__all__', label: 'All Time · combined' }, ...sourceFiles.map((file, i) => ({
+                      value: file,
+                      label: `${formatSourceFileLabel(file)}${i === 0 ? ' (latest)' : ''}`,
+                    }))].map((opt) => {
+                      const isSel = (opt.value === '__all__' && (selectedFile === null || selectedFile === '__all__'))
+                        || opt.value === selectedFile;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          role="option"
+                          aria-selected={isSel}
+                          onClick={() => {
+                            setSelectedFile(opt.value);
+                            setManualFileSelect(true);
+                            setSourceMenuOpen(false);
+                          }}
+                          className={`block w-full truncate px-2.5 py-1.5 text-left text-[11px] transition-colors hover:bg-orange-50 dark:hover:bg-orange-950/30 ${isSel ? 'bg-orange-50/70 font-medium text-orange-700 dark:bg-orange-950/40 dark:text-orange-300' : 'text-zinc-700 dark:text-zinc-300'}`}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
               {fileLoading && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-orange-500" />}
             </div>
@@ -1750,7 +1819,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
         </div>
       </header>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-scroll overscroll-y-contain pb-4 lg:gap-3 [scrollbar-gutter:stable]">
+      <div className="flex min-w-0 flex-col gap-2 overflow-x-hidden pb-4 lg:min-h-0 lg:flex-1 lg:gap-3 lg:overflow-y-scroll lg:overscroll-y-contain lg:[scrollbar-gutter:stable]">
       {dataError && (
         <Card className="shrink-0 border-red-200 bg-red-50/50 dark:border-red-500/20 dark:bg-red-950/20">
           <CardContent className="flex items-center gap-3 py-3">
@@ -2267,6 +2336,17 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                             {wi + 1}
                           </div>
                           {Array.from({ length: 5 }, (_, di) => {
+                            // Latest in-progress (past, no-data) M–F day in this
+                            // week — only that one gets the animated hourglass.
+                            const _now = new Date();
+                            const _todayMid = new Date(_now.getFullYear(), _now.getMonth(), _now.getDate());
+                            let latestInProgressTime = -Infinity;
+                            for (const d of week) {
+                              const cm = new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate());
+                              if (cm.getTime() >= _todayMid.getTime()) continue;
+                              if (d.hasData && d.seconds > 0) continue;
+                              if (cm.getTime() > latestInProgressTime) latestInProgressTime = cm.getTime();
+                            }
                             const day: PabCalendarDay | undefined = week.find(
                               d => d.date.getDay() === di + 1,
                             );
@@ -2288,10 +2368,18 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                             const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
                             const isToday = cellMid.getTime() === todayMid.getTime();
                             const isFutureOrToday = cellMid.getTime() >= todayMid.getTime();
-                            const isCurrentWeek = week.some((d) => {
-                              const dm = new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate());
-                              return dm.getTime() === todayMid.getTime();
-                            });
+                            // Week spans Mon..Sun. `week` only contains M–F cells,
+                            // so derive the Sunday end from the Monday entry to
+                            // catch Sat/Sun "today" (otherwise the user's Sat
+                            // never matches any cell and isCurrentWeek stays false).
+                            const isCurrentWeek = (() => {
+                              const mon = week[0]?.date;
+                              if (!mon) return false;
+                              const start = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate());
+                              const end = new Date(start);
+                              end.setDate(end.getDate() + 6);
+                              return todayMid.getTime() >= start.getTime() && todayMid.getTime() <= end.getTime();
+                            })();
                             const noMeaningfulData = !day.hasData || day.seconds === 0;
                             const stillInProgress = isCurrentWeek && noMeaningfulData && !isFutureOrToday;
 
@@ -2312,8 +2400,8 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                             } else if (effectivelyPasses) {
                               if (isCurrentWeek) {
                                 cellBorder = forgiven
-                                  ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-400/40 dark:border-blue-600/60 dark:bg-blue-950/30'
-                                  : 'border-blue-300 bg-blue-50 dark:border-blue-800/60 dark:bg-blue-950/30';
+                                  ? 'border-orange-400 bg-orange-50 ring-1 ring-orange-400/40 dark:border-orange-600/60 dark:bg-orange-950/30'
+                                  : 'border-orange-300 bg-orange-50 dark:border-orange-700/60 dark:bg-orange-950/30';
                               } else {
                                 cellBorder = forgiven
                                   ? 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-400/40 dark:border-emerald-600/60 dark:bg-emerald-950/30'
@@ -2321,10 +2409,10 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                               }
                             } else if (isToday) {
                               cellBorder =
-                                'border-orange-300 bg-white dark:border-orange-700/60 dark:bg-zinc-900/40';
+                                'border-orange-300 bg-orange-50 dark:border-orange-700/60 dark:bg-orange-950/30';
                             } else if (stillInProgress) {
                               cellBorder =
-                                'border-orange-800/60 bg-orange-950/30 dark:border-orange-800/50 dark:bg-orange-950/20';
+                                'border-orange-300 bg-orange-50 dark:border-orange-700/60 dark:bg-orange-950/30';
                             } else if (isFutureOrToday || !day.hasData) {
                               cellBorder =
                                 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
@@ -2365,11 +2453,15 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                                   </span>
                                 )}
                                 <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-2.5">
-                                  {isToday ? (
+                                  {isToday || stillInProgress ? (
                                     <div className="flex flex-col items-center gap-0.5">
                                       <Hourglass
                                         className="h-3 w-3 text-orange-400 dark:text-orange-300"
-                                        style={{ animation: 'hourglass-flip 2s ease-in-out infinite' }}
+                                        style={
+                                          isToday || cellMid.getTime() === latestInProgressTime
+                                            ? { animation: 'hourglass-flip 2s ease-in-out infinite' }
+                                            : undefined
+                                        }
                                       />
                                       <span className="text-[7px] font-semibold uppercase tracking-wider text-orange-400 dark:text-orange-300">
                                         In Progress
@@ -2381,7 +2473,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                                         dispute != null && disputeIsAwaitingResolution(dispute)
                                           ? 'text-amber-700 dark:text-amber-400'
                                           : effectivelyPasses
-                                            ? (isCurrentWeek ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-700 dark:text-emerald-400')
+                                            ? (isCurrentWeek ? 'text-orange-700 dark:text-orange-400' : 'text-emerald-700 dark:text-emerald-400')
                                             : isToday || isFutureOrToday || stillInProgress || !day.hasData
                                               ? 'text-zinc-400 dark:text-zinc-500'
                                               : 'text-red-600 dark:text-red-400'
@@ -2395,7 +2487,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                                   {dispute != null && disputeIsAwaitingResolution(dispute) ? (
                                     <Clock className="h-2.5 w-2.5 text-amber-500" />
                                   ) : effectivelyPasses ? (
-                                    <CheckCircle2 className={`h-2.5 w-2.5 ${isCurrentWeek ? 'text-blue-500' : 'text-emerald-500'}`} />
+                                    <CheckCircle2 className={`h-2.5 w-2.5 ${isCurrentWeek ? 'text-orange-500' : 'text-emerald-500'}`} />
                                   ) : isToday || isFutureOrToday || stillInProgress || !day.hasData ? null : day.hasData ? (
                                     <XCircle className="h-2.5 w-2.5 text-red-400" />
                                   ) : null}

@@ -530,6 +530,17 @@ export default function EmployeePabCalendar({
                     {wi + 1}
                   </div>
                   {Array.from({ length: 5 }, (_, di) => {
+                    // Latest in-progress (past, no-data) M–F day in this week —
+                    // only that one gets the animated hourglass.
+                    const _now = new Date();
+                    const _todayMid = new Date(_now.getFullYear(), _now.getMonth(), _now.getDate());
+                    let latestInProgressTime = -Infinity;
+                    for (const d of week) {
+                      const cm = new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate());
+                      if (cm.getTime() >= _todayMid.getTime()) continue;
+                      if (d.hasData && d.seconds > 0) continue;
+                      if (cm.getTime() > latestInProgressTime) latestInProgressTime = cm.getTime();
+                    }
                     const day: PabCalendarDay | undefined = week.find(
                       (d) => d.date.getDay() === di + 1,
                     );
@@ -551,11 +562,17 @@ export default function EmployeePabCalendar({
                     const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
                     const isToday = cellMid.getTime() === todayMid.getTime();
                     const isFutureOrToday = cellMid.getTime() >= todayMid.getTime();
-                    // Week is "current" if it contains today's date
-                    const isCurrentWeek = week.some((d) => {
-                      const dm = new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate());
-                      return dm.getTime() === todayMid.getTime();
-                    });
+                    // Week is "current" if today falls within its Mon–Sun span.
+                    // `week` only contains M–F cells, so a Sat/Sun "today" never
+                    // equals a cell — derive the span from the Monday entry.
+                    const isCurrentWeek = (() => {
+                      const mon = week[0]?.date;
+                      if (!mon) return false;
+                      const start = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate());
+                      const end = new Date(start);
+                      end.setDate(end.getDate() + 6);
+                      return todayMid.getTime() >= start.getTime() && todayMid.getTime() <= end.getTime();
+                    })();
                     // In the current week, days with no meaningful data aren't red yet
                     const noMeaningfulData = !day.hasData || day.seconds === 0;
                     const stillInProgress = isCurrentWeek && noMeaningfulData && !isFutureOrToday;
@@ -576,14 +593,14 @@ export default function EmployeePabCalendar({
                         'border-amber-300 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-950/40';
                     } else if (effectivelyPasses) {
                       cellBorder = isCurrentWeek
-                        ? 'border-blue-300 bg-blue-50 dark:border-blue-700/70 dark:bg-blue-950/40'
+                        ? 'border-orange-300 bg-orange-50 dark:border-orange-700/60 dark:bg-orange-950/30'
                         : 'border-emerald-300 bg-emerald-50 dark:border-emerald-700/70 dark:bg-emerald-950/40';
                     } else if (isToday) {
                       cellBorder =
                         'border-orange-300 bg-white dark:border-orange-700/60 dark:bg-zinc-900/40';
                     } else if (stillInProgress) {
                       cellBorder =
-                        'border-orange-800/60 bg-orange-950/30 dark:border-orange-800/50 dark:bg-orange-950/20';
+                        'border-orange-300 bg-orange-50 dark:border-orange-700/60 dark:bg-orange-950/30';
                     } else if (isFutureOrToday || !day.hasData) {
                       cellBorder =
                         'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
@@ -632,11 +649,15 @@ export default function EmployeePabCalendar({
                           </span>
                         )}
                         <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-3.5">
-                          {isToday ? (
+                          {isToday || stillInProgress ? (
                             <div className="flex flex-col items-center gap-0.5">
                               <Hourglass
                                 className="h-3.5 w-3.5 text-orange-400 dark:text-orange-300 sm:h-4 sm:w-4"
-                                style={{ animation: 'hourglass-flip 2s ease-in-out infinite' }}
+                                style={
+                                  isToday || cellMid.getTime() === latestInProgressTime
+                                    ? { animation: 'hourglass-flip 2s ease-in-out infinite' }
+                                    : undefined
+                                }
                               />
                               <span className="text-[8px] font-semibold uppercase tracking-wider text-orange-400 dark:text-orange-300">
                                 In Progress
@@ -648,7 +669,7 @@ export default function EmployeePabCalendar({
                                 dispute != null && disputeIsAwaitingResolution(dispute)
                                   ? 'text-amber-700 dark:text-amber-400'
                                   : effectivelyPasses
-                                    ? (isCurrentWeek ? 'text-blue-700 dark:text-blue-400' : 'text-emerald-700 dark:text-emerald-400')
+                                    ? (isCurrentWeek ? 'text-orange-700 dark:text-orange-400' : 'text-emerald-700 dark:text-emerald-400')
                                     : isToday || isFutureOrToday || stillInProgress
                                       ? 'text-zinc-400 dark:text-zinc-500'
                                       : !day.hasData

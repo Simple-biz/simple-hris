@@ -565,7 +565,7 @@ export default function EmployeeProfile({
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="flex flex-col gap-5 sm:flex-row sm:items-center sm:gap-6"
+          className="flex items-center gap-4 sm:gap-6"
         >
           <div className="group relative shrink-0">
             <button
@@ -603,7 +603,7 @@ export default function EmployeeProfile({
           </div>
 
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <h1 className="truncate text-[24px] font-semibold tracking-[-0.02em] text-zinc-900 dark:text-zinc-50 sm:text-[28px]">
+            <h1 className="truncate text-[20px] font-semibold tracking-[-0.02em] text-zinc-900 dark:text-zinc-50 sm:text-[28px]">
               {displayName}
             </h1>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-zinc-500 dark:text-zinc-400">
@@ -636,23 +636,6 @@ export default function EmployeeProfile({
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2 sm:hidden">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={uploadingPhoto}
-              onClick={() => fileInputRef.current?.click()}
-              className="h-9 gap-1.5 rounded-lg text-[12px]"
-            >
-              {uploadingPhoto ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Camera className="h-3.5 w-3.5" />
-              )}
-              Replace
-            </Button>
-          </div>
         </motion.section>
 
         {/* ─────────── Error / missing roster banner ─────────── */}
