@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react';
 import { useSearchParams } from 'next/navigation';
+import AppFooter from '@/components/AppFooter';
 import { signOut } from 'next-auth/react';
 import { useTheme } from 'next-themes';
 import { AnimatePresence, motion } from 'motion/react';
@@ -1112,6 +1113,7 @@ export default function OrphanageApp() {
             </motion.div>
           )}
         </AnimatePresence>
+        <AppFooter />
       </main>
       <Toaster position="top-right" />
 

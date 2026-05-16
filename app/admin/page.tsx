@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
+import AppFooter from '@/components/AppFooter';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -229,6 +230,7 @@ function AdminPageInner() {
         >
           {renderContent()}
         </div>
+        <AppFooter />
       </main>
     </div>
   );

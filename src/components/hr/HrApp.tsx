@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import AppFooter from '@/components/AppFooter';
 import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
 import {
@@ -164,6 +165,7 @@ export default function HrApp() {
             </motion.div>
           </AnimatePresence>
         </div>
+        <AppFooter />
       </main>
 
       <Toaster richColors position="top-center" />

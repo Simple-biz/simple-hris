@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, Copy, Download, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
+import QueuePagination from './QueuePagination';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -167,6 +168,16 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd }:
   const totalOT = filtered.reduce((sum, r) => sum + (r.otHours ?? 0), 0);
   const allAmountsNull = filtered.length > 0 && filtered.every((r) => r.amountUSD == null);
 
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  useEffect(() => { setPage(1); }, [debouncedQuery, processor]);
+  useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
+  const pagedRows = useMemo(
+    () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filtered, page],
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
@@ -286,7 +297,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd }:
               className="divide-y divide-orange-100/70 dark:divide-zinc-800"
             >
               <AnimatePresence initial={false}>
-                {filtered.map((row) => (
+                {pagedRows.map((row) => (
                   <QueueRowItem
                     key={row.id}
                     row={row}
@@ -301,6 +312,14 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd }:
             </motion.ul>
           )}
         </AnimatePresence>
+        <QueuePagination
+          page={page}
+          pageCount={pageCount}
+          total={filtered.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+          label="people"
+        />
       </div>
     </div>
   );

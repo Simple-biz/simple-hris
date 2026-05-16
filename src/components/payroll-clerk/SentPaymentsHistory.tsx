@@ -1,10 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, CircleDashed, Download, Gauge } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatPHP, formatUSD, PROCESSORS } from './mock-queue';
+import QueuePagination from './QueuePagination';
 import type {
   PaymentDispatchRow,
   PaymentDispatchStatus,
@@ -74,6 +75,14 @@ export default function SentPaymentsHistory({
   periodStart,
   periodEnd,
 }: SentPaymentsHistoryProps) {
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(records.length / PAGE_SIZE));
+  useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
+  const pagedRecords = useMemo(
+    () => records.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [records, page],
+  );
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
@@ -147,7 +156,7 @@ export default function SentPaymentsHistory({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#ececec] dark:divide-zinc-800">
-                {records.map((rec) => {
+                {pagedRecords.map((rec) => {
                   const meta = PROCESSORS.find((p) => p.id === rec.processor);
                   return (
                     <tr key={rec.id} className="hover:bg-[#fafaf8] dark:hover:bg-zinc-900/50">
@@ -214,6 +223,14 @@ export default function SentPaymentsHistory({
                 })}
               </tbody>
             </table>
+            <QueuePagination
+              page={page}
+              pageCount={pageCount}
+              total={records.length}
+              pageSize={PAGE_SIZE}
+              onPageChange={setPage}
+              label="records"
+            />
           </div>
         )}
       </div>

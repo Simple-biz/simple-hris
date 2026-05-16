@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { Banknote, Clock, DollarSign, Search, SearchX, ShieldOff, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { formatPHP, formatUSD, type ExcludedRow, type ExclusionReason } from './mock-queue';
+import QueuePagination from './QueuePagination';
 
 interface ExcludedQueueProps {
   rows: ExcludedRow[];
@@ -107,6 +108,16 @@ export default function ExcludedQueue({ rows }: ExcludedQueueProps) {
     });
   }, [rows, debounced, reasonFilter]);
 
+  const PAGE_SIZE = 25;
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  useEffect(() => { setPage(1); }, [debounced, reasonFilter]);
+  useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
+  const pagedRows = useMemo(
+    () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filtered, page],
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
@@ -200,7 +211,7 @@ export default function ExcludedQueue({ rows }: ExcludedQueueProps) {
           <EmptyState query={debounced} totalCount={rows.length} />
         ) : (
           <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {filtered.map((row, i) => (
+            {pagedRows.map((row, i) => (
               <motion.li
                 key={row.id}
                 initial={{ opacity: 0, y: 4 }}
@@ -262,6 +273,14 @@ export default function ExcludedQueue({ rows }: ExcludedQueueProps) {
             ))}
           </ul>
         )}
+        <QueuePagination
+          page={page}
+          pageCount={pageCount}
+          total={filtered.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+          label="people"
+        />
       </div>
     </div>
   );

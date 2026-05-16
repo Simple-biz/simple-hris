@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import EmployeeSidebar from './EmployeeSidebar';
 import EmployeeDashboard from './EmployeeDashboard';
 import EmployeeProfile from './EmployeeProfile';
+import AppFooter from '@/components/AppFooter';
 import EmployeeLeaves from './EmployeeLeaves';
 import EmployeePolicies from './EmployeePolicies';
 import EmployeeMesa from './EmployeeMesa';
@@ -363,6 +364,7 @@ export default function EmployeeApp() {
             {renderContent()}
           </motion.div>
         </AnimatePresence>
+        <AppFooter />
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>

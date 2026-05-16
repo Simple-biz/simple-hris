@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import AppFooter from '@/components/AppFooter';
 import { useTheme } from 'next-themes';
 import { AnimatePresence, motion } from 'motion/react';
 import { Menu } from 'lucide-react';
@@ -227,6 +228,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
             </motion.div>
           </AnimatePresence>
         </div>
+        <AppFooter />
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>

@@ -99,11 +99,11 @@ export default function EmployeeSidebar({
         // Base shell — drawer on mobile, static column on md+.
         'flex h-dvh w-[85vw] max-w-[20rem] shrink-0 flex-col border-r border-orange-100 bg-gradient-to-b from-white to-orange-50/40 text-zinc-600 dark:border-blue-950/60 dark:from-[#0d1117] dark:to-[#0f1729] dark:text-zinc-400 md:w-64 md:max-w-none md:shadow-none',
         // Off-canvas positioning and slide transition.
-        'fixed inset-y-0 left-0 z-50 will-change-transform md:static md:z-auto md:translate-x-0',
-        'transition-[transform,box-shadow] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+        'fixed inset-y-0 left-0 z-50 transform-gpu will-change-transform md:static md:z-auto md:translate-x-0 md:opacity-100',
+        'transition-[transform,opacity,box-shadow] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
         mobileOpen
-          ? 'translate-x-0 shadow-2xl shadow-black/25'
-          : '-translate-x-full shadow-none md:translate-x-0',
+          ? 'translate-x-0 opacity-100 shadow-2xl shadow-black/25'
+          : '-translate-x-full opacity-0 shadow-none md:translate-x-0 md:opacity-100',
       )}
       id="employee-sidebar-nav"
       role="navigation"
@@ -141,10 +141,10 @@ export default function EmployeeSidebar({
                   transitionDelay: mobileOpen ? `${60 + index * 35}ms` : '0ms',
                 }}
                 className={cn(
-                  'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,transform,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                  'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,transform,box-shadow,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
                   mobileOpen
-                    ? 'translate-x-0'
-                    : '-translate-x-8 md:translate-x-0',
+                    ? 'translate-x-0 opacity-100'
+                    : '-translate-x-6 opacity-0 md:translate-x-0 md:opacity-100',
                   activeTab === item.id
                     ? 'bg-gradient-to-r from-orange-100 to-orange-50 text-orange-900 shadow-sm dark:from-blue-950/70 dark:to-blue-950/40 dark:text-white'
                     : 'hover:bg-orange-50 hover:text-zinc-900 dark:hover:bg-blue-950/30 dark:hover:text-zinc-200',
@@ -214,8 +214,8 @@ export default function EmployeeSidebar({
               onClick={() => setActiveTab('s-wall')}
               style={{ transitionDelay: mobileOpen ? `${60 + navItems.length * 35}ms` : '0ms' }}
               className={cn(
-                'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,transform,box-shadow] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
-                mobileOpen ? 'translate-x-0' : '-translate-x-8 md:translate-x-0',
+                'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,transform,box-shadow,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+                mobileOpen ? 'translate-x-0 opacity-100' : '-translate-x-6 opacity-0 md:translate-x-0 md:opacity-100',
                 activeTab === 's-wall'
                   ? 'bg-gradient-to-r from-violet-100 to-violet-50 text-violet-900 shadow-sm dark:from-violet-950/70 dark:to-violet-950/40 dark:text-white'
                   : 'hover:bg-violet-50 hover:text-zinc-900 dark:hover:bg-violet-950/30 dark:hover:text-zinc-200',
@@ -243,8 +243,8 @@ export default function EmployeeSidebar({
           transitionDelay: mobileOpen ? `${60 + navItems.length * 35}ms` : '0ms',
         }}
         className={cn(
-          'mt-auto border-t border-orange-100 p-4 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none dark:border-blue-950/60',
-          mobileOpen ? 'translate-x-0' : '-translate-x-8 md:translate-x-0',
+          'mt-auto border-t border-orange-100 p-4 transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none dark:border-blue-950/60',
+          mobileOpen ? 'translate-x-0 opacity-100' : '-translate-x-6 opacity-0 md:translate-x-0 md:opacity-100',
         )}
       >
         {payrollLocked && (

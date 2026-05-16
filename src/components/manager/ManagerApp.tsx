@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import AppFooter from '@/components/AppFooter';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -316,6 +317,7 @@ export default function ManagerApp() {
             </motion.div>
           </AnimatePresence>
         </div>
+        <AppFooter />
       </main>
 
       <Toaster richColors position="top-center" />

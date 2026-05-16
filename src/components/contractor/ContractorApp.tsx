@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import AppFooter from '@/components/AppFooter';
 import { useTheme } from 'next-themes';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -234,6 +235,7 @@ export default function ContractorApp() {
             {renderContent()}
           </motion.div>
         </AnimatePresence>
+        <AppFooter />
       </main>
 
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />

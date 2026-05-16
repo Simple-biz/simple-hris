@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'motion/react';
+import QueuePagination from './QueuePagination';
 import {
   AlertTriangle,
   Banknote,
@@ -447,6 +448,22 @@ export default function OrphanageQueue() {
   const budgetItems = useMemo(() => items.filter((i) => i.sourceType === 'budget_request'), [items]);
   const giftItems = useMemo(() => items.filter((i) => i.sourceType === 'gift_shipping'), [items]);
 
+  const PAGE_SIZE = 25;
+  const [budgetPage, setBudgetPage] = useState(1);
+  const [giftPage, setGiftPage] = useState(1);
+  const budgetPageCount = Math.max(1, Math.ceil(budgetItems.length / PAGE_SIZE));
+  const giftPageCount = Math.max(1, Math.ceil(giftItems.length / PAGE_SIZE));
+  useEffect(() => { if (budgetPage > budgetPageCount) setBudgetPage(budgetPageCount); }, [budgetPage, budgetPageCount]);
+  useEffect(() => { if (giftPage > giftPageCount) setGiftPage(giftPageCount); }, [giftPage, giftPageCount]);
+  const pagedBudgetItems = useMemo(
+    () => budgetItems.slice((budgetPage - 1) * PAGE_SIZE, budgetPage * PAGE_SIZE),
+    [budgetItems, budgetPage],
+  );
+  const pagedGiftItems = useMemo(
+    () => giftItems.slice((giftPage - 1) * PAGE_SIZE, giftPage * PAGE_SIZE),
+    [giftItems, giftPage],
+  );
+
   const handleConfirmPaid = async (item: OrphanagePendingItem, payload: MarkPaidPayload) => {
     const res = await fetch('/api/orphanage-dispatches', {
       method: 'POST',
@@ -567,11 +584,20 @@ export default function OrphanageQueue() {
                 </h2>
                 <AnimatePresence mode="popLayout">
                   <div className="flex flex-col gap-3">
-                    {budgetItems.map((item) => (
+                    {pagedBudgetItems.map((item) => (
                       <OrphanageItemCard key={item.sourceId} item={item} onMarkPaid={setMarkPaidItem} />
                     ))}
                   </div>
                 </AnimatePresence>
+                <QueuePagination
+                  page={budgetPage}
+                  pageCount={budgetPageCount}
+                  total={budgetItems.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setBudgetPage}
+                  label="requests"
+                  className="mt-2 border-0"
+                />
               </section>
             )}
 
@@ -587,11 +613,20 @@ export default function OrphanageQueue() {
                 </h2>
                 <AnimatePresence mode="popLayout">
                   <div className="flex flex-col gap-3">
-                    {giftItems.map((item) => (
+                    {pagedGiftItems.map((item) => (
                       <OrphanageItemCard key={item.sourceId} item={item} onMarkPaid={setMarkPaidItem} />
                     ))}
                   </div>
                 </AnimatePresence>
+                <QueuePagination
+                  page={giftPage}
+                  pageCount={giftPageCount}
+                  total={giftItems.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setGiftPage}
+                  label="gifts"
+                  className="mt-2 border-0"
+                />
               </section>
             )}
           </div>

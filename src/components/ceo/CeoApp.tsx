@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import AppFooter from '@/components/AppFooter';
 import { AnimatePresence, motion } from 'motion/react';
 import { Crown, Menu, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -141,6 +142,7 @@ export default function CeoApp() {
             </motion.div>
           </AnimatePresence>
         </div>
+        <AppFooter />
       </main>
 
       <Toaster richColors position="top-center" />
