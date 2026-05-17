@@ -1575,11 +1575,39 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
               ))}
             </div>
           </div>
-          <div className="flex min-h-[10rem] flex-1 flex-col rounded-xl border border-zinc-200/60 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/30 lg:min-h-0">
-            <div className="mb-3 h-3.5 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-            <div className="grid flex-1 grid-cols-5 gap-1">
-              {Array.from({ length: 25 }, (_, i) => (
-                <div key={i} className="h-8 animate-pulse rounded-md bg-zinc-200/60 dark:bg-zinc-800/60" style={{ animationDelay: `${i * 30}ms` }} />
+          {/* PAB Calendar skeleton — mirrors the real card chrome (indigo gradient,
+              week-number col + M/T/W/T/F headers + 5 week rows of h-10 cells) so
+              it doesn't reflow when the real calendar swaps in. */}
+          <div className="flex min-h-[16rem] flex-1 flex-col rounded-2xl border border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 p-3 ring-1 ring-indigo-500/5 dark:border-indigo-950/60 dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 lg:min-h-0 lg:rounded-xl lg:ring-0">
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <div className="flex flex-col gap-1">
+                <div className="h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                <div className="h-2.5 w-40 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+              </div>
+              <div className="h-6 w-6 shrink-0 animate-pulse rounded-md bg-indigo-100/70 dark:bg-indigo-950/40" />
+            </div>
+            <div className="flex flex-1 flex-col gap-0">
+              {/* Day-of-week headers (M T W T F) */}
+              <div className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] gap-0.5">
+                <div />
+                {Array.from({ length: 5 }, (_, i) => (
+                  <div key={i} className="mx-auto h-2 w-2.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                ))}
+              </div>
+              {/* 5 week rows: week-number + 5 day cells */}
+              {Array.from({ length: 5 }, (_, wi) => (
+                <div key={wi} className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] items-stretch gap-0.5">
+                  <div className="flex items-center justify-end">
+                    <div className="h-2 w-1.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  </div>
+                  {Array.from({ length: 5 }, (_, di) => (
+                    <div
+                      key={di}
+                      className="h-10 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/30"
+                      style={{ animationDelay: `${(wi * 5 + di) * 35}ms` }}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
           </div>
@@ -2283,32 +2311,35 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
               </CardHeader>
               <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
                 {pabMergeLoading ? (
-                  /* -------- Skeleton: only while merged Hubstaff loads (not file picker reloads) -------- */
-                  <div className="flex flex-1 flex-col gap-0">
-                    {/* Skeleton header row */}
-                    <div className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1">
-                      <div />
-                      {Array.from({ length: 5 }, (_, i) => (
-                        <div key={i} className="mx-auto h-2 w-4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                      ))}
-                    </div>
-                    {/* Skeleton week rows */}
-                    {Array.from({ length: 5 }, (_, wi) => (
-                      <div key={wi} className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1">
-                        <div className="flex items-center justify-end">
-                          <div className="h-2 w-3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                        </div>
-                        {Array.from({ length: 5 }, (_, di) => (
-                          <div
-                            key={di}
-                            className="h-14 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 sm:h-16 dark:border-zinc-800 dark:bg-zinc-900/30"
-                            style={{ animationDelay: `${(wi * 5 + di) * 50}ms` }}
-                          />
+                  /* -------- Skeleton: mirrors the real grid below so no reflow on swap.
+                       Grid dims, gaps, cell size, and header row all match. -------- */
+                  <div className="flex min-h-0 flex-1 flex-col gap-0">
+                    <div className="min-h-0 flex-1 overflow-hidden pr-1 [scrollbar-gutter:stable]">
+                      {/* Day-of-week headers row */}
+                      <div className="sticky top-0 z-10 mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
+                        <div />
+                        {Array.from({ length: 5 }, (_, i) => (
+                          <div key={i} className="mx-auto h-2 w-2.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
                         ))}
                       </div>
-                    ))}
-                    <div className="mt-auto flex items-center justify-center gap-2 pt-2 text-[10px] text-zinc-400">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      {/* Week rows */}
+                      {Array.from({ length: 5 }, (_, wi) => (
+                        <div key={wi} className="mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] items-stretch gap-0.5">
+                          <div className="flex items-center justify-end">
+                            <div className="h-2 w-1.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                          </div>
+                          {Array.from({ length: 5 }, (_, di) => (
+                            <div
+                              key={di}
+                              className="h-10 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 dark:border-zinc-800 dark:bg-zinc-900/30"
+                              style={{ animationDelay: `${(wi * 5 + di) * 40}ms` }}
+                            />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex shrink-0 items-center justify-center gap-1.5 text-[9px] text-zinc-400 dark:text-zinc-600">
+                      <Loader2 className="h-3 w-3 animate-spin" />
                       Loading PAB data…
                     </div>
                   </div>

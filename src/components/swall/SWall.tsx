@@ -75,6 +75,50 @@ export function SWallNavLabel() {
   );
 }
 
+/* ── Social links ─────────────────────────────────────────────────────── */
+// Replace `href`s with the real channels — left as '#' so a missing handle
+// renders a disabled-feeling link rather than a 404.
+const SOCIAL_LINKS = [
+  { key: 'facebook', label: 'Facebook', href: '#', hover: 'hover:text-[#1877F2] hover:bg-[#1877F2]/10' },
+  { key: 'youtube',  label: 'YouTube',  href: '#', hover: 'hover:text-[#FF0000] hover:bg-[#FF0000]/10' },
+  { key: 'x',        label: 'X',        href: '#', hover: 'hover:text-zinc-900 hover:bg-zinc-900/10 dark:hover:text-white dark:hover:bg-white/10' },
+  { key: 'tiktok',   label: 'TikTok',   href: '#', hover: 'hover:text-zinc-900 hover:bg-zinc-900/10 dark:hover:text-white dark:hover:bg-white/10' },
+] as const;
+
+type SocialKey = (typeof SOCIAL_LINKS)[number]['key'];
+
+function SocialGlyph({ kind, className }: { kind: SocialKey; className?: string }) {
+  // Brand SVGs — paths from simpleicons.org (CC0). Inlined to avoid adding a dep.
+  const common = { viewBox: '0 0 24 24', fill: 'currentColor', 'aria-hidden': true } as const;
+  if (kind === 'facebook') {
+    return (
+      <svg {...common} className={className}>
+        <path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z" />
+      </svg>
+    );
+  }
+  if (kind === 'youtube') {
+    return (
+      <svg {...common} className={className}>
+        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+      </svg>
+    );
+  }
+  if (kind === 'x') {
+    return (
+      <svg {...common} className={className}>
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+      </svg>
+    );
+  }
+  // tiktok
+  return (
+    <svg {...common} className={className}>
+      <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" />
+    </svg>
+  );
+}
+
 /* ── Policy data ──────────────────────────────────────────────────────── */
 
 const POLICY_SECTIONS = [
@@ -447,85 +491,104 @@ export default function SWall({ viewerEmail, canPost, viewerName, sourceLabel }:
 
   /* ── Render ── */
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* ── Sticky header ── */}
-      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-4 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex items-center gap-2.5">
+    <div className="flex h-full min-h-0 flex-col bg-zinc-50 dark:bg-[#0a0a0c]">
+      {/* ── Minimal sticky header ── */}
+      <header className="sticky top-0 z-10 shrink-0 border-b border-zinc-200/70 bg-white/85 px-4 py-3 backdrop-blur-md dark:border-zinc-800/70 dark:bg-zinc-950/80">
+        <div className="mx-auto flex max-w-[1100px] items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/favicon2.png" alt="Simple" className="h-8 w-8 shrink-0 object-contain" />
-          <div>
-            <h1 className="flex items-center gap-1.5 text-base font-semibold tracking-tight text-zinc-900 dark:text-white">
-              <span className="text-violet-600 dark:text-violet-400">S</span>
-              <span className="text-zinc-300 dark:text-zinc-600">·</span>
-              <span>Wall</span>
-              <span className="ml-1 rounded-full border border-violet-200 bg-violet-50 px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.14em] text-violet-700 dark:border-violet-900/40 dark:bg-violet-950/30 dark:text-violet-300">
-                Simple Wall
-              </span>
-            </h1>
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
-              Company policies · CEO announcements · team social feed
-            </p>
-          </div>
+          <img src="/favicon2.png" alt="" className="h-7 w-7 shrink-0 object-contain" />
+          <h1 className="text-[17px] font-bold tracking-tight text-zinc-900 dark:text-white">
+            Simple Wall
+          </h1>
+          <span className="hidden text-[11.5px] text-zinc-400 sm:inline dark:text-zinc-600">
+            · what the team's saying
+          </span>
+        </div>
+      </header>
+
+      {/* ── 2-col layout: centered feed + slim right rail ── */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-[1100px] gap-6 px-3 py-5 sm:px-5">
+          {/* ── Feed (centered, capped width like Twitter) ── */}
+          <main className="mx-auto min-w-0 flex-1 space-y-3 sm:max-w-[600px]">
+            {canPost && (
+              <SWallComposer
+                viewerEmail={normalizedEmail}
+                viewerName={viewerName ?? null}
+                sourceLabel={sourceLabel}
+              />
+            )}
+
+            {loading ? (
+              <SWallFeedSkeleton />
+            ) : error ? (
+              <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-zinc-200 bg-white py-14 text-center dark:border-zinc-800 dark:bg-zinc-950">
+                <WifiOff className="h-7 w-7 text-zinc-300 dark:text-zinc-700" />
+                <p className="text-sm text-zinc-500">{error}</p>
+              </div>
+            ) : posts.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-zinc-200 bg-white py-16 text-center dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-900">
+                  <MessageCircle className="h-5 w-5" />
+                </div>
+                <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">The wall is quiet</p>
+                <p className="text-xs text-zinc-400 dark:text-zinc-600">
+                  {canPost ? 'Be the first to post something.' : 'Check back later for updates.'}
+                </p>
+              </div>
+            ) : (
+              posts.map((post) => (
+                <SWallPostCard
+                  key={post.id}
+                  post={post}
+                  viewerEmail={normalizedEmail}
+                  onReact={handleReact}
+                  onDelete={handleDeletePost}
+                  inFlight={inFlight}
+                />
+              ))
+            )}
+          </main>
+
+          {/* ── Right rail — social + announcements + policies, hidden on small screens ── */}
+          <aside className="hidden w-[290px] shrink-0 space-y-3 lg:block">
+            <div className="sticky top-[68px] space-y-3">
+              <SocialLinksPanel />
+              <CEOAnnouncementsPanel announcements={announcements} loading={loading} />
+              <CompanyPoliciesPanel />
+            </div>
+          </aside>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* ── 3-column scrollable body ── */}
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] dark:bg-[#0d1117]">
-        <div className="w-full px-3 py-5 sm:px-5 lg:px-6">
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[200px_1fr_220px] lg:items-start">
+/* ── Social links panel (top of right rail) ───────────────────────────── */
 
-            {/* ── LEFT — Company Policies ── */}
-            <aside className="order-3 lg:order-1 lg:sticky lg:top-5">
-              <CompanyPoliciesPanel />
-            </aside>
-
-            {/* ── CENTER — Wall ── */}
-            <main className="order-1 min-w-0 space-y-3.5 lg:order-2">
-              {canPost && (
-                <SWallComposer
-                  viewerEmail={normalizedEmail}
-                  viewerName={viewerName ?? null}
-                  sourceLabel={sourceLabel}
-                />
-              )}
-
-              {loading ? (
-                <SWallFeedSkeleton />
-              ) : error ? (
-                <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-[#ececec] py-14 text-center dark:border-zinc-800">
-                  <WifiOff className="h-7 w-7 text-zinc-300 dark:text-zinc-700" />
-                  <p className="text-sm text-zinc-500">{error}</p>
-                </div>
-              ) : posts.length === 0 ? (
-                <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-[#ececec] py-16 text-center dark:border-zinc-800">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-400 dark:bg-violet-950/40">
-                    <span className="text-lg font-bold">S</span>
-                  </div>
-                  <p className="text-sm font-medium text-zinc-500">The wall is quiet</p>
-                  <p className="text-xs text-zinc-400 dark:text-zinc-600">
-                    {canPost ? 'Be the first to post something.' : 'Check back later for updates.'}
-                  </p>
-                </div>
-              ) : (
-                posts.map((post) => (
-                  <SWallPostCard
-                    key={post.id}
-                    post={post}
-                    viewerEmail={normalizedEmail}
-                    onReact={handleReact}
-                    onDelete={handleDeletePost}
-                    inFlight={inFlight}
-                  />
-                ))
-              )}
-            </main>
-
-            {/* ── RIGHT — CEO Announcements ── */}
-            <aside className="order-2 lg:order-3 lg:sticky lg:top-5">
-              <CEOAnnouncementsPanel announcements={announcements} loading={loading} />
-            </aside>
-          </div>
-        </div>
+function SocialLinksPanel() {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white px-4 pt-3.5 pb-3 dark:border-zinc-800 dark:bg-zinc-950">
+      <h2 className="mb-2.5 text-[12.5px] font-bold tracking-tight text-zinc-900 dark:text-white">
+        Follow Simple
+      </h2>
+      <div className="flex items-center gap-1.5">
+        {SOCIAL_LINKS.map((s) => (
+          <a
+            key={s.key}
+            href={s.href}
+            target="_blank"
+            rel="noreferrer noopener"
+            aria-label={s.label}
+            title={s.label}
+            className={cn(
+              'flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 transition-colors dark:text-zinc-400',
+              s.hover,
+            )}
+          >
+            <SocialGlyph kind={s.key} className="h-4 w-4" />
+          </a>
+        ))}
       </div>
     </div>
   );
@@ -544,30 +607,25 @@ function CompanyPoliciesPanel() {
     });
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-indigo-100/80 bg-white shadow-sm dark:border-indigo-900/30 dark:bg-zinc-950">
-      {/* Panel header */}
-      <div className="flex items-center gap-2 border-b border-indigo-100/60 bg-gradient-to-br from-indigo-50 to-violet-50/60 px-3.5 py-3 dark:border-indigo-900/30 dark:from-indigo-950/40 dark:to-violet-950/30">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-sm">
-          <Pin className="h-3 w-3" />
-        </div>
-        <h2 className="text-[12.5px] font-bold tracking-tight text-indigo-900 dark:text-indigo-100">
-          Company Policies
+    <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+        <Pin className="h-3.5 w-3.5 text-zinc-400 dark:text-zinc-500" />
+        <h2 className="text-[12.5px] font-bold tracking-tight text-zinc-900 dark:text-white">
+          Company policies
         </h2>
       </div>
 
-      {/* Sections */}
-      <div className="divide-y divide-indigo-100/60 dark:divide-indigo-900/30">
+      <div className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
         {POLICY_SECTIONS.map((section) => {
           const isOpen = openSections.has(section.id);
           return (
             <div key={section.id}>
-              {/* Section toggle */}
               <button
                 type="button"
                 onClick={() => toggle(section.id)}
-                className="flex w-full items-center justify-between px-3.5 py-2.5 text-left transition-colors hover:bg-indigo-50/50 dark:hover:bg-indigo-950/20"
+                className="flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
               >
-                <span className="text-[11.5px] font-semibold text-zinc-700 dark:text-zinc-300">
+                <span className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-300">
                   {section.label}
                 </span>
                 <ChevronDown
@@ -578,7 +636,6 @@ function CompanyPoliciesPanel() {
                 />
               </button>
 
-              {/* Policy rows — animated */}
               <div
                 className={cn(
                   'grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
@@ -588,17 +645,15 @@ function CompanyPoliciesPanel() {
                 <div className="overflow-hidden">
                   <div
                     className={cn(
-                      'divide-y divide-indigo-50 transition-opacity duration-200 ease-in-out dark:divide-indigo-950/40',
+                      'divide-y divide-zinc-100 transition-opacity duration-200 ease-in-out dark:divide-zinc-800/60',
                       isOpen ? 'opacity-100 delay-100' : 'opacity-0 delay-0',
                     )}
                   >
                     {section.policies.map((policy) => {
                       const Icon = policy.icon;
                       return (
-                        <div key={policy.title} className="flex items-start gap-2.5 bg-indigo-50/30 px-3.5 py-2.5 dark:bg-indigo-950/10">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-indigo-100 text-indigo-500 dark:bg-indigo-950/60 dark:text-indigo-400">
-                            <Icon className="h-3 w-3" />
-                          </div>
+                        <div key={policy.title} className="flex items-start gap-2.5 bg-zinc-50/60 px-4 py-2.5 dark:bg-zinc-900/30">
+                          <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
                           <div className="min-w-0">
                             <p className="text-[11.5px] font-semibold leading-snug text-zinc-800 dark:text-zinc-200">
                               {policy.title}
@@ -616,12 +671,6 @@ function CompanyPoliciesPanel() {
             </div>
           );
         })}
-      </div>
-
-      <div className="border-t border-indigo-100/60 bg-indigo-50/20 px-3.5 py-2.5 dark:border-indigo-900/30 dark:bg-indigo-950/10">
-        <p className="text-[10.5px] leading-relaxed text-zinc-500 dark:text-zinc-500">
-          Questions? Ask your manager before acting — it's always better to ask early.
-        </p>
       </div>
     </div>
   );
@@ -642,27 +691,21 @@ function Shimmer({ className }: { className?: string }) {
 
 function SWallPostSkeleton() {
   return (
-    <div className="overflow-hidden rounded-2xl border border-[#ececec] bg-white dark:border-zinc-800 dark:bg-zinc-950">
-      {/* Header */}
-      <div className="flex items-center gap-3 p-4 pb-3">
-        <Shimmer className="h-9 w-9 shrink-0 rounded-full" />
-        <div className="flex-1 space-y-1.5">
-          <Shimmer className="h-3 w-28" />
-          <Shimmer className="h-2.5 w-16" />
+    <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex items-start gap-3 p-4">
+        <Shimmer className="h-10 w-10 shrink-0 rounded-full" />
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex items-center gap-2">
+            <Shimmer className="h-3 w-24" />
+            <Shimmer className="h-3 w-14" />
+          </div>
+          <Shimmer className="h-3 w-full" />
+          <Shimmer className="h-3 w-4/5" />
         </div>
       </div>
-      {/* Body lines */}
-      <div className="space-y-2 px-4 pb-4">
-        <Shimmer className="h-3 w-full" />
-        <Shimmer className="h-3 w-5/6" />
-        <Shimmer className="h-3 w-3/4" />
-      </div>
-      {/* Divider */}
-      <div className="mx-4 border-t border-[#ececec] dark:border-zinc-800" />
-      {/* Action row */}
-      <div className="flex items-center gap-3 px-4 py-3">
-        <Shimmer className="h-5 w-14" />
-        <Shimmer className="h-5 w-20" />
+      <div className="flex items-center gap-3 px-4 pb-3">
+        <Shimmer className="h-6 w-14 rounded-full" />
+        <Shimmer className="h-6 w-16 rounded-full" />
       </div>
     </div>
   );
@@ -680,7 +723,7 @@ function SWallFeedSkeleton() {
 
 function AnnouncementsSkeleton() {
   return (
-    <div className="divide-y divide-amber-100/50 dark:divide-amber-900/20">
+    <div className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
       {[0, 1, 2].map((i) => (
         <div key={i} className="px-3.5 py-3">
           <div className="mb-2 flex items-center gap-2">
@@ -709,19 +752,15 @@ function CEOAnnouncementsPanel({
   loading: boolean;
 }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-amber-100/80 bg-white shadow-sm dark:border-amber-900/30 dark:bg-zinc-950">
-      {/* Panel header */}
-      <div className="flex items-center gap-2 border-b border-amber-100/60 bg-gradient-to-br from-amber-50 to-orange-50/60 px-3.5 py-3 dark:border-amber-900/30 dark:from-amber-950/40 dark:to-orange-950/20">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-sm shadow-amber-500/25">
-          <Megaphone className="h-3 w-3" />
-        </div>
-        <h2 className="text-[12.5px] font-bold tracking-tight text-amber-900 dark:text-amber-100">
-          CEO's Announcements
+    <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex items-center gap-2 px-4 pt-3.5 pb-2">
+        <Megaphone className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400" />
+        <h2 className="text-[12.5px] font-bold tracking-tight text-zinc-900 dark:text-white">
+          From the CEO
         </h2>
       </div>
 
-      {/* Announcement list */}
-      <div className="divide-y divide-amber-100/50 dark:divide-amber-900/20">
+      <div className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
         {loading ? (
           <AnnouncementsSkeleton />
         ) : announcements.length === 0 ? (
@@ -1045,10 +1084,10 @@ function SWallComposer({
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-2xl border bg-white shadow-[0_2px_12px_-6px_rgba(0,0,0,0.06)] transition-colors duration-150 dark:bg-zinc-950',
+        'relative overflow-hidden rounded-2xl border bg-white transition-colors duration-150 dark:bg-zinc-950',
         isDragOver
           ? 'border-violet-400 dark:border-violet-500'
-          : 'border-[#ececec] dark:border-zinc-800',
+          : 'border-zinc-200/80 dark:border-zinc-800',
       )}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
@@ -1082,15 +1121,15 @@ function SWallComposer({
       />
 
       <div className="flex items-start gap-3 p-4">
-        <SwallAvatar email={viewerEmail} name={viewerName} size={36} className="mt-0.5 shrink-0" />
+        <SwallAvatar email={viewerEmail} name={viewerName} size={40} className="mt-0.5 shrink-0" />
         <div className="relative min-w-0 flex-1">
           {!isExpanded ? (
             <button
               type="button"
               onClick={() => { setFocused(true); setTimeout(() => textareaRef.current?.focus(), 0); }}
-              className="w-full rounded-xl border border-[#ececec] bg-[#fafaf8] px-3 py-2 text-left text-[13px] text-zinc-400 transition-colors hover:border-violet-200 hover:bg-violet-50/30 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-600 dark:hover:border-violet-800"
+              className="flex h-10 w-full items-center rounded-full bg-zinc-100 px-4 text-left text-[14px] text-zinc-500 transition-colors hover:bg-zinc-200/70 dark:bg-zinc-900 dark:text-zinc-500 dark:hover:bg-zinc-800"
             >
-              Share something with the company…
+              {viewerName ? `What's on your mind, ${viewerName.split(' ')[0]}?` : "What's on your mind?"}
             </button>
           ) : (
             <>
@@ -1385,55 +1424,63 @@ function SWallPostCard({
     hidePickerTimer.current = setTimeout(() => setEmojiPickerOpen(false), 320);
   };
 
+  const handle = (post.author_email.split('@')[0] ?? '').toLowerCase();
+
   return (
-    <article className="overflow-hidden rounded-2xl border border-[#ececec] bg-white shadow-[0_2px_12px_-6px_rgba(0,0,0,0.06)] transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-950">
-      {/* Header */}
-      <div className="flex items-start gap-3 p-4 pb-3">
-        <SwallAvatar email={post.author_email} name={post.author_name} size={36} />
+    <article className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white transition-colors hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700">
+      {/* Twitter-style header: avatar on left, name · @handle · time inline */}
+      <div className="flex items-start gap-3 px-4 pt-3.5">
+        <SwallAvatar email={post.author_email} name={post.author_name} size={40} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-semibold text-zinc-900 dark:text-white">
-                {displayName(post.author_email, post.author_name)}
-              </p>
-              <p className="text-[10px] text-zinc-400 dark:text-zinc-600">{timeAgo(post.created_at)}</p>
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-[14px] font-bold text-zinc-900 dark:text-white">
+              {displayName(post.author_email, post.author_name)}
+            </span>
+            <span className="truncate text-[13px] text-zinc-500 dark:text-zinc-500">
+              @{handle}
+            </span>
+            <span className="text-zinc-400 dark:text-zinc-600">·</span>
+            <span className="shrink-0 text-[13px] text-zinc-500 dark:text-zinc-500" title={new Date(post.created_at).toLocaleString()}>
+              {timeAgo(post.created_at)}
+            </span>
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              {post.source_label && (
+                <span className="rounded-full bg-zinc-100 px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-wider text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+                  {post.source_label}
+                </span>
+              )}
+              {isAuthor && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(post.id)}
+                  className="rounded-full p-1 text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-500 dark:text-zinc-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                  title="Delete post"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
-            {post.source_label && (
-              <span className="ml-auto shrink-0 rounded-full border border-violet-200/70 bg-violet-50 px-2 py-px text-[9px] font-semibold uppercase tracking-[0.12em] text-violet-700 dark:border-violet-800/40 dark:bg-violet-950/30 dark:text-violet-300">
-                {post.source_label}
-              </span>
-            )}
-            {isAuthor && (
-              <button
-                type="button"
-                onClick={() => onDelete(post.id)}
-                className="shrink-0 rounded-md p-1 text-zinc-400 transition-all hover:bg-rose-50 hover:text-rose-500 dark:text-zinc-600 dark:hover:bg-rose-950/30 dark:hover:text-rose-400"
-                title="Delete post"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            )}
           </div>
+
+          {/* Body — sits aligned with the name, like Twitter */}
+          {post.body && (
+            <p className="mt-1 text-[14.5px] leading-[1.45] text-zinc-800 dark:text-zinc-200">
+              {renderBody(post.body)}
+            </p>
+          )}
         </div>
       </div>
 
-      {/* Body */}
-      {post.body && (
-        <p className="px-4 pb-3 text-[13.5px] leading-relaxed text-zinc-700 dark:text-zinc-300">
-          {renderBody(post.body)}
-        </p>
-      )}
-
-      {/* Image grid — edge-to-edge, no horizontal padding (article has overflow-hidden) */}
+      {/* Image grid — edge-to-edge, rounded matching card */}
       {post.image_urls?.length > 0 && (
-        <div className="mt-1 mb-1">
+        <div className="mt-3 overflow-hidden">
           <PostImageGrid urls={post.image_urls} />
         </div>
       )}
 
-      {/* Reaction summary — emoji bubbles + total count */}
+      {/* Reaction summary — tiny inline strip above the action row */}
       {totalReactions > 0 && (
-        <div className="flex items-center gap-1.5 px-4 pt-2.5 pb-0.5">
+        <div className="flex items-center gap-1.5 px-4 pt-3">
           <div className="flex -space-x-1">
             {(SWALL_EMOJIS as readonly string[])
               .filter((e) => (post.reaction_counts[e] ?? 0) > 0)
@@ -1442,23 +1489,22 @@ function SWallPostCard({
               .map((e) => (
                 <span
                   key={e}
-                  className="flex h-[20px] w-[20px] items-center justify-center rounded-full bg-white shadow-[0_0_0_1.5px_rgba(0,0,0,0.07)] dark:bg-zinc-900 dark:shadow-[0_0_0_1.5px_rgba(255,255,255,0.07)]"
+                  className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white shadow-[0_0_0_1.5px_rgba(0,0,0,0.06)] dark:bg-zinc-900 dark:shadow-[0_0_0_1.5px_rgba(255,255,255,0.08)]"
                 >
-                  <EmEmoji native={e} size="13" />
+                  <EmEmoji native={e} size="12" />
                 </span>
               ))}
           </div>
-          <span className="text-[12px] text-zinc-500 dark:text-zinc-400">{totalReactions}</span>
+          <span className="text-[12px] tabular-nums text-zinc-500 dark:text-zinc-400">
+            {totalReactions}
+          </span>
         </div>
       )}
 
-      {/* Divider */}
-      <div className="mx-4 border-t border-[#ececec] dark:border-zinc-800" />
-
-      {/* Action row — Like (floating picker on hover) + Comment */}
-      <div className="flex items-stretch">
-        {/* Like button — picker floats above it, centered */}
-        <div className="relative flex flex-1">
+      {/* Twitter-style action row — flat icons, generous spacing, no internal dividers */}
+      <div className="flex items-center gap-1 px-3 pt-2 pb-2.5">
+        {/* Like — picker floats above on hover */}
+        <div className="relative">
           <AnimatePresence>
             {emojiPickerOpen && (
               <motion.div
@@ -1468,9 +1514,9 @@ function SWallPostCard({
                 transition={{ type: 'spring', stiffness: 420, damping: 22 }}
                 onMouseEnter={showPicker}
                 onMouseLeave={hidePicker}
-                className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 origin-bottom"
+                className="absolute bottom-full left-0 z-20 mb-2 origin-bottom-left"
               >
-                <div className="flex items-end gap-1 rounded-full border border-[#ececec] bg-white px-3 py-2 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+                <div className="flex items-end gap-1 rounded-full border border-zinc-200 bg-white px-3 py-2 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
                   {SWALL_EMOJIS.map((emoji) => {
                     const reacted = post.my_reactions.includes(emoji);
                     const pending = inFlight.has(`${post.id}:${emoji}`);
@@ -1489,7 +1535,7 @@ function SWallPostCard({
                           pending ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
                         )}
                       >
-                        <EmEmoji native={emoji} size="30" />
+                        <EmEmoji native={emoji} size="28" />
                       </motion.button>
                     );
                   })}
@@ -1507,42 +1553,38 @@ function SWallPostCard({
               onReact(post.id, primary, post.my_reactions.includes(primary));
             }}
             className={cn(
-              'flex w-full items-center justify-center gap-1.5 py-2.5 text-[13px] font-semibold transition-colors',
-              'hover:bg-zinc-50 dark:hover:bg-zinc-800/60',
+              'group/btn flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium transition-colors',
               post.my_reactions.length > 0
-                ? 'text-blue-600 dark:text-blue-400'
-                : 'text-zinc-500 dark:text-zinc-400',
+                ? 'text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30'
+                : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200',
             )}
           >
             {post.my_reactions.length > 0 ? (
-              <>
-                <EmEmoji native={post.my_reactions[0]!} size="18" />
-                <span>{REACTION_NAMES[post.my_reactions[0]!] ?? 'Like'}</span>
-              </>
+              <EmEmoji native={post.my_reactions[0]!} size="16" />
             ) : (
-              <>
-                <ThumbsUp className="h-4 w-4" />
-                <span>Like</span>
-              </>
+              <ThumbsUp className="h-3.5 w-3.5 transition-transform group-hover/btn:scale-110" />
             )}
+            <span className="tabular-nums">
+              {totalReactions > 0 ? totalReactions : 'Like'}
+            </span>
           </button>
         </div>
 
-        <div className="w-px bg-[#ececec] dark:bg-zinc-800" />
-
+        {/* Comment */}
         <button
           type="button"
           onClick={() => setShowComments((v) => !v)}
           className={cn(
-            'flex flex-1 items-center justify-center gap-1.5 py-2.5 text-[13px] font-semibold transition-colors',
-            'hover:bg-zinc-50 dark:hover:bg-zinc-800/60',
+            'group/btn flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium transition-colors',
             showComments
               ? 'text-violet-600 dark:text-violet-400'
-              : 'text-zinc-500 dark:text-zinc-400',
+              : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200',
           )}
         >
-          <MessageCircle className="h-4 w-4" />
-          <span>Comment{post.comment_count > 0 ? ` · ${post.comment_count}` : ''}</span>
+          <MessageCircle className="h-3.5 w-3.5 transition-transform group-hover/btn:scale-110" />
+          <span className="tabular-nums">
+            {post.comment_count > 0 ? post.comment_count : 'Reply'}
+          </span>
         </button>
       </div>
 

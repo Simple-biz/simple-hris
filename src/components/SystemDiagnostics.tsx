@@ -57,8 +57,11 @@ import {
   DollarSign,
   FileSpreadsheet,
   FileText,
+  Image as ImageIcon,
   KeyRound,
   LayoutDashboard,
+  Plug,
+  Settings,
   RefreshCw,
   Radar as RadarIcon,
   RotateCcw,
@@ -92,7 +95,10 @@ export type DiagnosticCategory =
   | 'auth'
   | 'audit'
   | 'reports'
-  | 'infra';
+  | 'infra'
+  | 'config'
+  | 'integration'
+  | 'manager';
 
 /** A concrete remediation step. `kind` lets the UI hint at the type of action:
  *  config = settings/env tweak, code = source change, db = SQL/migration,
@@ -219,6 +225,9 @@ const CATEGORY_LABEL: Record<DiagnosticCategory, string> = {
   audit: 'audit',
   reports: 'reports',
   infra: 'infra',
+  config: 'config',
+  integration: 'integration',
+  manager: 'manager',
 };
 
 /** Category-specific glyph for the node header — gives each card a visual
@@ -235,6 +244,9 @@ const CATEGORY_ICON: Record<DiagnosticCategory, React.ComponentType<{ className?
   audit: ScrollText,
   reports: BarChart3,
   infra: Server,
+  config: Settings,
+  integration: Plug,
+  manager: ImageIcon,
 };
 
 const FIX_KIND_LABEL: Record<NonNullable<DiagnosticFix['kind']>, string> = {
@@ -530,6 +542,67 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
       ],
       lastChecked: iso,
     },
+    {
+      id: 'app-settings',
+      label: 'App Settings (config bag)',
+      category: 'config',
+      status: 'healthy',
+      summary: 'Runtime config table reachable.',
+      details: [
+        'Backs PAB period, dispatch lock, feature permissions, force-logout map.',
+        'Prefer /api/app-settings?keys=a,b,c for multi-key reads.',
+      ],
+      suggestedChecks: [
+        'Confirm auth.force_logout_map row is a valid JSON object.',
+      ],
+      lastChecked: iso,
+    },
+    {
+      id: 'google-sheet-sync',
+      label: 'Google Sheet Sync',
+      category: 'integration',
+      status: 'warning',
+      summary: 'Manual sync — recency depends on operator action.',
+      details: [
+        'Master + rates each pulled via a button in Admin → CSV Imports.',
+        'Not on cron; staleness here is a heads-up, not a failure.',
+      ],
+      suggestedChecks: [
+        'Run a manual sync if the last run is older than a week.',
+        'Verify GOOGLE_SHEETS_* env vars when a sync fails.',
+      ],
+      lastChecked: iso,
+    },
+    {
+      id: 'rate-history',
+      label: 'Rate History',
+      category: 'rates',
+      status: 'healthy',
+      summary: 'Per-day rate resolution table available.',
+      details: [
+        'Authoritative source for mid-cycle prorating.',
+        'Used by current-pay.ts + member-monthly-pay.ts.',
+      ],
+      suggestedChecks: [
+        'Confirm effectiveDate is passed when editing a rate mid-cycle.',
+      ],
+      lastChecked: iso,
+    },
+    {
+      id: 'manager-wallpapers',
+      label: 'Manager Team Wallpapers',
+      category: 'manager',
+      status: 'healthy',
+      summary: 'Per-department banner table reachable.',
+      details: [
+        'Inline data-URL images (~10 MB cap per row).',
+        'background_position column added via idempotent ALTER.',
+      ],
+      suggestedChecks: [
+        'Spot-check one banner renders for the corresponding department.',
+      ],
+      lastChecked: iso,
+    },
   ];
 
   const alerts: DiagnosticAlert[] = [
@@ -600,6 +673,10 @@ const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
   'daily-report':          { x: 740,  y: 660 },
   'auth-login':            { x: 380,  y: 880 },
   'audit-log':             { x: 1100, y: 880 },
+  'app-settings':          { x: 1460, y: 60  },
+  'google-sheet-sync':     { x: 40,   y: 60  },
+  'rate-history':          { x: 1100, y: 600 },
+  'manager-wallpapers':    { x: 40,   y: 600 },
 };
 
 const EDGES: { source: string; target: string }[] = [
@@ -616,6 +693,13 @@ const EDGES: { source: string; target: string }[] = [
   { source: 'pg-pool', target: 'supabase-postgres' },
   { source: 'auth-login', target: 'audit-log' },
   { source: 'auth-login', target: 'supabase-postgres' },
+  { source: 'google-sheet-sync', target: 'master-list' },
+  { source: 'google-sheet-sync', target: 'rates' },
+  { source: 'app-settings', target: 'supabase-postgres' },
+  { source: 'auth-login', target: 'app-settings' },
+  { source: 'rates', target: 'rate-history' },
+  { source: 'rate-history', target: 'supabase-client' },
+  { source: 'manager-wallpapers', target: 'supabase-client' },
 ];
 
 const POSITIONS_STORAGE_KEY = 'system-diagnostics-positions-v1';

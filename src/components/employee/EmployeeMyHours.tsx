@@ -944,7 +944,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                             'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
                         } else if (!day.hasData) {
                           cellBorder =
-                            'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
+                            'border-orange-300 bg-orange-50 dark:border-orange-700/70 dark:bg-orange-950/30';
                         } else {
                           cellBorder =
                             'border-red-300 bg-red-50 dark:border-red-700/70 dark:bg-red-950/40';
@@ -1036,6 +1036,13 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                                 />
                                 <span className="text-[6.5px] font-semibold uppercase tracking-wider leading-none text-orange-400 dark:text-orange-300 sm:text-[7.5px]">
                                   In Progress
+                                </span>
+                              </div>
+                            ) : inMonth && !weekend && !day.hasData && !isFutureOrToday ? (
+                              <div className="flex flex-col items-center gap-0.5">
+                                <Hourglass className="h-3 w-3 text-orange-400 dark:text-orange-300" />
+                                <span className="text-[6.5px] font-semibold uppercase tracking-wider leading-none text-orange-400 dark:text-orange-300 sm:text-[7.5px]">
+                                  Pending
                                 </span>
                               </div>
                             ) : (

@@ -508,6 +508,256 @@ export async function probeDailyReport(): Promise<ProbeResult> {
   }
 }
 
+/** app_settings: confirms the bag-of-config table is readable and that the
+ *  force-logout map (if present) is a valid JSON object. Critical because most
+ *  runtime knobs (pab period, dispatch lock, feature permissions) live here. */
+export async function probeAppSettings(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const { count, error: countErr } = await supabase
+      .from('app_settings')
+      .select('*', { head: true, count: 'exact' });
+    if (countErr) {
+      return {
+        status: 'critical',
+        summary: 'Could not read app_settings.',
+        details: [trimError(countErr)],
+        suggestedChecks: ['Verify app_settings table exists and service role has SELECT.'],
+      };
+    }
+    const { data, error: rowErr } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'auth.force_logout_map')
+      .maybeSingle();
+    if (rowErr && rowErr.code !== 'PGRST116') {
+      return {
+        status: 'warning',
+        summary: 'app_settings reachable but force-logout map unreadable.',
+        details: [trimError(rowErr), `${count ?? 0} keys on file.`],
+        suggestedChecks: ['Confirm auth.force_logout_map row schema (key text, value text).'],
+      };
+    }
+    let logoutEntries = 0;
+    let logoutShapeOk = true;
+    if (data?.value) {
+      try {
+        const parsed = JSON.parse(data.value);
+        logoutShapeOk = !!parsed && typeof parsed === 'object' && !Array.isArray(parsed);
+        if (logoutShapeOk) logoutEntries = Object.keys(parsed).length;
+      } catch {
+        logoutShapeOk = false;
+      }
+    }
+    if (!logoutShapeOk) {
+      return {
+        status: 'warning',
+        summary: 'auth.force_logout_map is not a valid JSON object.',
+        details: [
+          `${count ?? 0} keys on file.`,
+          'Force-logout writes will reset the map on next bump.',
+        ],
+        suggestedChecks: [
+          'Repair the row manually or clear it; bumpForceLogoutFor() rebuilds on next call.',
+        ],
+      };
+    }
+    return {
+      status: 'healthy',
+      summary: `${count ?? 0} keys on file.`,
+      details: [
+        'Backs PAB period, dispatch lock, feature permissions, force-logout map.',
+        `Force-logout entries currently tracked: ${logoutEntries}.`,
+      ],
+      suggestedChecks: [
+        'Use /api/app-settings?keys=a,b,c for multi-key reads instead of fan-out.',
+      ],
+    };
+  } catch (e) {
+    return { status: 'unknown', summary: 'app_settings probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}
+
+/** Google Sheet → rates + master sync. Recency comes from audit_log
+ *  (`csv.master.sync` / `csv.rates.sync`). Stale > 7d → warning, > 30d → critical. */
+export async function probeGoogleSheetsSync(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const [masterRes, ratesRes] = await Promise.all([
+      supabase
+        .from('audit_log')
+        .select('created_at')
+        .eq('action', 'csv.master.sync')
+        .order('created_at', { ascending: false })
+        .limit(1),
+      supabase
+        .from('audit_log')
+        .select('created_at')
+        .eq('action', 'csv.rates.sync')
+        .order('created_at', { ascending: false })
+        .limit(1),
+    ]);
+    if (masterRes.error || ratesRes.error) {
+      return {
+        status: 'unknown',
+        summary: 'Sheet sync history unreadable.',
+        details: [trimError(masterRes.error ?? ratesRes.error)],
+        suggestedChecks: ['Verify audit_log reads work.'],
+      };
+    }
+    const masterAt = masterRes.data?.[0]?.created_at as string | undefined;
+    const ratesAt = ratesRes.data?.[0]?.created_at as string | undefined;
+    const ageHours = (iso: string | undefined) =>
+      iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 3_600_000) : null;
+    const masterAge = ageHours(masterAt);
+    const ratesAge = ageHours(ratesAt);
+    const fmt = (h: number | null) =>
+      h == null ? 'never' : h < 48 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`;
+    const details = [
+      `Master list last sync: ${fmt(masterAge)}.`,
+      `Rates last sync: ${fmt(ratesAge)}.`,
+      'Both sync paths are manual buttons in AdminCsvImports, not cron.',
+    ];
+    const worstAge = Math.max(masterAge ?? Infinity, ratesAge ?? Infinity);
+    if (worstAge === Infinity) {
+      return {
+        status: 'warning',
+        summary: 'Sheet sync has never run.',
+        details,
+        suggestedChecks: [
+          'Click "Sync from Google Sheet" in Admin → CSV Imports.',
+          'Verify GOOGLE_SHEETS_* env vars are set.',
+        ],
+      };
+    }
+    if (worstAge > 24 * 30) {
+      return {
+        status: 'critical',
+        summary: `Stalest sync ${Math.floor(worstAge / 24)}d ago.`,
+        details,
+        suggestedChecks: [
+          'Trigger a manual sync — rates and master are drifting from the source of truth.',
+        ],
+      };
+    }
+    if (worstAge > 24 * 7) {
+      return {
+        status: 'warning',
+        summary: `Stalest sync ${Math.floor(worstAge / 24)}d ago.`,
+        details,
+        suggestedChecks: ['Manual syncs older than a week — consider running one.'],
+      };
+    }
+    return {
+      status: 'healthy',
+      summary: `Latest sync ${fmt(Math.min(masterAge ?? Infinity, ratesAge ?? Infinity))}.`,
+      details,
+      suggestedChecks: [
+        'Confirm GOOGLE_SHEETS_* env vars and service-account permissions if a sync fails.',
+      ],
+    };
+  } catch (e) {
+    return { status: 'unknown', summary: 'Sheet sync probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}
+
+/** employee_rate_history: authoritative source for per-day rate resolution. */
+export async function probeRateHistory(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const { count, error } = await supabase
+      .from('employee_rate_history')
+      .select('*', { head: true, count: 'exact' });
+    if (error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read employee_rate_history.',
+        details: [trimError(error)],
+        suggestedChecks: [
+          'Verify employee_rate_history table exists.',
+          'Without it, mid-cycle prorating falls back to current rate only.',
+        ],
+      };
+    }
+    if (!count || count === 0) {
+      return {
+        status: 'warning',
+        summary: 'No rate-history rows on file.',
+        details: ['Mid-cycle rate changes will not prorate correctly.'],
+        suggestedChecks: [
+          'Backfill from employee_hourly_rates if this is a fresh environment.',
+        ],
+      };
+    }
+    return {
+      status: 'healthy',
+      summary: `${count} rate-history rows on file.`,
+      details: [
+        'Authoritative source for per-day rate resolution.',
+        'Used by current-pay.ts and member-monthly-pay.ts.',
+      ],
+      suggestedChecks: [
+        'Confirm effectiveDate is passed when editing a rate mid-cycle.',
+      ],
+    };
+  } catch (e) {
+    return { status: 'unknown', summary: 'Rate history probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}
+
+/** manager_team_wallpapers: per-department "My Team" banner. Optional table. */
+export async function probeManagerWallpapers(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const { count, error } = await supabase
+      .from('manager_team_wallpapers')
+      .select('*', { head: true, count: 'exact' });
+    if (error) {
+      return {
+        status: 'warning',
+        summary: 'manager_team_wallpapers not reachable.',
+        details: [
+          trimError(error),
+          'Department banners fall back to default styling when this table is missing.',
+        ],
+        suggestedChecks: [
+          'Apply references/create_manager_team_wallpapers.sql.',
+        ],
+      };
+    }
+    return {
+      status: 'healthy',
+      summary: `${count ?? 0} department banner${count === 1 ? '' : 's'} on file.`,
+      details: [
+        'Inline data-URL image per department; capped ~10 MB by the API.',
+        'background_position column added via idempotent ALTER.',
+      ],
+      suggestedChecks: [
+        'Spot-check a banner renders for one department.',
+      ],
+    };
+  } catch (e) {
+    return {
+      status: 'unknown',
+      summary: 'Wallpapers probe error.',
+      details: [trimError(e)],
+      suggestedChecks: [],
+    };
+  }
+}
+
 /** employee_hourly_rates row count for the Rates Management node. */
 export async function probeRates(): Promise<ProbeResult> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();

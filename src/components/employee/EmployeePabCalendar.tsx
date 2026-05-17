@@ -482,30 +482,55 @@ export default function EmployeePabCalendar({
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
         {loading ? (
-          <div className="flex flex-1 flex-col gap-0">
-            <div className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1">
-              <div />
-              {Array.from({ length: 5 }, (_, i) => (
-                <div key={i} className="mx-auto h-2 w-4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-              ))}
-            </div>
-            {Array.from({ length: 5 }, (_, wi) => (
-              <div key={wi} className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1">
-                <div className="flex items-center justify-end">
-                  <div className="h-2 w-3 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
-                </div>
-                {Array.from({ length: 5 }, (_, di) => (
-                  <div
-                    key={di}
-                    className="h-14 animate-pulse rounded-md border border-zinc-200 bg-zinc-100/60 sm:h-16 dark:border-zinc-800 dark:bg-zinc-900/30"
-                    style={{ animationDelay: `${(wi * 5 + di) * 50}ms` }}
-                  />
+          /* Skeleton mirrors the real layout below: same grid dims, header row,
+             week rows of h-14/sm:h-16 cells, and the bottom legend strip — so
+             the real grid swaps in without any layout reflow. */
+          <div className="flex min-h-0 flex-1 flex-col gap-0">
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {/* Day-of-week header row (M T W T F) — placeholder dots */}
+              <div className="sticky top-0 z-10 mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] gap-1 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
+                <div />
+                {Array.from({ length: 5 }, (_, i) => (
+                  <div key={i} className="mx-auto h-2 w-2 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
                 ))}
               </div>
-            ))}
-            <div className="mt-auto flex items-center justify-center gap-2 pt-2 text-[10px] text-zinc-400">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Loading PAB data…
+              {/* 5 week rows — week number + 5 day cells matching real h-14/sm:h-16 */}
+              {Array.from({ length: 5 }, (_, wi) => (
+                <div key={wi} className="mb-1 grid grid-cols-[1.5rem_repeat(5,1fr)] items-stretch gap-1">
+                  <div className="flex items-center justify-end">
+                    <div className="h-2 w-1.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  </div>
+                  {Array.from({ length: 5 }, (_, di) => (
+                    <div
+                      key={di}
+                      className="relative h-14 animate-pulse overflow-hidden rounded-md border border-zinc-200 bg-zinc-100/60 sm:h-16 dark:border-zinc-800 dark:bg-zinc-900/30"
+                      style={{ animationDelay: `${(wi * 5 + di) * 50}ms` }}
+                    >
+                      {/* Faint date-corner tick to hint at the real cell shape */}
+                      <span className="absolute left-1 top-1 h-1 w-3 rounded-full bg-zinc-200/80 dark:bg-zinc-700/60" />
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+            {/* Legend skeleton — matches the real legend dot+label rhythm so the
+                bottom strip doesn't pop in when data lands. */}
+            <div className="mt-auto flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-200 pt-2 text-[9px] dark:border-zinc-800">
+              {[
+                'bg-emerald-200 dark:bg-emerald-900/40',
+                'bg-red-200 dark:bg-red-900/40',
+                'bg-amber-200 dark:bg-amber-900/40',
+                'bg-emerald-200 dark:bg-emerald-900/40',
+              ].map((dot, i) => (
+                <span key={i} className="flex items-center gap-1">
+                  <span className={`inline-block h-1.5 w-1.5 animate-pulse rounded-full sm:h-2 sm:w-2 ${dot}`} />
+                  <span className="h-2 w-6 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                </span>
+              ))}
+              <span className="ml-auto inline-flex items-center gap-1">
+                <Loader2 className="h-2.5 w-2.5 animate-spin text-zinc-400" />
+                <span className="h-2.5 w-14 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+              </span>
             </div>
           </div>
         ) : pabCalendar && pabCalendar.length > 0 ? (

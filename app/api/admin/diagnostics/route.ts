@@ -20,13 +20,17 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
 import {
+  probeAppSettings,
   probeAuditLog,
   probeAuth,
   probeDailyReport,
   probeDisbursementRecords,
+  probeGoogleSheetsSync,
   probeHubstaffCsv,
+  probeManagerWallpapers,
   probeMasterList,
   probePgPool,
+  probeRateHistory,
   probeRates,
   probeSupabase,
   withProbeTimeout,
@@ -47,7 +51,10 @@ type DiagnosticCategory =
   | 'auth'
   | 'audit'
   | 'reports'
-  | 'infra';
+  | 'infra'
+  | 'config'
+  | 'integration'
+  | 'manager';
 
 type DiagnosticNode = {
   id: string;
@@ -121,6 +128,10 @@ export async function GET() {
     authProbe,
     dailyReportProbe,
     ratesProbe,
+    appSettingsProbe,
+    sheetsSyncProbe,
+    rateHistoryProbe,
+    wallpapersProbe,
   ] = await Promise.all([
     withProbeTimeout(probeSupabase(), fallback),
     withProbeTimeout(probePgPool(), fallback),
@@ -131,6 +142,10 @@ export async function GET() {
     withProbeTimeout(probeAuth(), fallback),
     withProbeTimeout(probeDailyReport(), fallback),
     withProbeTimeout(probeRates(), fallback),
+    withProbeTimeout(probeAppSettings(), fallback),
+    withProbeTimeout(probeGoogleSheetsSync(), fallback),
+    withProbeTimeout(probeRateHistory(), fallback),
+    withProbeTimeout(probeManagerWallpapers(), fallback),
   ]);
 
   // Compose nodes — service-map identifiers must match the client's NODE_POSITIONS.
@@ -206,6 +221,10 @@ export async function GET() {
     node('auth-login', 'Employee / Accounting Login', 'auth', authProbe),
     node('audit-log', 'Audit Log', 'audit', auditLogProbe),
     node('disbursement-records', 'Disbursement Records', 'reports', disbursementProbe),
+    node('app-settings', 'App Settings (config bag)', 'config', appSettingsProbe),
+    node('google-sheet-sync', 'Google Sheet Sync', 'integration', sheetsSyncProbe),
+    node('rate-history', 'Rate History', 'rates', rateHistoryProbe),
+    node('manager-wallpapers', 'Manager Team Wallpapers', 'manager', wallpapersProbe),
   ];
 
   // Generate alerts from any non-healthy node.
