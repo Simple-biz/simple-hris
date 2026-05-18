@@ -2163,8 +2163,13 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
    * Picking April's CSV shows tech eligibility as of end-of-April.
    */
   const { techBonusEligibility, techEligibilityByEmail } = useMemo(() => {
-    const asOf = pabMetrics.periodEnd ?? new Date();
-    const asOfMid = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate()).getTime();
+    // Tech Bonus eligibility is anchored to TODAY, not the selected PAB period
+    // end. An employee is eligible iff their start_date is already at least
+    // 30 calendar days in the past as of right now. Future eligibility on a
+    // forward-looking period is intentionally NOT counted — we only show
+    // people who have actually completed 30 days of service.
+    const now = new Date();
+    const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     let eligible = 0;
     let pending = 0;
     let unknown = 0;
@@ -2185,7 +2190,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
         continue;
       }
       const eligibleFrom = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() + 30).getTime();
-      const isElig = asOfMid >= eligibleFrom;
+      const isElig = todayMid >= eligibleFrom;
       if (isElig) eligible += 1;
       else pending += 1;
       if (emailKey) byEmail.set(emailKey, isElig);
@@ -2194,7 +2199,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
       techBonusEligibility: { eligible, pending, unknown, total: employees.length },
       techEligibilityByEmail: byEmail,
     };
-  }, [employees, pabMetrics.periodEnd]);
+  }, [employees]);
 
   const fetchEmployees = React.useCallback(async (signal?: AbortSignal) => {
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -2517,12 +2522,81 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
         // Build HSL email set from the memoized key (stable across no-op employee re-fetches).
         const hslMasterEmails = new Set<string>(hslMasterEmailsKey ? hslMasterEmailsKey.split(',') : []);
 
+        // In-progress month handling: only count days that have BOTH already
+        // happened AND have Hubstaff data uploaded for them. Without this clamp:
+        //  - future days have seconds=0 → fail
+        //  - past days from weeks Hubstaff hasn't uploaded yet also fail
+        // The first effect was already obvious; the second one bites every time
+        // the dashboard runs ahead of the weekly Hubstaff upload (which is the
+        // normal state mid-week, since uploads are weekly batches).
+        //
+        // After the PAB period ends AND Hubstaff has uploaded the final week,
+        // both clamps become no-ops and the chart matches the settled total.
+        const today = new Date();
+        const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+        // Latest day Hubstaff has data for. Parse the end date out of every
+        // source-file name (format: `…_YYYY-MM-DD_to_YYYY-MM-DD.csv`) and take
+        // the max. Falls back to today if no filename parses, which preserves
+        // the original behavior for hand-uploaded files.
+        const latestHubstaffDay = (() => {
+          let maxT = -Infinity;
+          for (const f of sourceFiles) {
+            const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(f);
+            if (!m) continue;
+            const t = new Date(+m[4], +m[5] - 1, +m[6]).getTime();
+            if (t > maxT) maxT = t;
+          }
+          return maxT === -Infinity ? todayMid : new Date(maxT);
+        })();
+
+        const evalCeiling = Math.min(todayMid.getTime(), latestHubstaffDay.getTime(), end.getTime());
+        const standardEvalEnd = new Date(evalCeiling);
+
+        // For HSL we need WHOLE Mon–Sun weeks (the rule is per-week). Clamp to
+        // the last completed Sunday at or before the standard evaluation
+        // ceiling so an in-progress week isn't penalized for not having Mon–Fri
+        // filled in yet.
+        const hslEvalEnd = (() => {
+          if (standardEvalEnd.getTime() >= end.getTime()) return end;
+          const dow = standardEvalEnd.getDay();
+          const lastSun = new Date(
+            standardEvalEnd.getFullYear(),
+            standardEvalEnd.getMonth(),
+            standardEvalEnd.getDate() - dow,
+          );
+          // If even the last Sunday is before the period started, there's nothing
+          // to evaluate yet — return the day before start so the HSL check sees
+          // an empty range and treats the employee as still eligible.
+          if (lastSun.getTime() < start.getTime()) {
+            return new Date(start.getFullYear(), start.getMonth(), start.getDate() - 1);
+          }
+          return lastSun;
+        })();
+
         let eligible = 0;
         let notEligible = 0;
         let evaluated = 0;
         const eligMap = new Map<string, boolean>();
 
-        for (const [email, mergedRow] of rowsByEmail) {
+        // Iterate the ACTIVE MASTER LIST, not Hubstaff history. The previous
+        // loop ran over `rowsByEmail` (every email Hubstaff has ever seen,
+        // ~1076 incl. former employees) which made the denominator wrong.
+        // For each master employee we look up their Hubstaff row by either
+        // work or personal email — if they have no Hubstaff row at all, the
+        // empty `hoursByDateKey` naturally fails eligibility (no hours
+        // tracked = not perfect attendance).
+        const masterEntries: { email: string; row: Record<string, unknown> }[] = [];
+        for (const e of employees) {
+          const w = normEmail(e.work_email ?? null);
+          const p = normEmail(e.personal_email ?? null);
+          const key = w ?? p;
+          if (!key) continue;
+          const hubRow = (w && rowsByEmail.get(w)) || (p && rowsByEmail.get(p)) || {};
+          masterEntries.push({ email: key, row: hubRow as Record<string, unknown> });
+        }
+
+        for (const { email, row: mergedRow } of masterEntries) {
           evaluated++;
           // Build date → seconds lookup
           const hoursByDateKey = new Map<string, number>();
@@ -2558,13 +2632,19 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
 
           let isEligible: boolean;
           if (isHsl) {
-            // HSL rule: Mon–Sun weeks, ≥5 days at ≥7 h per week
-            isEligible = checkHslPabEligibility(start, end, hoursByDateKey);
+            // HSL rule: Mon–Sun weeks, ≥5 days at ≥7 h per week.
+            // Evaluate only fully-completed weeks during in-progress months.
+            isEligible = checkHslPabEligibility(start, hslEvalEnd, hoursByDateKey);
           } else {
-            // Standard rule: all Mon–Fri days must be ≥7 h
-            const weeks = buildPabCalendarWeeks(start, end, hoursByDateKey);
+            // Standard rule: all Mon–Fri days must be ≥7 h. During in-progress
+            // months only days through today count — an employee stays eligible
+            // until they actually miss a past workday.
+            const weeks = buildPabCalendarWeeks(start, standardEvalEnd, hoursByDateKey);
             const allDays = weeks.flat();
-            isEligible = allDays.length > 0 && allDays.every(d => d.passes);
+            // No days to evaluate yet (period hasn't started any weekdays) →
+            // treat as still eligible. Once at least one weekday has happened
+            // they need to have hit the 7-hour bar on every past one.
+            isEligible = allDays.length === 0 || allDays.every(d => d.passes);
           }
 
           eligMap.set(email, isEligible);
@@ -2592,7 +2672,10 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
       }
     })();
     return () => { cancelled = true; };
-  }, [sourceFiles, selectedSourceFile, monthFilter, hslMasterEmailsKey]);
+    // `employees.length` (not the full array) so the 60s refetch of the same
+    // roster doesn't churn this expensive effect; size changes capture
+    // hires/leavers. `hslMasterEmailsKey` already covers HSL membership shifts.
+  }, [sourceFiles, selectedSourceFile, monthFilter, hslMasterEmailsKey, employees.length]);
 
   /** Master-list rows only. Hubstaff-only workers are no longer merged into
    *  Overview totals — the master list is the single source of truth. */
