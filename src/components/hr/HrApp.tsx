@@ -307,8 +307,517 @@ function tenure(iso: string | null | undefined): string {
 
 type DeptStat = { department: string; count: number };
 
+type TenureCohort = {
+  key: 'new' | 'settling' | 'established' | 'veteran';
+  label: string;
+  range: string;
+  count: number;
+  pct: number;
+};
+
+const TENURE_COHORT_DEFS: { key: TenureCohort['key']; label: string; range: string; max: number }[] = [
+  { key: 'new',         label: 'Newcomers',   range: '0–30 days',   max: 30 },
+  { key: 'settling',    label: 'Settling',    range: '1–12 months', max: 365 },
+  { key: 'established', label: 'Established', range: '1–3 years',   max: 365 * 3 },
+  { key: 'veteran',     label: 'Veterans',    range: '3+ years',    max: Number.POSITIVE_INFINITY },
+];
 
 const PAGE_SIZE = 10;
+
+// ─── Editorial Overview composition ──────────────────────────────────────────
+
+const TENURE_PALETTE: Record<TenureCohort['key'], { bg: string; ring: string; dot: string }> = {
+  new:         { bg: 'bg-emerald-400',  ring: 'ring-emerald-200/70',  dot: 'bg-emerald-500' },
+  settling:    { bg: 'bg-emerald-600',  ring: 'ring-emerald-200/70',  dot: 'bg-emerald-700' },
+  established: { bg: 'bg-teal-700',     ring: 'ring-teal-200/70',     dot: 'bg-teal-800' },
+  veteran:     { bg: 'bg-zinc-900 dark:bg-zinc-100', ring: 'ring-zinc-200/70', dot: 'bg-zinc-900 dark:bg-zinc-100' },
+};
+
+function initialsFromName(name: string | null | undefined): string {
+  const s = (name ?? '').trim();
+  if (!s) return '··';
+  // "Surname, Given 'Nick'" → use Given + Surname initials
+  const commaSplit = s.split(',');
+  if (commaSplit.length >= 2) {
+    const first = (commaSplit[1] ?? '').trim().split(/\s+/)[0] ?? '';
+    const last = (commaSplit[0] ?? '').trim();
+    return ((first[0] ?? '') + (last[0] ?? '')).toUpperCase() || '··';
+  }
+  const parts = s.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return ((parts[0][0] ?? '') + (parts[parts.length - 1][0] ?? '')).toUpperCase() || '··';
+}
+
+interface OverviewEditorialSectionProps {
+  loading: boolean;
+  roster: EmployeeRow[];
+  deptStats: DeptStat[];
+  headcountSeries: { points: { label: string; value: number; year: number; month: number }[]; netDelta: number };
+  tenureCohorts: TenureCohort[];
+  recentHires: { row: EmployeeRow; days: number; t: number }[];
+}
+
+function OverviewEditorialSection({
+  loading,
+  roster,
+  deptStats,
+  headcountSeries,
+  tenureCohorts,
+  recentHires,
+}: OverviewEditorialSectionProps) {
+  const totalActive = roster.length;
+  const newcomersThisMonth = useMemo(() => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    return roster.filter((r) => {
+      if (!r.start_date) return false;
+      const t = new Date(r.start_date).getTime();
+      return Number.isFinite(t) && t >= monthStart;
+    }).length;
+  }, [roster]);
+
+  return (
+    <section className="relative overflow-hidden rounded-2xl border border-emerald-100/70 bg-white p-5 shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950 sm:p-6 lg:p-8">
+      {/* Decorative grain / shape */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-gradient-to-br from-emerald-100/60 via-teal-100/30 to-transparent blur-3xl dark:from-emerald-900/30 dark:via-teal-900/20"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-32 -left-16 h-64 w-64 rounded-full bg-gradient-to-tr from-emerald-50/80 via-transparent to-transparent blur-3xl dark:from-emerald-950/30"
+      />
+
+      {/* Editorial header strip */}
+      <div className="relative flex flex-col gap-2 border-b border-zinc-100 pb-5 sm:flex-row sm:items-end sm:justify-between dark:border-zinc-900">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-emerald-700/80 dark:text-emerald-400/70">
+            Workforce · Issue No. {String(new Date().getFullYear()).slice(-2)}/{String(new Date().getMonth() + 1).padStart(2, '0')}
+          </p>
+          <h2 className="mt-1 font-serif text-2xl font-semibold leading-tight tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-3xl">
+            The people behind the payroll.
+          </h2>
+        </div>
+        <p className="max-w-sm text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+          A monthly readout of headcount, tenure, and who just joined us — derived directly from the master list.
+        </p>
+      </div>
+
+      {/* Asymmetric three-column grid: headcount chart spans wide, tenure narrow */}
+      <div className="relative mt-6 grid gap-5 lg:grid-cols-5 lg:gap-6">
+        {/* Headcount growth — wide left column */}
+        <div className="lg:col-span-3">
+          <HeadcountStoryCard
+            loading={loading}
+            totalActive={totalActive}
+            netDelta={headcountSeries.netDelta}
+            newcomersThisMonth={newcomersThisMonth}
+            points={headcountSeries.points}
+          />
+        </div>
+
+        {/* Tenure cohorts — narrow right column */}
+        <div className="lg:col-span-2">
+          <TenureCohortCard loading={loading} cohorts={tenureCohorts} totalActive={totalActive} />
+        </div>
+      </div>
+
+      {/* Recent arrivals + Departments at a glance */}
+      <div className="relative mt-6 grid gap-5 lg:grid-cols-5 lg:gap-6">
+        <div className="lg:col-span-3">
+          <RecentHiresCard loading={loading} hires={recentHires} />
+        </div>
+        <div className="lg:col-span-2">
+          <DepartmentBarsCard loading={loading} deptStats={deptStats} totalActive={totalActive} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Headcount story (big serif number + sparkline area chart) ──────────────
+
+function HeadcountStoryCard({
+  loading,
+  totalActive,
+  netDelta,
+  newcomersThisMonth,
+  points,
+}: {
+  loading: boolean;
+  totalActive: number;
+  netDelta: number;
+  newcomersThisMonth: number;
+  points: { label: string; value: number }[];
+}) {
+  // Build SVG path for the area chart
+  const W = 600;
+  const H = 140;
+  const PAD_X = 4;
+  const PAD_TOP = 10;
+  const PAD_BOTTOM = 22;
+  const innerW = W - PAD_X * 2;
+  const innerH = H - PAD_TOP - PAD_BOTTOM;
+  const max = Math.max(1, ...points.map((p) => p.value));
+  const min = Math.min(...points.map((p) => p.value), max - 1);
+  const range = Math.max(1, max - min);
+  const stepX = points.length > 1 ? innerW / (points.length - 1) : innerW;
+
+  const coords = points.map((p, i) => {
+    const x = PAD_X + i * stepX;
+    const y = PAD_TOP + innerH - ((p.value - min) / range) * innerH;
+    return { x, y, value: p.value, label: p.label };
+  });
+  const linePath = coords.map((c, i) => (i === 0 ? `M${c.x},${c.y}` : `L${c.x},${c.y}`)).join(' ');
+  const areaPath = coords.length > 0
+    ? `${linePath} L${coords[coords.length - 1].x},${PAD_TOP + innerH} L${coords[0].x},${PAD_TOP + innerH} Z`
+    : '';
+
+  const positive = netDelta >= 0;
+
+  return (
+    <div className="relative h-full overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
+      {/* Top label strip */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+            Headcount · trailing 12 mo
+          </p>
+          <div className="mt-2 flex items-baseline gap-3">
+            <p className="font-serif text-5xl font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-50 sm:text-6xl">
+              {loading ? <span className="inline-block h-12 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" /> : totalActive}
+            </p>
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums',
+                positive
+                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                  : 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300',
+              )}
+            >
+              <TrendingUp className={cn('h-3 w-3', !positive && 'rotate-180')} />
+              {positive ? '+' : ''}{netDelta}
+            </span>
+          </div>
+          <p className="mt-1 text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
+            <span className="font-semibold text-zinc-700 dark:text-zinc-300">+{newcomersThisMonth}</span> joined this month
+            <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">·</span>
+            Net delta over 12 months: <span className="tabular-nums font-medium">{positive ? '+' : ''}{netDelta}</span>
+          </p>
+        </div>
+      </div>
+
+      {/* Chart */}
+      <div className="mt-5 -mx-1">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="h-[150px] w-full"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label="Headcount growth over the trailing 12 months"
+        >
+          <defs>
+            <linearGradient id="hcGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="rgb(16, 185, 129)" stopOpacity="0.32" />
+              <stop offset="100%" stopColor="rgb(16, 185, 129)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {/* Faint baseline guides */}
+          {[0.25, 0.5, 0.75].map((t) => (
+            <line
+              key={t}
+              x1={PAD_X}
+              x2={W - PAD_X}
+              y1={PAD_TOP + innerH * t}
+              y2={PAD_TOP + innerH * t}
+              stroke="currentColor"
+              strokeOpacity={0.06}
+              strokeDasharray="2 4"
+              className="text-zinc-900 dark:text-zinc-100"
+            />
+          ))}
+          {areaPath && <path d={areaPath} fill="url(#hcGradient)" />}
+          {linePath && (
+            <path d={linePath} fill="none" stroke="rgb(5, 150, 105)" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+          )}
+          {/* Endpoint dot */}
+          {coords.length > 0 && (
+            <g>
+              <circle
+                cx={coords[coords.length - 1].x}
+                cy={coords[coords.length - 1].y}
+                r={3.5}
+                fill="rgb(5, 150, 105)"
+              />
+              <circle
+                cx={coords[coords.length - 1].x}
+                cy={coords[coords.length - 1].y}
+                r={6.5}
+                fill="rgb(5, 150, 105)"
+                fillOpacity={0.15}
+              />
+            </g>
+          )}
+          {/* Month labels along the bottom */}
+          {coords.map((c, i) => {
+            const showLabel = points.length <= 12 || i % 2 === 0;
+            return showLabel ? (
+              <text
+                key={i}
+                x={c.x}
+                y={H - 6}
+                textAnchor="middle"
+                fontSize={10}
+                fill="currentColor"
+                className="font-mono text-zinc-400 dark:text-zinc-500"
+              >
+                {c.label}
+              </text>
+            ) : null;
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+// ─── Tenure cohorts (stacked horizontal bar + cohort cards) ─────────────────
+
+function TenureCohortCard({
+  loading,
+  cohorts,
+  totalActive,
+}: {
+  loading: boolean;
+  cohorts: TenureCohort[];
+  totalActive: number;
+}) {
+  const totalKnown = cohorts.reduce((s, c) => s + c.count, 0);
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+            Tenure cohorts
+          </p>
+          <p className="mt-1 font-serif text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+            {loading ? '—' : `${totalKnown} of ${totalActive}`}
+            <span className="ml-1 text-xs font-normal text-zinc-400">with known start dates</span>
+          </p>
+        </div>
+      </div>
+
+      {/* Stacked bar */}
+      <div className="mt-5">
+        <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-zinc-100 ring-1 ring-inset ring-zinc-200/60 dark:bg-zinc-900 dark:ring-zinc-800/80">
+          {cohorts.map((c) => (
+            <div
+              key={c.key}
+              className={cn('h-full transition-all', TENURE_PALETTE[c.key].bg)}
+              style={{ width: `${c.pct}%` }}
+              title={`${c.label}: ${c.count}`}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Cohort cards */}
+      <div className="mt-4 grid grid-cols-2 gap-2.5">
+        {cohorts.map((c) => (
+          <div
+            key={c.key}
+            className="group relative overflow-hidden rounded-lg border border-zinc-100 bg-zinc-50/60 px-3 py-2.5 transition-colors hover:bg-zinc-50 dark:border-zinc-800/60 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/70"
+          >
+            <div className="flex items-center gap-1.5">
+              <span className={cn('h-1.5 w-1.5 rounded-full', TENURE_PALETTE[c.key].dot)} aria-hidden />
+              <p className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                {c.label}
+              </p>
+            </div>
+            <p className="mt-1.5 font-serif text-2xl font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-50">
+              {c.count}
+            </p>
+            <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">
+              {c.range} · {c.pct.toFixed(0)}%
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Recent hires editorial list ─────────────────────────────────────────────
+
+function RecentHiresCard({
+  loading,
+  hires,
+}: {
+  loading: boolean;
+  hires: { row: EmployeeRow; days: number; t: number }[];
+}) {
+  const shown = hires.slice(0, 8);
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+            Recent arrivals · last 90 days
+          </p>
+          <p className="mt-1 font-serif text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+            {loading ? '…' : hires.length === 0 ? 'No new hires yet.' : `${hires.length} ${hires.length === 1 ? 'person' : 'people'} joined.`}
+          </p>
+        </div>
+        <span className="rounded-full border border-emerald-200/70 bg-emerald-50/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+          NEW
+        </span>
+      </div>
+
+      {/* List */}
+      {loading ? (
+        <div className="mt-5 space-y-2.5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <div className="h-9 w-9 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-900" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3 w-1/2 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+                <div className="h-2.5 w-1/3 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : shown.length === 0 ? (
+        <p className="mt-6 text-xs text-zinc-400 dark:text-zinc-500">No new hires in the last 90 days.</p>
+      ) : (
+        <ul className="mt-5 divide-y divide-zinc-100 dark:divide-zinc-900">
+          {shown.map(({ row, days }, i) => (
+            <li
+              key={`${row.work_email ?? row.personal_email ?? i}`}
+              className="group flex items-center gap-3 py-2.5 first:pt-0 last:pb-0"
+            >
+              {/* Avatar (initials only — keeps the editorial vibe consistent) */}
+              <div className="relative shrink-0">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-emerald-100 to-teal-200 font-serif text-sm font-bold text-emerald-900 ring-2 ring-white dark:from-emerald-900/50 dark:to-teal-900/50 dark:text-emerald-200 dark:ring-zinc-950">
+                  {initialsFromName(row.name)}
+                </div>
+                {days <= 7 && (
+                  <span
+                    className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950"
+                    aria-label="Joined this week"
+                  />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  {row.name ?? row.work_email ?? '—'}
+                </p>
+                <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                  <span className="font-medium text-zinc-600 dark:text-zinc-300">{row.department ?? 'Unassigned'}</span>
+                  <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">·</span>
+                  {row.work_email ?? row.personal_email ?? '—'}
+                </p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="font-serif text-base font-bold tabular-nums leading-none text-zinc-800 dark:text-zinc-200">
+                  {days === 0 ? 'today' : `${days}d`}
+                </p>
+                <p className="mt-0.5 text-[10px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                  {days === 0 ? 'first day' : 'tenure'}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ─── Department bars (replaces the Accounting donut style with editorial bars) ───
+
+function DepartmentBarsCard({
+  loading,
+  deptStats,
+  totalActive,
+}: {
+  loading: boolean;
+  deptStats: DeptStat[];
+  totalActive: number;
+}) {
+  const top = deptStats.slice(0, 8);
+  const restCount = deptStats.slice(8).reduce((s, d) => s + d.count, 0);
+  const maxCount = Math.max(1, ...top.map((d) => d.count));
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+            Departments at a glance
+          </p>
+          <p className="mt-1 font-serif text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+            {loading ? '…' : `Top ${Math.min(8, deptStats.length)} of ${deptStats.length}`}
+          </p>
+        </div>
+      </div>
+
+      <ul className="mt-5 space-y-2.5">
+        {loading
+          ? Array.from({ length: 6 }).map((_, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <div className="h-3 w-20 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+                <div className="h-2 flex-1 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-900" />
+              </li>
+            ))
+          : top.map((d, i) => {
+              const widthPct = (d.count / maxCount) * 100;
+              const sharePct = totalActive > 0 ? (d.count / totalActive) * 100 : 0;
+              // Cascade emerald shades so the order itself reads visually
+              const shades = [
+                'bg-emerald-700 dark:bg-emerald-500',
+                'bg-emerald-600 dark:bg-emerald-500/90',
+                'bg-emerald-500 dark:bg-emerald-500/80',
+                'bg-teal-600 dark:bg-teal-500/80',
+                'bg-teal-500 dark:bg-teal-500/70',
+                'bg-teal-400 dark:bg-teal-500/60',
+                'bg-zinc-500 dark:bg-zinc-400',
+                'bg-zinc-400 dark:bg-zinc-500',
+              ];
+              return (
+                <li key={d.department} className="group">
+                  <div className="mb-1 flex items-baseline justify-between gap-3">
+                    <span className="truncate text-[12px] font-medium text-zinc-700 dark:text-zinc-300">
+                      <span className="mr-2 inline-block w-4 text-right font-mono text-[10px] text-zinc-400 tabular-nums dark:text-zinc-600">
+                        {String(i + 1).padStart(2, '0')}
+                      </span>
+                      {d.department}
+                    </span>
+                    <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                      {d.count}
+                      <span className="ml-1.5 text-zinc-400 dark:text-zinc-600">{sharePct.toFixed(0)}%</span>
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
+                    <div
+                      className={cn('h-full rounded-full transition-all duration-500 ease-out', shades[i] ?? 'bg-zinc-400')}
+                      style={{ width: `${widthPct}%` }}
+                    />
+                  </div>
+                </li>
+              );
+            })}
+      </ul>
+
+      {!loading && restCount > 0 && (
+        <p className="mt-4 border-t border-zinc-100 pt-3 text-[11px] text-zinc-400 dark:border-zinc-900 dark:text-zinc-500">
+          + {restCount} more across {deptStats.length - 8} other department{deptStats.length - 8 === 1 ? '' : 's'}.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function OverviewBody() {
   const [roster, setRoster] = useState<EmployeeRow[]>([]);
@@ -416,6 +925,79 @@ function OverviewBody() {
       .sort((a, b) => b.count - a.count);
   }, [roster]);
 
+  // Recent hires — last 90 days sorted by start_date desc.
+  const recentHires = useMemo(() => {
+    const now = Date.now();
+    const cutoff = now - 90 * 86400000;
+    return roster
+      .map((r) => {
+        if (!r.start_date) return null;
+        const t = new Date(r.start_date).getTime();
+        if (!Number.isFinite(t)) return null;
+        if (t < cutoff || t > now + 7 * 86400000) return null;
+        const days = Math.floor((now - t) / 86400000);
+        return { row: r, days, t };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .sort((a, b) => b.t - a.t);
+  }, [roster]);
+
+  // Headcount growth — cumulative hire count for the trailing 12 months.
+  // Each bucket is "people whose start_date falls on or before the end of that month",
+  // computed only from current active roster (so departures already net out).
+  const headcountSeries = useMemo(() => {
+    const now = new Date();
+    const months: { label: string; year: number; month: number; endMs: number }[] = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const endMs = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59).getTime();
+      months.push({
+        label: d.toLocaleDateString('en-US', { month: 'short' }),
+        year: d.getFullYear(),
+        month: d.getMonth(),
+        endMs,
+      });
+    }
+    const startTimes: number[] = [];
+    for (const r of roster) {
+      if (!r.start_date) continue;
+      const t = new Date(r.start_date).getTime();
+      if (Number.isFinite(t)) startTimes.push(t);
+    }
+    const points = months.map((m) => {
+      let cum = 0;
+      for (const t of startTimes) if (t <= m.endMs) cum++;
+      return { label: m.label, value: cum, year: m.year, month: m.month };
+    });
+    // Net change over the trailing 12 months
+    const netDelta = points.length > 0 ? points[points.length - 1].value - points[0].value : 0;
+    return { points, netDelta };
+  }, [roster]);
+
+  // Tenure cohorts — bucket the active roster by how long they've been here.
+  const tenureCohorts: TenureCohort[] = useMemo(() => {
+    const counts = { new: 0, settling: 0, established: 0, veteran: 0 } as Record<TenureCohort['key'], number>;
+    const now = Date.now();
+    for (const r of roster) {
+      if (!r.start_date) continue;
+      const t = new Date(r.start_date).getTime();
+      if (!Number.isFinite(t)) continue;
+      const days = (now - t) / 86400000;
+      if (days <= 30) counts.new++;
+      else if (days <= 365) counts.settling++;
+      else if (days <= 365 * 3) counts.established++;
+      else counts.veteran++;
+    }
+    const total = counts.new + counts.settling + counts.established + counts.veteran;
+    return TENURE_COHORT_DEFS.map((def) => ({
+      key: def.key,
+      label: def.label,
+      range: def.range,
+      count: counts[def.key],
+      pct: total > 0 ? (counts[def.key] / total) * 100 : 0,
+    }));
+  }, [roster]);
+
   const filtered = useMemo(() => {
     setPage(0);
     const q = search.trim().toLowerCase();
@@ -493,6 +1075,16 @@ function OverviewBody() {
           </div>
         ))}
       </div>
+
+      {/* Editorial composition — headcount story + recent arrivals */}
+      <OverviewEditorialSection
+        loading={loading}
+        roster={roster}
+        deptStats={deptStats}
+        headcountSeries={headcountSeries}
+        tenureCohorts={tenureCohorts}
+        recentHires={recentHires}
+      />
 
       {/* Roster */}
       <Card className="border-zinc-100 shadow-sm dark:border-zinc-800">

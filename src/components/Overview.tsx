@@ -3246,6 +3246,8 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
                       </select>
                     </div>
                   </div>
+                  {/* PAB + Tech filters — side-by-side, wrap on narrow widths */}
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                   {/* PAB filter */}
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs text-zinc-500 dark:text-zinc-400">PAB:</span>
@@ -3330,6 +3332,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
                         );
                       })}
                     </div>
+                  </div>
                   </div>
                 </div>
 
