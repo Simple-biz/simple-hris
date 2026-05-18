@@ -355,6 +355,8 @@ interface SimpleViewProps {
   pabEligibilityByEmail: Map<string, boolean>;
   pabFilter: 'all' | 'eligible' | 'not-eligible';
   setPabFilter: (v: 'all' | 'eligible' | 'not-eligible') => void;
+  techFilter: 'all' | 'eligible' | 'not-eligible';
+  setTechFilter: (v: 'all' | 'eligible' | 'not-eligible') => void;
   onExportCsv: () => void;
   /** Live status of the dashboard data feeds — drives the hero pill animation. */
   apiStatus: 'loading' | 'error' | 'live';
@@ -427,6 +429,8 @@ function SimpleView({
   pabEligibilityByEmail,
   pabFilter,
   setPabFilter,
+  techFilter,
+  setTechFilter,
   onExportCsv,
   apiStatus,
   apiLatencyMs,
@@ -1083,27 +1087,75 @@ function SimpleView({
                 ))}
               </select>
               {/* PAB filter */}
-              <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="relative flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
                 {(['all', 'eligible', 'not-eligible'] as const).map((f) => {
                   const labels = { all: 'All', eligible: 'PAB Eligible', 'not-eligible': 'Not Eligible' };
                   const active = pabFilter === f;
+                  const activeBg =
+                    f === 'eligible'
+                      ? 'bg-emerald-700 dark:bg-emerald-600'
+                      : f === 'not-eligible'
+                        ? 'bg-red-700 dark:bg-red-600'
+                        : 'bg-zinc-900 dark:bg-zinc-100';
                   return (
                     <button
                       key={f}
                       type="button"
                       onClick={() => setPabFilter(f)}
                       className={cn(
-                        'h-7 rounded-md px-2.5 text-[11.5px] font-medium transition-colors',
+                        'relative h-7 rounded-md px-2.5 text-[11.5px] font-medium transition-colors',
                         active
-                          ? f === 'eligible'
-                            ? 'bg-emerald-700 text-white dark:bg-emerald-600'
-                            : f === 'not-eligible'
-                              ? 'bg-red-700 text-white dark:bg-red-600'
-                              : 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                          ? f === 'all'
+                            ? 'text-white dark:text-zinc-900'
+                            : 'text-white'
                           : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
                       )}
                     >
-                      {labels[f]}
+                      {active && (
+                        <motion.span
+                          layoutId="pab-filter-pill-simple"
+                          className={cn('absolute inset-0 rounded-md', activeBg)}
+                          transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                        />
+                      )}
+                      <span className="relative">{labels[f]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Tech Bonus filter */}
+              <div className="relative flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                {(['all', 'eligible', 'not-eligible'] as const).map((f) => {
+                  const labels = { all: 'All', eligible: 'Tech Eligible', 'not-eligible': 'Tech Pending' };
+                  const active = techFilter === f;
+                  const activeBg =
+                    f === 'eligible'
+                      ? 'bg-indigo-700 dark:bg-indigo-600'
+                      : f === 'not-eligible'
+                        ? 'bg-amber-700 dark:bg-amber-600'
+                        : 'bg-zinc-900 dark:bg-zinc-100';
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setTechFilter(f)}
+                      className={cn(
+                        'relative h-7 rounded-md px-2.5 text-[11.5px] font-medium transition-colors',
+                        active
+                          ? f === 'all'
+                            ? 'text-white dark:text-zinc-900'
+                            : 'text-white'
+                          : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                      )}
+                    >
+                      {active && (
+                        <motion.span
+                          layoutId="tech-filter-pill-simple"
+                          className={cn('absolute inset-0 rounded-md', activeBg)}
+                          transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                        />
+                      )}
+                      <span className="relative">{labels[f]}</span>
                     </button>
                   );
                 })}
@@ -2103,27 +2155,45 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
 
   const [pabEligibilityByEmail, setPabEligibilityByEmail] = useState<Map<string, boolean>>(new Map());
   const [pabFilter, setPabFilter] = useState<'all' | 'eligible' | 'not-eligible'>('all');
+  const [techFilter, setTechFilter] = useState<'all' | 'eligible' | 'not-eligible'>('all');
 
   /**
    * Tech Bonus eligibility: employees who have completed 30 days of service
    * by the **selected period's end date** (or today, if no period is loaded).
    * Picking April's CSV shows tech eligibility as of end-of-April.
    */
-  const techBonusEligibility = useMemo(() => {
+  const { techBonusEligibility, techEligibilityByEmail } = useMemo(() => {
     const asOf = pabMetrics.periodEnd ?? new Date();
     const asOfMid = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate()).getTime();
     let eligible = 0;
     let pending = 0;
     let unknown = 0;
+    // Per-email map drives the table filter — `null` means we couldn't decide
+    // (missing or unparseable start_date), `true` = eligible, `false` = pending.
+    const byEmail = new Map<string, boolean | null>();
     for (const e of employees) {
-      if (!e.start_date) { unknown += 1; continue; }
+      const emailKey = normEmail(e.work_email ?? e.personal_email ?? '') ?? '';
+      if (!e.start_date) {
+        unknown += 1;
+        if (emailKey) byEmail.set(emailKey, null);
+        continue;
+      }
       const sd = new Date(e.start_date);
-      if (isNaN(sd.getTime())) { unknown += 1; continue; }
+      if (isNaN(sd.getTime())) {
+        unknown += 1;
+        if (emailKey) byEmail.set(emailKey, null);
+        continue;
+      }
       const eligibleFrom = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() + 30).getTime();
-      if (asOfMid >= eligibleFrom) eligible += 1;
+      const isElig = asOfMid >= eligibleFrom;
+      if (isElig) eligible += 1;
       else pending += 1;
+      if (emailKey) byEmail.set(emailKey, isElig);
     }
-    return { eligible, pending, unknown, total: employees.length };
+    return {
+      techBonusEligibility: { eligible, pending, unknown, total: employees.length },
+      techEligibilityByEmail: byEmail,
+    };
   }, [employees, pabMetrics.periodEnd]);
 
   const fetchEmployees = React.useCallback(async (signal?: AbortSignal) => {
@@ -2577,6 +2647,15 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
         return pabFilter === 'eligible' ? elig === true : elig === false;
       });
     }
+    if (techFilter !== 'all') {
+      list = list.filter((e) => {
+        const emailKey = normEmail(e.work_email ?? e.personal_email ?? '') ?? '';
+        const elig = emailKey ? techEligibilityByEmail.get(emailKey) : undefined;
+        // Treat unknown (null) as not-eligible so it doesn't slip into the
+        // "eligible" bucket — matches what techBonusEligibility totals show.
+        return techFilter === 'eligible' ? elig === true : elig !== true;
+      });
+    }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
       list = list.filter((e) => {
@@ -2587,14 +2666,14 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
       });
     }
     return list;
-  }, [mergedEmployees, departmentFilter, searchQuery, pabFilter, pabEligibilityByEmail]);
+  }, [mergedEmployees, departmentFilter, searchQuery, pabFilter, pabEligibilityByEmail, techFilter, techEligibilityByEmail]);
 
   const totalPages = Math.max(1, Math.ceil(filteredEmployees.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, departmentFilter, pabFilter, monthFilter]);
+  }, [searchQuery, departmentFilter, pabFilter, techFilter, monthFilter]);
 
   useEffect(() => {
     setPage((p) => Math.min(p, totalPages));
@@ -2727,7 +2806,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
   const exportToCsv = () => {
     const headers = [
       'Name', 'Personal Email', 'Work Email', 'Department', 'Source', 'Employee ID',
-      'Start Date', 'Hours', 'Initial Pay (PHP)', 'PAB Eligibility',
+      'Start Date', 'Hours', 'Initial Pay (PHP)', 'PAB Eligibility', 'Tech Bonus Eligibility',
     ];
     const rows = filteredEmployees.map((row) => {
       const email = row.work_email ?? row.personal_email ?? '';
@@ -2735,6 +2814,8 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
       const pay = emailKey ? employeePayByEmail[emailKey] : undefined;
       const elig = emailKey ? pabEligibilityByEmail.get(emailKey) : undefined;
       const pabStatus = elig === true ? 'Eligible' : elig === false ? 'Ineligible' : 'N/A';
+      const techElig = emailKey ? techEligibilityByEmail.get(emailKey) : undefined;
+      const techStatus = techElig === true ? 'Eligible' : techElig === false ? 'Pending' : 'N/A';
       return [
         row.name ?? '',
         row.personal_email ?? '',
@@ -2746,6 +2827,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
         pay ? pay.hours.toFixed(2) : '',
         pay?.pay != null ? pay.pay.toFixed(2) : '',
         pabStatus,
+        techStatus,
       ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',');
     });
     const csv = [headers.map((h) => `"${h}"`).join(','), ...rows].join('\n');
@@ -2755,8 +2837,9 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     a.href = url;
     const dateStr = new Date().toISOString().slice(0, 10);
     const filterSuffix = pabFilter !== 'all' ? `_pab-${pabFilter}` : '';
+    const techSuffix = techFilter !== 'all' ? `_tech-${techFilter}` : '';
     const deptSuffix = departmentFilter ? `_${departmentFilter.toLowerCase().replace(/\s+/g, '-')}` : '';
-    a.download = `employees_${dateStr}${deptSuffix}${filterSuffix}.csv`;
+    a.download = `employees_${dateStr}${deptSuffix}${filterSuffix}${techSuffix}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -2884,6 +2967,8 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
               pabEligibilityByEmail={pabEligibilityByEmail}
               pabFilter={pabFilter}
               setPabFilter={setPabFilter}
+              techFilter={techFilter}
+              setTechFilter={setTechFilter}
               onExportCsv={exportToCsv}
               apiStatus={
                 employeesError
@@ -3081,27 +3166,38 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
                   {/* PAB filter */}
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs text-zinc-500 dark:text-zinc-400">PAB:</span>
-                    <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                    <div className="relative flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
                       {(['all', 'eligible', 'not-eligible'] as const).map((f) => {
                         const labels = { all: 'All', eligible: 'Eligible', 'not-eligible': 'Not Eligible' };
                         const active = pabFilter === f;
+                        const activeBg =
+                          f === 'eligible'
+                            ? 'bg-emerald-700 dark:bg-emerald-600'
+                            : f === 'not-eligible'
+                              ? 'bg-red-700 dark:bg-red-600'
+                              : 'bg-zinc-900 dark:bg-zinc-100';
                         return (
                           <button
                             key={f}
                             type="button"
                             onClick={() => setPabFilter(f)}
                             className={cn(
-                              'h-6 rounded-md px-2.5 text-[11px] font-medium transition-colors',
+                              'relative h-6 rounded-md px-2.5 text-[11px] font-medium transition-colors',
                               active
-                                ? f === 'eligible'
-                                  ? 'bg-emerald-700 text-white dark:bg-emerald-600'
-                                  : f === 'not-eligible'
-                                    ? 'bg-red-700 text-white dark:bg-red-600'
-                                    : 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                                ? f === 'all'
+                                  ? 'text-white dark:text-zinc-900'
+                                  : 'text-white'
                                 : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
                             )}
                           >
-                            {labels[f]}
+                            {active && (
+                              <motion.span
+                                layoutId="pab-filter-pill-expanded"
+                                className={cn('absolute inset-0 rounded-md', activeBg)}
+                                transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                              />
+                            )}
+                            <span className="relative">{labels[f]}</span>
                           </button>
                         );
                       })}
@@ -3111,6 +3207,46 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
                         {filteredEmployees.length} result{filteredEmployees.length !== 1 ? 's' : ''}
                       </span>
                     )}
+                  </div>
+                  {/* Tech Bonus filter */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">Tech:</span>
+                    <div className="relative flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                      {(['all', 'eligible', 'not-eligible'] as const).map((f) => {
+                        const labels = { all: 'All', eligible: 'Eligible', 'not-eligible': 'Pending' };
+                        const active = techFilter === f;
+                        const activeBg =
+                          f === 'eligible'
+                            ? 'bg-indigo-700 dark:bg-indigo-600'
+                            : f === 'not-eligible'
+                              ? 'bg-amber-700 dark:bg-amber-600'
+                              : 'bg-zinc-900 dark:bg-zinc-100';
+                        return (
+                          <button
+                            key={f}
+                            type="button"
+                            onClick={() => setTechFilter(f)}
+                            className={cn(
+                              'relative h-6 rounded-md px-2.5 text-[11px] font-medium transition-colors',
+                              active
+                                ? f === 'all'
+                                  ? 'text-white dark:text-zinc-900'
+                                  : 'text-white'
+                                : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100',
+                            )}
+                          >
+                            {active && (
+                              <motion.span
+                                layoutId="tech-filter-pill-expanded"
+                                className={cn('absolute inset-0 rounded-md', activeBg)}
+                                transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                              />
+                            )}
+                            <span className="relative">{labels[f]}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
