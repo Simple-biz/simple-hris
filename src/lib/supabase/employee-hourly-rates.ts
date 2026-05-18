@@ -202,6 +202,28 @@ export async function getEmployeeHourlyRatesRows(): Promise<{
     process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() ||
     "employee_hourly_rates";
 
+  // Prefer the deduplicated view (`employee_hourly_rates_current`) — one row
+  // per email, picked by latest upload_id then created_at. See
+  // references/create_employee_hourly_rates_current_view.sql. The full
+  // history table only has ~2660 distinct emails out of ~9000 rows, so the
+  // view drops the payload ~70% and avoids the pagination dance below.
+  //
+  // If the view doesn't exist (e.g. before the migration is run, or after
+  // running drop_employee_hourly_rates_current_view.sql to revert), we fall
+  // back to the original paginated read of the base table — no app deploy
+  // needed to revert.
+  const VIEW_NAME = "employee_hourly_rates_current";
+  const viewResult = await supabase
+    .from(VIEW_NAME)
+    .select("*")
+    .range(0, 4999);
+  if (!viewResult.error) {
+    const rows = ((viewResult.data ?? []) as RawRow[])
+      .map(mapEmployeeHourlyRateRow)
+      .filter((row) => !isRowEmpty(row));
+    return { rows, error: null };
+  }
+
   // PostgREST silently caps `.select("*")` at 1000 rows by default. The rates
   // table now exceeds that (multi-upload history), so we paginate to pull
   // everything. Without this, employees near the end of the table (by internal

@@ -598,9 +598,25 @@ export default function EmployeePabCalendar({
                       end.setDate(end.getDate() + 6);
                       return todayMid.getTime() >= start.getTime() && todayMid.getTime() <= end.getTime();
                     })();
+                    // Week immediately before the current one — its days are over
+                    // but Hubstaff hours may not be uploaded/processed yet, so any
+                    // empty cell there is "Processing" rather than a real miss.
+                    const isPreviousWeek = (() => {
+                      const mon = week[0]?.date;
+                      if (!mon) return false;
+                      const start = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate());
+                      const end = new Date(start);
+                      end.setDate(end.getDate() + 6);
+                      const nextMon = new Date(end);
+                      nextMon.setDate(nextMon.getDate() + 1);
+                      const nextSun = new Date(nextMon);
+                      nextSun.setDate(nextSun.getDate() + 6);
+                      return todayMid.getTime() >= nextMon.getTime() && todayMid.getTime() <= nextSun.getTime();
+                    })();
                     // In the current week, days with no meaningful data aren't red yet
                     const noMeaningfulData = !day.hasData || day.seconds === 0;
                     const stillInProgress = isCurrentWeek && noMeaningfulData && !isFutureOrToday;
+                    const stillProcessing = isPreviousWeek && noMeaningfulData && !dispute;
 
                     const canDispute = day.hasData && !day.passes && !dispute && !isFutureOrToday && !isCurrentWeek;
                     const cellClickable = canDispute || !!dispute;
@@ -626,6 +642,9 @@ export default function EmployeePabCalendar({
                     } else if (stillInProgress) {
                       cellBorder =
                         'border-orange-300 bg-orange-50 dark:border-orange-700/60 dark:bg-orange-950/30';
+                    } else if (stillProcessing) {
+                      cellBorder =
+                        'border-sky-300 bg-sky-50 dark:border-sky-700/60 dark:bg-sky-950/30';
                     } else if (isFutureOrToday || !day.hasData) {
                       cellBorder =
                         'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
@@ -651,7 +670,7 @@ export default function EmployeePabCalendar({
                       <div
                         key={di}
                         className={`relative flex h-14 flex-col overflow-hidden rounded-md border transition-all duration-200 sm:h-16 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                        title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltip}`}
+                        title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltip}`}
                         onClick={
                           cellClickable
                             ? () =>
@@ -686,6 +705,13 @@ export default function EmployeePabCalendar({
                               />
                               <span className="text-[8px] font-semibold uppercase tracking-wider text-orange-400 dark:text-orange-300">
                                 In Progress
+                              </span>
+                            </div>
+                          ) : stillProcessing ? (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-500 dark:text-sky-400 sm:h-4 sm:w-4" />
+                              <span className="text-[8px] font-semibold uppercase tracking-wider text-sky-600 dark:text-sky-400">
+                                Processing
                               </span>
                             </div>
                           ) : (

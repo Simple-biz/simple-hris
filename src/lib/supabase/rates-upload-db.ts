@@ -68,6 +68,34 @@ function parseRate(v: unknown): string | null {
   return cleaned;
 }
 
+/**
+ * Returns the set of lowercased Work Emails whose department in
+ * `global_master_list` marks them as HSL / Hogan Smith Law. The Hogan-sheet
+ * sync owns these rows in `employee_hourly_rates`; the Payroll Rates sync
+ * filters them out so it never overwrites authoritative HSL rates with
+ * (probably stale) values from the All-Dept payroll sheet.
+ */
+async function fetchHslWorkEmails(supabase: SupabaseClient): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("global_master_list")
+    .select('"Work Email"')
+    .in('"Department"', ["HSL", "Hogan Smith Law"])
+    .range(0, 9999);
+  if (error) {
+    // Non-fatal: if we can't read the master list (RLS / transient), fall
+    // back to the previous behavior of syncing every row. Better to keep
+    // payroll moving than to fail the whole sync over an aux lookup.
+    console.warn("[rates-upload] fetchHslWorkEmails failed:", error.message);
+    return new Set();
+  }
+  const out = new Set<string>();
+  for (const r of (data ?? []) as { "Work Email": string | null }[]) {
+    const em = (r["Work Email"] ?? "").trim().toLowerCase();
+    if (em) out.add(em);
+  }
+  return out;
+}
+
 async function createPendingRatesUpload(
   supabase: SupabaseClient,
   sourceFile: string | undefined,
@@ -173,6 +201,9 @@ export async function replaceEmployeeHourlyRatesFromCsv(
   uniqueEmployees: number;
   skippedNoWorkEmail: number;
   skippedNoRate: number;
+  /** Rows skipped because the employee is in HSL / Hogan Smith Law — their
+   *  rates are owned by the Hogan sheet sync. */
+  skippedHsl: number;
 }> {
   const supabase = requireServiceRole();
   const table = getRatesTableName();
@@ -284,8 +315,24 @@ export async function replaceEmployeeHourlyRatesFromCsv(
     );
   }
 
-  const byEmail = new Map<string, Candidate>();
+  // HSL / Hogan Smith Law rates are authoritative in `hsl_team_members`
+  // (synced from the Hogan pay-plan Google Sheet). Skip those work emails here
+  // so we never clobber the value `replaceHslAgentsFromRows` mirrored into
+  // `employee_hourly_rates`. Match BOTH legacy "HSL" and the canonical
+  // "Hogan Smith Law" department strings since both exist in production.
+  const hslEmailSet = await fetchHslWorkEmails(supabase);
+  let skippedHsl = 0;
+  const nonHslCandidates: Candidate[] = [];
   for (const c of candidates) {
+    if (hslEmailSet.has(c.workEmail)) {
+      skippedHsl += 1;
+      continue;
+    }
+    nonHslCandidates.push(c);
+  }
+
+  const byEmail = new Map<string, Candidate>();
+  for (const c of nonHslCandidates) {
     const prev = byEmail.get(c.workEmail);
     if (!prev || c.weekTs > prev.weekTs) {
       // Carry forward mesa=true from any older row — a blank cell in the latest
@@ -410,5 +457,6 @@ export async function replaceEmployeeHourlyRatesFromCsv(
     uniqueEmployees,
     skippedNoWorkEmail,
     skippedNoRate,
+    skippedHsl,
   };
 }

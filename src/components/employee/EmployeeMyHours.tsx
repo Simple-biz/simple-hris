@@ -894,6 +894,18 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                         const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
                         const isFutureOrToday = cellMid.getTime() >= todayMid.getTime();
                         const isToday = cellMid.getTime() === todayMid.getTime();
+                        // Previous Mon–Sun week — empty weekday cells here are
+                        // awaiting Hubstaff upload / payroll processing, not a
+                        // real miss. Show "Processing" (sky) instead of orange
+                        // "Pending" so employees can tell the two states apart.
+                        const isPreviousWeek = (() => {
+                          const todayDow = nowMid.getDay();
+                          const daysBackToMon = (todayDow + 6) % 7;
+                          const thisWeekMon = new Date(nowMid.getFullYear(), nowMid.getMonth(), nowMid.getDate() - daysBackToMon);
+                          const prevWeekMon = new Date(thisWeekMon.getFullYear(), thisWeekMon.getMonth(), thisWeekMon.getDate() - 7);
+                          const prevWeekSun = new Date(prevWeekMon.getFullYear(), prevWeekMon.getMonth(), prevWeekMon.getDate() + 6);
+                          return cellMid.getTime() >= prevWeekMon.getTime() && cellMid.getTime() <= prevWeekSun.getTime();
+                        })();
                         const canDispute =
                           inMonth &&
                           !weekend &&
@@ -942,6 +954,9 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                         } else if (isFutureOrToday && !day.hasData) {
                           cellBorder =
                             'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
+                        } else if (!day.hasData && isPreviousWeek && !weekend) {
+                          cellBorder =
+                            'border-sky-300 bg-sky-50 dark:border-sky-700/60 dark:bg-sky-950/30';
                         } else if (!day.hasData) {
                           cellBorder =
                             'border-orange-300 bg-orange-50 dark:border-orange-700/70 dark:bg-orange-950/30';
@@ -1036,6 +1051,13 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                                 />
                                 <span className="text-[6.5px] font-semibold uppercase tracking-wider leading-none text-orange-400 dark:text-orange-300 sm:text-[7.5px]">
                                   In Progress
+                                </span>
+                              </div>
+                            ) : inMonth && !weekend && !day.hasData && isPreviousWeek ? (
+                              <div className="flex flex-col items-center gap-0.5">
+                                <Loader2 className="h-3 w-3 animate-spin text-sky-500 dark:text-sky-400" />
+                                <span className="text-[6.5px] font-semibold uppercase tracking-wider leading-none text-sky-600 dark:text-sky-400 sm:text-[7.5px]">
+                                  Processing
                                 </span>
                               </div>
                             ) : inMonth && !weekend && !day.hasData && !isFutureOrToday ? (

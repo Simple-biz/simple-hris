@@ -35,6 +35,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   const [focusRatesEmail, setFocusRatesEmail] = useState<string | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
   const [featurePerms, setFeaturePerms] = useState<FeaturePermissionsMap>({});
+  const [permsLoaded, setPermsLoaded] = useState(false);
   const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -62,6 +63,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
     if (!e) {
       setRoles([]);
       setFeaturePerms({});
+      setPermsLoaded(false);
       return;
     }
     let cancelled = false;
@@ -88,6 +90,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       if (cancelled) return;
       setRoles(r);
       setFeaturePerms(p);
+      setPermsLoaded(true);
     });
     return () => {
       cancelled = true;
@@ -127,10 +130,15 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   }, [mobileNavOpen]);
 
   useEffect(() => {
+    // Wait for the roles + feature-perms fetch to settle before gating —
+    // otherwise the initial render (empty perms) kicks every non-admin off
+    // the default 'overview' tab onto the fallback before their real
+    // permissions arrive.
+    if (!permsLoaded) return;
     if (!canAccessAccountingTabForUser(activeTab, roles, featurePerms)) {
       setActiveTab(allowedTabs[0] ?? 'payment-dispatch');
     }
-  }, [activeTab, allowedTabs, roles, featurePerms]);
+  }, [activeTab, allowedTabs, roles, featurePerms, permsLoaded]);
 
   const renderContent = () => {
     switch (activeTab) {

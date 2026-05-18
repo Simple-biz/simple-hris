@@ -116,7 +116,9 @@
       "Bash(grep -r \"off_boarded\" references/ --include=\"*.sql\" -l)",
       "Bash(npm uninstall *)",
       "Bash(pnpm)",
-      "Bash(yarn\")"
+      "Bash(yarn\")",
+      "Bash(SR_KEY=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM\" node *)",
+      "Bash(SR_KEY=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBdyc2NCIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM\" node *)"
     ]
   }
 }

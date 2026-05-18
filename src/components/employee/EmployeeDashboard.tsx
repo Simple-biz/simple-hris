@@ -1108,6 +1108,24 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
     return t <= endT;
   }, [pabMonthRange, selectedFile, manualFileSelect]);
 
+  /**
+   * Pure calendar check — true while today falls inside the displayed PAB
+   * period's Mon–end window, regardless of whether the user is viewing a
+   * specific weekly file. Used for status wording ("Still in Progress" vs
+   * "Not met") so the label tracks the real-world month, not the file view.
+   */
+  const isPabPeriodInProgressByCalendar = useMemo(() => {
+    if (!pabMonthRange) return false;
+    const today = new Date();
+    const t = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const endT = new Date(
+      pabMonthRange.end.getFullYear(),
+      pabMonthRange.end.getMonth(),
+      pabMonthRange.end.getDate(),
+    ).getTime();
+    return t <= endT;
+  }, [pabMonthRange]);
+
   /** Elapsed weekdays where hours were logged but fell below the 7h threshold — hard disqualifications. */
   const pabViolations = useMemo<PabCalendarDay[]>(() => {
     const days = pabCalendar?.flat() ?? [];
@@ -1299,6 +1317,36 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
     const t = salaryDate.getTime();
     return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
   }, [isTechnologyBonusActive, employeeStartDate, selectedFileWeek]);
+
+  /**
+   * Calendar-anchored "tech bonus pays this week" — independent of the
+   * selected file. Looks at today's Mon–Sun window: the salary Tuesday of
+   * this week pays for the prior pay-period Monday (thisWeekMon − 7). If
+   * that salary date is the 3rd-week tech date, return it for display.
+   */
+  const techBonusSalaryThisWeek = useMemo<Date | null>(() => {
+    if (!employeeStartDate) return null;
+    const eligibleFrom = new Date(
+      employeeStartDate.getFullYear(),
+      employeeStartDate.getMonth(),
+      employeeStartDate.getDate() + 30,
+    );
+    const today = new Date();
+    const dow = today.getDay();
+    const daysBackToMon = (dow + 6) % 7;
+    const thisWeekMon = new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysBackToMon);
+    const payPeriodMon = new Date(thisWeekMon.getFullYear(), thisWeekMon.getMonth(), thisWeekMon.getDate() - 7);
+    if (payPeriodMon.getTime() < eligibleFrom.getTime()) return null;
+    const salaryDate = new Date(payPeriodMon.getFullYear(), payPeriodMon.getMonth(), payPeriodMon.getDate() + 8);
+    const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
+    const fdow = first.getDay();
+    const daysForward = (8 - fdow) % 7;
+    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
+    const thirdMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
+    const fourthMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
+    const t = salaryDate.getTime();
+    return t >= thirdMon.getTime() && t < fourthMon.getTime() ? salaryDate : null;
+  }, [employeeStartDate]);
 
   /** 30-day service status for Tech Bonus eligibility (independent of week gating). */
   const techServiceStatus = useMemo<
@@ -1634,7 +1682,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
   const _greeting = _rawFirst.charAt(0).toUpperCase() + _rawFirst.slice(1);
 
   return (
-    <div className="box-border flex h-full min-h-0 flex-col gap-2 overflow-y-auto bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [@media(max-height:900px)]:gap-1.5 sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:overflow-hidden lg:py-3 dark:bg-none dark:bg-[#0d1117]">
+    <div className="box-border flex h-full min-h-0 flex-col gap-2 overflow-y-auto overscroll-y-contain bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 px-3 py-2 [scrollbar-gutter:stable] [@media(max-height:900px)]:gap-1.5 sm:px-4 sm:py-3 md:px-5 lg:gap-3 lg:py-3 dark:bg-none dark:bg-[#0d1117]">
       {/* ── Hero intro card ── */}
       <header className="relative shrink-0 overflow-hidden rounded-2xl border border-orange-200/80 bg-gradient-to-br from-orange-500 via-amber-500 to-zinc-900 px-5 py-6 text-white shadow-lg shadow-orange-500/20 dark:border-orange-900/50 dark:from-orange-600 dark:via-amber-800 dark:to-black sm:px-7">
         <style>{`
@@ -1847,7 +1895,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
         </div>
       </header>
 
-      <div className="flex min-w-0 flex-col gap-2 overflow-x-hidden pb-4 lg:min-h-0 lg:flex-1 lg:gap-3 lg:overflow-y-scroll lg:overscroll-y-contain lg:[scrollbar-gutter:stable]">
+      <div className="flex min-w-0 flex-col gap-2 overflow-x-hidden pb-4 lg:gap-3">
       {dataError && (
         <Card className="shrink-0 border-red-200 bg-red-50/50 dark:border-red-500/20 dark:bg-red-950/20">
           <CardContent className="flex items-center gap-3 py-3">
@@ -2107,7 +2155,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                     : perfectAttendanceBonusStatus === 'pending'
                       ? 'In progress'
                       : perfectAttendanceBonusStatus === 'not_eligible'
-                        ? 'Not met'
+                        ? (isPabPeriodInProgressByCalendar ? 'Still in Progress' : 'Not met')
                         : 'Unknown'}
                 </span>
               </div>
@@ -2121,9 +2169,11 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                       ? 'text-sky-700 dark:text-sky-300'
                       : techServiceStatus.state === 'pending'
                         ? 'text-amber-700 dark:text-amber-400'
-                        : isTechBonusNextWeek
-                          ? 'text-emerald-700 dark:text-emerald-400'
-                          : 'text-zinc-500 dark:text-zinc-500'
+                        : techBonusSalaryThisWeek
+                          ? 'text-sky-700 dark:text-sky-300'
+                          : isTechBonusNextWeek
+                            ? 'text-emerald-700 dark:text-emerald-400'
+                            : 'text-zinc-500 dark:text-zinc-500'
                   }`}
                 >
                   <span
@@ -2132,18 +2182,22 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                         ? 'bg-sky-500'
                         : techServiceStatus.state === 'pending'
                           ? 'bg-amber-500'
-                          : isTechBonusNextWeek
-                            ? 'bg-emerald-500'
-                            : 'bg-zinc-400'
+                          : techBonusSalaryThisWeek
+                            ? 'bg-sky-500'
+                            : isTechBonusNextWeek
+                              ? 'bg-emerald-500'
+                              : 'bg-zinc-400'
                     }`}
                   />
                   {isTechnologyBonusActive
                     ? 'Unlocked'
                     : techServiceStatus.state === 'pending'
                       ? `${techServiceStatus.daysRemaining}d to go`
-                      : isTechBonusNextWeek
-                        ? 'Unlocked Next Week'
-                        : 'Locked'}
+                      : techBonusSalaryThisWeek
+                        ? 'Paid this Week'
+                        : isTechBonusNextWeek
+                          ? 'Unlocked Next Week'
+                          : 'Locked'}
                 </span>
               </div>
               {isMesaMember && (
@@ -2192,7 +2246,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                   </div>
                 ) : (
                   <div className="flex min-h-0 flex-1 flex-col gap-0">
-                    <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-clip [-webkit-overflow-scrolling:touch] pr-0.5 sm:space-y-2 lg:space-y-1.5 lg:pr-2">
+                    <div className="flex-1 space-y-1.5 overflow-x-clip pr-0.5 sm:space-y-2 lg:space-y-1.5 lg:pr-2">
                     {dailyHours.map((day) => {
                       const hours = day.seconds / 3600;
                       const pct = maxBarSeconds > 0 ? (day.seconds / maxBarSeconds) * 100 : 0;
@@ -2274,7 +2328,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                 a tight inner scroll. */}
             <Card
               size="sm"
-              className="flex min-h-[16rem] flex-1 flex-col overflow-hidden rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 sm:min-h-[16rem] lg:min-h-[16rem] lg:rounded-xl lg:shadow-sm lg:ring-0"
+              className="flex flex-1 flex-col rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 lg:min-h-[16rem] lg:rounded-xl lg:shadow-sm lg:ring-0"
             >
               <CardHeader className="shrink-0 pb-2 pt-3">
                 <div className="flex items-start justify-between gap-2">
@@ -2346,7 +2400,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                 ) : pabCalendar && pabCalendar.length > 0 ? (
                   /* -------- PAB Calendar Grid -------- */
                   <div className="flex min-h-0 flex-1 flex-col gap-0">
-                    <div className="min-h-0 flex-1 overflow-y-scroll overflow-x-clip pr-1 [scrollbar-gutter:stable]">
+                    <div className="flex-1 overflow-x-clip pr-1">
                       {/* Column headers */}
                       <div className="sticky top-0 z-10 mb-0.5 grid grid-cols-[1.25rem_repeat(5,1fr)] gap-0.5 bg-white/95 pb-0.5 dark:bg-[#0d1117]/95">
                         <div />
@@ -2411,8 +2465,23 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                               end.setDate(end.getDate() + 6);
                               return todayMid.getTime() >= start.getTime() && todayMid.getTime() <= end.getTime();
                             })();
+                            // Previous Mon–Sun week — empty cells here are awaiting
+                            // Hubstaff upload / payroll processing, not a real miss.
+                            const isPreviousWeek = (() => {
+                              const mon = week[0]?.date;
+                              if (!mon) return false;
+                              const start = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate());
+                              const end = new Date(start);
+                              end.setDate(end.getDate() + 6);
+                              const nextMon = new Date(end);
+                              nextMon.setDate(nextMon.getDate() + 1);
+                              const nextSun = new Date(nextMon);
+                              nextSun.setDate(nextSun.getDate() + 6);
+                              return todayMid.getTime() >= nextMon.getTime() && todayMid.getTime() <= nextSun.getTime();
+                            })();
                             const noMeaningfulData = !day.hasData || day.seconds === 0;
                             const stillInProgress = isCurrentWeek && noMeaningfulData && !isFutureOrToday;
+                            const stillProcessing = isPreviousWeek && noMeaningfulData && !dispute;
 
                             const canDispute = day.hasData && !day.passes && !dispute && !isFutureOrToday && !isCurrentWeek;
                             const cellClickable = canDispute || !!dispute;
@@ -2444,6 +2513,9 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                             } else if (stillInProgress) {
                               cellBorder =
                                 'border-orange-300 bg-orange-50 dark:border-orange-700/60 dark:bg-orange-950/30';
+                            } else if (stillProcessing) {
+                              cellBorder =
+                                'border-sky-300 bg-sky-50 dark:border-sky-700/60 dark:bg-sky-950/30';
                             } else if (isFutureOrToday || !day.hasData) {
                               cellBorder =
                                 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40';
@@ -2467,7 +2539,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                               <div
                                 key={di}
                                 className={`relative flex h-10 flex-col overflow-hidden rounded-md border transition-all duration-300 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltipSuffix}`}
+                                title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltipSuffix}`}
                                 style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
                                 onClick={cellClickable ? () => {
                                   onNavigateToDisputes?.({ date: dayIso, seconds: day.seconds });
@@ -2496,6 +2568,13 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
                                       />
                                       <span className="text-[7px] font-semibold uppercase tracking-wider text-orange-400 dark:text-orange-300">
                                         In Progress
+                                      </span>
+                                    </div>
+                                  ) : stillProcessing ? (
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      <Loader2 className="h-3 w-3 animate-spin text-sky-500 dark:text-sky-400" />
+                                      <span className="text-[7px] font-semibold uppercase tracking-wider text-sky-600 dark:text-sky-400">
+                                        Processing
                                       </span>
                                     </div>
                                   ) : (

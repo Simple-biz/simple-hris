@@ -4,6 +4,19 @@ import type { HslAgentRow } from "@/lib/google-sheets/fetch-hsl-sheet";
 const HSL_AGENTS_TABLE = "hsl_team_members";
 const HSL_UPLOADS_TABLE = "hsl_agent_uploads";
 
+/** Department string written to `employee_hourly_rates."Department"` when this
+ *  sync mirrors HSL rates into the payout table. Canonical going forward; the
+ *  Payroll Rates sync filters out both this and the legacy "HSL" tag so the
+ *  Hogan sheet is the sole source of HSL/Hogan Smith Law rates. */
+const HSL_RATES_DEPARTMENT = "Hogan Smith Law";
+
+function getRatesTableName(): string {
+  return (
+    process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() ||
+    "employee_hourly_rates"
+  );
+}
+
 function requireServiceRole(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
@@ -176,6 +189,14 @@ export async function replaceHslAgentsFromRows(
 
   await promoteHslUploadToCurrent(supabase, uploadId);
 
+  // Bridge HSL rates into `employee_hourly_rates` so the payout reads them.
+  // Without this, an HSL employee whose rate is set on the Hogan sheet but
+  // not on the legacy Payroll Rates sheet shows ₱0 in PayrollWizard. The
+  // Hogan sheet is now the authoritative source for HSL rates; the Payroll
+  // Rates sync (rates-upload-db.ts) filters out HSL/Hogan Smith Law rows so
+  // it never overwrites these values.
+  await mirrorHslRatesToEmployeeHourlyRates(supabase, finalRows);
+
   return {
     rowCount: inserted + updated,
     uploadId,
@@ -183,6 +204,107 @@ export async function replaceHslAgentsFromRows(
     updated,
     duplicatesInInput,
   };
+}
+
+/**
+ * Upsert HSL rate rows into `employee_hourly_rates`. Only touches rate-related
+ * columns (`Regular Rate`, `OT Rate`, `Department`) plus the email keys —
+ * bank/dispatch fields on existing rows are left as-is.
+ *
+ * On INSERT, `Personal Email` is null (the Hogan sheet only carries work
+ * emails). The consumer indexes by both work and personal email, so this is
+ * fine for payout lookups — Hubstaff matches by work email anyway.
+ */
+async function mirrorHslRatesToEmployeeHourlyRates(
+  supabase: SupabaseClient,
+  rows: HslAgentRow[],
+): Promise<void> {
+  const ratesTable = getRatesTableName();
+
+  // Only rows with a usable rate. Without a rate we'd be no-oping anyway.
+  const usable = rows.filter(
+    (r) => r.email && (r.hourlyRate != null || r.otRate != null),
+  );
+  if (usable.length === 0) return;
+
+  // Index existing rows so we know whether to UPDATE or INSERT.
+  // PostgREST silently caps at 1000 rows per request — paginate so employees
+  // beyond row 1000 (like the HSL folks) are actually found and don't get
+  // a duplicate INSERT every time the Hogan sync runs.
+  const existingByEmail = new Map<string, unknown>();
+  {
+    const PAGE = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from(ratesTable)
+        .select('id, "Work Email"')
+        .not('"Work Email"', "is", null)
+        .range(from, from + PAGE - 1);
+      if (error) {
+        throw new Error(
+          `Could not read ${ratesTable} for HSL rate mirror: ${error.message}`,
+        );
+      }
+      const page = (data ?? []) as { id: unknown; "Work Email": string | null }[];
+      for (const r of page) {
+        const em = (r["Work Email"] ?? "").trim().toLowerCase();
+        // First occurrence wins — view ordering uses `id DESC` later, so the
+        // highest-id row is what consumers actually read. Here we just need
+        // ANY existing id per email to anchor the UPDATE.
+        if (em && !existingByEmail.has(em)) existingByEmail.set(em, r.id);
+      }
+      if (page.length < PAGE) break;
+      from += PAGE;
+    }
+  }
+
+  const updateOps: { id: unknown; payload: Record<string, string | null> }[] = [];
+  const rowsToInsert: Record<string, string | null>[] = [];
+
+  for (const r of usable) {
+    const payload: Record<string, string | null> = {
+      "Regular Rate": r.hourlyRate != null ? String(r.hourlyRate) : null,
+      "OT Rate": r.otRate != null ? String(r.otRate) : null,
+      "Department": HSL_RATES_DEPARTMENT,
+    };
+    const existingId = existingByEmail.get(r.email);
+    if (existingId !== undefined) {
+      updateOps.push({ id: existingId, payload });
+    } else {
+      rowsToInsert.push({ "Work Email": r.email, ...payload });
+    }
+  }
+
+  if (updateOps.length > 0) {
+    const CHUNK = 20;
+    for (let i = 0; i < updateOps.length; i += CHUNK) {
+      const batch = updateOps.slice(i, i + CHUNK);
+      await Promise.all(
+        batch.map(async ({ id, payload }) => {
+          const { error } = await supabase.from(ratesTable).update(payload).eq("id", id);
+          if (error) {
+            throw new Error(
+              `HSL rate mirror update failed for id ${String(id)}: ${error.message}`,
+            );
+          }
+        }),
+      );
+    }
+  }
+
+  if (rowsToInsert.length > 0) {
+    const BATCH = 50;
+    for (let i = 0; i < rowsToInsert.length; i += BATCH) {
+      const batch = rowsToInsert.slice(i, i + BATCH);
+      const { error } = await supabase.from(ratesTable).insert(batch);
+      if (error) {
+        throw new Error(
+          `HSL rate mirror insert failed (batch ${i}–${i + batch.length}): ${error.message}`,
+        );
+      }
+    }
+  }
 }
 
 /** Newest-first list of HSL upload batches — for the Files tab. */
