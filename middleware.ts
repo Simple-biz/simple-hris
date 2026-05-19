@@ -24,6 +24,8 @@ const PUBLIC_PATHS = new Set<string>([
 
 const PUBLIC_PREFIXES = [
   '/api/auth/', // NextAuth handler
+  '/onboarding/', // token-gated public onboarding form for new hires
+  '/api/onboarding/', // its corresponding submit + upload endpoints
 ];
 
 export async function middleware(req: NextRequest) {

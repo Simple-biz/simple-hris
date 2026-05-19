@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import React from 'react';
 import AddPersonDialog from './AddPersonDialog';
 import DeptFilter from './DeptFilter';
+import HrOnboardingForm from './HrOnboardingForm';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +41,7 @@ import type {
 } from '@/lib/supabase/hr-pending-employees';
 
 type TabFilter = 'pending' | 'ready' | 'promoted' | 'cancelled' | 'all';
+type SubTab = 'pending-hires' | 'onboarding-form';
 
 const STATUS_LABEL: Record<HrPendingStatus, string> = {
   pending_work_email: 'Awaiting work email',
@@ -71,6 +73,7 @@ function formatDate(iso: string | null): string {
 }
 
 export default function HrOnboarding() {
+  const [subTab, setSubTab] = useState<SubTab>('pending-hires');
   const [pending, setPending] = useState<HrPendingEmployeeRow[]>([]);
   const [pendingLoading, setPendingLoading] = useState(true);
 
@@ -262,6 +265,24 @@ export default function HrOnboarding() {
         </div>
       </header>
 
+      {/* Sub-tabs */}
+      <div className="-mb-2 flex flex-wrap items-center gap-1.5 border-b border-emerald-100/60 pb-2 dark:border-emerald-900/40">
+        <SubTabPill
+          label="Pending Hires"
+          active={subTab === 'pending-hires'}
+          onClick={() => setSubTab('pending-hires')}
+        />
+        <SubTabPill
+          label="Onboarding Form"
+          active={subTab === 'onboarding-form'}
+          onClick={() => setSubTab('onboarding-form')}
+        />
+      </div>
+
+      {subTab === 'onboarding-form' ? (
+        <HrOnboardingForm />
+      ) : (
+      <>
       {/* Stat tiles */}
       <section className="grid gap-3 sm:grid-cols-3" aria-label="Pending hire counts">
         <StatTile
@@ -519,6 +540,8 @@ export default function HrOnboarding() {
           )}
         </CardContent>
       </Card>
+      </>
+      )}
 
       {/* Add Person dialog */}
       <AddPersonDialog
@@ -811,6 +834,32 @@ function PipelinePieChart({
         })}
       </div>
     </div>
+  );
+}
+
+function SubTabPill({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
+        active
+          ? 'bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25'
+          : 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
+      )}
+    >
+      {label}
+    </button>
   );
 }
 

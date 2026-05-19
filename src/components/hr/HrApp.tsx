@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AppFooter from '@/components/AppFooter';
 import { AnimatePresence, motion } from 'motion/react';
@@ -394,7 +394,7 @@ function OverviewEditorialSection({
           <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-emerald-700/80 dark:text-emerald-400/70">
             Workforce · Issue No. {String(new Date().getFullYear()).slice(-2)}/{String(new Date().getMonth() + 1).padStart(2, '0')}
           </p>
-          <h2 className="mt-1 font-serif text-2xl font-semibold leading-tight tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-3xl">
+          <h2 className="mt-1 text-2xl font-semibold leading-tight tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-3xl">
             The people behind the payroll.
           </h2>
         </div>
@@ -448,43 +448,99 @@ function HeadcountStoryCard({
   totalActive: number;
   netDelta: number;
   newcomersThisMonth: number;
-  points: { label: string; value: number }[];
+  points: { label: string; value: number; year: number; month: number }[];
 }) {
-  // Build SVG path for the area chart
-  const W = 600;
-  const H = 140;
-  const PAD_X = 4;
-  const PAD_TOP = 10;
-  const PAD_BOTTOM = 22;
-  const innerW = W - PAD_X * 2;
+  // Chart viewBox — proper aspect ratio so dots stay circular and lines read
+  // correctly on any container width. Y-axis tick column is real space, not
+  // negative margins. The chart fills the card's remaining height via flex.
+  const W = 800;
+  const H = 280;
+  const AXIS_W = 38;      // left gutter for Y-axis tick labels
+  const PAD_TOP = 18;
+  const PAD_BOTTOM = 28;  // room for month labels
+  const PAD_RIGHT = 14;
+  const innerX0 = AXIS_W;
+  const innerW = W - AXIS_W - PAD_RIGHT;
   const innerH = H - PAD_TOP - PAD_BOTTOM;
-  const max = Math.max(1, ...points.map((p) => p.value));
-  const min = Math.min(...points.map((p) => p.value), max - 1);
-  const range = Math.max(1, max - min);
-  const stepX = points.length > 1 ? innerW / (points.length - 1) : innerW;
 
-  const coords = points.map((p, i) => {
-    const x = PAD_X + i * stepX;
-    const y = PAD_TOP + innerH - ((p.value - min) / range) * innerH;
-    return { x, y, value: p.value, label: p.label };
-  });
+  const values = points.map((p) => p.value);
+  const max = Math.max(1, ...values);
+  const min = Math.min(...values, max - 1);
+  // Pad the range a little so the line never hugs the top/bottom edges.
+  const span = Math.max(1, max - min);
+  const pad = Math.max(1, Math.round(span * 0.18));
+  const yMin = Math.max(0, min - pad);
+  const yMax = max + pad;
+  const yRange = Math.max(1, yMax - yMin);
+
+  const stepX = points.length > 1 ? innerW / (points.length - 1) : innerW;
+  const projectY = (v: number) => PAD_TOP + innerH - ((v - yMin) / yRange) * innerH;
+
+  const coords = points.map((p, i) => ({
+    x: innerX0 + i * stepX,
+    y: projectY(p.value),
+    value: p.value,
+    label: p.label,
+    year: p.year,
+    month: p.month,
+  }));
   const linePath = coords.map((c, i) => (i === 0 ? `M${c.x},${c.y}` : `L${c.x},${c.y}`)).join(' ');
   const areaPath = coords.length > 0
     ? `${linePath} L${coords[coords.length - 1].x},${PAD_TOP + innerH} L${coords[0].x},${PAD_TOP + innerH} Z`
     : '';
 
+  // Y-axis ticks — 4 evenly-spaced labels covering yMin..yMax.
+  const yTicks = useMemo(() => {
+    const n = 4;
+    const arr: { value: number; y: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      const v = Math.round(yMin + (yRange * (n - 1 - i)) / (n - 1));
+      arr.push({ value: v, y: projectY(v) });
+    }
+    return arr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yMin, yMax, yRange]);
+
   const positive = netDelta >= 0;
 
+  // Interactivity — hovered point + month-over-month delta for the tooltip.
+  const chartRef = useRef<HTMLDivElement | null>(null);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const onMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (coords.length === 0 || !chartRef.current) return;
+    const rect = chartRef.current.getBoundingClientRect();
+    const relX = e.clientX - rect.left;
+    const vbX = (relX / rect.width) * W;
+    let bestI = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const d = Math.abs(coords[i].x - vbX);
+      if (d < bestD) { bestD = d; bestI = i; }
+    }
+    setHoverIdx(bestI);
+  }, [coords]);
+  const onMouseLeave = useCallback(() => setHoverIdx(null), []);
+
+  const hovered = hoverIdx != null ? coords[hoverIdx] : null;
+  const hoverPrev = hoverIdx != null && hoverIdx > 0 ? coords[hoverIdx - 1] : null;
+  const hoverDelta = hovered && hoverPrev ? hovered.value - hoverPrev.value : null;
+  // Tooltip position in % of chart container so it scales with width AND height.
+  const tooltipLeftPct = hovered ? (hovered.x / W) * 100 : 0;
+  const tooltipTopPct = hovered ? (hovered.y / H) * 100 : 0;
+  // Tooltip nudges itself away from the edges so it never clips.
+  const tooltipAlign = hovered ? (hovered.x < W * 0.18 ? 'start' : hovered.x > W * 0.82 ? 'end' : 'center') : 'center';
+  const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
   return (
-    <div className="relative h-full overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
+    <div className="relative flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
       {/* Top label strip */}
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex shrink-0 items-start justify-between gap-3">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
             Headcount · trailing 12 mo
           </p>
           <div className="mt-2 flex items-baseline gap-3">
-            <p className="font-serif text-5xl font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-50 sm:text-6xl">
+            <p className="text-5xl font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-50 sm:text-6xl">
               {loading ? <span className="inline-block h-12 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" /> : totalActive}
             </p>
             <span
@@ -507,75 +563,171 @@ function HeadcountStoryCard({
         </div>
       </div>
 
-      {/* Chart */}
-      <div className="mt-5 -mx-1">
+      {/* Chart fills the remaining card height */}
+      <div
+        ref={chartRef}
+        className="relative mt-5 min-h-[220px] flex-1 cursor-crosshair"
+        onMouseMove={onMouseMove}
+        onMouseLeave={onMouseLeave}
+      >
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          className="h-[150px] w-full"
-          preserveAspectRatio="none"
+          className="h-full w-full"
+          preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="Headcount growth over the trailing 12 months"
         >
           <defs>
             <linearGradient id="hcGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="rgb(16, 185, 129)" stopOpacity="0.32" />
+              <stop offset="0%" stopColor="rgb(16, 185, 129)" stopOpacity="0.34" />
               <stop offset="100%" stopColor="rgb(16, 185, 129)" stopOpacity="0" />
             </linearGradient>
           </defs>
-          {/* Faint baseline guides */}
-          {[0.25, 0.5, 0.75].map((t) => (
-            <line
-              key={t}
-              x1={PAD_X}
-              x2={W - PAD_X}
-              y1={PAD_TOP + innerH * t}
-              y2={PAD_TOP + innerH * t}
-              stroke="currentColor"
-              strokeOpacity={0.06}
-              strokeDasharray="2 4"
-              className="text-zinc-900 dark:text-zinc-100"
-            />
+
+          {/* Y-axis horizontal grid + tick labels */}
+          {yTicks.map((t, i) => (
+            <g key={i}>
+              <line
+                x1={innerX0}
+                x2={W - PAD_RIGHT}
+                y1={t.y}
+                y2={t.y}
+                stroke="currentColor"
+                strokeOpacity={i === yTicks.length - 1 ? 0.18 : 0.07}
+                strokeDasharray={i === yTicks.length - 1 ? '0' : '2 4'}
+                className="text-zinc-900 dark:text-zinc-100"
+              />
+              <text
+                x={innerX0 - 8}
+                y={t.y + 3}
+                textAnchor="end"
+                fontSize={10}
+                fill="currentColor"
+                className="font-mono tabular-nums text-zinc-400 dark:text-zinc-500"
+              >
+                {t.value}
+              </text>
+            </g>
           ))}
+
           {areaPath && <path d={areaPath} fill="url(#hcGradient)" />}
           {linePath && (
-            <path d={linePath} fill="none" stroke="rgb(5, 150, 105)" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+            <path d={linePath} fill="none" stroke="rgb(5, 150, 105)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
           )}
-          {/* Endpoint dot */}
-          {coords.length > 0 && (
-            <g>
+
+          {/* Quiet dots at every data point — readable density without noise */}
+          {coords.map((c, i) => {
+            const isHovered = hoverIdx === i;
+            const isEnd = i === coords.length - 1;
+            const r = isHovered ? 5 : isEnd ? 3.5 : 2.4;
+            return (
               <circle
-                cx={coords[coords.length - 1].x}
-                cy={coords[coords.length - 1].y}
-                r={3.5}
-                fill="rgb(5, 150, 105)"
+                key={i}
+                cx={c.x}
+                cy={c.y}
+                r={r}
+                fill={isHovered ? 'rgb(5, 150, 105)' : isEnd ? 'rgb(5, 150, 105)' : 'white'}
+                stroke="rgb(5, 150, 105)"
+                strokeWidth={isHovered ? 1.5 : 1.25}
+                className="transition-all duration-150"
+              />
+            );
+          })}
+
+          {/* Hover guide line + halo */}
+          {hovered && (
+            <g>
+              <line
+                x1={hovered.x}
+                x2={hovered.x}
+                y1={PAD_TOP}
+                y2={PAD_TOP + innerH}
+                stroke="rgb(5, 150, 105)"
+                strokeOpacity={0.4}
+                strokeDasharray="3 4"
+                strokeWidth={1}
               />
               <circle
-                cx={coords[coords.length - 1].x}
-                cy={coords[coords.length - 1].y}
-                r={6.5}
+                cx={hovered.x}
+                cy={hovered.y}
+                r={11}
                 fill="rgb(5, 150, 105)"
-                fillOpacity={0.15}
+                fillOpacity={0.16}
               />
             </g>
           )}
-          {/* Month labels along the bottom */}
+
+          {/* Month labels — every month, all visible since we have the space */}
           {coords.map((c, i) => {
-            const showLabel = points.length <= 12 || i % 2 === 0;
-            return showLabel ? (
+            const isHovered = hoverIdx === i;
+            return (
               <text
                 key={i}
                 x={c.x}
-                y={H - 6}
+                y={H - 8}
                 textAnchor="middle"
-                fontSize={10}
+                fontSize={11}
                 fill="currentColor"
-                className="font-mono text-zinc-400 dark:text-zinc-500"
+                className={cn(
+                  'font-mono transition-colors',
+                  isHovered
+                    ? 'fill-emerald-700 font-semibold dark:fill-emerald-400'
+                    : 'text-zinc-400 dark:text-zinc-500',
+                )}
               >
                 {c.label}
               </text>
-            ) : null;
+            );
           })}
         </svg>
+
+        {/* Tooltip — absolute HTML, edge-aware so it never clips */}
+        {hovered && (
+          <div
+            className="pointer-events-none absolute z-10 select-none"
+            style={{
+              left: `${tooltipLeftPct}%`,
+              top: `${tooltipTopPct}%`,
+              transform:
+                tooltipAlign === 'start'
+                  ? 'translate(0, 0)'
+                  : tooltipAlign === 'end'
+                    ? 'translate(-100%, 0)'
+                    : 'translate(-50%, 0)',
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 4, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
+              className="-translate-y-[calc(100%+16px)] whitespace-nowrap rounded-lg border border-zinc-200/80 bg-white/95 px-3 py-2 shadow-lg backdrop-blur-sm dark:border-zinc-700/60 dark:bg-zinc-900/95"
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-400">
+                {MONTH_FULL[hovered.month]} {hovered.year}
+              </p>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-xl font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
+                  {hovered.value}
+                </span>
+                <span className="text-[10px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                  people
+                </span>
+                {hoverDelta != null && hoverDelta !== 0 && (
+                  <span
+                    className={cn(
+                      'ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
+                      hoverDelta > 0
+                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                        : 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300',
+                    )}
+                  >
+                    {hoverDelta > 0 ? '+' : ''}{hoverDelta}
+                  </span>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -600,7 +752,7 @@ function TenureCohortCard({
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
             Tenure cohorts
           </p>
-          <p className="mt-1 font-serif text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+          <p className="mt-1 text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
             {loading ? '—' : `${totalKnown} of ${totalActive}`}
             <span className="ml-1 text-xs font-normal text-zinc-400">with known start dates</span>
           </p>
@@ -634,7 +786,7 @@ function TenureCohortCard({
                 {c.label}
               </p>
             </div>
-            <p className="mt-1.5 font-serif text-2xl font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-50">
+            <p className="mt-1.5 text-2xl font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-50">
               {c.count}
             </p>
             <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-500">
@@ -664,7 +816,7 @@ function RecentHiresCard({
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
             Recent arrivals · last 90 days
           </p>
-          <p className="mt-1 font-serif text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+          <p className="mt-1 text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
             {loading ? '…' : hires.length === 0 ? 'No new hires yet.' : `${hires.length} ${hires.length === 1 ? 'person' : 'people'} joined.`}
           </p>
         </div>
@@ -697,7 +849,7 @@ function RecentHiresCard({
             >
               {/* Avatar (initials only — keeps the editorial vibe consistent) */}
               <div className="relative shrink-0">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-emerald-100 to-teal-200 font-serif text-sm font-bold text-emerald-900 ring-2 ring-white dark:from-emerald-900/50 dark:to-teal-900/50 dark:text-emerald-200 dark:ring-zinc-950">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-emerald-100 to-teal-200 text-sm font-bold text-emerald-900 ring-2 ring-white dark:from-emerald-900/50 dark:to-teal-900/50 dark:text-emerald-200 dark:ring-zinc-950">
                   {initialsFromName(row.name)}
                 </div>
                 {days <= 7 && (
@@ -718,7 +870,7 @@ function RecentHiresCard({
                 </p>
               </div>
               <div className="shrink-0 text-right">
-                <p className="font-serif text-base font-bold tabular-nums leading-none text-zinc-800 dark:text-zinc-200">
+                <p className="text-base font-bold tabular-nums leading-none text-zinc-800 dark:text-zinc-200">
                   {days === 0 ? 'today' : `${days}d`}
                 </p>
                 <p className="mt-0.5 text-[10px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
@@ -755,7 +907,7 @@ function DepartmentBarsCard({
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
             Departments at a glance
           </p>
-          <p className="mt-1 font-serif text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+          <p className="mt-1 text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
             {loading ? '…' : `Top ${Math.min(8, deptStats.length)} of ${deptStats.length}`}
           </p>
         </div>
