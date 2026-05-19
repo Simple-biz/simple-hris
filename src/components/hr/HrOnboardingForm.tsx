@@ -35,8 +35,6 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
-type HubstaffProject = { id: string | number; name: string };
-
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
@@ -417,20 +415,22 @@ function GenerateLinkDialog({
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const [departments, setDepartments] = useState<HubstaffProject[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
   const [deptsLoading, setDeptsLoading] = useState(false);
 
   // Pull the department list the moment the modal opens so the dropdown
   // doesn't sit on "Loading…" while the user is already typing.
+  // Reads from the main DB's active_employees table — no secondary-Supabase
+  // env vars required, so this works on a fresh local checkout too.
   useEffect(() => {
     if (!open) return;
     if (departments.length > 0 || deptsLoading) return;
     setDeptsLoading(true);
-    fetch('/api/secondary/hubstaff-projects', { cache: 'no-store' })
+    fetch('/api/departments', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { projects?: HubstaffProject[]; error?: string }) => {
+      .then((j: { departments?: string[]; error?: string }) => {
         if (j.error) throw new Error(j.error);
-        setDepartments(j.projects ?? []);
+        setDepartments(j.departments ?? []);
       })
       .catch((e) =>
         toast.error(e instanceof Error ? e.message : 'Could not load departments'),
@@ -575,7 +575,7 @@ function DepartmentSelect({
 }: {
   value: string;
   onChange: (v: string) => void;
-  departments: HubstaffProject[];
+  departments: string[];
   loading: boolean;
 }) {
   const [query, setQuery] = useState('');
@@ -583,7 +583,7 @@ function DepartmentSelect({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return departments;
-    return departments.filter((d) => d.name.toLowerCase().includes(q));
+    return departments.filter((d) => d.toLowerCase().includes(q));
   }, [departments, query]);
 
   return (
@@ -625,7 +625,7 @@ function DepartmentSelect({
                     e.stopPropagation();
                     if (e.key === 'Enter' && filtered.length === 1) {
                       e.preventDefault();
-                      onChange(filtered[0].name);
+                      onChange(filtered[0]);
                     }
                   }}
                   placeholder="Search departments…"
@@ -646,8 +646,8 @@ function DepartmentSelect({
               ) : (
                 filtered.map((d) => (
                   <SelectPrimitive.Item
-                    key={String(d.id)}
-                    value={d.name}
+                    key={d}
+                    value={d}
                     className={cn(
                       'relative flex w-full cursor-default items-center justify-between rounded-lg px-3 py-2 text-sm outline-none select-none',
                       'focus:bg-emerald-50 focus:text-emerald-900 dark:focus:bg-emerald-950/50 dark:focus:text-emerald-100',
@@ -655,7 +655,7 @@ function DepartmentSelect({
                     )}
                   >
                     <SelectPrimitive.ItemText className="flex-1 truncate pr-2">
-                      {d.name}
+                      {d}
                     </SelectPrimitive.ItemText>
                     <SelectPrimitive.ItemIndicator className="flex h-4 w-4 items-center justify-center">
                       <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />
