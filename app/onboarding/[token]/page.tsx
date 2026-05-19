@@ -819,7 +819,8 @@ function Step5Payment({
               onChange={(e) => update('bank_full_address', e.target.value)}
               placeholder="123 Main St, Quezon City, Metro Manila 1100"
               rows={2}
-              className="w-full rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:border-input dark:bg-input/30"
+              style={{ color: "#000" }}
+              className="w-full rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-sm !text-black outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:border-input dark:bg-input/30"
             />
           </Field>
 

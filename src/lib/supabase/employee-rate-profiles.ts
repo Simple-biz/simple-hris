@@ -1210,8 +1210,31 @@ export async function getEmployeeRateProfileByEmail(
 
   const sources: RawRow[] = [mergedRates, master ?? {}];
   const rawFields = mergeSourcesDeduped(sources);
-  const { fields, department, organization, primaryEmail, workEmail, personalEmail } =
+  let { fields, department, organization, primaryEmail, workEmail, personalEmail } =
     finalizeProfileFields(rawFields);
+
+  // Fallback: rates + master sometimes omit Personal Email (e.g. Accounting
+  // Team rows seeded without it), but `employee_ids` carries it for payroll
+  // routing. Probe there by any known email so the read-only modal can render
+  // it alongside the rest of the profile.
+  if (!personalEmail) {
+    const probe = new Set<string>(allEmails);
+    const w = normEmail(workEmail);
+    if (w) probe.add(w);
+    if (probe.size > 0) {
+      const list = [...probe].map((e) => `"${e}"`).join(",");
+      const { data: idRows } = await supabase
+        .from("employee_ids")
+        .select("work_email, personal_email")
+        .or([`work_email.in.(${list})`, `personal_email.in.(${list})`].join(","));
+      const hit = (idRows ?? []).find(
+        (r) => !!(r as { personal_email?: string | null }).personal_email,
+      ) as { personal_email?: string | null } | undefined;
+      const fromIds = normEmail(hit?.personal_email ?? null);
+      if (fromIds) personalEmail = fromIds;
+    }
+  }
+
   const displayName = resolveDisplayName(mergedRates, master);
 
   const id = rateGroupKey(mergedRates, 0, master);

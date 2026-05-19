@@ -11,22 +11,15 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export const ONBOARDING_WEBHOOK_KEY = "hr.onboarding_webhook_url";
-const ONBOARDING_TEMPLATES_BUCKET = "hr-onboarding-templates";
-const W8BEN_FILENAME = "FW8BEN.pdf";
 
 /**
- * Build the public URL for the blank W-8BEN PDF. Prefers the
- * `hr-onboarding-templates` Supabase bucket (single source of truth, HR can
- * swap the PDF without a redeploy) and falls back to the in-app copy at
- * /forms/FW8BEN.pdf so local dev still works before the bucket is seeded.
+ * Canonical W-8BEN form, hosted by the IRS. Linking directly means recipients
+ * always get the latest revision and we don't have to keep a copy in sync.
+ * Both the in-email "Download" link and the `attachments[0].url` shipped to
+ * n8n point here, so n8n's HTTP Request node fetches the binary straight
+ * from irs.gov when attaching to the outgoing email.
  */
-function resolveW8BenUrl(requestOrigin: string): string {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  if (supabaseUrl) {
-    return `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/public/${ONBOARDING_TEMPLATES_BUCKET}/${W8BEN_FILENAME}`;
-  }
-  return `${requestOrigin}/forms/${W8BEN_FILENAME}`;
-}
+const W8BEN_URL = "https://www.irs.gov/pub/irs-pdf/fw8ben.pdf";
 
 /**
  * POST /api/hr/onboarding-submissions/[id]/send
@@ -106,7 +99,7 @@ Let me know if you hit any issues.
 
 — The Simple.biz Team`;
 
-  const w8benUrl = resolveW8BenUrl(origin);
+  const w8benUrl = W8BEN_URL;
 
   const subject = overrideSubject ?? "Welcome to Simple.biz — your onboarding form";
   const plainBody = overrideBody ?? defaultBody;

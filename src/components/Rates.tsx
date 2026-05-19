@@ -2790,6 +2790,28 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           </motion.div>
                         );
                       })()}
+                      {/* Personal Email — emails are stripped from `fields` by splitProfileMeta, so surface it here. */}
+                      {activeProfile.personalEmail ? (
+                        <motion.div
+                          key={`${activeProfile.id}-personal-email`}
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.2, ease: dialogEase, delay: 0 }}
+                          className="border-b border-zinc-100 py-3.5 dark:border-zinc-800/90"
+                        >
+                          <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                            Personal Email
+                          </dt>
+                          <dd className="mt-1.5 max-w-full break-words text-sm leading-relaxed text-zinc-900 dark:text-zinc-100">
+                            <a
+                              href={`mailto:${activeProfile.personalEmail}`}
+                              className="text-zinc-900 hover:text-orange-600 hover:underline dark:text-zinc-100 dark:hover:text-orange-400"
+                            >
+                              {activeProfile.personalEmail}
+                            </a>
+                          </dd>
+                        </motion.div>
+                      ) : null}
                       {activeProfile.fields.filter(({ key }) => !isHiddenField(key)).map(({ key, value }, i) => (
                         <motion.div
                           key={`${activeProfile.id}-${key}`}

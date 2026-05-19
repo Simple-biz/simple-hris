@@ -18,6 +18,7 @@ import {
   Search,
   Send,
   Sparkles,
+  Trash2,
   User,
 } from 'lucide-react';
 import { Select as SelectPrimitive } from '@base-ui/react/select';
@@ -127,6 +128,7 @@ export default function HrOnboardingForm() {
   const [linkCreated, setLinkCreated] = useState<SubmissionRow | null>(null);
   const [viewRow, setViewRow] = useState<SubmissionRow | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<SubmissionRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SubmissionRow | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -178,6 +180,24 @@ export default function HrOnboardingForm() {
     } finally {
       setBusyId(null);
       setArchiveTarget(null);
+    }
+  }
+
+  async function hardDelete(row: SubmissionRow) {
+    setBusyId(row.id);
+    try {
+      const res = await fetch(`/api/hr/onboarding-submissions/${row.id}?hard=true`, {
+        method: 'DELETE',
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to delete');
+      toast.success('Submission deleted permanently');
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete');
+    } finally {
+      setBusyId(null);
+      setDeleteTarget(null);
     }
   }
 
@@ -334,6 +354,16 @@ export default function HrOnboardingForm() {
                               <Archive className="h-3 w-3" />
                             </Button>
                           )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                            onClick={() => setDeleteTarget(r)}
+                            disabled={isBusy}
+                            title="Permanently delete this submission"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -390,6 +420,39 @@ export default function HrOnboardingForm() {
                 <Archive className="mr-1 h-3 w-3" />
               )}
               Archive
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base">Permanently delete this submission?</DialogTitle>
+            <DialogDescription className="text-xs">
+              <strong>{deleteTarget?.invite_name ?? deleteTarget?.full_name ?? 'This row'}</strong>
+              {' '}
+              ({deleteTarget?.invite_personal_email ?? deleteTarget?.email ?? '—'}) will be
+              removed from the database, along with any signatures and W-8BEN file uploaded
+              with it. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" size="sm" onClick={() => setDeleteTarget(null)} disabled={busyId === deleteTarget?.id}>
+              Keep
+            </Button>
+            <Button
+              size="sm"
+              className="bg-rose-600 hover:bg-rose-700"
+              onClick={() => deleteTarget && void hardDelete(deleteTarget)}
+              disabled={busyId === deleteTarget?.id}
+            >
+              {busyId === deleteTarget?.id ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <Trash2 className="mr-1 h-3 w-3" />
+              )}
+              Delete permanently
             </Button>
           </DialogFooter>
         </DialogContent>
