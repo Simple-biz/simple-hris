@@ -731,23 +731,46 @@ function LinkCreatedDialog({
   onClose: () => void;
 }) {
   const [justCopied, setJustCopied] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
   useEffect(() => {
-    if (!row) setJustCopied(false);
+    if (!row) {
+      setJustCopied(false);
+      setSending(false);
+      setSent(false);
+    }
   }, [row]);
 
   const url = row ? publicLinkFor(row.token) : '';
   const firstName = row?.invite_name ? row.invite_name.split(/\s+/)[0] : null;
   const mailtoSubject = encodeURIComponent('Your Simple.biz onboarding form');
   const mailtoBodyRaw = `Hi${firstName ? ` ${firstName}` : ''},\n\nWelcome to Simple.biz! Please complete your onboarding form here — it should take about 10 minutes:\n\n${url}\n\nNo account needed; the link is private to you.\n\nLet me know if you hit any issues.\n`;
-  const mailto = row?.invite_personal_email
-    ? `mailto:${row.invite_personal_email}?subject=${mailtoSubject}&body=${encodeURIComponent(mailtoBodyRaw)}`
-    : `mailto:?subject=${mailtoSubject}&body=${encodeURIComponent(mailtoBodyRaw)}`;
 
   const copy = () => {
     void navigator.clipboard.writeText(url);
     setJustCopied(true);
     toast.success('Link copied to clipboard');
     setTimeout(() => setJustCopied(false), 1500);
+  };
+
+  const sendViaWebhook = async () => {
+    if (!row) return;
+    setSending(true);
+    try {
+      const res = await fetch(`/api/hr/onboarding-submissions/${row.id}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const json = (await res.json()) as { ok?: boolean; to?: string; error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Send failed');
+      setSent(true);
+      toast.success(`Email sent to ${json.to ?? row.invite_personal_email ?? 'recipient'}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Send failed');
+    } finally {
+      setSending(false);
+    }
   };
 
   if (!row) return null;
@@ -859,6 +882,38 @@ function LinkCreatedDialog({
             <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-zinc-200 bg-white p-2 font-mono text-[11px] leading-relaxed text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
               {mailtoBodyRaw.trim()}
             </pre>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <p className="text-[11px] italic text-zinc-500 dark:text-zinc-500">
+                "Send via webhook" delivers this server-side. The buttons below are manual fallbacks.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(mailtoBodyRaw.trim());
+                    toast.success('Email body copied');
+                  }}
+                >
+                  <ClipboardCopy className="mr-1 h-3 w-3" />
+                  Copy body
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    const to = row.invite_personal_email ?? '';
+                    const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${mailtoSubject}&body=${encodeURIComponent(mailtoBodyRaw)}`;
+                    window.open(gmail, '_blank', 'noopener,noreferrer');
+                  }}
+                >
+                  <Mail className="mr-1 h-3 w-3" />
+                  Open in Gmail
+                </Button>
+              </div>
+            </div>
           </div>
         </DialogSection>
 
@@ -866,13 +921,27 @@ function LinkCreatedDialog({
           <Button variant="outline" size="sm" onClick={onClose}>
             Done
           </Button>
-          <a
-            href={mailto}
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-gradient-to-br from-emerald-500 to-teal-700 px-3 text-sm font-medium text-white shadow-md shadow-emerald-600/25 transition-opacity hover:opacity-90"
+          <Button
+            size="sm"
+            disabled={sending || sent || !row.invite_personal_email}
+            className={cn(
+              'shadow-md shadow-emerald-600/25 transition-colors',
+              sent
+                ? 'bg-emerald-600 text-white hover:bg-emerald-600'
+                : 'bg-gradient-to-br from-emerald-500 to-teal-700 text-white hover:from-emerald-500 hover:to-teal-600',
+            )}
+            onClick={() => void sendViaWebhook()}
+            title={!row.invite_personal_email ? 'Add a recipient email to enable this.' : undefined}
           >
-            <Send className="h-3.5 w-3.5" />
-            Email it now
-          </a>
+            {sending ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : sent ? (
+              <CheckIcon className="mr-1 h-3.5 w-3.5" />
+            ) : (
+              <Send className="mr-1 h-3.5 w-3.5" />
+            )}
+            {sending ? 'Sending…' : sent ? 'Sent' : 'Send via webhook'}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

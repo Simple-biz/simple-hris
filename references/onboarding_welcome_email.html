@@ -1,0 +1,202 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<!--
+  Onboarding "Welcome" email — Simple.biz brand
+  ============================================================================
+  Source of truth: this file. The runtime renderer lives at
+    app/api/hr/onboarding-submissions/[id]/send/route.ts
+                                 → renderOnboardingEmailHtml()
+
+  If you change anything visual here, mirror it into that function (the
+  template strings + COLORS constants). Variables that get interpolated at
+  send time are marked with a "{{…}}" pseudo-placeholder in this preview;
+  the runtime swaps them with real values:
+    {{logoUrl}}    →  https://<host>/simple-logo.png
+    {{greeting}}   →  "Hi Kane"           (firstName extracted from invite)
+    {{department}} →  "VA"                (or empty — block hides itself)
+    {{note}}       →  "Welcome aboard…"   (or empty — callout hides itself)
+    {{link}}       →  https://<host>/onboarding/<token>
+    {{w8benUrl}}   →  https://<project>.supabase.co/storage/v1/object/public/hr-onboarding-templates/FW8BEN.pdf
+
+  The W-8BEN attachment
+  ----------------------------------------------------------------------------
+  The blank W-8BEN PDF lives in the PUBLIC Supabase bucket
+  `hr-onboarding-templates`. The runtime route derives the public URL from
+  NEXT_PUBLIC_SUPABASE_URL + bucket + filename — so swapping the PDF later
+  (IRS form revision, custom branding) is a one-click upload in Supabase
+  Studio, no redeploy.
+
+  Fallback: if NEXT_PUBLIC_SUPABASE_URL is missing, the route falls back to
+  `${origin}/forms/FW8BEN.pdf` (served from public/forms/) so local dev still
+  works before the bucket is seeded.
+
+  The same URL is also passed in the webhook payload under
+  `attachments[0].url` so n8n can attach the binary to the actual email.
+  Wire it: HTTP Request node → response type "file" → Gmail "Attachments"
+  field, filename = `attachments[0].filename`. If you skip the n8n attach
+  step, the in-body "Download FW8BEN.pdf" link still works.
+
+  Email-client compatibility notes
+  ----------------------------------------------------------------------------
+  - Layout is table-based (Outlook/Yahoo still need this).
+  - All styles are inline (Gmail strips <style> on cached/forwarded mail).
+  - CTA is a "bulletproof" table-wrapped <a> so the button survives Outlook,
+    which ignores padding on plain anchors.
+  - Logo sits on a white pill so it stays legible on the navy hero band even
+    when "Show external images" is off (alt text falls back gracefully).
+  - Preheader text (the inbox-preview line) is hidden via display:none +
+    mso-hide:all so it doesn't double up inside the body.
+
+  Open this file in a browser to preview. To preview note/department empty
+  states, delete those two <table> blocks (clearly commented below).
+-->
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Welcome to Simple.biz</title>
+</head>
+<body style="margin:0;padding:0;background-color:#fafaf7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Helvetica,Arial,sans-serif;color:#1f2937;-webkit-font-smoothing:antialiased;">
+  <!-- Hidden preheader (shows in inbox preview, hidden in the email body) -->
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
+    Hi Kane — your Simple.biz onboarding form is ready. Takes about 10 minutes.
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fafaf7;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:580px;background-color:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;box-shadow:0 4px 14px rgba(30,27,75,0.06);">
+
+          <!-- ──────────────────────────────────────────────────────────────
+               HEADER — navy band with logo + orange heart sparkle
+               ────────────────────────────────────────────────────────────── -->
+          <tr>
+            <td style="background-color:#1e1b4b;background-image:linear-gradient(135deg,#1e1b4b 0%,#15123b 100%);padding:36px 36px 28px 36px;text-align:center;color:#ffffff;">
+              <img src="https://simple-hris.vercel.app/simple-logo.png" alt="Simple.biz" width="140" style="display:inline-block;max-width:140px;height:auto;border:0;outline:none;text-decoration:none;background-color:#ffffff;padding:10px 16px;border-radius:12px;" />
+              <p style="margin:18px 0 0 0;font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#f97316;">
+                &#9829; Welcome to the team
+              </p>
+              <h1 style="margin:8px 0 0 0;font-size:24px;line-height:1.25;font-weight:700;color:#ffffff;">
+                Your onboarding form is ready
+              </h1>
+              <!-- Department subtitle — runtime omits this whole <p> when invite_department is null -->
+              <p style="margin:6px 0 0 0;font-size:13px;color:rgba(255,255,255,0.72);">For the <strong style="color:#ffffff;font-weight:600;">VA</strong> team</p>
+            </td>
+          </tr>
+
+          <!-- ──────────────────────────────────────────────────────────────
+               BODY
+               ────────────────────────────────────────────────────────────── -->
+          <tr>
+            <td style="padding:32px 36px 8px 36px;">
+              <p style="margin:0 0 14px 0;font-size:16px;line-height:1.55;color:#1f2937;">Hi Kane,</p>
+              <p style="margin:0 0 18px 0;font-size:15px;line-height:1.6;color:#1f2937;">
+                We're so glad to have you with us. Please take about <strong>10 minutes</strong> to complete the
+                onboarding form below so we can set you up properly in our system.
+              </p>
+
+              <!-- CTA button (bulletproof table layout — works in Outlook too) -->
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:24px auto 8px auto;">
+                <tr>
+                  <td align="center" bgcolor="#1e1b4b" style="background-color:#1e1b4b;background-image:linear-gradient(135deg,#1e1b4b 0%,#15123b 100%);border-radius:10px;">
+                    <a href="https://simple-hris.vercel.app/onboarding/X-VL3a4kEUF_Vkyz2mrTRtLAQ7Pe2oCG" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;border:1px solid #15123b;">
+                      Open my onboarding form &nbsp;&rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:18px 0 0 0;font-size:13px;line-height:1.55;color:#6b7280;text-align:center;">
+                Or paste this URL into your browser:<br />
+                <a href="https://simple-hris.vercel.app/onboarding/X-VL3a4kEUF_Vkyz2mrTRtLAQ7Pe2oCG" style="color:#1e1b4b;word-break:break-all;text-decoration:underline;">https://simple-hris.vercel.app/onboarding/X-VL3a4kEUF_Vkyz2mrTRtLAQ7Pe2oCG</a>
+              </p>
+
+              <!-- HR note callout — runtime omits this whole <table> when invite_note is null -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 0 0;">
+                <tr>
+                  <td style="background-color:#fff7ed;border-left:3px solid #f97316;border-radius:8px;padding:14px 16px;">
+                    <p style="margin:0 0 4px 0;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#f97316;">
+                      &#9829; Note from HR
+                    </p>
+                    <p style="margin:0;font-size:14px;line-height:1.5;color:#1f2937;">Welcome aboard! Please complete this before your first day so payroll can set you up.</p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- W-8BEN attachment card — runtime omits this whole <table> when w8benUrl is null -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 0 0;border:1px solid #e5e7eb;border-radius:10px;background-color:#ffffff;">
+                <tr>
+                  <td style="padding:16px 18px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td valign="top" style="width:44px;">
+                          <div style="width:38px;height:46px;background-color:#fff7ed;border:1px solid #f97316;border-radius:6px;text-align:center;line-height:44px;font-size:10px;font-weight:700;letter-spacing:0.5px;color:#f97316;">PDF</div>
+                        </td>
+                        <td valign="top" style="padding-left:14px;">
+                          <p style="margin:0 0 2px 0;font-size:13px;font-weight:700;color:#1e1b4b;">
+                            FW8BEN.pdf
+                            <span style="font-weight:500;color:#6b7280;font-size:11px;">&nbsp; (attached)</span>
+                          </p>
+                          <p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:#6b7280;">
+                            IRS W-8BEN form. Required only if you're a contract worker outside the US &mdash; fill it out, then upload it on step 4 of the onboarding form.
+                          </p>
+                          <a href="https://simple-hris.vercel.app/forms/FW8BEN.pdf" target="_blank" style="display:inline-block;font-size:12px;font-weight:600;color:#1e1b4b;text-decoration:underline;">Download FW8BEN.pdf &rarr;</a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- "What to expect" card -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:26px 0 0 0;border:1px solid #e5e7eb;border-radius:10px;">
+                <tr>
+                  <td style="padding:18px 20px;">
+                    <p style="margin:0 0 10px 0;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#1e1b4b;">
+                      What you'll fill in
+                    </p>
+                    <p style="margin:0;font-size:13px;line-height:1.7;color:#1f2937;">
+                      <span style="color:#f97316;">&#9679;</span>&nbsp;&nbsp;Your contact info<br />
+                      <span style="color:#f97316;">&#9679;</span>&nbsp;&nbsp;Non-solicitation &amp; privacy agreements<br />
+                      <span style="color:#f97316;">&#9679;</span>&nbsp;&nbsp;W-8BEN upload (only if you're outside the US)<br />
+                      <span style="color:#f97316;">&#9679;</span>&nbsp;&nbsp;How you'd like to be paid &mdash; Hurupay or wire transfer<br />
+                      <span style="color:#f97316;">&#9679;</span>&nbsp;&nbsp;Contract worker agreement signature
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:28px 0 0 0;font-size:13px;line-height:1.55;color:#6b7280;">
+                No account needed &mdash; this link is private to you. If you hit any issues, just reply to this
+                email and we'll help you through it.
+              </p>
+
+              <p style="margin:24px 0 0 0;font-size:15px;line-height:1.55;color:#1f2937;">
+                Welcome aboard,<br />
+                <strong style="color:#1e1b4b;">The Simple.biz Team</strong>
+                <span style="color:#f97316;">&#9829;</span>
+              </p>
+            </td>
+          </tr>
+
+          <!-- ──────────────────────────────────────────────────────────────
+               FOOTER
+               ────────────────────────────────────────────────────────────── -->
+          <tr>
+            <td style="padding:24px 36px 28px 36px;text-align:center;border-top:1px solid #e5e7eb;background-color:#fafaf7;">
+              <p style="margin:0 0 6px 0;font-size:11px;color:#6b7280;">
+                Questions? Reach us at
+                <a href="mailto:hr@simple.biz" style="color:#1e1b4b;font-weight:600;text-decoration:none;">hr@simple.biz</a>
+                or
+                <a href="mailto:payroll@simple.biz" style="color:#1e1b4b;font-weight:600;text-decoration:none;">payroll@simple.biz</a>.
+              </p>
+              <p style="margin:0;font-size:10px;color:#6b7280;letter-spacing:0.5px;">
+                Simple.biz &nbsp;&middot;&nbsp; This link is single-use and tied only to you.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
