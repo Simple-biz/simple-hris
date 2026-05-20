@@ -213,15 +213,40 @@ export async function getEmployeeHourlyRatesRows(): Promise<{
   // back to the original paginated read of the base table — no app deploy
   // needed to revert.
   const VIEW_NAME = "employee_hourly_rates_current";
-  const viewResult = await supabase
-    .from(VIEW_NAME)
-    .select("*")
-    .range(0, 4999);
-  if (!viewResult.error) {
-    const rows = ((viewResult.data ?? []) as RawRow[])
-      .map(mapEmployeeHourlyRateRow)
-      .filter((row) => !isRowEmpty(row));
-    return { rows, error: null };
+  // Paginate the view read. PostgREST enforces a server-side `db.max-rows` cap
+  // (1000 on this project), so a single `.range(0, 4999)` silently returns only
+  // the first 1000 view rows — dropping every employee whose row sorts past that
+  // and making them show "No rate" in the Payroll Wizard / Overview even though
+  // their rate exists. Loop until a short page, exactly like the base-table
+  // fallback below. (The Rates & Profiles page never hit this because it already
+  // paginates the base table directly.)
+  {
+    const PAGE = 1000;
+    const viewRaw: RawRow[] = [];
+    let from = 0;
+    let viewError: string | null = null;
+    while (true) {
+      const { data, error } = await supabase
+        .from(VIEW_NAME)
+        .select("*")
+        .range(from, from + PAGE - 1);
+      if (error) {
+        viewError = error.message;
+        break;
+      }
+      const page = (data ?? []) as RawRow[];
+      viewRaw.push(...page);
+      if (page.length < PAGE) break;
+      from += PAGE;
+    }
+    if (!viewError) {
+      const rows = viewRaw
+        .map(mapEmployeeHourlyRateRow)
+        .filter((row) => !isRowEmpty(row));
+      return { rows, error: null };
+    }
+    // View unavailable (migration not run / reverted) — fall through to the
+    // base-table pagination below.
   }
 
   // PostgREST silently caps `.select("*")` at 1000 rows by default. The rates

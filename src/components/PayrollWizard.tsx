@@ -2476,7 +2476,7 @@ export default function PayrollWizard({
       let rateRow = em ? ratesByEmail.get(em) : undefined;
 
       // Fallback: match via masterEmployees when direct email lookup fails.
-      // Hubstaff email → master (by work_email) → personal_email → ratesByEmail,
+      // Hubstaff email → master (by work_email OR personal_email) → other email → ratesByEmail,
       // or Hubstaff name → master (by name) → personal_email / work_email → ratesByEmail.
       if (!rateRow && masterEmployees.length > 0) {
         let master: typeof masterEmployees[number] | undefined;
@@ -2484,6 +2484,12 @@ export default function PayrollWizard({
         // Try work_email match first
         if (em) {
           master = masterEmployees.find(e => normEmail(e.work_email) === em);
+        }
+
+        // Also try personal_email match — Hubstaff account may be registered under
+        // the employee's personal email while the rates table only has work_email.
+        if (!master && em) {
+          master = masterEmployees.find(e => normEmail(e.personal_email) === em);
         }
 
         // Try name match (normalized: handles "First Last" vs "Last, First" vs nicknames)
@@ -2645,7 +2651,9 @@ export default function PayrollWizard({
           existing.regularRate != null ? existing.totalHours * existing.regularRate : null;
         existing.visits.push({ date: row.dispute_date, hours, reason: row.reason });
       } else {
-        const rate = rateByEmail.get(em) ?? null;
+        const rate = rateByEmail.get(em)
+          ?? (() => { const r = ratesByEmail.get(em); return r ? parseRateField(r.regular_rate) : null; })()
+          ?? null;
         visitMap.set(em, {
           kind: 'visit_wages',
           id: `visit:${em}`,
@@ -3331,15 +3339,15 @@ export default function PayrollWizard({
    * Auto-populate employeeDepts whenever calcResults, masterEmployees, or
    * hubstaffData change. Existing manual assignments are preserved.
    *
+   * The Global Master List (active_employees) Department is the SOURCE OF TRUTH.
    * Resolution order (first hit wins):
-   *  1. personal_email chain  — Hubstaff work email → employee_hourly_rates
-   *                             → personal_email → global_master_list
-   *  2. Name match            — Hubstaff name → global_master_list name
-   *  3. Work email direct     — Hubstaff email → global_master_list "Work Email"
-   *                             (uses new work_email field fetched from DB)
-   *  4. Hubstaff dept fallback — if still unresolved, use the "Job type" column
-   *                             from hubstaff_hours as the department hint.
-   *                             This covers employees absent from global_master_list.
+   *  1. Master list department — match the employee to their global_master_list
+   *                              row by work email → personal email → rate-row
+   *                              personal email → name, then use its Department.
+   *  2. Rates table fallback   — employee_hourly_rates "Department" column, only
+   *                              when the employee isn't in the master list.
+   *  3. Hubstaff dept fallback — Hubstaff "Job type" column, for employees in
+   *                              neither the master list nor the rates table.
    */
   useEffect(() => {
     if (calcResults.length === 0) return;
@@ -3354,42 +3362,36 @@ export default function PayrollWizard({
         const em = normEmail(calcRow.email);
         const rateRow = em ? ratesByEmail.get(em) : undefined;
 
-        let deptRaw: string | null = null;
+        // ── Source of truth: resolve this employee's global_master_list row,
+        // trying the most reliable identity keys first.
+        let master = em
+          ? masterEmployees.find(e => normEmail(e.work_email) === em)
+          : undefined;
+        if (!master && em) {
+          master = masterEmployees.find(e => normEmail(e.personal_email) === em);
+        }
+        if (!master && rateRow?.personal_email) {
+          const normPE = normEmail(rateRow.personal_email);
+          master = masterEmployees.find(e => normEmail(e.personal_email) === normPE);
+        }
+        if (!master && calcRow.name) {
+          const tokens = normalizeNameTokens(calcRow.name);
+          if (tokens) {
+            master = masterEmployees.find(
+              e => e.name ? normalizeNameTokens(e.name) === tokens : false,
+            );
+          }
+        }
 
-        // ── Tier 0: Department column in employee_hourly_rates (primary source)
+        // Tier 1: master-list Department (authoritative).
+        let deptRaw: string | null = master?.department ?? null;
+
+        // Tier 2: rates-table Department — only when not in the master list.
         if (!deptRaw && rateRow?.department) {
           deptRaw = rateRow.department;
         }
 
-        // ── Tier 1: personal_email from rate row → global_master_list ──────
-        if (!deptRaw && rateRow?.personal_email) {
-          const normPE = normEmail(rateRow.personal_email);
-          const master = masterEmployees.find(
-            e => normEmail(e.personal_email) === normPE,
-          );
-          deptRaw = master?.department ?? null;
-        }
-
-        // ── Tier 2: name match → global_master_list ─────────────────────────
-        if (!deptRaw && calcRow.name) {
-          const tokens = normalizeNameTokens(calcRow.name);
-          if (tokens) {
-            const master = masterEmployees.find(
-              e => e.name ? normalizeNameTokens(e.name) === tokens : false,
-            );
-            deptRaw = master?.department ?? null;
-          }
-        }
-
-        // ── Tier 3: direct work email → global_master_list "Work Email" ────
-        if (!deptRaw && em) {
-          const master = masterEmployees.find(
-            e => normEmail(e.work_email) === em,
-          );
-          deptRaw = master?.department ?? null;
-        }
-
-        // ── Tier 4: Hubstaff "Job type" fallback (employee not in master list)
+        // Tier 3: Hubstaff "Job type" — employee in neither source.
         if (!deptRaw) {
           const hubRow = hubstaffData.find(h => normEmail(h.email) === em);
           deptRaw = hubRow?.department ?? null;
@@ -3726,6 +3728,12 @@ export default function PayrollWizard({
           `${json.inserted ?? 0} new`,
         ].join(' · '),
       });
+      // Pull the freshly-synced rates into the wizard's in-memory rate map so
+      // the Initial Calculation reflects them immediately — without this, the
+      // calc keeps using the page-load snapshot and newly-rated employees show
+      // "No rate" until a manual refresh. Mirrors handleMasterSheetSync's
+      // reloadMasterEmployees() call.
+      await loadEmployeeHourlyRates();
       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('rates-profiles-stale'));
     } catch (err) {
       toast.error('Rates sync failed', { description: err instanceof Error ? err.message : String(err) });
@@ -6791,7 +6799,12 @@ export default function PayrollWizard({
             existing.wages =
               existing.regularRate != null ? existing.totalHours * existing.regularRate : null;
           } else {
-            const rate = rateByEmail.get(em) ?? null;
+            // rateByEmail is keyed by Hubstaff email; orphanage disputes store work_email.
+            // Fall back to ratesByEmail (indexed by both work + personal email from rates
+            // table) so employees whose Hubstaff account uses personal email still resolve.
+            const rate = rateByEmail.get(em)
+              ?? (() => { const row = ratesByEmail.get(em); return row ? parseRateField(row.regular_rate) : null; })()
+              ?? null;
             wageMap.set(em, {
               email: em,
               name: r.name,

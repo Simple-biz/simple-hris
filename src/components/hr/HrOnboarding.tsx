@@ -466,19 +466,21 @@ export default function HrOnboarding() {
                           </td>
                           <td data-label="Status" className="px-4 py-3">
                             <div className="flex flex-col items-start gap-1">
-                              <Badge
-                                variant="outline"
-                                className={cn(
-                                  'text-[10px] font-medium',
-                                  row.status === 'ready' && !row.orientation_attended_at
-                                    ? STATUS_BADGE['pending_work_email']
-                                    : STATUS_BADGE[row.status],
-                                )}
-                              >
-                                {row.status === 'ready' && !row.orientation_attended_at
-                                  ? 'Awaiting orientation'
-                                  : STATUS_LABEL[row.status]}
-                              </Badge>
+                              {row.status !== 'pending_work_email' && (
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    'text-[10px] font-medium',
+                                    row.status === 'ready' && !row.orientation_attended_at
+                                      ? STATUS_BADGE['pending_work_email']
+                                      : STATUS_BADGE[row.status],
+                                  )}
+                                >
+                                  {row.status === 'ready' && !row.orientation_attended_at
+                                    ? 'Awaiting orientation'
+                                    : STATUS_LABEL[row.status]}
+                                </Badge>
+                              )}
                               {(row.status === 'ready' || row.status === 'pending_work_email') &&
                                 row.orientation_attended_at && (
                                   <Badge

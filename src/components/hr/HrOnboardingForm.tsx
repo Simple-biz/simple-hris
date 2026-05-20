@@ -137,7 +137,7 @@ function publicLinkFor(token: string): string {
 export default function HrOnboardingForm() {
   const [rows, setRows] = useState<SubmissionRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<StatusFilter>('pending');
+  const [filter, setFilter] = useState<StatusFilter>('all');
   const [search, setSearch] = useState('');
 
   const [generateOpen, setGenerateOpen] = useState(false);
@@ -352,7 +352,6 @@ export default function HrOnboardingForm() {
       {/* Filter + search */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-1">
-          <FilterPill label="Awaiting" count={counts.pending} active={filter === 'pending'} onClick={() => setFilter('pending')} />
           <FilterPill label="Submitted" count={counts.submitted} active={filter === 'submitted'} onClick={() => setFilter('submitted')} />
           <FilterPill label="Archived" count={counts.archived} active={filter === 'archived'} onClick={() => setFilter('archived')} />
           <FilterPill label="All" count={rows.length} active={filter === 'all'} onClick={() => setFilter('all')} />

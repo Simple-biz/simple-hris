@@ -252,8 +252,30 @@ async function fetchActiveEmployees(
   // returns "column does not exist" — fall back to the base select so the dashboard
   // keeps working. Address fields are still served via /api/employee-master-record,
   // which queries global_master_list directly.
-  const queryView = async (sel: string) =>
-    supabase.from(ACTIVE_EMPLOYEES_VIEW).select(sel).range(0, 9999);
+  // Paginate — PostgREST caps a single response at db.max-rows (1000 on this
+  // project), so a bare .range(0, 9999) silently drops every employee past row
+  // 1000 once the active roster grows beyond it (it feeds masterEmployees, the
+  // Payroll Wizard's department source-of-truth + rate-match bridge). Loop until
+  // a short page.
+  const queryView = async (
+    sel: string,
+  ): Promise<{ data: RawRow[] | null; error: { message: string } | null }> => {
+    const PAGE = 1000;
+    const out: RawRow[] = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from(ACTIVE_EMPLOYEES_VIEW)
+        .select(sel)
+        .range(from, from + PAGE - 1);
+      if (error) return { data: null, error };
+      const page = (data ?? []) as unknown as RawRow[];
+      out.push(...page);
+      if (page.length < PAGE) break;
+      from += PAGE;
+    }
+    return { data: out, error: null };
+  };
 
   let res = await queryView(GLOBAL_MASTER_SELECT);
   let select = GLOBAL_MASTER_SELECT;
