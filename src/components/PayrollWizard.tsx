@@ -3266,6 +3266,11 @@ export default function PayrollWizard({
   useEffect(() => {
     if (skipInitialSourceFilesFetchRef.current) {
       skipInitialSourceFilesFetchRef.current = false;
+      // Prefetch shipped the list, so we skip the fetch — but loadUploadedSourceFiles'
+      // finally is the only thing that clears sourceFilesLoading (init true). Clear it
+      // here too, or the Step 2 calc table hangs on its skeleton on production. (Dev
+      // hides this: Strict Mode double-fires the effect, so the 2nd run does fetch.)
+      setSourceFilesLoading(false);
       return;
     }
     void loadUploadedSourceFiles();
