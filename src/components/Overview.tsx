@@ -450,8 +450,20 @@ function SimpleView({
   const pabPct = pabTotal > 0 ? Math.round((pabMetrics.eligible / pabTotal) * 100) : 0;
   const techTotal = techBonusEligibility.total;
   const techPct = techTotal > 0 ? Math.round((techBonusEligibility.eligible / techTotal) * 100) : 0;
+  // The time-of-day greeting depends on the viewer's LOCAL hour, which only
+  // exists on the client. Computing it during SSR uses the server's timezone
+  // (UTC on Vercel) and mismatches the browser (Manila, UTC+8) → React #418
+  // hydration error, which forces React to discard the server HTML and
+  // re-render the whole dashboard client-side (the "laggish on Vercel, fine on
+  // localhost" symptom — localhost's dev server shares the browser timezone).
+  // Render a stable greeting on the server + first client paint, then switch to
+  // the time-based one after mount so server and client agree on first render.
+  const [greetingReady, setGreetingReady] = useState(false);
+  useEffect(() => { setGreetingReady(true); }, []);
   const nowHour = new Date().getHours();
-  const greeting = nowHour < 12 ? 'Good morning' : nowHour < 18 ? 'Good afternoon' : 'Good evening';
+  const greeting = !greetingReady
+    ? 'Welcome'
+    : nowHour < 12 ? 'Good morning' : nowHour < 18 ? 'Good afternoon' : 'Good evening';
 
   const usdEquivalent = totalPayout != null ? totalPayout / PHP_USD_FX : null;
 
