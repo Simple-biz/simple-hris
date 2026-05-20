@@ -19,6 +19,7 @@ import {
   DollarSign,
   FileText,
   ChevronRight,
+  ChevronLeft,
   CalendarDays,
   X,
   Info,
@@ -923,6 +924,7 @@ export default function PayrollWizard({
   const SOURCE_FILE_PAGE_SIZE = 25;
   const [hubstaffSearch, setHubstaffSearch] = useState('');
   const [initialCalcSearch, setInitialCalcSearch] = useState('');
+  const [initialCalcPage, setInitialCalcPage] = useState(1);
   const [approveUploadDialogOpen, setApproveUploadDialogOpen] = useState(false);
   const [previewPaystubsOpen, setPreviewPaystubsOpen] = useState(false);
   const [previewSelectedEmail, setPreviewSelectedEmail] = useState<string | null>(null);
@@ -4673,6 +4675,16 @@ export default function PayrollWizard({
           sourceFilesLoading ||
           unfilteredHubstaffLoading ||
           (uploadedSourceFiles.length > 0 && calcSourceFile == null);
+        // Paginate the calc table. Rendering all ~764 rows (10 cells each) at
+        // once — and re-rendering them on every search keystroke — is the main
+        // remaining source of jank; cap the DOM to one page.
+        const INITIAL_CALC_PAGE_SIZE = 50;
+        const calcTotalPages = Math.max(1, Math.ceil(filteredCalcResults.length / INITIAL_CALC_PAGE_SIZE));
+        const calcSafePage = Math.min(initialCalcPage, calcTotalPages);
+        const pagedCalcResults = filteredCalcResults.slice(
+          (calcSafePage - 1) * INITIAL_CALC_PAGE_SIZE,
+          calcSafePage * INITIAL_CALC_PAGE_SIZE,
+        );
         return (
           <div className="space-y-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -5002,13 +5014,13 @@ export default function PayrollWizard({
                     <Input
                       placeholder="Search member, email, hours, rates, pay…"
                       value={initialCalcSearch}
-                      onChange={(e) => setInitialCalcSearch(e.target.value)}
+                      onChange={(e) => { setInitialCalcSearch(e.target.value); setInitialCalcPage(1); }}
                       className="h-8 border-zinc-200 bg-white pl-8 pr-8 text-xs dark:border-zinc-800 dark:bg-zinc-950"
                     />
                     {initialCalcSearch && (
                       <button
                         type="button"
-                        onClick={() => setInitialCalcSearch('')}
+                        onClick={() => { setInitialCalcSearch(''); setInitialCalcPage(1); }}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
                         aria-label="Clear search"
                       >
@@ -5080,7 +5092,7 @@ export default function PayrollWizard({
                           </TableCell>
                         </TableRow>
                       ) : (
-                        filteredCalcResults.map((row, i) => (
+                        pagedCalcResults.map((row, i) => (
                         <TableRow
                           key={`${row.email}-${i}`}
                           className={cn(
@@ -5164,6 +5176,62 @@ export default function PayrollWizard({
                   </Table>
                   </div>
                 </div>
+                {!initialCalcDataLoading && filteredCalcResults.length > INITIAL_CALC_PAGE_SIZE && (
+                  <div className="flex items-center justify-between pt-2">
+                    <span className="text-xs text-zinc-400">
+                      Showing {(calcSafePage - 1) * INITIAL_CALC_PAGE_SIZE + 1}-
+                      {Math.min(calcSafePage * INITIAL_CALC_PAGE_SIZE, filteredCalcResults.length)} of {filteredCalcResults.length}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800"
+                        disabled={calcSafePage === 1}
+                        onClick={() => setInitialCalcPage((p) => Math.max(1, p - 1))}
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </Button>
+                      {Array.from({ length: Math.min(calcTotalPages, 5) }, (_, i) => {
+                        const page = calcTotalPages <= 5
+                          ? i + 1
+                          : calcSafePage <= 3
+                            ? i + 1
+                            : calcSafePage >= calcTotalPages - 2
+                              ? calcTotalPages - 4 + i
+                              : calcSafePage - 2 + i;
+                        return (
+                          <Button
+                            key={page}
+                            type="button"
+                            variant={calcSafePage === page ? 'default' : 'outline'}
+                            size="sm"
+                            className={cn(
+                              'h-7 w-7 p-0 text-xs',
+                              calcSafePage === page
+                                ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                                : 'border-zinc-200 dark:border-zinc-800',
+                            )}
+                            onClick={() => setInitialCalcPage(page)}
+                          >
+                            {page}
+                          </Button>
+                        );
+                      })}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 w-7 p-0 border-zinc-200 dark:border-zinc-800"
+                        disabled={calcSafePage === calcTotalPages}
+                        onClick={() => setInitialCalcPage((p) => Math.min(calcTotalPages, p + 1))}
+                      >
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
