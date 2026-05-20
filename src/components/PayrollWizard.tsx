@@ -1681,6 +1681,41 @@ export default function PayrollWizard({
     [hourlyRateRows],
   );
 
+  // Lookup maps over masterEmployees, built once per roster change. The Step 2
+  // calc, the department auto-assign effect, and dispatchData each need to match
+  // a Hubstaff row to its master record; doing that with `masterEmployees.find()`
+  // inside a per-employee loop is O(employees × roster) and re-runs
+  // normalizeNameTokens for every comparison — that synchronous work is what made
+  // the Initial Calculation skeleton stutter. Map lookups make each match O(1).
+  // First occurrence wins, mirroring `.find()` semantics.
+  const masterIndex = useMemo(() => {
+    type M = typeof masterEmployees[number];
+    const byWorkEmail = new Map<string, M>();
+    const byPersonalEmail = new Map<string, M>();
+    const byNameTokens = new Map<string, M>();
+    for (const e of masterEmployees) {
+      const we = normEmail(e.work_email);
+      if (we && !byWorkEmail.has(we)) byWorkEmail.set(we, e);
+      const pe = normEmail(e.personal_email);
+      if (pe && !byPersonalEmail.has(pe)) byPersonalEmail.set(pe, e);
+      if (e.name) {
+        const t = normalizeNameTokens(e.name);
+        if (t && !byNameTokens.has(t)) byNameTokens.set(t, e);
+      }
+    }
+    return { byWorkEmail, byPersonalEmail, byNameTokens };
+  }, [masterEmployees]);
+
+  const hubstaffByEmail = useMemo(() => {
+    type H = typeof hubstaffData[number];
+    const m = new Map<string, H>();
+    for (const h of hubstaffData) {
+      const e = normEmail(h.email);
+      if (e && !m.has(e)) m.set(e, h);
+    }
+    return m;
+  }, [hubstaffData]);
+
   /**
    * PAB month + computed date range for the Additions tab.
    *
@@ -2475,31 +2510,16 @@ export default function PayrollWizard({
       const em = normEmail(row.email);
       let rateRow = em ? ratesByEmail.get(em) : undefined;
 
-      // Fallback: match via masterEmployees when direct email lookup fails.
+      // Fallback: match via masterIndex when direct email lookup fails.
       // Hubstaff email → master (by work_email OR personal_email) → other email → ratesByEmail,
       // or Hubstaff name → master (by name) → personal_email / work_email → ratesByEmail.
-      if (!rateRow && masterEmployees.length > 0) {
-        let master: typeof masterEmployees[number] | undefined;
-
-        // Try work_email match first
-        if (em) {
-          master = masterEmployees.find(e => normEmail(e.work_email) === em);
-        }
-
-        // Also try personal_email match — Hubstaff account may be registered under
-        // the employee's personal email while the rates table only has work_email.
-        if (!master && em) {
-          master = masterEmployees.find(e => normEmail(e.personal_email) === em);
-        }
-
-        // Try name match (normalized: handles "First Last" vs "Last, First" vs nicknames)
+      if (!rateRow) {
+        // Try work email, then personal email, then normalized name.
+        let master = em ? masterIndex.byWorkEmail.get(em) : undefined;
+        if (!master && em) master = masterIndex.byPersonalEmail.get(em);
         if (!master && row.name) {
           const hubstaffTokens = normalizeNameTokens(row.name);
-          if (hubstaffTokens) {
-            master = masterEmployees.find(
-              e => e.name ? normalizeNameTokens(e.name) === hubstaffTokens : false,
-            );
-          }
+          if (hubstaffTokens) master = masterIndex.byNameTokens.get(hubstaffTokens);
         }
 
         if (master) {
@@ -2536,7 +2556,7 @@ export default function PayrollWizard({
         initialPay,
       };
     });
-  }, [hubstaffData, ratesByEmail, masterEmployees]);
+  }, [hubstaffData, ratesByEmail, masterIndex]);
 
   /**
    * Applies per-department and global OT suspension from System Settings.
@@ -2847,16 +2867,10 @@ export default function PayrollWizard({
       const rateRow = em ? ratesByEmail.get(em) : undefined;
       const fromRate = normEmail(rateRow?.personal_email);
       if (fromRate) return fromRate;
-      let master = em
-        ? masterEmployees.find((e) => normEmail(e.work_email) === em)
-        : undefined;
+      let master = em ? masterIndex.byWorkEmail.get(em) : undefined;
       if (!master && r.name) {
         const tokens = normalizeNameTokens(r.name);
-        if (tokens) {
-          master = masterEmployees.find(
-            (e) => e.name && normalizeNameTokens(e.name) === tokens,
-          );
-        }
+        if (tokens) master = masterIndex.byNameTokens.get(tokens);
       }
       return normEmail(master?.personal_email) ?? null;
     };
@@ -3083,6 +3097,7 @@ export default function PayrollWizard({
     effectiveCalcResults,
     ratesByEmail,
     masterEmployees,
+    masterIndex,
     employeeDepts,
     employeeBonuses,
     bonusTotals,
@@ -3363,24 +3378,16 @@ export default function PayrollWizard({
         const rateRow = em ? ratesByEmail.get(em) : undefined;
 
         // ── Source of truth: resolve this employee's global_master_list row,
-        // trying the most reliable identity keys first.
-        let master = em
-          ? masterEmployees.find(e => normEmail(e.work_email) === em)
-          : undefined;
-        if (!master && em) {
-          master = masterEmployees.find(e => normEmail(e.personal_email) === em);
-        }
+        // trying the most reliable identity keys first (O(1) map lookups).
+        let master = em ? masterIndex.byWorkEmail.get(em) : undefined;
+        if (!master && em) master = masterIndex.byPersonalEmail.get(em);
         if (!master && rateRow?.personal_email) {
           const normPE = normEmail(rateRow.personal_email);
-          master = masterEmployees.find(e => normEmail(e.personal_email) === normPE);
+          if (normPE) master = masterIndex.byPersonalEmail.get(normPE);
         }
         if (!master && calcRow.name) {
           const tokens = normalizeNameTokens(calcRow.name);
-          if (tokens) {
-            master = masterEmployees.find(
-              e => e.name ? normalizeNameTokens(e.name) === tokens : false,
-            );
-          }
+          if (tokens) master = masterIndex.byNameTokens.get(tokens);
         }
 
         // Tier 1: master-list Department (authoritative).
@@ -3393,7 +3400,7 @@ export default function PayrollWizard({
 
         // Tier 3: Hubstaff "Job type" — employee in neither source.
         if (!deptRaw) {
-          const hubRow = hubstaffData.find(h => normEmail(h.email) === em);
+          const hubRow = em ? hubstaffByEmail.get(em) : undefined;
           deptRaw = hubRow?.department ?? null;
         }
 
@@ -3406,7 +3413,7 @@ export default function PayrollWizard({
 
       return changed ? next : prev;
     });
-  }, [calcResults, masterEmployees, ratesByEmail, hubstaffData]);
+  }, [calcResults, masterIndex, ratesByEmail, hubstaffByEmail]);
 
   const payrollComparison = useMemo(
     () => comparePayrollToMaster(masterEmployees, hubstaffData),
