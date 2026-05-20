@@ -49,6 +49,11 @@ export type HrOnboardingSubmissionRow = {
   contract_signature: string | null;
   contract_date: string | null;
 
+  /** Minted @simple.biz address (set when HR converts a submitted form). */
+  work_email: string | null;
+  /** FK to the hr_pending_employees row spun up at conversion; null until then. */
+  pending_employee_id: number | null;
+
   archived_at: string | null;
   notes: string | null;
 };
@@ -217,6 +222,54 @@ export async function submitHrOnboarding(
     .single();
   if (error) return { row: null, error: error.message };
   return { row: data as HrOnboardingSubmissionRow, error: null };
+}
+
+/**
+ * Mint a fresh token on a row and persist it. Called by the send route so each
+ * email carries a unique URL; any link from a previous send for the same row
+ * is implicitly invalidated. Only allowed while the row is still `pending` —
+ * rotating a submitted row would orphan the recipient's already-completed form.
+ */
+export async function rotateHrOnboardingToken(
+  id: string,
+): Promise<{ token: string | null; error: string | null }> {
+  const sb = client();
+  const token = generateOnboardingToken();
+  const { data, error } = await sb
+    .from(TABLE)
+    .update({ token })
+    .eq("id", id)
+    .eq("status", "pending")
+    .select("token")
+    .maybeSingle();
+  if (error) return { token: null, error: error.message };
+  if (!data) {
+    return {
+      token: null,
+      error: "Cannot rotate token — row is not pending (already submitted or archived).",
+    };
+  }
+  return { token: (data as { token: string }).token, error: null };
+}
+
+/**
+ * Stamp a submitted form with the minted work email and the staged-hire id it
+ * was converted into. Called by the set-work-email route after the matching
+ * `hr_pending_employees` row is created.
+ */
+export async function linkOnboardingToPendingHire(
+  id: string,
+  args: { work_email: string; pending_employee_id: number },
+): Promise<{ error: string | null }> {
+  const sb = client();
+  const { error } = await sb
+    .from(TABLE)
+    .update({
+      work_email: args.work_email.trim().toLowerCase() || null,
+      pending_employee_id: args.pending_employee_id,
+    })
+    .eq("id", id);
+  return { error: error?.message ?? null };
 }
 
 export async function archiveHrOnboardingSubmission(

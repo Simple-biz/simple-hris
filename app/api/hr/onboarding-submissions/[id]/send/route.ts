@@ -4,7 +4,10 @@ import {
   requireElevatedSession,
 } from "@/lib/auth/authorize-email";
 import { getAppSetting } from "@/lib/supabase/app-settings";
-import { getHrOnboardingSubmissionById } from "@/lib/supabase/hr-onboarding-submissions";
+import {
+  getHrOnboardingSubmissionById,
+  rotateHrOnboardingToken,
+} from "@/lib/supabase/hr-onboarding-submissions";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
@@ -66,8 +69,20 @@ export async function POST(
     );
   }
 
+  // Mint a fresh token on every send so each outbound email carries a unique
+  // URL — and any prior link for this row becomes a 404. Only rotates while
+  // the row is pending; submitted/archived rows aren't sendable anyway.
+  const { token: rotatedToken, error: rotateErr } = await rotateHrOnboardingToken(id);
+  if (rotateErr || !rotatedToken) {
+    return NextResponse.json(
+      { error: rotateErr ?? "Failed to rotate onboarding token" },
+      { status: 500 },
+    );
+  }
+  const activeToken = rotatedToken;
+
   const origin = new URL(req.url).origin;
-  const link = `${origin}/onboarding/${row.token}`;
+  const link = `${origin}/onboarding/${activeToken}`;
 
   // Optional override coming from the modal — HR can tweak the body/subject
   // before sending without us re-rendering the page.
@@ -114,7 +129,7 @@ Let me know if you hit any issues.
 
   const payload = {
     submission_id: row.id,
-    token: row.token,
+    token: activeToken,
     link,
     sent_by: authz.sessionEmail,
     to: recipient,
@@ -187,7 +202,15 @@ Let me know if you hit any issues.
     );
   }
 
-  return NextResponse.json({ ok: true, webhookStatus, to: recipient });
+  return NextResponse.json({
+    ok: true,
+    webhookStatus,
+    to: recipient,
+    // Returned so the HR UI can refresh its locally-cached row — the token was
+    // just rotated, and any older copy of the URL is now stale.
+    token: activeToken,
+    link,
+  });
 }
 
 // ─── HTML email template ──────────────────────────────────────────────────

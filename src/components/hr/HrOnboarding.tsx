@@ -73,9 +73,11 @@ function formatDate(iso: string | null): string {
 }
 
 export default function HrOnboarding() {
-  const [subTab, setSubTab] = useState<SubTab>('pending-hires');
+  const [subTab, setSubTab] = useState<SubTab>('onboarding-form');
   const [pending, setPending] = useState<HrPendingEmployeeRow[]>([]);
   const [pendingLoading, setPendingLoading] = useState(true);
+
+  const [deptRates, setDeptRates] = useState<Map<string, { regular_rate: string | null; ot_rate: string | null }>>(new Map());
 
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('');
@@ -106,6 +108,16 @@ export default function HrOnboarding() {
 
   useEffect(() => {
     void fetchPending();
+    fetch('/api/hr/department-rates', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { departments?: { department: string; regular_rate: string | null; ot_rate: string | null }[] }) => {
+        const m = new Map<string, { regular_rate: string | null; ot_rate: string | null }>();
+        for (const d of j.departments ?? []) {
+          m.set(d.department.trim().toLowerCase(), { regular_rate: d.regular_rate, ot_rate: d.ot_rate });
+        }
+        setDeptRates(m);
+      })
+      .catch(() => {/* non-critical */});
   }, [fetchPending]);
 
   const filteredPending = useMemo(() => {
@@ -268,14 +280,14 @@ export default function HrOnboarding() {
       {/* Sub-tabs */}
       <div className="-mb-2 flex flex-wrap items-center gap-1.5 border-b border-emerald-100/60 pb-2 dark:border-emerald-900/40">
         <SubTabPill
-          label="Pending Hires"
-          active={subTab === 'pending-hires'}
-          onClick={() => setSubTab('pending-hires')}
-        />
-        <SubTabPill
           label="Onboarding Form"
           active={subTab === 'onboarding-form'}
           onClick={() => setSubTab('onboarding-form')}
+        />
+        <SubTabPill
+          label="Pending Hires"
+          active={subTab === 'pending-hires'}
+          onClick={() => setSubTab('pending-hires')}
         />
       </div>
 
@@ -429,16 +441,28 @@ export default function HrOnboarding() {
                             {formatDate(row.start_date)}
                           </td>
                           <td data-label="Rate" className="px-4 py-3 text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
-                            {row.regular_rate ? (
-                              <>
-                                <span>₱{row.regular_rate}</span>
-                                {row.ot_rate && (
-                                  <span className="text-zinc-400"> · OT ₱{row.ot_rate}</span>
-                                )}
-                              </>
-                            ) : (
-                              '—'
-                            )}
+                            {(() => {
+                              const reg = row.regular_rate;
+                              const ot = row.ot_rate;
+                              const fallback = deptRates.get((row.department ?? '').trim().toLowerCase());
+                              if (reg) {
+                                return (
+                                  <>
+                                    <span>₱{reg}</span>
+                                    {ot && <span className="text-zinc-400"> · OT ₱{ot}</span>}
+                                  </>
+                                );
+                              }
+                              if (fallback?.regular_rate) {
+                                return (
+                                  <span className="italic text-zinc-400 dark:text-zinc-500" title="Dept. typical rate — not yet confirmed for this hire">
+                                    ₱{fallback.regular_rate}
+                                    {fallback.ot_rate && <> · OT ₱{fallback.ot_rate}</>}
+                                  </span>
+                                );
+                              }
+                              return '—';
+                            })()}
                           </td>
                           <td data-label="Status" className="px-4 py-3">
                             <div className="flex flex-col items-start gap-1">
@@ -446,13 +470,17 @@ export default function HrOnboarding() {
                                 variant="outline"
                                 className={cn(
                                   'text-[10px] font-medium',
-                                  STATUS_BADGE[row.status],
+                                  row.status === 'ready' && !row.orientation_attended_at
+                                    ? STATUS_BADGE['pending_work_email']
+                                    : STATUS_BADGE[row.status],
                                 )}
                               >
-                                {STATUS_LABEL[row.status]}
+                                {row.status === 'ready' && !row.orientation_attended_at
+                                  ? 'Awaiting orientation'
+                                  : STATUS_LABEL[row.status]}
                               </Badge>
-                              {(row.status === 'ready' || row.status === 'pending_work_email') && (
-                                row.orientation_attended_at ? (
+                              {(row.status === 'ready' || row.status === 'pending_work_email') &&
+                                row.orientation_attended_at && (
                                   <Badge
                                     variant="outline"
                                     className="border-emerald-300 bg-emerald-50 text-[10px] font-medium text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100"
@@ -460,16 +488,7 @@ export default function HrOnboarding() {
                                   >
                                     Orientation ✓
                                   </Badge>
-                                ) : (
-                                  <Badge
-                                    variant="outline"
-                                    className="border-amber-300 bg-amber-50 text-[10px] font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950/35 dark:text-amber-100"
-                                    title="Waiting for the department manager to mark orientation as attended"
-                                  >
-                                    Awaiting orientation
-                                  </Badge>
-                                )
-                              )}
+                                )}
                             </div>
                           </td>
                           <td data-label="Actions" className="px-4 py-3 text-right">

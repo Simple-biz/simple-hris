@@ -21,6 +21,12 @@ import { Label } from '@/components/ui/label';
 import { Toaster } from '@/components/ui/sonner';
 import { cn } from '@/lib/utils';
 import type { OnboardingPaymentMethod } from '@/lib/supabase/hr-onboarding-submissions';
+import {
+  AGREEMENT_TITLES,
+  ContractWorkerText,
+  NonSolicitationText,
+  PrivacyText,
+} from '@/components/onboarding/agreement-texts';
 
 type LinkInfo = {
   id: string;
@@ -499,19 +505,9 @@ function Step2NonSolicitation({
   return (
     <div className="space-y-5 p-5 sm:p-7">
       <div>
-        <h2 className="text-xl font-bold text-zinc-900">Non-Solicitation of Employees</h2>
+        <h2 className="text-xl font-bold text-zinc-900">{AGREEMENT_TITLES.nonSolicitation}</h2>
       </div>
-      <div className="space-y-3 text-sm leading-relaxed text-zinc-700">
-        <p>
-          You agree not to hire, offer work to, or try to hire any employee or contractor of
-          our company while you are working with us, or for one year after your work with us
-          ends.
-        </p>
-        <p>
-          This includes not asking anyone who works with us to leave their job, or to stop
-          working with us in any way.
-        </p>
-      </div>
+      <NonSolicitationText />
 
       <Field label="Please sign here to indicate that you agree to the above" required>
         <SignaturePad
@@ -535,15 +531,9 @@ function Step3Privacy({
   return (
     <div className="space-y-5 p-5 sm:p-7">
       <div>
-        <h2 className="text-xl font-bold text-zinc-900">Privacy Agreement</h2>
+        <h2 className="text-xl font-bold text-zinc-900">{AGREEMENT_TITLES.privacy}</h2>
       </div>
-      <p className="text-sm leading-relaxed text-zinc-700">
-        For the protection of yourself and the company, we ask that you do not include the
-        name "Simple.biz" in any profiles, posts, video or the like on any social media
-        platform. This is including but not limited to LinkedIn, Facebook, Instagram, etc...
-        Instead, we recommend that you put "Company Confidential" or "Web Design Firm" when
-        the need arises.
-      </p>
+      <PrivacyText />
 
       <Field
         label='Please sign here to indicate that you agree to exclude mention of "Simple.biz" by name on all social media'
@@ -846,86 +836,10 @@ function Step6Contract({
   return (
     <div className="space-y-5 p-5 sm:p-7">
       <div>
-        <h2 className="text-xl font-bold text-zinc-900">Contract Worker Agreement</h2>
+        <h2 className="text-xl font-bold text-zinc-900">{AGREEMENT_TITLES.contract}</h2>
       </div>
 
-      <article className="space-y-3 text-sm leading-relaxed text-zinc-700">
-        <section>
-          <h3 className="font-semibold text-zinc-900">Effective Date</h3>
-          <p>
-            This Agreement will take place effective immediately and will remain in effect until
-            voluntarily terminated by either Company or Contractor.
-          </p>
-        </section>
-
-        <section>
-          <h3 className="font-semibold text-zinc-900">Payment</h3>
-          <p>Contractor will be paid as follows: for services as Company deems needed.</p>
-        </section>
-
-        <section>
-          <h3 className="font-semibold text-zinc-900">Expenses</h3>
-          <p>
-            Contractor will be responsible for all expenses incurred while performing services
-            under this Agreement.
-          </p>
-        </section>
-
-        <section>
-          <h3 className="font-semibold text-zinc-900">Independent Contractor Status</h3>
-          <p>
-            Contractor is an independent contractor, and neither Contractor, nor Contractor's
-            employees, or contract personnel is, or will be deemed, Company's employees. In its
-            capacity as independent contractor, Contractor agrees and represents, and Company
-            agrees as follows:
-          </p>
-          <ul className="mt-2 list-disc space-y-1 pl-5">
-            <li>
-              Contractor has the right to perform services for others during the term of this
-              Agreement. However, Contractor agrees to not perform "side work" for any of Company's
-              clients or referrals from Company's clients, as this represents an actionable breach
-              of confidentiality.
-            </li>
-            <li>
-              Contractor has the sole right to control and direct the means, manner, and method by
-              which the services required by this Agreement will be performed.
-            </li>
-            <li>
-              Contractor has the right to perform the services required by the Agreement at any
-              place or location and at such times as Contractor may determine.
-            </li>
-            <li>
-              Contractor will furnish all equipment and materials used to provide the services
-              required by this Agreement.
-            </li>
-            <li>
-              Contractor will not receive any training from Company in the professional skills
-              necessary to perform the services required by this Agreement.
-            </li>
-            <li>
-              Contractor will not withhold from Contractor's compensation any amount that would
-              normally be withheld from an employee's pay.
-            </li>
-          </ul>
-        </section>
-
-        <section>
-          <h3 className="font-semibold text-zinc-900">Entire Agreement</h3>
-          <p>
-            This is the entire Agreement between the parties. It represents and supersedes any and
-            all oral agreements between the parties, as well as any prior writings. This Agreement
-            may not be amended except in writing.
-          </p>
-        </section>
-
-        <section>
-          <h3 className="font-semibold text-zinc-900">No Partnership</h3>
-          <p>
-            This Agreement does not create a partnership relationship. Contractor does not have
-            authority to enter into contracts on Company's behalf.
-          </p>
-        </section>
-      </article>
+      <ContractWorkerText />
 
       <Field
         label="My signature below indicates that I have read and understood this Agreement in its entirety"

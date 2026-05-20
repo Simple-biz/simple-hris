@@ -8,6 +8,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ClipboardCopy,
+  Download,
   Eye,
   FileText,
   Link2,
@@ -20,12 +21,25 @@ import {
   Sparkles,
   Trash2,
   User,
+  UserCheck,
+  Wand2,
+  XCircle,
 } from 'lucide-react';
 import { Select as SelectPrimitive } from '@base-ui/react/select';
+import { splitFullName } from '@/lib/hr/work-email';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Tabs as TabsPrimitive } from '@base-ui/react/tabs';
+import { AnimatePresence, motion } from 'motion/react';
+import {
+  AGREEMENT_TITLES,
+  ContractWorkerText,
+  NonSolicitationText,
+  PrivacyText,
+} from '@/components/onboarding/agreement-texts';
 import {
   Dialog,
   DialogContent,
@@ -74,6 +88,8 @@ type SubmissionRow = {
   bank_full_address: string | null;
   contract_signature: string | null;
   contract_date: string | null;
+  work_email: string | null;
+  pending_employee_id: number | null;
 };
 
 type StatusFilter = 'all' | HrOnboardingStatus;
@@ -127,9 +143,20 @@ export default function HrOnboardingForm() {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [linkCreated, setLinkCreated] = useState<SubmissionRow | null>(null);
   const [viewRow, setViewRow] = useState<SubmissionRow | null>(null);
+  const [workEmailFor, setWorkEmailFor] = useState<SubmissionRow | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<SubmissionRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SubmissionRow | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Multi-select for bulk actions. Selection is scoped to the rows currently
+  // visible under the active filter + search; an effect prunes it whenever the
+  // visible set changes so we never act on a hidden row.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<{
+    type: 'archive' | 'delete' | 'send';
+    rows: SubmissionRow[];
+  } | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -166,6 +193,87 @@ export default function HrOnboardingForm() {
         .some((s) => s!.toLowerCase().includes(q));
     });
   }, [rows, filter, search]);
+
+  // Drop any selected id that's no longer visible (filter/search changed, or a
+  // row was archived/deleted). `filtered` is memoized, so this only fires when
+  // the visible set actually changes.
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set<string>();
+      for (const r of filtered) if (prev.has(r.id)) next.add(r.id);
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filtered]);
+
+  const selectedRows = useMemo(
+    () => filtered.filter((r) => selectedIds.has(r.id)),
+    [filtered, selectedIds],
+  );
+  const allVisibleSelected = filtered.length > 0 && selectedRows.length === filtered.length;
+  const someVisibleSelected = selectedRows.length > 0 && !allVisibleSelected;
+  const selSendable = selectedRows.filter((r) => r.status === 'pending');
+  const selArchivable = selectedRows.filter((r) => r.status !== 'archived');
+  const selDeletable = selectedRows.filter((r) => r.status === 'archived');
+
+  function toggleAllVisible() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (filtered.every((r) => next.has(r.id))) {
+        for (const r of filtered) next.delete(r.id);
+      } else {
+        for (const r of filtered) next.add(r.id);
+      }
+      return next;
+    });
+  }
+
+  function toggleOne(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function runBulkAction() {
+    if (!bulkAction) return;
+    const { type, rows: targets } = bulkAction;
+    setBulkBusy(true);
+    try {
+      const results = await Promise.allSettled(
+        targets.map(async (r) => {
+          let res: Response;
+          if (type === 'archive') {
+            res = await fetch(`/api/hr/onboarding-submissions/${r.id}`, { method: 'DELETE' });
+          } else if (type === 'delete') {
+            res = await fetch(`/api/hr/onboarding-submissions/${r.id}?hard=true`, {
+              method: 'DELETE',
+            });
+          } else {
+            res = await fetch(`/api/hr/onboarding-submissions/${r.id}/send`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            });
+          }
+          const json = (await res.json().catch(() => ({}))) as { error?: string };
+          if (!res.ok || json.error) throw new Error(json.error ?? 'Request failed');
+        }),
+      );
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      const failed = results.length - ok;
+      const verb = type === 'archive' ? 'archived' : type === 'delete' ? 'deleted' : 'sent';
+      if (ok > 0) toast.success(`${ok} submission${ok === 1 ? '' : 's'} ${verb}`);
+      if (failed > 0) toast.error(`${failed} failed — check and retry`);
+      setSelectedIds(new Set());
+      await load();
+    } finally {
+      setBulkBusy(false);
+      setBulkAction(null);
+    }
+  }
 
   async function archive(row: SubmissionRow) {
     setBusyId(row.id);
@@ -260,6 +368,63 @@ export default function HrOnboardingForm() {
         </div>
       </div>
 
+      {/* Bulk action bar — appears once one or more visible rows are selected.
+          Each action only targets the eligible subset of the selection. */}
+      {selectedRows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-2.5 dark:border-emerald-900/50 dark:bg-emerald-950/25">
+          <span className="text-sm font-medium text-emerald-900 dark:text-emerald-200">
+            {selectedRows.length} selected
+          </span>
+          <div className="ml-auto flex flex-wrap items-center gap-1.5">
+            {selSendable.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 px-2 text-xs text-emerald-800 hover:bg-emerald-100 dark:text-emerald-200 dark:hover:bg-emerald-900/40"
+                onClick={() => setBulkAction({ type: 'send', rows: selSendable })}
+                disabled={bulkBusy}
+              >
+                <Send className="h-3 w-3" />
+                Send ({selSendable.length})
+              </Button>
+            )}
+            {selArchivable.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 px-2 text-xs text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                onClick={() => setBulkAction({ type: 'archive', rows: selArchivable })}
+                disabled={bulkBusy}
+              >
+                <Archive className="h-3 w-3" />
+                Archive ({selArchivable.length})
+              </Button>
+            )}
+            {selDeletable.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                onClick={() => setBulkAction({ type: 'delete', rows: selDeletable })}
+                disabled={bulkBusy}
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete ({selDeletable.length})
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+              onClick={() => setSelectedIds(new Set())}
+              disabled={bulkBusy}
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Submissions table */}
       <div className="overflow-hidden rounded-xl border border-emerald-100/80 bg-white shadow-sm ring-1 ring-emerald-500/5 dark:border-emerald-950/40 dark:bg-zinc-950">
         {loading ? (
@@ -280,6 +445,14 @@ export default function HrOnboardingForm() {
             <table className="w-full text-left text-sm sm:min-w-[860px]">
               <thead className="border-b border-emerald-100/60 bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:border-emerald-900/40 dark:from-emerald-950/40 dark:via-zinc-950 dark:to-emerald-950/30 dark:text-zinc-400">
                 <tr>
+                  <th className="w-10 px-4 py-3">
+                    <Checkbox
+                      checked={allVisibleSelected}
+                      indeterminate={someVisibleSelected}
+                      onCheckedChange={toggleAllVisible}
+                      aria-label="Select all visible submissions"
+                    />
+                  </th>
                   <th className="px-4 py-3 font-semibold">Invitee</th>
                   <th className="px-4 py-3 font-semibold">Department</th>
                   <th className="px-4 py-3 font-semibold">Status</th>
@@ -289,10 +462,28 @@ export default function HrOnboardingForm() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-emerald-100/60 dark:divide-emerald-900/30">
-                {filtered.map((r) => {
+                {filtered.map((r, i) => {
                   const isBusy = busyId === r.id;
                   return (
-                    <tr key={r.id} className="align-top hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20">
+                    // Keyed by filter so every row remounts and re-runs its
+                    // stagger-in when you switch Awaiting/Submitted/Archived/All.
+                    <motion.tr
+                      key={`${filter}:${r.id}`}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.18, ease: 'easeOut', delay: Math.min(i * 0.025, 0.25) }}
+                      className={cn(
+                        'align-top hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20',
+                        selectedIds.has(r.id) && 'bg-emerald-50/60 dark:bg-emerald-950/30',
+                      )}
+                    >
+                      <td data-label="Select" className="px-4 py-3">
+                        <Checkbox
+                          checked={selectedIds.has(r.id)}
+                          onCheckedChange={() => toggleOne(r.id)}
+                          aria-label={`Select ${r.invite_name ?? r.full_name ?? 'submission'}`}
+                        />
+                      </td>
                       <td data-label="Invitee" className="px-4 py-3">
                         <div className="font-medium text-zinc-900 dark:text-zinc-100">
                           {r.invite_name ?? r.full_name ?? '—'}
@@ -333,40 +524,65 @@ export default function HrOnboardingForm() {
                             </Button>
                           )}
                           {r.status === 'submitted' && (
-                            <Button
-                              size="sm"
-                              className="h-7 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white hover:opacity-90"
-                              onClick={() => setViewRow(r)}
-                            >
-                              <Eye className="mr-1 h-3 w-3" />
-                              View
-                            </Button>
+                            <>
+                              {r.pending_employee_id ? (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-md border border-sky-300 bg-sky-50 px-2 py-1 font-mono text-[11px] font-medium text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100"
+                                  title="Staged in Pending Hires"
+                                >
+                                  <UserCheck className="h-3 w-3 shrink-0" />
+                                  {r.work_email}
+                                </span>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 gap-1 px-2 text-xs text-emerald-800 hover:bg-emerald-50 dark:text-emerald-200 dark:hover:bg-emerald-950/30"
+                                  onClick={() => setWorkEmailFor(r)}
+                                  title="Mint an @simple.biz address and stage this hire"
+                                >
+                                  <Mail className="h-3 w-3" />
+                                  Set work email
+                                </Button>
+                              )}
+                              <Button
+                                size="sm"
+                                className="h-7 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white hover:opacity-90"
+                                onClick={() => setViewRow(r)}
+                              >
+                                <Eye className="mr-1 h-3 w-3" />
+                                View
+                              </Button>
+                            </>
                           )}
-                          {r.status !== 'archived' && (
+                          {r.status !== 'archived' ? (
                             <Button
                               size="sm"
                               variant="outline"
                               className="h-7 px-2 text-xs text-zinc-600 hover:bg-zinc-50"
                               onClick={() => setArchiveTarget(r)}
                               disabled={isBusy}
-                              title="Archive"
+                              title="Archive — link will stop working but can be reviewed later"
                             >
                               <Archive className="h-3 w-3" />
                             </Button>
+                          ) : (
+                            // Gmail trash-bin pattern: hard-delete only reachable from the
+                            // Archived view, so accidental one-clicks can't nuke a live link.
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                              onClick={() => setDeleteTarget(r)}
+                              disabled={isBusy}
+                              title="Permanently delete this archived submission"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                           )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                            onClick={() => setDeleteTarget(r)}
-                            disabled={isBusy}
-                            title="Permanently delete this submission"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
                         </div>
                       </td>
-                    </tr>
+                    </motion.tr>
                   );
                 })}
               </tbody>
@@ -388,11 +604,21 @@ export default function HrOnboardingForm() {
       <LinkCreatedDialog
         row={linkCreated}
         onClose={() => setLinkCreated(null)}
+        onSent={() => void load()}
       />
 
       <SubmissionDetailDialog
         row={viewRow}
         onClose={() => setViewRow(null)}
+      />
+
+      <SetOnboardingWorkEmailDialog
+        row={workEmailFor}
+        onClose={() => setWorkEmailFor(null)}
+        onConverted={() => {
+          setWorkEmailFor(null);
+          void load();
+        }}
       />
 
       <Dialog open={!!archiveTarget} onOpenChange={(o) => !o && setArchiveTarget(null)}>
@@ -453,6 +679,57 @@ export default function HrOnboardingForm() {
                 <Trash2 className="mr-1 h-3 w-3" />
               )}
               Delete permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!bulkAction} onOpenChange={(o) => !o && !bulkBusy && setBulkAction(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              {bulkAction?.type === 'send'
+                ? `Send ${bulkAction.rows.length} onboarding email${bulkAction.rows.length === 1 ? '' : 's'}?`
+                : bulkAction?.type === 'archive'
+                  ? `Archive ${bulkAction.rows.length} submission${bulkAction.rows.length === 1 ? '' : 's'}?`
+                  : `Permanently delete ${bulkAction?.rows.length ?? 0} submission${bulkAction?.rows.length === 1 ? '' : 's'}?`}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {bulkAction?.type === 'send'
+                ? 'Each recipient gets a fresh, unique link — any previous link for that row stops working. Emails go out via the configured webhook.'
+                : bulkAction?.type === 'archive'
+                  ? "Their links will stop working. You can still review them under the Archived filter, but new hires won't be able to open or submit the form."
+                  : 'These archived submissions and any signatures / W-8BEN files uploaded with them will be removed from the database. This cannot be undone.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" size="sm" onClick={() => setBulkAction(null)} disabled={bulkBusy}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className={cn(
+                bulkAction?.type === 'send' && 'bg-emerald-600 hover:bg-emerald-700',
+                bulkAction?.type === 'archive' && 'bg-zinc-700 hover:bg-zinc-800',
+                bulkAction?.type === 'delete' && 'bg-rose-600 hover:bg-rose-700',
+              )}
+              onClick={() => void runBulkAction()}
+              disabled={bulkBusy}
+            >
+              {bulkBusy ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : bulkAction?.type === 'send' ? (
+                <Send className="mr-1 h-3 w-3" />
+              ) : bulkAction?.type === 'archive' ? (
+                <Archive className="mr-1 h-3 w-3" />
+              ) : (
+                <Trash2 className="mr-1 h-3 w-3" />
+              )}
+              {bulkAction?.type === 'send'
+                ? 'Send all'
+                : bulkAction?.type === 'archive'
+                  ? 'Archive all'
+                  : 'Delete all'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -630,6 +907,279 @@ function GenerateLinkDialog({
 
 // ─── Department dropdown (Base UI Select, matches AddPersonDialog style) ──
 
+// --- Set-work-email dialog (mints @simple.biz + stages a pending hire) -----
+
+function SetOnboardingWorkEmailDialog({
+  row,
+  onClose,
+  onConverted,
+}: {
+  row: SubmissionRow | null;
+  onClose: () => void;
+  onConverted: () => void;
+}) {
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [deptsLoading, setDeptsLoading] = useState(false);
+  const [dept, setDept] = useState('');
+  const [workEmail, setWorkEmail] = useState('');
+  const [suggesting, setSuggesting] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [available, setAvailable] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const fullName = row?.full_name?.trim() || row?.invite_name?.trim() || '';
+  const { first, last } = useMemo(() => splitFullName(fullName), [fullName]);
+
+  // Ask the server for the next free address derived from the hire's name.
+  const reSuggest = useCallback(async () => {
+    if (!fullName) return;
+    setSuggesting(true);
+    try {
+      const res = await fetch('/api/hr/work-email/suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullName }),
+      });
+      const j = (await res.json()) as {
+        suggestion?: { email: string } | null;
+        error?: string;
+      };
+      if (j.error) throw new Error(j.error);
+      if (j.suggestion?.email) {
+        setWorkEmail(j.suggestion.email);
+        setAvailable(true);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not suggest a work email');
+    } finally {
+      setSuggesting(false);
+    }
+  }, [fullName]);
+
+  // Seed the form (and a fresh suggestion) whenever a row opens.
+  useEffect(() => {
+    if (!row) return;
+    setDept(row.invite_department?.trim() ?? '');
+    setWorkEmail('');
+    setAvailable(null);
+    void reSuggest();
+  }, [row, reSuggest]);
+
+  // Department list — same source as the Generate-link dialog.
+  useEffect(() => {
+    if (!row) return;
+    if (departments.length > 0 || deptsLoading) return;
+    setDeptsLoading(true);
+    fetch('/api/departments', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { departments?: string[]; error?: string }) => {
+        if (j.error) throw new Error(j.error);
+        setDepartments(j.departments ?? []);
+      })
+      .catch((e) =>
+        toast.error(e instanceof Error ? e.message : 'Could not load departments'),
+      )
+      .finally(() => setDeptsLoading(false));
+  }, [row, departments.length, deptsLoading]);
+
+  // Debounced availability check as HR edits the address.
+  useEffect(() => {
+    if (!row) return;
+    const email = workEmail.trim().toLowerCase();
+    if (!email) {
+      setAvailable(null);
+      setChecking(false);
+      return;
+    }
+    let active = true;
+    setChecking(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/hr/work-email/suggest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candidate: email }),
+        });
+        const j = (await res.json()) as {
+          candidate?: { available: boolean } | null;
+        };
+        if (active) setAvailable(j.candidate ? j.candidate.available : null);
+      } catch {
+        if (active) setAvailable(null);
+      } finally {
+        if (active) setChecking(false);
+      }
+    }, 350);
+    return () => {
+      active = false;
+      clearTimeout(t);
+    };
+  }, [workEmail, row]);
+
+  const emailNorm = workEmail.trim().toLowerCase();
+  const emailValid = isPlausibleEmail(emailNorm) && emailNorm.endsWith('@simple.biz');
+  const canSave =
+    !!row && !busy && emailValid && available === true && dept.trim().length > 0;
+
+  async function save() {
+    if (!row) return;
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/hr/onboarding-submissions/${row.id}/set-work-email`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ work_email: emailNorm, department: dept.trim() }),
+        },
+      );
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to set work email');
+      toast.success(`${emailNorm} assigned`, {
+        description: 'Staged in Pending Hires - promote after orientation.',
+      });
+      onConverted();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to set work email');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!row) return null;
+
+  return (
+    <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">
+        <div className="-mx-6 -mt-6 mb-1 overflow-hidden rounded-t-lg border-b border-emerald-100/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 px-6 py-5 dark:border-emerald-950/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25">
+                <Mail className="h-4 w-4" />
+              </span>
+              Set work email
+            </DialogTitle>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+              We suggest an @simple.biz address from the hire's name and check it against the
+              master list (off-boarded addresses are free to reuse). Saving stages them in
+              Pending Hires, ready to promote after orientation.
+            </p>
+          </DialogHeader>
+        </div>
+
+        <DialogSection label="New hire">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50/60 px-2 py-0.5 text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-200">
+              <User className="h-3 w-3" />
+              {fullName || '(no name on submission)'}
+            </span>
+            {(row.email || row.invite_personal_email) && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                <Mail className="h-3 w-3" />
+                {row.email ?? row.invite_personal_email}
+              </span>
+            )}
+          </div>
+          {(first || last) && (
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+              Parsed as first{' '}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">{first || '-'}</span>, last{' '}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">{last || '-'}</span>.
+            </p>
+          )}
+        </DialogSection>
+
+        <DialogSection label="Department">
+          <DialogField
+            label="Department"
+            hint={deptsLoading ? 'Loading...' : 'Required - carried into the staged hire.'}
+          >
+            <DepartmentSelect
+              value={dept}
+              onChange={setDept}
+              departments={departments}
+              loading={deptsLoading}
+            />
+          </DialogField>
+        </DialogSection>
+
+        <DialogSection label="Work email" last>
+          <DialogField label="Work email (@simple.biz)" icon={<Mail className="h-3 w-3" />}>
+            <div className="relative">
+              <Input
+                value={workEmail}
+                onChange={(e) => setWorkEmail(e.target.value)}
+                placeholder={suggesting ? 'Suggesting...' : 'namel@simple.biz'}
+                className="pr-9 font-mono"
+                spellCheck={false}
+                autoCapitalize="none"
+              />
+              <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">
+                {suggesting || checking ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                ) : available === true ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                ) : available === false ? (
+                  <XCircle className="h-4 w-4 text-rose-500" />
+                ) : null}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <p
+                className={cn(
+                  'text-[11px]',
+                  available === false
+                    ? 'text-rose-600 dark:text-rose-400'
+                    : available === true
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-zinc-500',
+                )}
+              >
+                {available === false
+                  ? 'Already in use - try another.'
+                  : available === true
+                    ? 'Available.'
+                    : emailNorm && !emailValid
+                      ? 'Must be a valid @simple.biz address.'
+                      : 'Checking availability as you type.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => void reSuggest()}
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:underline disabled:opacity-50 dark:text-emerald-300"
+                disabled={suggesting || !fullName}
+              >
+                <Wand2 className="h-3 w-3" /> Suggest
+              </button>
+            </div>
+          </DialogField>
+        </DialogSection>
+
+        <DialogFooter className="gap-2 pt-2 sm:gap-0">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:from-emerald-500 hover:to-teal-600"
+            onClick={() => void save()}
+            disabled={!canSave}
+          >
+            {busy ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <UserCheck className="mr-1 h-3.5 w-3.5" />
+            )}
+            {busy ? 'Saving...' : 'Save and stage hire'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// --- Department dropdown (Base UI Select, matches AddPersonDialog style) ---
+
 function DepartmentSelect({
   value,
   onChange,
@@ -789,22 +1339,32 @@ function DialogField({
 function LinkCreatedDialog({
   row,
   onClose,
+  onSent,
 }: {
   row: SubmissionRow | null;
   onClose: () => void;
+  onSent?: () => void;
 }) {
   const [justCopied, setJustCopied] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  // Send rotates the token server-side, so cache the post-send token locally
+  // and prefer it for the displayed URL — otherwise Copy link would keep
+  // handing out the pre-rotation URL that's now a 404.
+  const [rotatedToken, setRotatedToken] = useState<string | null>(null);
   useEffect(() => {
     if (!row) {
       setJustCopied(false);
       setSending(false);
       setSent(false);
+      setRotatedToken(null);
+    } else {
+      setRotatedToken(null);
     }
   }, [row]);
 
-  const url = row ? publicLinkFor(row.token) : '';
+  const displayToken = rotatedToken ?? row?.token ?? '';
+  const url = row ? publicLinkFor(displayToken) : '';
   const firstName = row?.invite_name ? row.invite_name.split(/\s+/)[0] : null;
   const mailtoSubject = encodeURIComponent('Your Simple.biz onboarding form');
   const mailtoBodyRaw = `Hi${firstName ? ` ${firstName}` : ''},\n\nWelcome to Simple.biz! Please complete your onboarding form here — it should take about 10 minutes:\n\n${url}\n\nNo account needed; the link is private to you.\n\nLet me know if you hit any issues.\n`;
@@ -825,10 +1385,17 @@ function LinkCreatedDialog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      const json = (await res.json()) as { ok?: boolean; to?: string; error?: string };
+      const json = (await res.json()) as {
+        ok?: boolean;
+        to?: string;
+        token?: string;
+        error?: string;
+      };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Send failed');
       setSent(true);
+      if (json.token) setRotatedToken(json.token);
       toast.success(`Email sent to ${json.to ?? row.invite_personal_email ?? 'recipient'}`);
+      onSent?.();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Send failed');
     } finally {
@@ -1013,21 +1580,54 @@ function LinkCreatedDialog({
 
 // ─── Submission detail dialog ─────────────────────────────────────────────
 
+// Left-to-right order of the detail tabs — drives the directional slide so a
+// jump to a later tab enters from the right, an earlier tab from the left.
+const DETAIL_TAB_ORDER = ['summary', 'non_solicitation', 'privacy', 'contract'] as const;
+
 function SubmissionDetailDialog({
-  row,
+  row: rowProp,
   onClose,
 }: {
   row: SubmissionRow | null;
   onClose: () => void;
 }) {
   const [w8benUrl, setW8benUrl] = useState<string | null>(null);
+  const [tab, setTab] = useState('summary');
+  const [tabDirection, setTabDirection] = useState(0);
+  const [downloadingW8Ben, setDownloadingW8Ben] = useState(false);
+
+  // Switch tabs while recording which way we moved (1 = rightward, -1 = left)
+  // so the panel can slide in the matching direction.
+  function selectTab(next: string) {
+    const from = DETAIL_TAB_ORDER.indexOf(tab as (typeof DETAIL_TAB_ORDER)[number]);
+    const to = DETAIL_TAB_ORDER.indexOf(next as (typeof DETAIL_TAB_ORDER)[number]);
+    setTabDirection(to >= from ? 1 : -1);
+    setTab(next);
+  }
+
+  // Keep the last-opened submission rendered while the dialog plays its close
+  // animation. Without this, `row` flips to null on close and the early return
+  // unmounts the whole dialog synchronously — Base UI never runs the
+  // data-closed:animate-out exit, so the modal just blinks out.
+  const [cachedRow, setCachedRow] = useState<SubmissionRow | null>(rowProp);
+  useEffect(() => {
+    if (rowProp) setCachedRow(rowProp);
+  }, [rowProp]);
+
+  const open = !!rowProp;
+  const row = rowProp ?? cachedRow;
+
+  // Reset to the Summary tab each time a submission is opened — guarded so it
+  // doesn't snap back to Summary mid-close (rowProp is null while closing).
+  useEffect(() => {
+    if (rowProp) {
+      setTab('summary');
+      setTabDirection(0);
+    }
+  }, [rowProp?.id]);
 
   useEffect(() => {
-    if (!row) {
-      setW8benUrl(null);
-      return;
-    }
-    if (!row.w8ben_file_path) {
+    if (!row?.w8ben_file_path) {
       setW8benUrl(null);
       return;
     }
@@ -1046,10 +1646,42 @@ function SubmissionDetailDialog({
 
   if (!row) return null;
 
+  // Force a real download (save file) rather than opening it in the browser.
+  // The `download` attribute is ignored cross-origin, so fetch the signed URL
+  // into a blob and trigger a same-origin object-URL download instead.
+  async function handleDownloadW8Ben() {
+    if (!w8benUrl) return;
+    setDownloadingW8Ben(true);
+    try {
+      const res = await fetch(w8benUrl);
+      if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = row?.w8ben_file_name || 'FW8BEN.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Download failed');
+    } finally {
+      setDownloadingW8Ben(false);
+    }
+  }
+
+  const detailTabs = [
+    { value: 'summary', label: 'Summary' },
+    { value: 'non_solicitation', label: 'Non-Solicitation', signed: !!row.non_solicitation_signature },
+    { value: 'privacy', label: 'Privacy', signed: !!row.privacy_signature },
+    { value: 'contract', label: 'Contract', signed: !!row.contract_signature },
+  ] as const;
+
   return (
-    <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
-        <DialogHeader>
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="flex max-h-[88vh] w-[min(94vw,920px)] max-w-[min(94vw,920px)] flex-col gap-0 overflow-hidden p-0 data-closed:slide-out-to-bottom-4 data-closed:duration-200 sm:max-w-[min(94vw,920px)]">
+        <DialogHeader className="shrink-0 px-6 pt-5 pr-12">
           <DialogTitle className="text-base">
             {row.full_name ?? row.invite_name ?? 'Onboarding submission'}
           </DialogTitle>
@@ -1058,69 +1690,164 @@ function SubmissionDetailDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-5 pt-1">
-          <DetailSection title="Personal info">
-            <DetailRow label="Full name" value={row.full_name} />
-            <DetailRow label="Phone" value={row.phone} />
-            <DetailRow label="Email" value={row.email} mono />
-          </DetailSection>
+        {/* Folder-style tabs: the active tab connects seamlessly into the
+            panel below it (shared white edge, broken baseline). */}
+        <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-4">
+          <TabsPrimitive.Root value={tab} onValueChange={(v) => selectTab(v as string)} className="shrink-0">
+            <TabsPrimitive.List className="flex flex-wrap items-end gap-1 border-b border-zinc-200/80 dark:border-zinc-700/70">
+              {detailTabs.map((t) => (
+                <TabsPrimitive.Tab
+                  key={t.value}
+                  value={t.value}
+                  className={cn(
+                    'relative -mb-px flex items-center gap-1.5 rounded-t-lg border px-4 py-2 text-sm font-medium',
+                    'transition-[background-color,color,border-color,box-shadow] duration-200 ease-out',
+                    'cursor-pointer select-none border-transparent text-zinc-500 outline-none',
+                    'hover:bg-white/50 hover:text-zinc-800 focus-visible:ring-2 focus-visible:ring-emerald-500/40',
+                    'dark:text-zinc-400 dark:hover:bg-zinc-800/40 dark:hover:text-zinc-200',
+                    'data-[active]:z-10 data-[active]:border-zinc-200/90 data-[active]:border-b-white data-[active]:bg-white data-[active]:text-zinc-900 data-[active]:shadow-[0_-1px_8px_-2px_rgba(16,24,40,0.08)]',
+                    'dark:data-[active]:border-zinc-700/80 dark:data-[active]:border-b-zinc-950 dark:data-[active]:bg-zinc-950 dark:data-[active]:text-white',
+                  )}
+                >
+                  {t.label}
+                  {'signed' in t ? <SignedDot signed={t.signed} /> : null}
+                </TabsPrimitive.Tab>
+              ))}
+            </TabsPrimitive.List>
+          </TabsPrimitive.Root>
 
-          <DetailSection title="Agreement signatures">
-            <SignaturePreview label="Non-solicitation" src={row.non_solicitation_signature} />
-            <SignaturePreview label="Privacy" src={row.privacy_signature} />
-            <SignaturePreview label="Contract worker agreement" src={row.contract_signature} />
-            <DetailRow label="Contract date" value={fmtDate(row.contract_date)} />
-          </DetailSection>
+          {/* Connected content panel. overflow-x-hidden clips the horizontal
+              slide so it never spawns a scrollbar mid-transition. */}
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden rounded-b-xl rounded-tr-xl border border-t-0 border-zinc-200/90 bg-white p-5 shadow-sm dark:border-zinc-700/80 dark:bg-zinc-950">
+            <AnimatePresence mode="wait" initial={false} custom={tabDirection}>
+              <motion.div
+                key={tab}
+                custom={tabDirection}
+                variants={{
+                  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 36 : -36 }),
+                  center: { opacity: 1, x: 0 },
+                  exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -36 : 36 }),
+                }}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              >
+                {tab === 'summary' ? (
+                  <div className="grid gap-x-8 gap-y-5 md:grid-cols-2">
+                    {/* Left column — text-based details */}
+                    <div className="space-y-5">
+                      <DetailSection title="Personal info">
+                        <DetailRow label="Full name" value={row.full_name} />
+                        <DetailRow label="Phone" value={row.phone} />
+                        <DetailRow label="Email" value={row.email} mono />
+                      </DetailSection>
 
-          <DetailSection title="W-8BEN">
-            <DetailRow
-              label="Applicable?"
-              value={row.w8ben_applicable === null ? '—' : row.w8ben_applicable ? 'Yes — non-US' : 'No — US-based'}
-            />
-            {row.w8ben_file_name && (
-              <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-xs">
-                <div className="flex items-center gap-2 truncate">
-                  <FileText className="h-4 w-4 shrink-0 text-emerald-700" />
-                  <span className="truncate">{row.w8ben_file_name}</span>
-                </div>
-                {w8benUrl ? (
-                  <a
-                    href={w8benUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-md border border-emerald-300 bg-white px-2 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-50"
+                      <DetailSection title="W-8BEN">
+                        <DetailRow
+                          label="Applicable?"
+                          value={row.w8ben_applicable === null ? '—' : row.w8ben_applicable ? 'Yes — non-US' : 'No — US-based'}
+                        />
+                        {row.w8ben_file_name && (
+                          <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-xs">
+                            <div className="flex items-center gap-2 truncate">
+                              <FileText className="h-4 w-4 shrink-0 text-emerald-700" />
+                              <span className="truncate">{row.w8ben_file_name}</span>
+                            </div>
+                            {w8benUrl ? (
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                <a
+                                  href={w8benUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-2 py-1 text-[11px] font-medium text-emerald-800 transition-colors hover:bg-emerald-50"
+                                  title="Open the W-8BEN in a new tab"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                  View
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={handleDownloadW8Ben}
+                                  disabled={downloadingW8Ben}
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-600 bg-emerald-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-60"
+                                  title="Download the W-8BEN file"
+                                >
+                                  {downloadingW8Ben ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Download className="h-3 w-3" />
+                                  )}
+                                  Download
+                                </button>
+                              </div>
+                            ) : (
+                              <Loader2 className="h-3 w-3 animate-spin text-emerald-700" />
+                            )}
+                          </div>
+                        )}
+                      </DetailSection>
+
+                      <DetailSection title="Payment method">
+                        <DetailRow
+                          label="Method"
+                          value={row.payment_method === 'hurupay' ? 'Hurupay' : row.payment_method === 'wires' ? 'Wire transfer' : '—'}
+                        />
+                        {row.payment_method === 'wires' && (
+                          <div className="grid gap-1.5 sm:grid-cols-2">
+                            <DetailRow label="Bank" value={row.bank_full_name} />
+                            <DetailRow label="Account name" value={row.bank_account_name} />
+                            <DetailRow label="Account number" value={row.bank_account_number} mono />
+                            <DetailRow label="SWIFT" value={row.bank_swift_code} mono />
+                            <DetailRow label="Street" value={row.bank_street} />
+                            <DetailRow label="City" value={row.bank_city} />
+                            <DetailRow label="Province" value={row.bank_province} />
+                            <DetailRow label="Postal code" value={row.bank_postal_code} />
+                            <DetailRow label="Full address" value={row.bank_full_address} className="sm:col-span-2" />
+                          </div>
+                        )}
+                      </DetailSection>
+                    </div>
+
+                    {/* Right column — signatures */}
+                    <div className="space-y-5">
+                      <DetailSection title="Agreement signatures">
+                        <SignaturePreview label="Non-solicitation" src={row.non_solicitation_signature} />
+                        <SignaturePreview label="Privacy" src={row.privacy_signature} />
+                        <SignaturePreview label="Contract worker agreement" src={row.contract_signature} />
+                        <DetailRow label="Contract date" value={fmtDate(row.contract_date)} />
+                      </DetailSection>
+                    </div>
+                  </div>
+                ) : tab === 'non_solicitation' ? (
+                  <AgreementTab
+                    title={AGREEMENT_TITLES.nonSolicitation}
+                    signatureSrc={row.non_solicitation_signature}
                   >
-                    Download
-                  </a>
+                    <NonSolicitationText />
+                  </AgreementTab>
+                ) : tab === 'privacy' ? (
+                  <AgreementTab title={AGREEMENT_TITLES.privacy} signatureSrc={row.privacy_signature}>
+                    <PrivacyText />
+                  </AgreementTab>
                 ) : (
-                  <Loader2 className="h-3 w-3 animate-spin text-emerald-700" />
+                  <AgreementTab
+                    title={AGREEMENT_TITLES.contract}
+                    signatureSrc={row.contract_signature}
+                    signedOn={row.contract_signature ? fmtDate(row.contract_date) : null}
+                  >
+                    <ContractWorkerText />
+                  </AgreementTab>
                 )}
-              </div>
-            )}
-          </DetailSection>
-
-          <DetailSection title="Payment method">
-            <DetailRow
-              label="Method"
-              value={row.payment_method === 'hurupay' ? 'Hurupay' : row.payment_method === 'wires' ? 'Wire transfer' : '—'}
-            />
-            {row.payment_method === 'wires' && (
-              <div className="grid gap-1.5 sm:grid-cols-2">
-                <DetailRow label="Bank" value={row.bank_full_name} />
-                <DetailRow label="Account name" value={row.bank_account_name} />
-                <DetailRow label="Account number" value={row.bank_account_number} mono />
-                <DetailRow label="SWIFT" value={row.bank_swift_code} mono />
-                <DetailRow label="Street" value={row.bank_street} />
-                <DetailRow label="City" value={row.bank_city} />
-                <DetailRow label="Province" value={row.bank_province} />
-                <DetailRow label="Postal code" value={row.bank_postal_code} />
-                <DetailRow label="Full address" value={row.bank_full_address} className="sm:col-span-2" />
-              </div>
-            )}
-          </DetailSection>
+              </motion.div>
+            </AnimatePresence>
+          </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-0">
+        {/* mx-0/mb-0 cancel DialogFooter's default -mx-4/-mb-4 (those assume the
+            dialog's default p-4; this modal is p-0, so without resetting them the
+            footer overflows and the Close button hugs the corner). */}
+        <DialogFooter className="mx-0 mb-0 shrink-0 rounded-b-xl border-t border-zinc-200/70 bg-white/70 px-6 py-4 backdrop-blur-sm dark:border-zinc-800/70 dark:bg-zinc-950/50 sm:justify-end sm:gap-0">
           <Button variant="outline" size="sm" onClick={onClose}>
             <CheckCircle2 className="mr-1 h-3 w-3" />
             Close
@@ -1173,10 +1900,85 @@ function SignaturePreview({ label, src }: { label: string; src: string | null })
     );
   }
   return (
-    <div className="rounded-lg border border-zinc-200 bg-zinc-50/40 p-2">
-      <div className="mb-1 text-[11px] font-medium text-zinc-600">{label}</div>
+    // Signatures are dark ink, so the canvas stays white in both themes — which
+    // means the label must be dark (not the default light-on-dark) to stay
+    // readable against it.
+    <div className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-300">
+      <div className="mb-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-900">{label}</div>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={src} alt={`${label} signature`} className="max-h-24 w-full object-contain" />
+    </div>
+  );
+}
+
+// Small colored dot in a tab trigger — green when that agreement has a
+// signature on file, amber when it's still unsigned.
+function SignedDot({ signed }: { signed: boolean }) {
+  return (
+    <span
+      className={cn('ml-1.5 h-1.5 w-1.5 rounded-full', signed ? 'bg-emerald-500' : 'bg-amber-400')}
+      aria-label={signed ? 'Signed' : 'Not signed'}
+    />
+  );
+}
+
+// One granular agreement tab: the legal copy the hiree saw, a signed/not-signed
+// badge, and the captured signature image (or a clear "not signed" notice).
+function AgreementTab({
+  title,
+  signatureSrc,
+  signedOn,
+  children,
+}: {
+  title: string;
+  signatureSrc: string | null;
+  signedOn?: string | null;
+  children: React.ReactNode;
+}) {
+  const signed = !!signatureSrc;
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h3>
+        <span
+          className={cn(
+            'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold',
+            signed
+              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+          )}
+        >
+          {signed ? <CheckCircle2 className="h-3 w-3" /> : null}
+          {signed ? 'Signed' : 'Not signed'}
+        </span>
+      </div>
+
+      <div className="max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50/50 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
+        {children}
+      </div>
+
+      <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-300">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-600">
+            Signature
+          </span>
+          {signedOn ? (
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-600">Dated {signedOn}</span>
+          ) : null}
+        </div>
+        {signed ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={signatureSrc!}
+            alt={`${title} signature`}
+            className="max-h-32 w-full object-contain"
+          />
+        ) : (
+          <p className="py-4 text-center text-xs text-zinc-400">
+            No signature captured — the hiree has not signed this agreement.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

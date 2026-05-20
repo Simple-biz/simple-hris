@@ -7,7 +7,7 @@
 </head>
 <body style="margin:0;padding:0;background-color:#fafaf7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Helvetica,Arial,sans-serif;color:#1f2937;-webkit-font-smoothing:antialiased;">
   <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
-    Hi Kane — your Simple.biz onboarding form is ready. Takes about 10 minutes.
+    Hi {{ $json.body.invite_name }} — your Simple.biz onboarding form is ready. Takes about 10 minutes.
   </div>
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fafaf7;">
@@ -24,7 +24,7 @@
               <h1 style="margin:8px 0 0 0;font-size:24px;line-height:1.25;font-weight:700;color:#ffffff;">
                 Your onboarding form is ready
               </h1>
-              <p style="margin:6px 0 0 0;font-size:13px;color:rgba(255,255,255,0.72);">For the <strong style="color:#ffffff;font-weight:600;">{{ $json.body.invite_department }}</p>
+              <p style="margin:6px 0 0 0;font-size:13px;color:rgba(255,255,255,0.72);">For the <strong style="color:#ffffff;font-weight:600;">{{ $json.body.invite_department }}</strong> team</p>
             </td>
           </tr>
 
@@ -39,7 +39,7 @@
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:24px auto 8px auto;">
                 <tr>
                   <td align="center" bgcolor="#1e1b4b" style="background-color:#1e1b4b;background-image:linear-gradient(135deg,#1e1b4b 0%,#15123b 100%);border-radius:10px;">
-                    <a href="https://simple-hris.vercel.app/onboarding/X-VL3a4kEUF_Vkyz2mrTRtLAQ7Pe2oCG" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;border:1px solid #15123b;">
+                    <a href="{{ $json.body.link }}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;border:1px solid #15123b;">
                       Open my onboarding form &nbsp;&rarr;
                     </a>
                   </td>
@@ -48,7 +48,7 @@
 
               <p style="margin:18px 0 0 0;font-size:13px;line-height:1.55;color:#6b7280;text-align:center;">
                 Or paste this URL into your browser:<br />
-                <a href="https://simple-hris.vercel.app/onboarding/X-VL3a4kEUF_Vkyz2mrTRtLAQ7Pe2oCG" style="color:#1e1b4b;word-break:break-all;text-decoration:underline;">https://simple-hris.vercel.app/onboarding/X-VL3a4kEUF_Vkyz2mrTRtLAQ7Pe2oCG</a>
+                <a href="{{ $json.body.link }}" style="color:#1e1b4b;word-break:break-all;text-decoration:underline;">{{ $json.body.link }}</a>
               </p>
 
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 0 0;">
@@ -57,7 +57,7 @@
                     <p style="margin:0 0 4px 0;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#f97316;">
                       &#9829; Note from HR
                     </p>
-                    <p style="margin:0;font-size:14px;line-height:1.5;color:#1f2937;">Welcome aboard! Please complete this before your first day so payroll can set you up.</p>
+                    <p style="margin:0;font-size:14px;line-height:1.5;color:#1f2937;">{{ $json.body.invite_note }}</p>
                   </td>
                 </tr>
               </table>

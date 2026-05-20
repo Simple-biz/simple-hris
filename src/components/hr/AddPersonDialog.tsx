@@ -35,6 +35,12 @@ interface HubstaffProject {
   name: string;
 }
 
+interface DeptRate {
+  department: string;
+  regular_rate: string | null;
+  ot_rate: string | null;
+}
+
 interface AddPersonDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -112,16 +118,20 @@ export default function AddPersonDialog({
   const [submitting, setSubmitting] = useState(false);
   const [departments, setDepartments] = useState<HubstaffProject[]>([]);
   const [departmentsLoading, setDepartmentsLoading] = useState(false);
+  const [deptRates, setDeptRates] = useState<DeptRate[]>([]);
   const [touched, setTouched] = useState<Set<RequiredKey>>(new Set());
 
   useEffect(() => {
     if (!open || departments.length > 0 || departmentsLoading) return;
     setDepartmentsLoading(true);
-    fetch('/api/secondary/hubstaff-projects', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { projects?: HubstaffProject[]; error?: string }) => {
-        if (j.error) throw new Error(j.error);
-        setDepartments(j.projects ?? []);
+    Promise.all([
+      fetch('/api/secondary/hubstaff-projects', { cache: 'no-store' }).then((r) => r.json()),
+      fetch('/api/hr/department-rates', { cache: 'no-store' }).then((r) => r.json()),
+    ])
+      .then(([dj, rj]: [{ projects?: HubstaffProject[]; error?: string }, { departments?: DeptRate[]; error?: string }]) => {
+        if (dj.error) throw new Error(dj.error);
+        setDepartments(dj.projects ?? []);
+        setDeptRates(rj.departments ?? []);
       })
       .catch((e) =>
         toast.error(e instanceof Error ? e.message : 'Could not load departments'),
@@ -143,7 +153,15 @@ export default function AddPersonDialog({
     setTouched((s) => (s.has(k) ? s : new Set(s).add(k)));
 
   const onDepartmentChange = (next: string) => {
-    setForm((prev) => ({ ...prev, department: next }));
+    const match = deptRates.find(
+      (r) => r.department.trim().toLowerCase() === next.trim().toLowerCase(),
+    );
+    setForm((prev) => ({
+      ...prev,
+      department: next,
+      regular_rate: match?.regular_rate ?? prev.regular_rate,
+      ot_rate: match?.ot_rate ?? prev.ot_rate,
+    }));
     markTouched('department');
   };
 

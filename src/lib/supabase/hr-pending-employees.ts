@@ -39,6 +39,9 @@ export type HrPendingEmployeeRow = {
   orientation_attended_at: string | null;
   orientation_attended_by: string | null;
   orientation_note: string | null;
+  /** Provenance back-link when this hire was spun up from a submitted
+   *  onboarding form (null for "Add person" hires). */
+  onboarding_submission_id: string | null;
 };
 
 export type CreateHrPendingInput = {
@@ -55,6 +58,7 @@ export type CreateHrPendingInput = {
   ot_rate?: string | null;
   notes?: string | null;
   created_by?: string | null;
+  onboarding_submission_id?: string | null;
 };
 
 export type UpdateHrPendingInput = Partial<
@@ -115,6 +119,7 @@ export async function createHrPendingEmployee(
     ot_rate: input.ot_rate?.trim() || null,
     notes: input.notes?.trim() || null,
     created_by: input.created_by?.trim().toLowerCase() || null,
+    onboarding_submission_id: input.onboarding_submission_id ?? null,
     status,
   };
 

@@ -120,7 +120,11 @@
       "Bash(SR_KEY=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM\" node *)",
       "Bash(SR_KEY=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBdyc2NCIsInJlZiI6Im9va3B4d3h4dWpkdHBwcWl6bHJwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjIwOTI1MywiZXhwIjoyMDg3Nzg1MjUzfQ.zv1h3hYhe5PGODiB1diLmVQyqbXO1qBjN01tpPQvIeM\" node *)",
       "Bash(git diff *)",
-      "Bash(git log *)"
+      "Bash(git log *)",
+      "PowerShell($line = \\(Get-Content -LiteralPath 'C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\lib\\\\hr\\\\work-email.ts'\\)[36]; $line.ToCharArray\\(\\) | ForEach-Object { '{0} U+{1:X4}' -f $_, [int]$_ } | Where-Object { $_ -match 'U\\\\+0[0-3]' -or $_ -match 'U\\\\+03' })",
+      "PowerShell($line = \\(Get-Content -LiteralPath 'C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\lib\\\\hr\\\\work-email.ts'\\)[37]; '{0}' -f $line; \\($line.ToCharArray\\(\\) | ForEach-Object { 'U+{0:X4}' -f [int]$_ }\\) -join ' ')",
+      "PowerShell($lines = Get-Content -LiteralPath 'C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\lib\\\\hr\\\\work-email.ts'; for \\($i=36; $i -le 40; $i++\\) { $l=$lines[$i]; if \\($l -match 'replace'\\) { 'IDX {0}: {1}' -f $i, \\(\\($l.ToCharArray\\(\\) | ForEach-Object { 'U+{0:X4}' -f [int]$_ }\\) -join ' '\\) } })",
+      "mcp__ide__getDiagnostics"
     ]
   }
 }
