@@ -232,9 +232,14 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
 
   const rows: Row[] = useMemo(() => {
     const out: Row[] = [];
+    // Email is this tracker's identity key (notes, shipping, expand state are all
+    // keyed by it), so collapse any duplicate master-list rows that share an email
+    // to a single row — keeping the first. Prevents duplicate React keys.
+    const seen = new Set<string>();
     for (const e of employees) {
       const email = (e.personal_email ?? e.work_email ?? '').toLowerCase().trim();
-      if (!email) continue;
+      if (!email || seen.has(email)) continue;
+      seen.add(email);
       const startDate = parseStartDate(e.start_date);
       const { history, next } = startDate
         ? buildMilestones(startDate, today)

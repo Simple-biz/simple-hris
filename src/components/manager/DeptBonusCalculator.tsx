@@ -119,6 +119,18 @@ function peso(n: number): string {
   return `₱${Math.round(n).toLocaleString('en-PH')}`;
 }
 
+/** Two-letter initials from a roster name (handles "Last, First M. \"Nick\"" formats). */
+function initials(name: string): string {
+  const parts = name.replace(/["']/g, '').replace(/,/g, ' ').split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
+  return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
+}
+
+/** Tileable film-grain noise, layered over the hero with mix-blend for depth. */
+const HERO_NOISE =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")";
+
 function rowEmail(r: EmployeeRow): string {
   return normEmail(r.personal_email ?? null) || normEmail(r.work_email ?? null) || '';
 }
@@ -523,14 +535,14 @@ export default function DeptBonusCalculator({
               </div>
             </LayoutGroup>
           )}
-          <div className="relative ml-auto">
+          <div className="relative w-full sm:ml-auto sm:w-auto">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
             <Input
               type="search"
               placeholder="Find member…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-8 w-44 pl-8 text-xs"
+              className="h-8 w-full pl-8 text-xs sm:w-44"
             />
           </div>
         </div>
@@ -626,13 +638,15 @@ export default function DeptBonusCalculator({
                   }}
                   aria-hidden
                 />
+                {/* Film-grain texture */}
+                <div className="pointer-events-none absolute inset-0 opacity-[0.15] mix-blend-overlay" style={{ backgroundImage: HERO_NOISE }} aria-hidden />
                 {/* Top colour accent */}
                 <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: color }} aria-hidden />
 
-                <div className="relative flex h-full flex-col justify-between p-4">
+                <div className="relative flex h-full flex-col justify-between p-3 sm:p-4">
                   <div className="flex items-start justify-between gap-2">
                     <HeroBadge status={d?.status ?? 'draft'} warn={!readOnly && daysLeft <= 2} />
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       {d?.dirty && (
                         <motion.span
                           className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_6px] shadow-amber-400"
@@ -736,10 +750,10 @@ export default function DeptBonusCalculator({
                           {q ? 'No members match your search.' : 'No team members in this department.'}
                         </div>
                       ) : (
-                        <div className="mt-1.5 overflow-x-auto px-1.5 pb-1">
+                        <div className="mt-1.5 px-1.5 pb-1 sm:overflow-x-auto">
                           {(cfg.employeeFields.length > 0 || awards.length > 0) && (
                             <div
-                              className="grid items-end gap-2 px-2 pb-1 text-[9px] font-medium uppercase tracking-wide text-zinc-400"
+                              className="hidden items-end gap-2 px-2 pb-1 text-[9px] font-medium uppercase tracking-wide text-zinc-400 sm:grid"
                               style={{ gridTemplateColumns: cols }}
                             >
                               <span>Member</span>
@@ -762,16 +776,24 @@ export default function DeptBonusCalculator({
                               <motion.div
                                 key={e.email}
                                 variants={{ hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0 } }}
-                                className="grid items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/40"
+                                className="flex flex-col gap-2 rounded-lg border border-zinc-100 px-2.5 py-2 transition-colors hover:bg-zinc-50 dark:border-zinc-800/60 dark:hover:bg-zinc-800/40 sm:grid sm:items-center sm:gap-2 sm:border-0 sm:px-2 sm:py-1.5"
                                 style={{ gridTemplateColumns: cols }}
                               >
-                                <div className="min-w-0">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <span
+                                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+                                    style={{ backgroundColor: hexA(color, 0.16), color }}
+                                    aria-hidden
+                                  >
+                                    {initials(e.name)}
+                                  </span>
                                   <div className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">{e.name}</div>
                                 </div>
                                 {cfg.employeeFields.map((f) => {
                                   const applies = !f.appliesTo || f.appliesTo(e.name);
                                   return (
-                                    <div key={f.key} className="flex justify-center">
+                                    <div key={f.key} className="flex items-center justify-between gap-2 sm:justify-center">
+                                      <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:hidden">{f.label}</span>
                                       {applies ? (
                                         <Input
                                           type="number"
@@ -789,7 +811,8 @@ export default function DeptBonusCalculator({
                                   );
                                 })}
                                 {awards.map((b) => (
-                                  <div key={b.id} className="flex justify-center">
+                                  <div key={b.id} className="flex items-center justify-between gap-2 sm:justify-center">
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:hidden">{b.label}</span>
                                     <input
                                       type="checkbox"
                                       aria-label={`${b.label} for ${e.name}`}
@@ -800,8 +823,18 @@ export default function DeptBonusCalculator({
                                     />
                                   </div>
                                 ))}
-                                <div className="tabular-nums text-right font-mono text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-                                  <AnimatedPeso value={bonuses[e.email] ?? 0} />
+                                <div className="flex items-center justify-between gap-2 border-t border-zinc-100 pt-1.5 dark:border-zinc-800/60 sm:block sm:border-0 sm:pt-0 sm:text-right">
+                                  <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:hidden">Bonus</span>
+                                  <span
+                                    className={cn(
+                                      'inline-block rounded-md px-1.5 py-0.5 font-mono text-sm font-semibold tabular-nums',
+                                      (bonuses[e.email] ?? 0) > 0
+                                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                                        : 'text-zinc-400 dark:text-zinc-600',
+                                    )}
+                                  >
+                                    <AnimatedPeso value={bonuses[e.email] ?? 0} />
+                                  </span>
                                 </div>
                               </motion.div>
                             ))}
