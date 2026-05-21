@@ -17,6 +17,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import ProfileCompletionCard from './ProfileCompletionCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -201,6 +202,12 @@ interface EmployeeDashboardProps {
    * lands pre-filled.
    */
   onNavigateToDisputes?: (prefill?: { date: string; seconds?: number }) => void;
+  /** Drives the "finish your profile" nudge — true when no photo is on file. */
+  needsPhoto?: boolean;
+  /** True when bank / payout details are not filled in yet. */
+  needsBank?: boolean;
+  /** Jump to the Profile tab so the employee can fill in what's missing. */
+  onNavigateToProfile?: () => void;
 }
 
 /** Align with mapHubstaffHoursRow / PayrollWizard so rows match after Supabase sync. */
@@ -326,7 +333,7 @@ const SPARKLES_FLOAT = [
   { left: '93%', delay: '3.3s',  dur: '3.6s', size: '13px' },
 ] as const;
 
-export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes }: EmployeeDashboardProps) {
+export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes, needsPhoto = false, needsBank = false, onNavigateToProfile }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
   // Shared mask state for the hero pay values (Take-Home, Regular, Overtime).
@@ -1729,6 +1736,16 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes 
           </p>
         </div>
       </header>
+
+      {/* Profile setup nudge — prompts new sign-ins to add a photo + bank
+          details. Hidden once both are on file. */}
+      {onNavigateToProfile && (
+        <ProfileCompletionCard
+          needsPhoto={needsPhoto}
+          needsBank={needsBank}
+          onGoToProfile={onNavigateToProfile}
+        />
+      )}
 
       {/* Gift Tracker — 6-month milestone shipping form notification.
           Externally controlled so the header bell icon can also open the modal. */}

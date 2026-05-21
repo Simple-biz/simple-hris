@@ -32,6 +32,7 @@ import {
   PayoutDetailsFields,
   emptyPayout,
   payoutDraftFromIdsRow,
+  isPayoutComplete,
   type PayoutFields,
 } from '@/components/employee/employee-payout-fields';
 
@@ -41,6 +42,8 @@ interface EmployeeProfileProps {
   /** Google SSO profile picture (`session.user.image`) — fallback when no Supabase upload. */
   googlePhotoUrl?: string | null;
   onProfilePhotoUpdated: (url: string) => void;
+  /** Notifies the shell whether payout/bank details are now complete (clears the nudge). */
+  onPayoutCompletionChange?: (complete: boolean) => void;
   /** When accounting starts payroll processing, bank / payout editing is disabled. */
   payrollLocked?: boolean;
 }
@@ -280,6 +283,7 @@ export default function EmployeeProfile({
   profilePhotoUrl,
   googlePhotoUrl = null,
   onProfilePhotoUpdated,
+  onPayoutCompletionChange,
   payrollLocked = false,
 }: EmployeeProfileProps) {
   const norm = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
@@ -530,6 +534,7 @@ export default function EmployeeProfile({
       const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[] };
       const myId = (idsJson.rows ?? [])[0];
       setBankInfo(myId ?? null);
+      onPayoutCompletionChange?.(isPayoutComplete((myId as unknown as Record<string, unknown>) ?? null));
       setPayoutSavedAt(new Date().toLocaleTimeString());
       setPayoutEditing(false);
       toast.success('Payment details saved');

@@ -279,6 +279,35 @@ export function payoutDraftFromIdsRow(row: Record<string, unknown>): {
   };
 }
 
+/**
+ * Whether an `employee_ids` row carries enough payout detail to disburse pay.
+ * A preferred processor must be set, plus the identifying field(s) that
+ * processor actually needs (see PROCESSOR_OPTIONS blurbs). Used to drive the
+ * "complete your profile" nudge in the employee portal.
+ */
+export function isPayoutComplete(row: Record<string, unknown> | null | undefined): boolean {
+  if (!row) return false;
+  const { preferredProcessor, payout } = payoutDraftFromIdsRow(row);
+  if (!preferredProcessor) return false;
+  switch (preferredProcessor) {
+    case 'hurupay':
+      return !!payout.hurupayEmail;
+    case 'wepay':
+      return !!payout.wepayEmail;
+    case 'higlobe':
+      return !!(payout.higlobeEmail && payout.higlobeAccountName);
+    case 'wise':
+      return !!(payout.wiseEmail || payout.wiseTag);
+    case 'jeeves':
+    case 'wires':
+      return payout.preferredBankSlot === 'alternative'
+        ? !!(payout.altBankName && payout.altAccountNumber)
+        : !!(payout.bankName && payout.accountNumber);
+    default:
+      return false;
+  }
+}
+
 export function PreferredPaymentMethodRadios({
   value,
   onChange,

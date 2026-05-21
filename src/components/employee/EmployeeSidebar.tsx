@@ -46,6 +46,8 @@ interface EmployeeSidebarProps {
   payrollLocked?: boolean;
   /** Unread employee notifications count — drives the Notifications nav badge. */
   unreadNotifications?: number;
+  /** Profile photo and/or bank details still missing — flags the Profile nav item. */
+  profileIncomplete?: boolean;
 }
 
 const navItems = [
@@ -72,6 +74,7 @@ export default function EmployeeSidebar({
   googlePhotoUrl = null,
   payrollLocked = false,
   unreadNotifications = 0,
+  profileIncomplete = false,
 }: EmployeeSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
@@ -185,6 +188,16 @@ export default function EmployeeSidebar({
                 )}
                 {item.id === 'notifications' && unreadNotifications === 0 && payrollLocked && (
                   <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                )}
+                {item.id === 'profile' && profileIncomplete && activeTab !== 'profile' && (
+                  <span
+                    className="relative ml-auto flex h-2.5 w-2.5"
+                    aria-label="Profile setup incomplete"
+                    title="Add your photo and bank details"
+                  >
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/70" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-white dark:ring-[#0d1117]" />
+                  </span>
                 )}
                 {item.id === 'disputes' && payrollLocked && (
                   <motion.span
