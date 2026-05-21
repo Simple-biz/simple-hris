@@ -6,9 +6,11 @@ import {
 /**
  * The set of work addresses that are NOT available to mint (lower-cased full
  * addresses):
- *   - every `global_master_list` Work Email whose row is NOT off-boarded.
- *     Off-boarded people free up their address for recycling (per HR), so we
- *     deliberately skip them.
+ *   - every `global_master_list` Work Email whose row is NOT off-boarded, plus
+ *     that row's Alternate Work Email columns (the gsuite aliases a promoted
+ *     employee carries) so a freshly-minted address can never collide with an
+ *     existing alternate. Off-boarded people free up every address (primary +
+ *     alternates) for recycling (per HR), so we deliberately skip them.
  *   - every in-flight `hr_pending_employees` work_email (status
  *     pending_work_email | ready) so two simultaneous hires can't be handed the
  *     same address. Promoted rows already live in the master list; cancelled
@@ -25,13 +27,15 @@ export async function loadTakenWorkEmails(): Promise<Set<string>> {
 
   const { data: gml, error: gmlErr } = await sb
     .from("global_master_list")
-    .select('"Work Email", off_boarded_at')
+    .select('"Work Email", "Alternate Work Email", "Alternate Work Email 2", off_boarded_at')
     .range(0, 99999);
   if (gmlErr) throw new Error(`global_master_list: ${gmlErr.message}`);
   for (const r of (gml ?? []) as Array<Record<string, unknown>>) {
-    if (r["off_boarded_at"]) continue; // off-boarded -> recyclable
-    const e = String(r["Work Email"] ?? "").trim().toLowerCase();
-    if (e) taken.add(e);
+    if (r["off_boarded_at"]) continue; // off-boarded -> primary + alternates recyclable
+    for (const col of ["Work Email", "Alternate Work Email", "Alternate Work Email 2"]) {
+      const e = String(r[col] ?? "").trim().toLowerCase();
+      if (e) taken.add(e);
+    }
   }
 
   const { data: pend, error: pendErr } = await sb

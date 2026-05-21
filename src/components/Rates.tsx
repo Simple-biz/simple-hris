@@ -65,6 +65,8 @@ type EmployeeRateProfile = {
   organization: string | null;
   workEmail: string | null;
   personalEmail: string | null;
+  alternateWorkEmail: string | null;
+  alternateWorkEmail2: string | null;
   fields: { key: string; value: unknown }[];
 };
 
@@ -397,6 +399,10 @@ function profileStubFromSummary(p: EmployeeRateProfileSummary): EmployeeRateProf
     organization: p.organization,
     workEmail: p.workEmail,
     personalEmail: p.personalEmail,
+    // Summary cards don't carry alternates (modal-only); the detail fetch fills
+    // these in. Null here so the dedicated rows render as "—" until it lands.
+    alternateWorkEmail: null,
+    alternateWorkEmail2: null,
     fields: [
       { key: "Work Email", value: p.workEmail },
       { key: "Personal Email", value: p.personalEmail },
@@ -2790,6 +2796,31 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           </motion.div>
                         );
                       })()}
+                      {/* Work Email — primary address; lifted out of `fields`
+                          during finalize, so surface it here as its own row. */}
+                      <motion.div
+                        key={`${activeProfile.id}-work-email`}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.2, ease: dialogEase, delay: 0 }}
+                        className="border-b border-zinc-100 py-3.5 dark:border-zinc-800/90"
+                      >
+                        <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                          Work Email
+                        </dt>
+                        <dd className="mt-1.5 max-w-full break-words text-sm leading-relaxed text-zinc-900 dark:text-zinc-100">
+                          {activeProfile.workEmail ? (
+                            <a
+                              href={`mailto:${activeProfile.workEmail}`}
+                              className="text-zinc-900 hover:text-orange-600 hover:underline dark:text-zinc-100 dark:hover:text-orange-400"
+                            >
+                              {activeProfile.workEmail}
+                            </a>
+                          ) : (
+                            <span className="text-zinc-400 dark:text-zinc-500">{"—"}</span>
+                          )}
+                        </dd>
+                      </motion.div>
                       {/* Personal Email — emails are stripped from `fields` by splitProfileMeta, so surface it here. */}
                       {activeProfile.personalEmail ? (
                         <motion.div
@@ -2812,6 +2843,37 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           </dd>
                         </motion.div>
                       ) : null}
+                      {/* Alternate work emails (master sheet cols F/G). Always
+                          rendered so both rows show even when the employee has
+                          none — empty renders as an em dash. */}
+                      {([
+                        { label: "Alternate Work Email", value: activeProfile.alternateWorkEmail },
+                        { label: "Alternate Work Email 2", value: activeProfile.alternateWorkEmail2 },
+                      ]).map(({ label, value }) => (
+                        <motion.div
+                          key={`${activeProfile.id}-${label}`}
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.2, ease: dialogEase, delay: 0 }}
+                          className="border-b border-zinc-100 py-3.5 dark:border-zinc-800/90"
+                        >
+                          <dt className="text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                            {label}
+                          </dt>
+                          <dd className="mt-1.5 max-w-full break-words text-sm leading-relaxed text-zinc-900 dark:text-zinc-100">
+                            {value ? (
+                              <a
+                                href={`mailto:${value}`}
+                                className="text-zinc-900 hover:text-orange-600 hover:underline dark:text-zinc-100 dark:hover:text-orange-400"
+                              >
+                                {value}
+                              </a>
+                            ) : (
+                              <span className="text-zinc-400 dark:text-zinc-500">{"—"}</span>
+                            )}
+                          </dd>
+                        </motion.div>
+                      ))}
                       {activeProfile.fields.filter(({ key }) => !isHiddenField(key)).map(({ key, value }, i) => (
                         <motion.div
                           key={`${activeProfile.id}-${key}`}

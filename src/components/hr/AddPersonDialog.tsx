@@ -289,7 +289,7 @@ export default function AddPersonDialog({
               </Field>
               <Field
                 label="Work email"
-                hint="Leave blank if not minted yet."
+                hint="Leave blank if not minted yet. Off-boarded addresses are free to reuse."
                 error={touched.has('work_email') ? errors.work_email : undefined}
               >
                 <Input

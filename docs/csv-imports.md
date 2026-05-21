@@ -118,7 +118,8 @@ Errors are caught and re-thrown as JSON with `success: false` and a descriptive 
 Input: a CSV text + a source label string. Output: `{ rowCount, uploadId, inserted, updated, rowsMissingPersonalEmail, duplicatesInCsv }`.
 
 1. **Parse + validate** — `parseCsv` then `validateMasterListCsvLayout` (rows 1–2 contain `MASTERLIST`, row 3 has `Department` + `Name`/`Personal Email`).
-2. **Filter empty rows** — drop fully-empty rows + rows where every mapped column is empty.
+2. **Map columns** — `resolveMasterColumnMapping` matches each CSV header to a `global_master_list` column **by name** (case-insensitive, each DB column claimed once). *(2026-05-21)* Exception: any header containing both "alternate" and "email" is mapped to the `Alternate Work Email` / `Alternate Work Email 2` slots **positionally** (Nth such sheet column → Nth alt slot), because the sheet often heads cols F and G identically — name matching alone would drop the duplicate.
+3. **Filter empty rows** — drop fully-empty rows + rows where every mapped column is empty.
 3. **Partition** rows into:
    - `dedupableRows` — has both `personal_email` AND `department`. Goes into the upsert flow.
    - `orphanRows` — missing one or both. Inserted every upload (no dedup).

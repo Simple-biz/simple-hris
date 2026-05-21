@@ -20,6 +20,8 @@ The canonical employee directory. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEES
 | `Name` | text | Display name, used in ID generation + profile merge |
 | `Personal Email` | text | Primary identity key for payroll matching |
 | `Work Email` | text | Secondary identity key |
+| `Alternate Work Email` *(2026-05-21)* | text | gsuite alias a promoted employee (most often PM team) presents to customers; mail still routes to the primary work inbox. Synced from master sheet col F. Treated as an identity key in the profile merge + reserved by the HR work-email minter |
+| `Alternate Work Email 2` *(2026-05-21)* | text | Second alternate alias (master sheet col G). Same treatment as `Alternate Work Email` |
 | `Start Date` | text/date | Used to derive `YYMM` group for employee ID generation |
 | `Profile Photo URL` | text | Optional; uploaded photo (Supabase Storage public URL) |
 | `street` *(2026-05-02)* | text | Home address — backfilled from payroll dashboard CSV (col D) |
@@ -34,6 +36,7 @@ The canonical employee directory. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEES
 **Address & Google-photo migrations:**
 - `references/seed_global_master_list_addresses.sql` — `ALTER TABLE` + 1,025-row CTE backfill from `references/NEW Payroll Dashboard - All Dept.csv`. Recreates the `active_employees` view so the new columns surface to PostgREST.
 - `references/seed_global_master_list_google_photo.sql` — `ALTER TABLE` + view refresh. No backfill — populates organically as users sign in.
+- `references/add_alternate_work_emails_to_global_master_list.sql` *(2026-05-21)* — `ALTER TABLE` adds `"Alternate Work Email"` + `"Alternate Work Email 2"` + `CREATE OR REPLACE VIEW active_employees` so PostgREST exposes them. No backfill — populated by the next master-sheet sync. The sheet often heads both columns identically, which the name-based ingest can't disambiguate, so `resolveMasterColumnMapping` maps any header containing "alternate"+"email" to the two slots **positionally** (Nth sheet column → Nth DB slot).
 
 **Code-level robustness:** `fetchActiveEmployees` and `getEmployeeMasterRecord` both try the full select first and fall back to the base select if the new columns don't exist on the view yet (`/does not exist/i.test(error.message)` guard). The Profile page additionally always calls `/api/employee-master-record` as a parallel fetch and merges the address fields, so the Address panel surfaces even when the `active_employees` view is stale.
 
@@ -323,14 +326,14 @@ Any number of additional tables can be merged into the employee profile view by 
 
 **Profile merge logic (`src/lib/supabase/employee-rate-profiles.ts`):**
 
-The merge engine runs in five phases:
+The merge engine runs in six phases:
 
 1. **Fetch**: All tables in the merge list are fetched in parallel.
 2. **Key building**: `employee_hourly_rates` rows are indexed by email (both work + personal) as the anchor.
-3. **Master list join**: Each anchor row is matched to `global_master_list` by personal email, then work email, then name.
-4. **Extra table join**: Each extra table row is matched to the anchor by any email column or by name.
+3. **Master list join**: Each anchor row is matched to `global_master_list` by personal email, then work email, then name. *(2026-05-21)* Masters are also indexed by their `Alternate Work Email` / `Alternate Work Email 2` values (`buildMasterIndexes`), so a rate/lookup keyed on an alternate alias still resolves to the right person.
+4. **Extra table join**: Each extra table row is matched to the anchor by any email column or by name — alternates are part of the employee's identity set (`buildIdentity`), so e.g. a Hubstaff row keyed on an alternate matches too.
 5. **Field deduplication**: All matched fields are merged into a single flat object. `normFieldKey()` normalizes field names to `snake_case` to collapse duplicates (e.g., `"Work Email"` and `work_email` become the same key).
-6. **Finalization**: `finalizeProfileFields()` drops noisy internal fields (`teamindex`, `created_at`), extracts `department` into the profile header, and collapses all email columns into a subtitle string.
+6. **Finalization**: `finalizeProfileFields()` drops noisy internal fields (`teamindex`, `created_at`), extracts `department` into the profile header, and collapses ordinary email columns into a subtitle string. *(2026-05-21)* Alternate work emails are **not** collapsed — they're lifted onto the profile as dedicated `alternateWorkEmail` / `alternateWorkEmail2` properties (preserving `null`) so the read-only modal always renders both rows, even when empty. The detail modal also surfaces `Work Email` and `Personal Email` as their own rows alongside the two alternates.
 
 **Display name resolution** (in priority order):
 1. Hubstaff `Member` name

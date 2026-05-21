@@ -103,7 +103,12 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   const tabDirRef = useRef<1 | -1>(1);
 
   const navigate = (tab: string) => {
-    if (!canAccessAccountingTabForUser(tab, roles, featurePerms)) {
+    // Only gate once roles + feature-perms have loaded. Before then everything
+    // looks disallowed (empty perms) and `allowedTabs` is empty too, so gating
+    // here would bounce a click made during the initial fetch onto the
+    // 'payment-dispatch' fallback (e.g. refresh, then click Rates). The effect
+    // below re-checks the active tab the moment permsLoaded flips.
+    if (permsLoaded && !canAccessAccountingTabForUser(tab, roles, featurePerms)) {
       setActiveTab(allowedTabs[0] ?? 'payment-dispatch');
       setMobileNavOpen(false);
       return;

@@ -305,6 +305,7 @@ function CeoAnnouncements({ viewerEmail }: { viewerEmail: string | null }) {
             allowGeneral
             departments={[]}
             canPin
+            authorLabel="CEO"
           />
           <AnnouncementWall scope="all" viewerEmail={viewerEmail} isElevated />
         </div>

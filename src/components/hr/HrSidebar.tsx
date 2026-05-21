@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   LogIn,
   LogOut,
+  Megaphone,
   Moon,
   MoreHorizontal,
   Newspaper,
@@ -29,7 +30,7 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 'gift-tracker' | 'mesa' | 's-wall' | 'notifications';
+export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 'gift-tracker' | 'mesa' | 'announcements' | 's-wall' | 'notifications';
 
 interface HrSidebarProps {
   activeTab: HrTab;
@@ -143,6 +144,7 @@ export default function HrSidebar({
             {navBtn('leaves', 'Leave Requests', CalendarDays)}
             {navBtn('gift-tracker', 'Gift Tracker', Gift)}
             {navBtn('mesa', 'MESA', HeartHandshake)}
+            {navBtn('announcements', 'Announcements', Megaphone)}
             {navBtn(
               'notifications',
               'Notifications',

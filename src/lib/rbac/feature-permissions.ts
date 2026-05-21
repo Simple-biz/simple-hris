@@ -27,6 +27,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "leaves",        label: "Leaves" },
     { key: "gift_tracker",  label: "Gift Tracker" },
     { key: "mesa",          label: "MESA" },
+    { key: "announcements", label: "Announcements" },
     { key: "s_wall",        label: "S-Wall" },
     { key: "notifications", label: "Notifications" },
   ],

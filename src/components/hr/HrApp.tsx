@@ -33,6 +33,8 @@ import HrOffboarding from './HrOffboarding';
 import HrMesa from './HrMesa';
 import GiftTracker from '@/components/orphanage/GiftTracker';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
+import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
+import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import SWall from '@/components/swall/SWall';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -158,6 +160,7 @@ export default function HrApp() {
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
               {activeTab === 'gift-tracker' && <GiftTracker viewerEmail={viewerEmail} />}
               {activeTab === 'mesa' && <HrMesa />}
+              {activeTab === 'announcements' && <HrAnnouncements viewerEmail={viewerEmail} />}
               {activeTab === 'notifications' && (
                 <NotificationsPanel viewerEmail={viewerEmail} accent="emerald" />
               )}
@@ -1330,6 +1333,36 @@ function OverviewBody() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+
+function HrAnnouncements({ viewerEmail }: { viewerEmail: string | null }) {
+  // HR coordinators may post company-wide announcements (hr_coordinator is in
+  // the API's GENERAL_POST_ROLES) but cannot pin or delete others' posts —
+  // those stay admin/CEO only — so this view is non-elevated. They see the
+  // whole company feed.
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
+        <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
+          Announcements
+        </h1>
+        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
+          Post company-wide updates and read every team&apos;s announcements. New posts appear live.
+        </p>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        <div className="mx-auto max-w-2xl space-y-4">
+          <AnnouncementComposer
+            authorEmail={viewerEmail ?? ''}
+            allowGeneral
+            departments={[]}
+            authorLabel="HR"
+          />
+          <AnnouncementWall scope="all" viewerEmail={viewerEmail} />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function HrSwallTab({ viewerEmail }: { viewerEmail: string | null }) {
   return (

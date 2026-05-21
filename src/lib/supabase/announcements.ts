@@ -12,60 +12,76 @@ export interface AnnouncementRow {
   body: string;
   pinned: boolean;
   created_at: string;
+  /**
+   * Resolved at fetch time from the roster (manual upload, else Google SSO).
+   * Not a real column. `undefined` on Realtime payloads -- the client falls
+   * back to the photo endpoint there.
+   */
+  author_photo_url?: string | null;
 }
 
 function client() {
   return createSupabaseServiceRoleClient();
 }
 
-/* ───────── full-name lookup (master list) ─────────
+/* ───────── author lookup (master list) ─────────
  *
  * Stored `author_name` on existing posts is whatever NextAuth's JWT had at
- * post-time (often a Google-truncated first name). For the wall we want the
- * canonical roster name, so we override `author_name` at fetch time using
- * `active_employees`. Cached for 5 minutes — names rarely change and the wall
- * is realtime-refreshed.
+ * post-time (often a Google-truncated first name), and posts carry no photo.
+ * For the wall we want the canonical roster name + avatar, so we resolve both
+ * at fetch time from `active_employees`. Cached for 5 minutes — the roster
+ * rarely changes and the wall is realtime-refreshed.
  */
-const NAME_MAP_TTL_MS = 5 * 60_000;
-let nameMapCache: { ts: number; map: Map<string, string> } | null = null;
+const AUTHOR_MAP_TTL_MS = 5 * 60_000;
 
-async function getEmailToFullNameMap(): Promise<Map<string, string>> {
-  if (nameMapCache && Date.now() - nameMapCache.ts < NAME_MAP_TTL_MS) {
-    return nameMapCache.map;
+interface AuthorMeta {
+  name: string | null;
+  photoUrl: string | null;
+}
+
+let authorMapCache: { ts: number; map: Map<string, AuthorMeta> } | null = null;
+
+async function getEmailToAuthorMetaMap(): Promise<Map<string, AuthorMeta>> {
+  if (authorMapCache && Date.now() - authorMapCache.ts < AUTHOR_MAP_TTL_MS) {
+    return authorMapCache.map;
   }
   const sb = client();
-  const map = new Map<string, string>();
+  const map = new Map<string, AuthorMeta>();
   if (!sb) return map;
 
-  // active_employees is a view over the master list; columns are quoted
-  // PascalCase. We only need three for the lookup.
+  // active_employees is a `SELECT *` view over the master list; columns are
+  // quoted PascalCase. Manual upload wins over the Google SSO photo, matching
+  // getProfilePhotoUrlForEmail().
   const { data, error } = await sb
     .from('active_employees')
-    .select('"Name", "Work Email", "Personal Email"');
+    .select('"Name", "Work Email", "Personal Email", "Profile Photo URL", google_photo_url');
   if (error || !data) return map;
 
   for (const row of data as Array<Record<string, unknown>>) {
-    const name = String(row['Name'] ?? '').trim();
-    if (!name) continue;
+    const name = String(row['Name'] ?? '').trim() || null;
+    const uploaded = String(row['Profile Photo URL'] ?? '').trim();
+    const google = String(row['google_photo_url'] ?? '').trim();
+    const meta: AuthorMeta = { name, photoUrl: uploaded || google || null };
+
     const we = String(row['Work Email'] ?? '').trim().toLowerCase();
     const pe = String(row['Personal Email'] ?? '').trim().toLowerCase();
-    if (we) map.set(we, name);
-    if (pe && !map.has(pe)) map.set(pe, name);
+    if (we) map.set(we, meta);
+    if (pe && !map.has(pe)) map.set(pe, meta);
   }
 
-  nameMapCache = { ts: Date.now(), map };
+  authorMapCache = { ts: Date.now(), map };
   return map;
 }
 
 /** Force a refresh on the next call — call after roster changes. */
 export function invalidateAnnouncementsNameCache(): void {
-  nameMapCache = null;
+  authorMapCache = null;
 }
 
 /** Look up a single full name by email (uses the cached map). */
 export async function lookupFullNameForEmail(email: string): Promise<string | null> {
-  const map = await getEmailToFullNameMap();
-  return map.get(email.trim().toLowerCase()) ?? null;
+  const map = await getEmailToAuthorMetaMap();
+  return map.get(email.trim().toLowerCase())?.name ?? null;
 }
 
 /**
@@ -104,13 +120,17 @@ export async function listAnnouncements(opts: {
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as AnnouncementRow[];
 
-  // Override `author_name` with the canonical roster name for each unique
-  // author email. Falls through to the stored value when no master row matches.
+  // Resolve the canonical roster name + avatar for each author email. Name
+  // falls through to the stored value when no master row matches; photo is null.
   if (rows.length > 0) {
-    const nameMap = await getEmailToFullNameMap();
+    const metaMap = await getEmailToAuthorMetaMap();
     return rows.map((row) => {
-      const fullName = nameMap.get(row.author_email.trim().toLowerCase());
-      return fullName ? { ...row, author_name: fullName } : row;
+      const meta = metaMap.get(row.author_email.trim().toLowerCase());
+      return {
+        ...row,
+        author_name: meta?.name ?? row.author_name,
+        author_photo_url: meta?.photoUrl ?? null,
+      };
     });
   }
   return rows;

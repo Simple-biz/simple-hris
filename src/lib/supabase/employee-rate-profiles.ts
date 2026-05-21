@@ -21,6 +21,10 @@ export type EmployeeRateProfile = {
   workEmail: string | null;
   /** Resolved personal email, if any. Lifted out of fields during finalize. */
   personalEmail: string | null;
+  /** Alternate work emails from the master sheet (cols F/G). Always present as
+   *  dedicated keys so the modal can render both rows even when empty. */
+  alternateWorkEmail: string | null;
+  alternateWorkEmail2: string | null;
   fields: { key: string; value: unknown }[];
 };
 
@@ -84,6 +88,40 @@ function normalizeName(s: string | null | undefined): string | null {
   return t || null;
 }
 
+/** DB column names for the alternate work emails synced from the master sheet
+ *  (added 2026-05-21). gsuite aliases a promoted employee — most often a PM —
+ *  presents to customers; mail still routes to their primary work inbox. */
+const ALT_EMAIL_FIELDS = ["Alternate Work Email", "Alternate Work Email 2"];
+
+/** True when a normFieldKey looks like an alternate-work-email column. */
+function isAltEmailFieldKey(nk: string): boolean {
+  return nk.includes("alternate") && nk.includes("email");
+}
+
+/** Collect normalized alternate work emails present on a master/raw row. */
+function altEmailsFromRow(row: RawRow): string[] {
+  const out: string[] = [];
+  for (const k of ALT_EMAIL_FIELDS) {
+    const v = normEmail(toStr(getField(row, [k, normFieldKey(k)])));
+    if (v) out.push(v);
+  }
+  return out;
+}
+
+/** Read both alternate-work-email slots from a master row, preserving null so
+ *  the modal can always render both rows (even when the employee has none). */
+function altEmailSlotsFromMaster(master: RawRow | null): {
+  alternateWorkEmail: string | null;
+  alternateWorkEmail2: string | null;
+} {
+  const read = (k: string) =>
+    master ? toStr(getField(master, [k, normFieldKey(k)])) || null : null;
+  return {
+    alternateWorkEmail: read(ALT_EMAIL_FIELDS[0]),
+    alternateWorkEmail2: read(ALT_EMAIL_FIELDS[1]),
+  };
+}
+
 type EmployeeIdentity = {
   emails: Set<string>;
   nameNorm: string | null;
@@ -100,6 +138,7 @@ function buildIdentity(mergedRates: RawRow, master: RawRow | null): EmployeeIden
   if (master) {
     add(getField(master, ["Personal Email", "personal_email", "Personal_Email"]));
     add(getField(master, ["Work Email", "work_email", "Work_Email"]));
+    for (const e of altEmailsFromRow(master)) emails.add(e);
   }
   const nameNorm =
     normalizeName(
@@ -271,6 +310,13 @@ function finalizeProfileFields(rawFields: { key: string; value: unknown }[]): {
   const nonEmail: typeof fields = [];
   for (const f of fields) {
     const nk = normFieldKey(f.key);
+    // Alternate work emails are surfaced as dedicated profile properties
+    // (alternateWorkEmail / alternateWorkEmail2) so the modal can always render
+    // both rows, even when empty — drop them from the generic field list here
+    // to avoid rendering them twice.
+    if (isAltEmailFieldKey(nk)) {
+      continue;
+    }
     if (isEmailFieldKey(nk)) {
       emailRows.push({ nk, value: f.value });
     } else {
@@ -364,6 +410,9 @@ function buildMasterIndexes(rows: RawRow[]): {
     const we = normEmail(toStr(getField(row, ["Work Email", "work_email", "Work_Email"])));
     if (pe) push(byEmail, pe, row);
     if (we) push(byEmail, we, row);
+    // Alternate work emails are aliases for the same human — index them so a
+    // rate/lookup keyed on an alternate address still resolves to this master.
+    for (const alt of altEmailsFromRow(row)) push(byEmail, alt, row);
     const nn = normalizeName(toStr(getField(row, ["Name", "name"])));
     if (nn) push(byName, nn, row);
   }
@@ -889,6 +938,7 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
       organization,
       workEmail,
       personalEmail,
+      ...altEmailSlotsFromMaster(master),
       fields,
     });
   }
@@ -1024,6 +1074,7 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
       organization,
       workEmail,
       personalEmail,
+      ...altEmailSlotsFromMaster(masterRow),
       fields,
     });
   }
@@ -1107,8 +1158,14 @@ function emailsFromRow(row: RawRow): string[] {
   const pe = normEmail(toStr(getField(row, ["Personal Email", "personal_email", "Personal_Email"])));
   if (we) out.push(we);
   if (pe) out.push(pe);
+  out.push(...altEmailsFromRow(row));
   return out;
 }
+
+/** Email columns on global_master_list to probe when resolving a profile by
+ *  email — includes the alternate-work-email aliases so a lookup keyed on an
+ *  alternate still finds the master row. */
+const MASTER_EMAIL_COLUMNS = ["Work Email", "Personal Email", ...ALT_EMAIL_FIELDS];
 
 export async function getEmployeeRateProfileByEmail(
   emailInput: string,
@@ -1128,7 +1185,7 @@ export async function getEmployeeRateProfileByEmail(
   // Step 1: parallel focused fetch — rates + master rows that match the input email.
   const [ratesInitial, masterInitial, currentRatesUploadId, hslRes] = await Promise.all([
     fetchRowsByEmails(supabase, ratesTable, [norm], ["Work Email", "Personal Email"]),
-    fetchRowsByEmails(supabase, "global_master_list",[norm], ["Work Email", "Personal Email"]),
+    fetchRowsByEmails(supabase, "global_master_list", [norm], MASTER_EMAIL_COLUMNS),
     getCurrentRatesUploadIdForProfiles(),
     fetchActiveHslDetailsByEmail(),
   ]);
@@ -1148,7 +1205,7 @@ export async function getEmployeeRateProfileByEmail(
   if (altEmails.length > 0) {
     const [moreRates, moreMasters] = await Promise.all([
       fetchRowsByEmails(supabase, ratesTable, altEmails, ["Work Email", "Personal Email"]),
-      fetchRowsByEmails(supabase, "global_master_list",altEmails, ["Work Email", "Personal Email"]),
+      fetchRowsByEmails(supabase, "global_master_list", altEmails, MASTER_EMAIL_COLUMNS),
     ]);
     if (moreRates.rows.length > 0) {
       const seen = new Set<string>();
@@ -1248,6 +1305,7 @@ export async function getEmployeeRateProfileByEmail(
       organization,
       workEmail,
       personalEmail,
+      ...altEmailSlotsFromMaster(master),
       fields,
     },
     error: null,

@@ -115,6 +115,16 @@ Payroll continues to mint `@simple.biz` accounts on Friday / Saturday. The HR da
 - Provide a quick **"Set work email"** action so John can paste the address once Payroll publishes it.
 - Mark the entry **active** (and therefore visible to `active_employees`) once name + personal email + work email + start date are all present.
 
+#### Auto-suggestion + availability *(shipped 2026-05-20; alternate-conflict + reuse note 2026-05-21)*
+
+The "Set work email" dialog (and the onboarding `set-work-email` route) auto-suggests an `@simple.biz` address and checks availability via `POST /api/hr/work-email/suggest`. Logic split across `src/lib/hr/work-email.ts` (pure) and `src/lib/hr/work-email-server.ts` (DB):
+
+- **Minting rule** (`suggestWorkEmail`): local part = first name + first letter of last name (`Kane Reroma` → `kaner`). The full name is one field — the first whitespace token is the first name, the **last** token the last name (`Jane Dela Cruz` → `janec`). On a collision it **lengthens the surname slice one letter at a time** (`kaner` → `kanere` → `kanerer`), and only if the whole surname is exhausted does it fall back to a numeric suffix (`kanereroma2`).
+- **Taken set** (`loadTakenWorkEmails`): the addresses a new mint must avoid —
+  - every non-off-boarded `global_master_list` `Work Email`, **plus that row's `Alternate Work Email` / `Alternate Work Email 2`** *(added 2026-05-21)* so a fresh address can never collide with an existing alias;
+  - every in-flight `hr_pending_employees` `work_email` (status `pending_work_email` | `ready`).
+- **Off-boarded addresses are reusable**: off-boarded rows are skipped entirely, freeing their primary **and** alternate addresses for recycling (per HR). Both the Add Person and onboarding "Set work email" surfaces show a reminder to that effect.
+
 ### 3.5 Data destination
 
 The HR dashboard writes to the existing `global_master_list` table (the underlying source for the `active_employees` view used by every other dashboard — see `src/lib/supabase/employees.ts`). **No parallel HR table.** Anything new (e.g., `source`, `phone`, `location`) extends `global_master_list` so payroll/manager/orphanage flows see the same row.

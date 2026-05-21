@@ -162,6 +162,24 @@ export default function DeptBonusCalculator({
     return map;
   }, [teamMembers]);
 
+  // The real `Department` string each key was derived from — this is what the
+  // Manager "My Team" banner saves the wallpaper under (e.g. key `accounting`
+  // came from "Accounting Team"). `DEPARTMENTS[].name` is only a short display
+  // label and can differ ("Accounting" vs "Accounting Team"), which is why the
+  // wallpaper lookup missed before. Keying off the real string keeps the
+  // calculator's wallpaper fetch in sync with the banner that uploads it.
+  const deptLabelByKey = useMemo<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    const add = (raw: string | null | undefined) => {
+      if (!raw) return;
+      const k = normalizeDeptToKey(raw);
+      if (k && !(k in out)) out[k] = raw.trim();
+    };
+    for (const r of teamMembers) add(r.department);
+    for (const d of managedDepts) add(d);
+    return out;
+  }, [teamMembers, managedDepts]);
+
   const visibleDeptKeys = useMemo<string[]>(() => {
     if (isElevated) {
       return MANAGER_BONUS_DEPT_KEYS.filter((k) => (rosterByDept.get(k)?.length ?? 0) > 0);
@@ -263,7 +281,9 @@ export default function DeptBonusCalculator({
     let cancelled = false;
     void Promise.all(
       visibleDeptKeys.map(async (key) => {
-        const name = DEPARTMENTS.find((d) => d.key === key)?.name ?? key;
+        // Prefer the real Department string the banner saves under; fall back to
+        // the short display label only if no roster/managed string is available.
+        const name = deptLabelByKey[key] ?? DEPARTMENTS.find((d) => d.key === key)?.name ?? key;
         try {
           const res = await fetch(`/api/manager/team-wallpaper?department=${encodeURIComponent(name)}`, { cache: 'no-store' });
           const json = (await res.json()) as { url?: string | null; position?: string };
@@ -277,7 +297,7 @@ export default function DeptBonusCalculator({
     return () => {
       cancelled = true;
     };
-  }, [visibleDeptKeys]);
+  }, [visibleDeptKeys, deptLabelByKey]);
 
   // ── Live bonus computation ───────────────────────────────────────────────────
 

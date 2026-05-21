@@ -162,6 +162,14 @@ function rowIsEmptyForMappedColumns(row: string[], insertCols: { csvIdx: number;
   });
 }
 
+/** Alternate-work-email columns ("Alternate Work Email", "Alternate Work Email 2").
+ *  The sheet may head both with the same text, so they can't be matched by name
+ *  alone — they're mapped positionally instead (see resolveMasterColumnMapping). */
+function isAlternateEmailHeader(h: string): boolean {
+  const n = normHeader(h);
+  return n.includes("alternate") && n.includes("email");
+}
+
 function resolveMasterColumnMapping(
   csvHeaders: string[],
   specCols: string[],
@@ -179,9 +187,19 @@ function resolveMasterColumnMapping(
   const usedSpec = new Set<string>();
   const insertCols: { csvIdx: number; dbCol: string }[] = [];
 
+  // Reserve the alternate-email DB slots from the name-based pass below. The
+  // sheet often heads both alternate columns with identical text, which the
+  // name matcher can't disambiguate (it maps each DB column once, so the second
+  // duplicate header would silently drop). We map them positionally afterwards.
+  const altSpecCols = specWithoutId
+    .filter((c) => isAlternateEmailHeader(c))
+    .sort((a, b) => a.localeCompare(b));
+  for (const c of altSpecCols) usedSpec.add(c);
+
   csvHeaders.forEach((rawH, csvIdx) => {
     const h = normHeader(rawH);
     if (!h) return;
+    if (isAlternateEmailHeader(rawH)) return; // handled positionally below
     const match = specWithoutId.find(
       (db) => normHeader(db) === h && !usedSpec.has(db),
     );
@@ -190,6 +208,16 @@ function resolveMasterColumnMapping(
       insertCols.push({ csvIdx, dbCol: match });
     }
   });
+
+  // Positional alternate-email mapping: the Nth alternate-email column in the
+  // sheet maps to the Nth alternate-email DB slot, regardless of header text.
+  const altCsvIdxs = csvHeaders
+    .map((rawH, csvIdx) => ({ rawH, csvIdx }))
+    .filter(({ rawH }) => isAlternateEmailHeader(rawH))
+    .map(({ csvIdx }) => csvIdx);
+  for (let i = 0; i < altCsvIdxs.length && i < altSpecCols.length; i++) {
+    insertCols.push({ csvIdx: altCsvIdxs[i], dbCol: altSpecCols[i] });
+  }
 
   return insertCols;
 }

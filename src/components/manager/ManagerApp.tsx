@@ -541,6 +541,7 @@ function ManagerAnnouncementsTab({
             authorEmail={viewerEmail ?? ''}
             allowGeneral={teamGate.kind === 'elevated'}
             departments={departments}
+            authorLabel={teamGate.kind === 'elevated' ? 'Management' : 'Manager'}
           />
           <AnnouncementWall
             scope={wallScope}
