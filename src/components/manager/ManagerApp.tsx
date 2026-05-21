@@ -45,7 +45,11 @@ import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
 import SWall from '@/components/swall/SWall';
 import HslBonusCalculator from '@/components/manager/HslBonusCalculator';
+import DeptBonusCalculator from '@/components/manager/DeptBonusCalculator';
 import ManagerBonusHistory from '@/components/manager/ManagerBonusHistory';
+import { HSL_DEPT_KEYS, canAccessHslDept } from '@/lib/hsl-bonus/schema';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { DEPT_INPUT_CONFIG } from '@/lib/payroll/department-bonus';
 import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -297,13 +301,45 @@ export default function ManagerApp() {
               {activeTab === 's-wall' && (
                 <ManagerSwallTab viewerEmail={viewerEmail} />
               )}
-              {activeTab === 'hsl-bonus' && (
-                <HslBonusCalculator
-                  viewerEmail={viewerEmail}
-                  managedDepts={teamGate.kind === 'department' ? teamGate.departments : []}
-                  isElevated={teamGate.kind === 'elevated'}
-                />
-              )}
+              {activeTab === 'hsl-bonus' && (() => {
+                const managed = teamGate.kind === 'department' ? teamGate.departments : [];
+                const elevated = teamGate.kind === 'elevated';
+                const hslVisible = elevated || HSL_DEPT_KEYS.some((k) => canAccessHslDept(managed, k, false));
+                const deptVisible =
+                  elevated ||
+                  managed.some((dStr) => {
+                    const k = normalizeDeptToKey(dStr);
+                    return !!k && k in DEPT_INPUT_CONFIG;
+                  });
+                if (!hslVisible && !deptVisible) {
+                  return (
+                    <div className="flex flex-col items-center justify-center gap-3 px-6 py-20 text-center">
+                      <Users className="h-10 w-10 text-zinc-300 dark:text-zinc-700" aria-hidden />
+                      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                        No bonus departments assigned to you.
+                      </p>
+                      <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-500">
+                        Ask an admin to assign you to a department under Roles &amp; permissions.
+                      </p>
+                    </div>
+                  );
+                }
+                return (
+                  <>
+                    {hslVisible && (
+                      <HslBonusCalculator viewerEmail={viewerEmail} managedDepts={managed} isElevated={elevated} />
+                    )}
+                    {deptVisible && (
+                      <DeptBonusCalculator
+                        viewerEmail={viewerEmail}
+                        teamMembers={teamMembers}
+                        managedDepts={managed}
+                        isElevated={elevated}
+                      />
+                    )}
+                  </>
+                );
+              })()}
               {activeTab === 'bonus-history' && (
                 <ManagerBonusHistory
                   viewerEmail={viewerEmail}

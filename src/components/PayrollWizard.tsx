@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { cn } from '@/lib/utils';
+import { KPI_BONUS_ID, DEPARTMENTS, FORMULA_DEPT_KEYS, MANAGER_BONUS_DEPT_KEYS, ACCOUNTING_WEEKDAY_METRICS, calcLeadGenBonus, isDevsDelivery, isDevsChecking, isJeromeRosero, isTeal, calculateDepartmentBonus } from '@/lib/payroll/department-bonus';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -414,52 +415,6 @@ const COMMON_BONUSES: { id: string; label: string; amount: number }[] = [
   { id: 'perfect_attendance', label: 'Perfect Attendance Bonus', amount: 5000 },
 ];
 
-/**
- * Special bonus id whose amount is **per-employee** rather than a flat dept-wide
- * amount. The amount comes from the latest ready/locked SSD Medical Records KPI
- * sheet (`hsl_bonus_entries.calculated_bonus`). Surfaces on the Hogan Smith Law
- * tab; only members of the SSD Medical Records team are eligible.
- */
-const KPI_BONUS_ID = 'kpi_bonus';
-
-const DEPARTMENTS: {
-  key: string;
-  name: string;
-  bonuses: { id: string; label: string; amount: number }[];
-}[] = [
-  { key: 'accounting',       name: 'Accounting',         bonuses: [] },
-  { key: 'edit',             name: 'Edit',               bonuses: [] },
-  { key: 'devs',             name: 'AI/API Team',         bonuses: [] },
-  { key: 'lead_gen',         name: 'Lead Gen',           bonuses: [] },
-  {
-    key: 'us_manager_bonus',
-    name: 'US - Manager Bonus',
-    bonuses: [
-      { id: 'usmgr_leadership', label: 'Leadership Excellence Award', amount: 3500 },
-      { id: 'usmgr_team',       label: 'Team Performance Bonus',      amount: 3000 },
-    ],
-  },
-  { key: 'callback',         name: 'Callback',           bonuses: [] },
-  { key: 'qc',               name: 'QC',                 bonuses: [] },
-  { key: 'discovery',        name: 'Discovery',          bonuses: [] },
-  { key: 'hr',               name: 'HR',                 bonuses: [] },
-  { key: 'sales_assistant',  name: 'Sales Assistant',    bonuses: [] },
-  { key: 'smart_staff',      name: 'Smart Staff',        bonuses: [] },
-  {
-    key: 'hogan_smith_law',
-    name: 'Hogan Smith Law',
-    // The KPI Bonus amount is sourced from `hsl_bonus_entries` per employee
-    // (latest ready/locked SSD Medical Records week). The `amount: 0` here is
-    // a sentinel; the actual value is read from `ssdKpiAmounts[email]`.
-    bonuses: [
-      { id: KPI_BONUS_ID, label: 'KPI Bonus', amount: 0 },
-    ],
-  },
-  { key: 'smm',              name: 'Social Media',       bonuses: [] },
-  { key: 'pm_team',          name: 'PM Team',            bonuses: [] },
-  { key: 'client_va',        name: 'Client VA',          bonuses: [] },
-  { key: 'site_building',    name: 'Site Building',      bonuses: [] },
-];
 
 /** Known non-date Hubstaff column names (lowercase). Used as a quick-reject before date parsing. */
 const HUBSTAFF_NON_DATE_COLS = new Set([
@@ -630,228 +585,6 @@ function isoDateFromColumnGroup(group: string[]): string | null {
   return null;
 }
 
-/**
- * Lead Gen appointment-based bonus:
- *   1–9  appointments → ₱250 per appointment
- *   10+  appointments → ₱500 per appointment
- */
-function calcLeadGenBonus(appointments: number): number {
-  if (appointments <= 0) return 0;
-  return appointments >= 10 ? appointments * 500 : appointments * 250;
-}
-
-/**
- * Returns true when every token in `pattern` appears in the tokenized employee name.
- * Case-insensitive; ignores punctuation. Supports both "Last, First" and "First Last" formats.
- */
-function nameMatchesPattern(empName: string, pattern: string): boolean {
-  const normalize = (s: string) =>
-    s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
-  const empTokens = new Set(normalize(empName));
-  return normalize(pattern).every(t => empTokens.has(t));
-}
-
-/** DEVS — Site Delivery eligibles: Enriquez Harry Jr. and Lagundi Bryan */
-function isDevsDelivery(name: string): boolean {
-  return nameMatchesPattern(name, 'Enriquez Harry') || nameMatchesPattern(name, 'Lagundi Bryan');
-}
-
-/** DEVS — Site Checking eligibles: Ranis Christian, Velasco Anjeo, Felices John Carl */
-function isDevsChecking(name: string): boolean {
-  return (
-    nameMatchesPattern(name, 'Ranis Christian') ||
-    nameMatchesPattern(name, 'Velasco Anjeo') ||
-    nameMatchesPattern(name, 'Felices John Carl')
-  );
-}
-
-/** QC — Jerome Rosero receives a separate calculation and optional Callback bonuses */
-function isJeromeRosero(name: string): boolean {
-  return nameMatchesPattern(name, 'Jerome Rosero');
-}
-
-/** HR — "Teal" is excluded from the headcount multiplier */
-function isTeal(name: string): boolean {
-  return name.trim().toLowerCase().includes('teal');
-}
-
-/**
- * Departments that use formula-based bonus calculation instead of manual toggles.
- * Lead Gen is included but intentionally returns zero (department disregarded per policy).
- */
-const FORMULA_DEPT_KEYS = new Set([
-  'accounting', 'edit', 'devs', 'lead_gen',
-  'callback', 'qc', 'discovery', 'hr', 'sales_assistant', 'smart_staff',
-]);
-
-/** Mon–Fri collection counts; sum drives Accounting weekly tier. Keys present ⇒ sum only; else legacy `collected` total. */
-const ACCOUNTING_WEEKDAY_METRICS: { key: string; label: string }[] = [
-  { key: 'collectedMon', label: 'Mon' },
-  { key: 'collectedTue', label: 'Tue' },
-  { key: 'collectedWed', label: 'Wed' },
-  { key: 'collectedThu', label: 'Thu' },
-  { key: 'collectedFri', label: 'Fri' },
-];
-
-function accountingWeeklyCollectedTotal(em: Record<string, number>): number {
-  const hasDailyBreakdown = ACCOUNTING_WEEKDAY_METRICS.some(({ key }) =>
-    Object.prototype.hasOwnProperty.call(em, key),
-  );
-  if (hasDailyBreakdown) {
-    return ACCOUNTING_WEEKDAY_METRICS.reduce((sum, { key }) => sum + (em[key] ?? 0), 0);
-  }
-  return em.collected ?? 0;
-}
-
-/**
- * Computes department-specific bonuses for all employees in a single department.
- * Returns a map of email → bonus amount (does NOT include common bonuses).
- *
- * @param deptKey        - Department key from DEPARTMENTS
- * @param employees      - CalcRows assigned to this department
- * @param empMetrics     - Per-employee numeric metrics (tickets, collected, appts, etc.)
- * @param deptMetrics    - Department-level numeric metrics (unitsSold for QC, newHires for HR)
- */
-function calculateDepartmentBonus(
-  deptKey: string,
-  employees: CalcRow[],
-  empMetrics: Record<string, Record<string, number>>,
-  deptMetrics: Record<string, Record<string, number>>,
-): Record<string, number> {
-  const result: Record<string, number> = {};
-  const em = (email: string) => empMetrics[email] ?? {};
-  const dm = deptMetrics[deptKey] ?? {};
-
-  switch (deptKey) {
-    // ── Accounting (dept-level daily counts → same bonus for everyone) ──────
-    case 'accounting': {
-      const hasDailyBreakdown = ACCOUNTING_WEEKDAY_METRICS.some(({ key }) =>
-        Object.prototype.hasOwnProperty.call(dm, key),
-      );
-      let sharedBonus = 0;
-      if (hasDailyBreakdown) {
-        for (const { key } of ACCOUNTING_WEEKDAY_METRICS) {
-          const day = dm[key] ?? 0;
-          if (day >= 30)      sharedBonus += 450;
-          else if (day >= 22) sharedBonus += 300;
-          else if (day >= 17) sharedBonus += 200;
-        }
-      } else {
-        const collected = dm.collected ?? 0;
-        if (collected >= 30)      sharedBonus = 450;
-        else if (collected >= 22) sharedBonus = 300;
-        else if (collected >= 17) sharedBonus = 200;
-      }
-      for (const emp of employees) {
-        result[emp.email] = sharedBonus;
-      }
-      break;
-    }
-
-    // ── Edit (₱50 per completed ticket) ────────────────────────────────────
-    case 'edit': {
-      for (const emp of employees) {
-        result[emp.email] = (em(emp.email).tickets ?? 0) * 50;
-      }
-      break;
-    }
-
-    // ── Devs (tickets + site delivery or site checking) ────────────────────
-    case 'devs': {
-      for (const emp of employees) {
-        const metrics = em(emp.email);
-        let bonus = (metrics.tickets ?? 0) * 50;
-        if (isDevsDelivery(emp.name)) {
-          bonus += (metrics.siteDelivery ?? 0) * 50;
-        } else if (isDevsChecking(emp.name)) {
-          bonus += (metrics.siteChecking ?? 0) * 250;
-        }
-        result[emp.email] = bonus;
-      }
-      break;
-    }
-
-    // ── Callback (₱50/callback appt + lead gen tier inside callback) ───────
-    case 'callback': {
-      for (const emp of employees) {
-        const metrics = em(emp.email);
-        const callbackBonus = (metrics.callbackAppts ?? 0) * 50;
-        const leadGenBonus  = calcLeadGenBonus(metrics.leadGenAppts ?? 0);
-        result[emp.email] = callbackBonus + leadGenBonus;
-      }
-      break;
-    }
-
-    // ── QC (pool split + Jerome Rosero exception) ──────────────────────────
-    case 'qc': {
-      const unitsSold = dm.unitsSold ?? 0;
-      const standardMembers = employees.filter(e => !isJeromeRosero(e.name));
-      const standardCount = standardMembers.length;
-      const poolRate = standardCount >= 6 ? 150 : 125;
-      const pool = unitsSold * poolRate;
-      const perMember = standardCount > 0 ? pool / standardCount : 0;
-
-      for (const emp of employees) {
-        if (isJeromeRosero(emp.name)) {
-          const callbackBonus = (em(emp.email).callbackAppts ?? 0) * 50;
-          result[emp.email] = unitsSold * 30 + callbackBonus;
-        } else {
-          result[emp.email] = perMember;
-        }
-      }
-      break;
-    }
-
-    // ── Discovery (₱25 per unit sold prior week) ───────────────────────────
-    case 'discovery': {
-      for (const emp of employees) {
-        result[emp.email] = (em(emp.email).unitsSoldPriorWeek ?? 0) * 25;
-      }
-      break;
-    }
-
-    // ── HR (pool ÷ new hires; Teal excluded from headcount multiplier) ─────
-    case 'hr': {
-      const newHires = dm.newHires ?? 0;
-      const billableCount = employees.filter(e => !isTeal(e.name)).length;
-      const pool = billableCount * 1000;
-      const individual = newHires > 0 ? pool / newHires : 0;
-      for (const emp of employees) {
-        result[emp.email] = individual;
-      }
-      break;
-    }
-
-    // ── Sales Assistant (₱150 per sale last week) ──────────────────────────
-    case 'sales_assistant': {
-      for (const emp of employees) {
-        result[emp.email] = (em(emp.email).salesLastWeek ?? 0) * 150;
-      }
-      break;
-    }
-
-    // ── SmartStaff (₱250 per appointment set) ──────────────────────────────
-    case 'smart_staff': {
-      for (const emp of employees) {
-        result[emp.email] = (em(emp.email).appointmentsSet ?? 0) * 250;
-      }
-      break;
-    }
-
-    // ── Lead Gen (₱500/appt when ≥ 10, else ₱250/appt, 0 when zero) ───────
-    case 'lead_gen': {
-      for (const emp of employees) {
-        result[emp.email] = calcLeadGenBonus(em(emp.email).leadGenAppts ?? 0);
-      }
-      break;
-    }
-
-    default:
-      break;
-  }
-
-  return result;
-}
 
 const steps = [
   {
@@ -1155,6 +888,70 @@ export default function PayrollWizard({
     status: 'ready' | 'locked';
   } | null>(null);
   const [ssdKpiLoading, setSsdKpiLoading] = useState(true);
+
+  /**
+   * Manager-submitted department bonuses (KPI Calculator → Additions bridge).
+   * For each manager-bonus department, pulls the latest `ready`/`locked` weekly
+   * submission and indexes `calculated_bonus` by the entry's stored email
+   * (personal/work, lowercased). Resolved to each wizard row's identity in
+   * `resolvedManagerBonus`. Surfaces in the Additions Bonus column; the
+   * accountant can still override per row.
+   */
+  const [managerBonusRaw, setManagerBonusRaw] = useState<Record<string, number>>({});
+  const [managerBonusMeta, setManagerBonusMeta] = useState<Record<string, { period_start: string; status: string }>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const statusRes = await fetch('/api/hsl-bonus/period-status', { cache: 'no-store' });
+        const statusJson = (await statusRes.json()) as {
+          rows?: { department: string; period_start: string; period_end: string; status: string }[];
+        };
+        const managerKeys = new Set(MANAGER_BONUS_DEPT_KEYS);
+        // Latest ready/locked period per manager-bonus department (locked beats ready on a tie).
+        const chosen = new Map<string, { period_start: string; status: string }>();
+        for (const row of statusJson.rows ?? []) {
+          if (!managerKeys.has(row.department)) continue;
+          if (row.status !== 'ready' && row.status !== 'locked') continue;
+          const cur = chosen.get(row.department);
+          if (
+            !cur ||
+            row.period_start > cur.period_start ||
+            (row.period_start === cur.period_start && row.status === 'locked')
+          ) {
+            chosen.set(row.department, { period_start: row.period_start, status: row.status });
+          }
+        }
+        if (cancelled) return;
+
+        const meta: Record<string, { period_start: string; status: string }> = {};
+        const raw: Record<string, number> = {};
+        await Promise.all(
+          Array.from(chosen.entries()).map(async ([dept, info]) => {
+            meta[dept] = info;
+            const res = await fetch(`/api/hsl-bonus/entries?dept=${dept}&period_start=${info.period_start}`, {
+              cache: 'no-store',
+            });
+            const json = (await res.json()) as { rows?: { employee_email: string; calculated_bonus: number }[] };
+            for (const r of json.rows ?? []) {
+              const em = (r.employee_email ?? '').toLowerCase();
+              if (!em || em === '__dept_meta__') continue;
+              raw[em] = Math.round(r.calculated_bonus ?? 0);
+            }
+          }),
+        );
+        if (cancelled) return;
+        setManagerBonusMeta(meta);
+        setManagerBonusRaw(raw);
+      } catch {
+        // Silent — no manager submissions surface; depts fall back to local entry.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2802,6 +2599,36 @@ export default function PayrollWizard({
     }
   };
 
+  /**
+   * Manager-submitted bonuses resolved to each wizard row's identity. The wizard
+   * keys rows by Hubstaff email; manager entries are keyed by personal/work email,
+   * so we bridge via `masterIndex` (work email → personal email → name tokens),
+   * mirroring how rates are resolved.
+   */
+  const resolvedManagerBonus = useMemo(() => {
+    const out: Record<string, number> = {};
+    if (Object.keys(managerBonusRaw).length === 0) return out;
+    for (const row of effectiveCalcResults) {
+      const e = normEmail(row.email);
+      let amt = e ? managerBonusRaw[e] : undefined;
+      if (amt === undefined) {
+        let master = e ? masterIndex.byWorkEmail.get(e) : undefined;
+        if (!master && e) master = masterIndex.byPersonalEmail.get(e);
+        if (!master && row.name) {
+          const toks = normalizeNameTokens(row.name);
+          if (toks) master = masterIndex.byNameTokens.get(toks);
+        }
+        if (master) {
+          const pe = normEmail(master.personal_email);
+          const we = normEmail(master.work_email);
+          amt = (pe ? managerBonusRaw[pe] : undefined) ?? (we ? managerBonusRaw[we] : undefined);
+        }
+      }
+      if (amt !== undefined) out[row.email] = amt;
+    }
+    return out;
+  }, [managerBonusRaw, effectiveCalcResults, masterIndex]);
+
   const bonusTotals = useMemo(() => {
     const result: Record<string, number> = {};
 
@@ -2814,17 +2641,26 @@ export default function PayrollWizard({
       deptEmployeeMap[deptKey].push(calcRow);
     }
 
-    // Department-specific bonus (formula-based or toggle-based)
+    // Department-specific bonus (formula-based or toggle-based). A manager's
+    // ready/locked KPI submission, when present for an employee, is authoritative
+    // for that department bonus (the accountant can still override per row).
     for (const [deptKey, employees] of Object.entries(deptEmployeeMap)) {
       if (FORMULA_DEPT_KEYS.has(deptKey)) {
         const deptBonuses = calculateDepartmentBonus(deptKey, employees, employeeMetrics, deptMetrics);
-        for (const [email, bonus] of Object.entries(deptBonuses)) {
-          result[email] = (result[email] ?? 0) + bonus;
+        for (const emp of employees) {
+          const mgr = resolvedManagerBonus[emp.email];
+          const bonus = mgr !== undefined ? mgr : (deptBonuses[emp.email] ?? 0);
+          result[emp.email] = (result[emp.email] ?? 0) + bonus;
         }
       } else {
         const dept = DEPARTMENTS.find(d => d.key === deptKey);
         if (!dept) continue;
         for (const emp of employees) {
+          const mgr = resolvedManagerBonus[emp.email];
+          if (mgr !== undefined) {
+            result[emp.email] = (result[emp.email] ?? 0) + mgr;
+            continue;
+          }
           const toggles = employeeBonuses[emp.email] ?? {};
           let total = 0;
           for (const db of dept.bonuses) {
@@ -2854,7 +2690,7 @@ export default function PayrollWizard({
     }
 
     return result;
-  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, ssdKpiAmounts]);
+  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, ssdKpiAmounts, resolvedManagerBonus]);
 
   /** Effective bonus per employee: accounting override wins over the auto-computed total. */
   const getEffectiveBonus = useCallback(
@@ -6077,6 +5913,19 @@ export default function PayrollWizard({
                         </button>
                       )}
                     </div>
+
+                    {/* Manager-submitted bonus note — explains why metric inputs may be
+                        blank while the Bonus column is populated from the KPI Calculator. */}
+                    {managerBonusMeta[activeDeptTab] && (
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-emerald-300/70 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                        <Check className="h-3.5 w-3.5 shrink-0" />
+                        <span className="font-semibold">Bonuses submitted by the department manager.</span>
+                        <span className="opacity-80">
+                          From the KPI Calculator · week of {managerBonusMeta[activeDeptTab]!.period_start} · {managerBonusMeta[activeDeptTab]!.status}. The Bonus
+                          column below reflects their submission — edit any cell to override.
+                        </span>
+                      </div>
+                    )}
 
                     <div className="rounded-xl border border-zinc-200 bg-white/50 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25">
                     <div className="w-full min-w-0 overflow-x-auto [-ms-overflow-style:none] [scrollbar-gutter:stable]">

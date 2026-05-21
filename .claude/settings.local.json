@@ -126,7 +126,10 @@
       "PowerShell($lines = Get-Content -LiteralPath 'C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\lib\\\\hr\\\\work-email.ts'; for \\($i=36; $i -le 40; $i++\\) { $l=$lines[$i]; if \\($l -match 'replace'\\) { 'IDX {0}: {1}' -f $i, \\(\\($l.ToCharArray\\(\\) | ForEach-Object { 'U+{0:X4}' -f [int]$_ }\\) -join ' '\\) } })",
       "mcp__ide__getDiagnostics",
       "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -Directory | Select-Object -First 30 | ForEach-Object { $_.FullName })",
-      "Bash(Select-Object -First 40)"
+      "Bash(Select-Object -First 40)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -Directory | Select-Object -First 30 | ForEach-Object { $_.FullName })",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -Directory)",
+      "PowerShell($p='c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\.enc-test.txt'; $b=[System.IO.File]::ReadAllBytes\\($p\\); \"UTF8 decode: \" + [System.Text.Encoding]::UTF8.GetString\\($b\\); \"has_E282B1_peso: \" + \\([System.Text.Encoding]::UTF8.GetString\\($b\\).Contains\\([char]0x20B1\\)\\); \"has_2500_emdash: \" + \\([System.Text.Encoding]::UTF8.GetString\\($b\\).Contains\\([char]0x2500\\)\\); Remove-Item $p -Force; \"cleaned up: \" + \\(-not \\(Test-Path $p\\)\\))"
     ]
   }
 }
