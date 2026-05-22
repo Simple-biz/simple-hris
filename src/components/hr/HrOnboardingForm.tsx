@@ -77,6 +77,7 @@ type SubmissionRow = {
   w8ben_file_path: string | null;
   w8ben_file_name: string | null;
   payment_method: PaymentMethod | null;
+  hurupay_email: string | null;
   bank_full_name: string | null;
   bank_account_name: string | null;
   bank_account_number: string | null;
@@ -748,7 +749,8 @@ function GenerateLinkDialog({
   onClose: () => void;
   onCreated: (row: SubmissionRow) => void;
 }) {
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [dept, setDept] = useState('');
   const [note, setNote] = useState('');
@@ -779,7 +781,7 @@ function GenerateLinkDialog({
 
   useEffect(() => {
     if (!open) {
-      setName(''); setEmail(''); setDept(''); setNote('');
+      setFirstName(''); setLastName(''); setEmail(''); setDept(''); setNote('');
     }
   }, [open]);
 
@@ -790,13 +792,14 @@ function GenerateLinkDialog({
       toast.error("Personal email doesn't look right.");
       return;
     }
+    const fullName = [firstName.trim(), lastName.trim()].filter(Boolean).join(' ');
     setBusy(true);
     try {
       const res = await fetch('/api/hr/onboarding-submissions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          invite_name: name.trim() || null,
+          invite_name: fullName || null,
           invite_personal_email: email.trim() || null,
           invite_department: dept.trim() || null,
           invite_note: note.trim() || null,
@@ -834,12 +837,19 @@ function GenerateLinkDialog({
 
         <DialogSection label="Who is this for?">
           <div className="grid gap-3 sm:grid-cols-2">
-            <DialogField label="New hire's full name" icon={<User className="h-3 w-3" />}>
+            <DialogField label="First name" icon={<User className="h-3 w-3" />}>
               <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Jane Dela Cruz"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                placeholder="Jane"
                 autoFocus
+              />
+            </DialogField>
+            <DialogField label="Last name" icon={<User className="h-3 w-3" />}>
+              <Input
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                placeholder="Dela Cruz"
               />
             </DialogField>
             <DialogField
@@ -1792,6 +1802,9 @@ function SubmissionDetailDialog({
                           label="Method"
                           value={row.payment_method === 'hurupay' ? 'Hurupay' : row.payment_method === 'wires' ? 'Wire transfer' : '—'}
                         />
+                        {row.payment_method === 'hurupay' && (
+                          <DetailRow label="Hurupay email" value={row.hurupay_email} />
+                        )}
                         {row.payment_method === 'wires' && (
                           <div className="grid gap-1.5 sm:grid-cols-2">
                             <DetailRow label="Bank" value={row.bank_full_name} />

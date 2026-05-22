@@ -48,6 +48,7 @@ type FormState = {
   w8ben_file_path: string | null;
   w8ben_file_name: string | null;
   payment_method: OnboardingPaymentMethod | null;
+  hurupay_email: string;
   bank_full_name: string;
   bank_account_name: string;
   bank_account_number: string;
@@ -71,6 +72,7 @@ const emptyForm: FormState = {
   w8ben_file_path: null,
   w8ben_file_name: null,
   payment_method: null,
+  hurupay_email: '',
   bank_full_name: '',
   bank_account_name: '',
   bank_account_number: '',
@@ -121,7 +123,12 @@ export default function OnboardingFormPage() {
           setForm((f) => ({ ...f, full_name: json.row!.invite_name ?? '' }));
         }
         if (json.row?.invite_personal_email) {
-          setForm((f) => ({ ...f, email: json.row!.invite_personal_email ?? '' }));
+          setForm((f) => ({
+            ...f,
+            email: json.row!.invite_personal_email ?? '',
+            // Suggest the personal email for Hurupay; the hire can change it on Step 5.
+            hurupay_email: json.row!.invite_personal_email ?? '',
+          }));
         }
         if (json.row?.status === 'submitted') {
           setSubmitted(true);
@@ -162,6 +169,11 @@ export default function OnboardingFormPage() {
         return null;
       case 4:
         if (form.payment_method == null) return 'Please choose a payment method.';
+        if (form.payment_method === 'hurupay') {
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.hurupay_email.trim())) {
+            return 'Please enter the email for your Hurupay account.';
+          }
+        }
         if (form.payment_method === 'wires') {
           if (!form.bank_full_name.trim()) return 'Bank name is required for wire transfers.';
           if (!form.bank_account_name.trim()) return 'Name on account is required.';
@@ -222,6 +234,7 @@ export default function OnboardingFormPage() {
           w8ben_file_path: form.w8ben_file_path,
           w8ben_file_name: form.w8ben_file_name,
           payment_method: form.payment_method,
+          hurupay_email: form.hurupay_email.trim() || null,
           bank_full_name: form.bank_full_name.trim() || null,
           bank_account_name: form.bank_account_name.trim() || null,
           bank_account_number: form.bank_account_number.trim() || null,
@@ -713,6 +726,30 @@ function Step5Payment({
           />
         </div>
       </Field>
+
+      {form.payment_method === 'hurupay' && (
+        <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+          <div>
+            <h3 className="inline-block rounded bg-yellow-200 px-1.5 py-0.5 text-sm font-semibold text-yellow-900">
+              Hurupay
+            </h3>
+            <p className="mt-2 text-xs leading-relaxed text-zinc-700">
+              Enter the email tied to your Hurupay account. We have suggested your
+              personal email, but you can change it to whichever email your Hurupay
+              account uses.
+            </p>
+          </div>
+          <Field label="Hurupay account email" required>
+            <Input
+              type="email"
+              value={form.hurupay_email}
+              onChange={(e) => update('hurupay_email', e.target.value)}
+              placeholder={form.email || 'you@example.com'}
+              autoComplete="email"
+            />
+          </Field>
+        </div>
+      )}
 
       {form.payment_method === 'wires' && (
         <div className="space-y-5 rounded-xl border border-amber-200 bg-amber-50/40 p-4">

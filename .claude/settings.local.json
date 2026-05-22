@@ -133,7 +133,8 @@
       "Bash(dir /s /b c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris)",
       "Read(//c/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/memory/**)",
       "Bash(xxd)",
-      "Bash(echo \"exit: $? \\(1 = no mangling found, good\\)\")"
+      "Bash(echo \"exit: $? \\(1 = no mangling found, good\\)\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -File)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory"

@@ -36,6 +36,7 @@ export type HrOnboardingSubmissionRow = {
   w8ben_file_name: string | null;
 
   payment_method: OnboardingPaymentMethod | null;
+  hurupay_email: string | null;
   bank_full_name: string | null;
   bank_account_name: string | null;
   bank_account_number: string | null;
@@ -72,6 +73,7 @@ export type SubmitOnboardingInput = {
   w8ben_file_name?: string | null;
 
   payment_method: OnboardingPaymentMethod;
+  hurupay_email?: string | null;
   bank_full_name?: string | null;
   bank_account_name?: string | null;
   bank_account_number?: string | null;
@@ -201,6 +203,7 @@ export async function submitHrOnboarding(
     w8ben_file_path: input.w8ben_file_path ?? null,
     w8ben_file_name: input.w8ben_file_name ?? null,
     payment_method: input.payment_method,
+    hurupay_email: input.hurupay_email?.trim().toLowerCase() || null,
     bank_full_name: input.bank_full_name?.trim() || null,
     bank_account_name: input.bank_account_name?.trim() || null,
     bank_account_number: input.bank_account_number?.trim() || null,

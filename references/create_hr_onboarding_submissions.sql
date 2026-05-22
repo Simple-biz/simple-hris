@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS public.hr_onboarding_submissions (
 
   -- Step 5 — payment method + wire details ───────────────────────────────
   payment_method      TEXT CHECK (payment_method IN ('hurupay', 'wires')),
+  hurupay_email       TEXT,                        -- email tied to the hire's Hurupay account (pre-filled w/ personal email, editable)
   bank_full_name      TEXT,
   bank_account_name   TEXT,
   bank_account_number TEXT,
