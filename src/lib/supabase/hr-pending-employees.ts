@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
@@ -387,10 +388,13 @@ export async function promoteHrPendingEmployee(
     );
   }
 
-  // Pre-fill the hire's payout details from their onboarding submission so
-  // their employee-portal Settings aren't blank on first login. Runs after the
-  // backfill so the employee_ids row already exists for this work_email.
-  // Best-effort: a failure here never unwinds the promotion.
+  // Pre-fill the hire's payout details (incl. the Hurupay email they entered on
+  // the onboarding form) into the `employee_ids` table so their employee-portal
+  // Profile > payment section is pre-filled on first login. The profile reads
+  // this table via /api/employee-ids. Crucially this UPSERTS: a freshly promoted
+  // hire usually has NO employee_ids row yet (backfillEmployeeIds only stamps
+  // global_master_list.employee_id, not this table), so a plain UPDATE would
+  // silently write nothing. Best-effort: a failure never unwinds the promotion.
   if (row.onboarding_submission_id) {
     try {
       const { row: sub } = await getHrOnboardingSubmissionById(
@@ -408,14 +412,45 @@ export async function promoteHrPendingEmployee(
           phone: sub.phone ?? row.phone,
         });
         if (patch) {
-          const { error: payoutErr } = await sb
+          const { data: existingIds } = await sb
             .from("employee_ids")
-            .update(patch)
-            .eq("work_email", row.work_email);
-          if (payoutErr) {
-            console.warn(
-              `[promoteHrPendingEmployee] payout pre-fill skipped: ${payoutErr.message}`,
-            );
+            .select("employee_id")
+            .eq("work_email", row.work_email)
+            .limit(1);
+          if (existingIds && existingIds.length > 0) {
+            const { error: payoutErr } = await sb
+              .from("employee_ids")
+              .update(patch)
+              .eq("work_email", row.work_email);
+            if (payoutErr) {
+              console.warn(
+                `[promoteHrPendingEmployee] payout pre-fill (update) skipped: ${payoutErr.message}`,
+              );
+            }
+          } else {
+            // No employee_ids row yet — create one so the prefill lands. Reuse
+            // the YYMM-NNNN id backfill stamped on the master row; fall back to a
+            // SELF- id if it isn't there.
+            const { data: masterRow } = await sb
+              .from(MASTER_TABLE)
+              .select("employee_id")
+              .eq("id", masterId)
+              .maybeSingle();
+            const employeeId =
+              (masterRow as { employee_id?: string | null } | null)?.employee_id?.trim() ||
+              `SELF-${randomUUID().replace(/-/g, "").slice(0, 14).toUpperCase()}`;
+            const { error: insertIdErr } = await sb.from("employee_ids").insert({
+              employee_id: employeeId,
+              name: row.name,
+              work_email: row.work_email,
+              personal_email: row.personal_email,
+              ...patch,
+            });
+            if (insertIdErr) {
+              console.warn(
+                `[promoteHrPendingEmployee] payout pre-fill (insert) skipped: ${insertIdErr.message}`,
+              );
+            }
           }
         }
       }
