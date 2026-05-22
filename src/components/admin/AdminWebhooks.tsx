@@ -45,6 +45,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     description:
       'Used by HR Onboarding "Save and stage hire" to provision the Hubstaff workspace account.',
   },
+  {
+    slug: 'hubstaff_invite_user',
+    label: 'Hubstaff Invite User (n8n)',
+    description:
+      'Fired by the HR Pending-Hires "Promote" button to invite the new hire to Hubstaff.',
+  },
 ];
 
 function uid() {

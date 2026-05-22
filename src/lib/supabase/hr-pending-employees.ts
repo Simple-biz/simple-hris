@@ -86,6 +86,8 @@ export type HrPendingEmployeeRow = {
   /** Provenance back-link when this hire was spun up from a submitted
    *  onboarding form (null for "Add person" hires). */
   onboarding_submission_id: string | null;
+  /** Hubstaff project names picked at staging; sent to the invite webhook on promote. */
+  project_names: string[] | null;
 };
 
 export type CreateHrPendingInput = {
@@ -103,6 +105,7 @@ export type CreateHrPendingInput = {
   notes?: string | null;
   created_by?: string | null;
   onboarding_submission_id?: string | null;
+  project_names?: string[] | null;
 };
 
 export type UpdateHrPendingInput = Partial<
@@ -164,6 +167,9 @@ export async function createHrPendingEmployee(
     notes: input.notes?.trim() || null,
     created_by: input.created_by?.trim().toLowerCase() || null,
     onboarding_submission_id: input.onboarding_submission_id ?? null,
+    project_names: Array.isArray(input.project_names)
+      ? input.project_names.map((p) => String(p).trim()).filter(Boolean)
+      : [],
     status,
   };
 
@@ -172,7 +178,19 @@ export async function createHrPendingEmployee(
     .insert(payload)
     .select("*")
     .single();
-  if (error) return { row: null, error: error.message };
+  if (error) {
+    // Graceful fallback if the project_names column migration
+    // (references/add_project_names_to_hr_pending.sql) hasn't been run yet —
+    // retry without it so staging still works (projects just won't persist).
+    if (/project_names/i.test(error.message)) {
+      const { project_names: _omit, ...rest } = payload;
+      void _omit;
+      const retry = await sb.from(TABLE).insert(rest).select("*").single();
+      if (retry.error) return { row: null, error: retry.error.message };
+      return { row: retry.data as HrPendingEmployeeRow, error: null };
+    }
+    return { row: null, error: error.message };
+  }
   return { row: data as HrPendingEmployeeRow, error: null };
 }
 
@@ -238,6 +256,31 @@ export async function cancelHrPendingEmployee(
   return { error: error?.message ?? null };
 }
 
+/**
+ * Reverses a promotion: flips a `promoted` staging row back to `ready` so HR can
+ * re-promote (e.g. after fixing details). Clears `promoted_at` +
+ * `promoted_to_master_id`. Does NOT remove the `global_master_list` row the
+ * original promote created — the person stays in the master list, and a later
+ * re-promote reuses that row (idempotent, by personal email + department). Only
+ * a `promoted` row can be reverted.
+ */
+export async function revertHrPendingEmployeeToReady(
+  id: number,
+): Promise<{ row: HrPendingEmployeeRow | null; error: string | null }> {
+  const sb = client();
+  const { data, error } = await sb
+    .from(TABLE)
+    .update({ status: "ready", promoted_at: null, promoted_to_master_id: null })
+    .eq("id", id)
+    .eq("status", "promoted")
+    .select("*")
+    .maybeSingle();
+  if (error) return { row: null, error: error.message };
+  if (!data)
+    return { row: null, error: "Only a promoted hire can be sent back to Ready." };
+  return { row: data as HrPendingEmployeeRow, error: null };
+}
+
 export async function deleteHrPendingEmployee(
   id: number,
 ): Promise<{ error: string | null }> {
@@ -263,6 +306,8 @@ export async function promoteHrPendingEmployee(
   error: string | null;
   /** Outcome of the best-effort master Google Sheet append (null until reached). */
   sheet?: { appended: boolean; reason?: string } | null;
+  /** Outcome of the best-effort Hubstaff-invite webhook (null until reached). */
+  hubstaff?: { ok: boolean; error?: string } | null;
 }> {
   const sb = client();
 
@@ -530,7 +575,33 @@ export async function promoteHrPendingEmployee(
     console.warn(`[promoteHrPendingEmployee] master-sheet append skipped: ${reason}`);
   }
 
-  return { row: promoted as HrPendingEmployeeRow, masterId, error: null, sheet };
+  // Invite the hire to the Hubstaff workspace via the n8n automation, using the
+  // projects HR picked at staging (persisted on the row) + the hire's rate.
+  // Best-effort: a failure here never unwinds the promotion.
+  let hubstaff: { ok: boolean; error?: string } | null = null;
+  try {
+    const { inviteHubstaffUser } = await import("../hr/hubstaff-invite");
+    const payRate =
+      row.regular_rate != null && Number.isFinite(Number(row.regular_rate))
+        ? Number(row.regular_rate)
+        : null;
+    hubstaff = await inviteHubstaffUser({
+      workEmail: row.work_email,
+      projectNames: Array.isArray(row.project_names) ? row.project_names : [],
+      payRate,
+    });
+    if (!hubstaff.ok) {
+      console.warn(
+        `[promoteHrPendingEmployee] hubstaff invite failed: ${hubstaff.error ?? "unknown"}`,
+      );
+    }
+  } catch (e) {
+    const err = e instanceof Error ? e.message : String(e);
+    hubstaff = { ok: false, error: err };
+    console.warn(`[promoteHrPendingEmployee] hubstaff invite failed: ${err}`);
+  }
+
+  return { row: promoted as HrPendingEmployeeRow, masterId, error: null, sheet, hubstaff };
 }
 
 /**

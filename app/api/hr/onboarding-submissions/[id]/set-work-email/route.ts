@@ -149,6 +149,12 @@ export async function POST(
   const regularRateStr = toRateStr(body.regular_rate);
   const otRateStr = toRateStr(body.ot_rate);
 
+  // Hubstaff project(s) HR picked — persisted on the hire so the Promote step
+  // can send them to the hubstaff-invite-user webhook (which requires them).
+  const projectNames = Array.isArray(body.project_names)
+    ? body.project_names.map((p) => String(p).trim()).filter(Boolean)
+    : [];
+
   const { row: pending, error: createErr } = await createHrPendingEmployee({
     name,
     personal_email: personalEmail,
@@ -157,6 +163,7 @@ export async function POST(
     phone: row.phone,
     regular_rate: regularRateStr,
     ot_rate: otRateStr,
+    project_names: projectNames,
     source: "onboarding_form",
     created_by: authz.sessionEmail,
     onboarding_submission_id: row.id,
@@ -194,12 +201,6 @@ export async function POST(
     workEmail,
     personalEmail,
   });
-
-  // Projects (if HR picked any) are recorded for reference; the current
-  // workspace webhook does not consume them.
-  const projectNames = Array.isArray(body.project_names)
-    ? body.project_names.map((p) => String(p).trim()).filter(Boolean)
-    : [];
 
   void insertAuditLog({
     user_name: authz.sessionEmail,

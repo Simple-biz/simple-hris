@@ -21,13 +21,12 @@ const MASTER_TABLE =
  *   • sends the termination notice to the personal email on file
  *
  * Configurable via env so test ↔ prod URLs can swap without redeploying code.
- * The default is the test endpoint the team gave us (n8n "Listen" mode — only
- * fires while the test workflow is armed). For production, set the env var to
- * the corresponding `/webhook/...` URL (no `-test` segment).
+ * The default is the production `/webhook/offboarding-endpoint`; override with
+ * N8N_OFFBOARDING_WEBHOOK_URL to point at a test (`/webhook-test/...`) endpoint.
  */
 const OFFBOARD_WEBHOOK_URL =
   process.env.N8N_OFFBOARDING_WEBHOOK_URL?.trim() ||
-  "https://auto.simple.biz/webhook-test/offboarding-endpoint";
+  "https://simpledotbiz.app.n8n.cloud/webhook/offboarding-endpoint";
 
 /** Reasons HR can pick when off-boarding. Free-text notes are stored separately
  *  in `off_boarded_note`. "other" requires a non-empty note. */

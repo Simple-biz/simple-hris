@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  Undo2,
   Users,
   XCircle,
 } from 'lucide-react';
@@ -162,21 +163,46 @@ export default function HrOnboarding() {
       const json = (await res.json()) as {
         error?: string;
         sheet?: { appended?: boolean; reason?: string } | null;
+        hubstaff?: { ok?: boolean; error?: string } | null;
       };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to promote');
       const sheet = json.sheet;
+      const hubstaff = json.hubstaff;
       if (sheet && sheet.appended === false && sheet.reason !== 'already present in sheet') {
         toast.warning(`${row.name} added to the master list, but NOT written to the Google Sheet`, {
           description: `${sheet.reason ?? 'Sheet append failed'} — add them to the Sheet manually, or they may drop out on the next sheet sync.`,
         });
+      } else if (hubstaff && hubstaff.ok === false) {
+        toast.warning(`${row.name} added to the master list, but the Hubstaff invite did not fire`, {
+          description: `${hubstaff.error ?? 'Invite webhook failed'} — invite them in Hubstaff manually.`,
+        });
       } else {
         toast.success(`${row.name} added to the master list`, {
-          description: 'Now visible across Payroll, Manager, and Orphanage views.',
+          description: 'Now visible across Payroll, Manager, and Orphanage views. Hubstaff invite sent.',
         });
       }
       await fetchPending();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to promote');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function sendBackToReady(row: HrPendingEmployeeRow) {
+    setBusyId(row.id);
+    try {
+      const res = await fetch(`/api/hr/pending-employees/${row.id}/unpromote`, {
+        method: 'POST',
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to send back to Ready');
+      toast.success(`${row.name} sent back to Ready`, {
+        description: 'Their master-list record was kept; you can promote again after any fixes.',
+      });
+      await fetchPending();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to send back to Ready');
     } finally {
       setBusyId(null);
     }
@@ -534,6 +560,23 @@ export default function HrOnboarding() {
                                   disabled={isBusy}
                                 >
                                   <Pencil className="mr-1 h-3 w-3" /> Edit
+                                </Button>
+                              )}
+                              {row.status === 'promoted' && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                                  onClick={() => void sendBackToReady(row)}
+                                  disabled={isBusy}
+                                  title="Send back to Ready (keeps the master-list record; lets you re-promote)"
+                                >
+                                  {isBusy ? (
+                                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Undo2 className="mr-1 h-3 w-3" />
+                                  )}
+                                  Back to Ready
                                 </Button>
                               )}
                               {(row.status === 'ready' ||

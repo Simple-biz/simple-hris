@@ -1072,7 +1072,8 @@ function SetOnboardingWorkEmailDialog({
     available === true &&
     dept.trim().length > 0 &&
     regularRateValid &&
-    otRateValid;
+    otRateValid &&
+    projectNames.length > 0;
 
   async function save() {
     if (!row) return;
@@ -1260,7 +1261,7 @@ function SetOnboardingWorkEmailDialog({
 
           <DialogField
             label="Project(s)"
-            hint="Pick the Hubstaff project(s) the hire is added to."
+            hint="Required — the Hubstaff project(s) the hire is invited to on Promote."
           >
             <ProjectMultiSelect
               selected={projectNames}
