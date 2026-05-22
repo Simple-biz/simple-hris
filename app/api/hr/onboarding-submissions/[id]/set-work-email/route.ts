@@ -9,8 +9,9 @@ import {
 } from "@/lib/supabase/hr-onboarding-submissions";
 import { createHrPendingEmployee } from "@/lib/supabase/hr-pending-employees";
 import { loadTakenWorkEmails } from "@/lib/hr/work-email-server";
-import { WORK_EMAIL_DOMAIN } from "@/lib/hr/work-email";
+import { WORK_EMAIL_DOMAIN, splitFullName } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { createWorkspaceAccount } from "@/lib/hr/workspace-account";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -40,7 +41,13 @@ export async function POST(
 
   const { id } = await context.params;
 
-  let body: { work_email?: string; department?: string };
+  let body: {
+    work_email?: string;
+    department?: string;
+    project_names?: string[];
+    regular_rate?: string | number | null;
+    ot_rate?: string | number | null;
+  };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -129,12 +136,27 @@ export async function POST(
     );
   }
 
+  // Normalize the rates HR entered. Stored on the staged hire and seeded into
+  // employee_hourly_rates on promote; the regular rate doubles as the Hubstaff
+  // pay_rate when no separate value is supplied.
+  const toRateStr = (v: string | number | null | undefined): string | null => {
+    if (v == null) return null;
+    const s = String(v).trim();
+    if (!s) return null;
+    const n = Number(s);
+    return Number.isFinite(n) && n >= 0 ? String(n) : null;
+  };
+  const regularRateStr = toRateStr(body.regular_rate);
+  const otRateStr = toRateStr(body.ot_rate);
+
   const { row: pending, error: createErr } = await createHrPendingEmployee({
     name,
     personal_email: personalEmail,
     work_email: workEmail,
     department,
     phone: row.phone,
+    regular_rate: regularRateStr,
+    ot_rate: otRateStr,
     source: "onboarding_form",
     created_by: authz.sessionEmail,
     onboarding_submission_id: row.id,
@@ -162,6 +184,23 @@ export async function POST(
     );
   }
 
+  // Best-effort: provision the workspace account via the n8n webhook. A failure
+  // here does NOT roll back the staged hire (per product decision) — we report
+  // it so HR can retry or create the account manually.
+  const { first, last } = splitFullName(name);
+  const workspace = await createWorkspaceAccount({
+    firstName: first,
+    lastName: last,
+    workEmail,
+    personalEmail,
+  });
+
+  // Projects (if HR picked any) are recorded for reference; the current
+  // workspace webhook does not consume them.
+  const projectNames = Array.isArray(body.project_names)
+    ? body.project_names.map((p) => String(p).trim()).filter(Boolean)
+    : [];
+
   void insertAuditLog({
     user_name: authz.sessionEmail,
     user_role: "HR",
@@ -173,6 +212,11 @@ export async function POST(
       pending_employee_id: pending.id,
       department,
       name,
+      project_names: projectNames,
+      regular_rate: regularRateStr,
+      ot_rate: otRateStr,
+      workspace_account_ok: workspace.ok,
+      workspace_account_error: workspace.ok ? null : workspace.error ?? null,
     },
   });
 
@@ -181,5 +225,6 @@ export async function POST(
     pending_employee_id: pending.id,
     work_email: workEmail,
     status: pending.status,
+    workspace_account: workspace,
   });
 }

@@ -935,6 +935,11 @@ function SetOnboardingWorkEmailDialog({
   const [checking, setChecking] = useState(false);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  const [regularRate, setRegularRate] = useState('');
+  const [otRate, setOtRate] = useState('');
+  const [projectNames, setProjectNames] = useState<string[]>([]);
+  const [projectOptions, setProjectOptions] = useState<string[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
 
   const fullName = row?.full_name?.trim() || row?.invite_name?.trim() || '';
   const { first, last } = useMemo(() => splitFullName(fullName), [fullName]);
@@ -971,8 +976,15 @@ function SetOnboardingWorkEmailDialog({
     setDept(row.invite_department?.trim() ?? '');
     setWorkEmail('');
     setAvailable(null);
+    setRegularRate('');
+    setOtRate('');
+    setProjectNames([]);
     void reSuggest();
   }, [row, reSuggest]);
+
+  const removeProject = useCallback((name: string) => {
+    setProjectNames((prev) => prev.filter((p) => p !== name));
+  }, []);
 
   // Department list — same source as the Generate-link dialog.
   useEffect(() => {
@@ -990,6 +1002,26 @@ function SetOnboardingWorkEmailDialog({
       )
       .finally(() => setDeptsLoading(false));
   }, [row, departments.length, deptsLoading]);
+
+  // Hubstaff project list — from the secondary Supabase `hubstaff_projects` table.
+  useEffect(() => {
+    if (!row) return;
+    if (projectOptions.length > 0 || projectsLoading) return;
+    setProjectsLoading(true);
+    fetch('/api/secondary/hubstaff-projects', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { projects?: Array<{ name?: string | null }>; error?: string }) => {
+        if (j.error) throw new Error(j.error);
+        const names = (j.projects ?? [])
+          .map((p) => (p?.name ?? '').trim())
+          .filter(Boolean);
+        setProjectOptions(Array.from(new Set(names)));
+      })
+      .catch((e) =>
+        toast.error(e instanceof Error ? e.message : 'Could not load projects'),
+      )
+      .finally(() => setProjectsLoading(false));
+  }, [row, projectOptions.length, projectsLoading]);
 
   // Debounced availability check as HR edits the address.
   useEffect(() => {
@@ -1027,8 +1059,20 @@ function SetOnboardingWorkEmailDialog({
 
   const emailNorm = workEmail.trim().toLowerCase();
   const emailValid = isPlausibleEmail(emailNorm) && emailNorm.endsWith('@simple.biz');
+  const regularRateNum = Number(regularRate);
+  const regularRateValid =
+    regularRate.trim() !== '' && Number.isFinite(regularRateNum) && regularRateNum > 0;
+  const otRateNum = Number(otRate);
+  const otRateValid =
+    otRate.trim() === '' || (Number.isFinite(otRateNum) && otRateNum >= 0);
   const canSave =
-    !!row && !busy && emailValid && available === true && dept.trim().length > 0;
+    !!row &&
+    !busy &&
+    emailValid &&
+    available === true &&
+    dept.trim().length > 0 &&
+    regularRateValid &&
+    otRateValid;
 
   async function save() {
     if (!row) return;
@@ -1039,14 +1083,33 @@ function SetOnboardingWorkEmailDialog({
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ work_email: emailNorm, department: dept.trim() }),
+          body: JSON.stringify({
+            work_email: emailNorm,
+            department: dept.trim(),
+            project_names: projectNames,
+            regular_rate: regularRate.trim(),
+            ot_rate: otRate.trim() || null,
+          }),
         },
       );
-      const json = (await res.json()) as { ok?: boolean; error?: string };
+      const json = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        workspace_account?: { ok?: boolean; error?: string };
+      };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to set work email');
-      toast.success(`${emailNorm} assigned`, {
-        description: 'Staged in Pending Hires - promote after orientation.',
-      });
+      if (json.workspace_account && json.workspace_account.ok === false) {
+        toast.warning(`${emailNorm} staged, but the Hubstaff account could not be created`, {
+          description:
+            json.workspace_account.error
+              ? `${json.workspace_account.error} - create it manually in Hubstaff.`
+              : 'Create it manually in Hubstaff.',
+        });
+      } else {
+        toast.success(`${emailNorm} assigned`, {
+          description: 'Staged in Pending Hires and Hubstaff account requested.',
+        });
+      }
       onConverted();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to set work email');
@@ -1112,7 +1175,7 @@ function SetOnboardingWorkEmailDialog({
           </DialogField>
         </DialogSection>
 
-        <DialogSection label="Work email" last>
+        <DialogSection label="Work email">
           <DialogField label="Work email (@simple.biz)" icon={<Mail className="h-3 w-3" />}>
             <div className="relative">
               <Input
@@ -1161,6 +1224,70 @@ function SetOnboardingWorkEmailDialog({
                 <Wand2 className="h-3 w-3" /> Suggest
               </button>
             </div>
+          </DialogField>
+        </DialogSection>
+
+        <DialogSection label="Hubstaff workspace account" last>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <DialogField
+              label="Regular rate (USD / hour)"
+              hint="Saved as the hire's rate and sent to Hubstaff."
+            >
+              <Input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={regularRate}
+                onChange={(e) => setRegularRate(e.target.value)}
+                placeholder="35.50"
+                aria-invalid={regularRate.trim() !== '' && !regularRateValid ? true : undefined}
+              />
+            </DialogField>
+            <DialogField label="OT rate (USD / hour)" hint="Optional.">
+              <Input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={otRate}
+                onChange={(e) => setOtRate(e.target.value)}
+                placeholder="53.25"
+                aria-invalid={otRate.trim() !== '' && !otRateValid ? true : undefined}
+              />
+            </DialogField>
+          </div>
+
+          <DialogField
+            label="Project(s)"
+            hint="Pick the Hubstaff project(s) the hire is added to."
+          >
+            <ProjectMultiSelect
+              selected={projectNames}
+              onChange={setProjectNames}
+              options={projectOptions}
+              loading={projectsLoading}
+            />
+            {projectNames.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {projectNames.map((p) => (
+                  <span
+                    key={p}
+                    className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/70 px-2 py-0.5 text-[11px] font-medium text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-200"
+                  >
+                    {p}
+                    <button
+                      type="button"
+                      onClick={() => removeProject(p)}
+                      className="text-emerald-600 hover:text-emerald-800 dark:text-emerald-400"
+                      aria-label={`Remove ${p}`}
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </DialogField>
         </DialogSection>
 
@@ -1278,6 +1405,117 @@ function DepartmentSelect({
                   >
                     <SelectPrimitive.ItemText className="flex-1 truncate pr-2">
                       {d}
+                    </SelectPrimitive.ItemText>
+                    <SelectPrimitive.ItemIndicator className="flex h-4 w-4 items-center justify-center">
+                      <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />
+                    </SelectPrimitive.ItemIndicator>
+                  </SelectPrimitive.Item>
+                ))
+              )}
+            </SelectPrimitive.List>
+          </SelectPrimitive.Popup>
+        </SelectPrimitive.Positioner>
+      </SelectPrimitive.Portal>
+    </SelectPrimitive.Root>
+  );
+}
+
+// --- Hubstaff project multi-select dropdown ------------------------------
+
+/**
+ * Multi-select of Hubstaff project names (selected names are sent as
+ * `projectNames` to the create-workspace-account webhook). Options are fetched
+ * live from the secondary Supabase `hubstaff_projects` table via
+ * `/api/secondary/hubstaff-projects`.
+ */
+function ProjectMultiSelect({
+  selected,
+  onChange,
+  options,
+  loading,
+}: {
+  selected: string[];
+  onChange: (next: string[]) => void;
+  options: string[];
+  loading: boolean;
+}) {
+  const [query, setQuery] = useState('');
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((p) => p.toLowerCase().includes(q));
+  }, [options, query]);
+
+  const summary =
+    selected.length === 0
+      ? ''
+      : selected.length === 1
+        ? selected[0]
+        : `${selected.length} projects selected`;
+
+  return (
+    <SelectPrimitive.Root
+      multiple
+      value={selected}
+      onValueChange={(v) => onChange((v ?? []) as string[])}
+      disabled={loading}
+      onOpenChange={(open) => { if (!open) setQuery(''); }}
+    >
+      <SelectPrimitive.Trigger
+        className={cn(
+          'flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm whitespace-nowrap transition-colors outline-none select-none dark:border-input',
+          'data-placeholder:text-muted-foreground',
+          'hover:border-zinc-400 dark:hover:border-zinc-500',
+          'focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20',
+          'disabled:cursor-not-allowed disabled:opacity-50',
+          'dark:bg-input/30',
+        )}
+      >
+        <span className={cn('flex-1 truncate text-left', summary ? '' : 'text-muted-foreground')}>
+          {loading ? 'Loading projects…' : summary || 'Select project(s)'}
+        </span>
+        <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      </SelectPrimitive.Trigger>
+      <SelectPrimitive.Portal>
+        <SelectPrimitive.Positioner side="bottom" sideOffset={4} alignItemWithTrigger className="isolate z-50">
+          <SelectPrimitive.Popup className="w-(--anchor-width) min-w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg shadow-black/8 dark:border-zinc-700 dark:bg-zinc-900 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
+            <div className="sticky top-0 z-[1] border-b border-zinc-100 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  placeholder="Search projects…"
+                  autoFocus
+                  className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs outline-none transition-colors placeholder:text-zinc-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+              </div>
+            </div>
+            <SelectPrimitive.List className="max-h-64 overflow-y-auto p-1">
+              {filtered.length === 0 ? (
+                <div className="px-3 py-4 text-center text-xs italic text-muted-foreground">
+                  {loading
+                    ? 'Loading…'
+                    : query.trim()
+                      ? `No projects match "${query.trim()}".`
+                      : 'No projects found.'}
+                </div>
+              ) : (
+                filtered.map((p) => (
+                  <SelectPrimitive.Item
+                    key={p}
+                    value={p}
+                    className={cn(
+                      'relative flex w-full cursor-default items-center justify-between rounded-lg px-3 py-2 text-sm outline-none select-none',
+                      'focus:bg-emerald-50 focus:text-emerald-900 dark:focus:bg-emerald-950/50 dark:focus:text-emerald-100',
+                      'data-highlighted:bg-emerald-50 data-highlighted:text-emerald-900 dark:data-highlighted:bg-emerald-950/50 dark:data-highlighted:text-emerald-100',
+                    )}
+                  >
+                    <SelectPrimitive.ItemText className="flex-1 truncate pr-2">
+                      {p}
                     </SelectPrimitive.ItemText>
                     <SelectPrimitive.ItemIndicator className="flex h-4 w-4 items-center justify-center">
                       <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />

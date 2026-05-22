@@ -3,10 +3,53 @@ import {
   createSupabaseServiceRoleClient,
 } from "./server";
 import { getCurrentMasterListUploadId } from "./global-master-list-db";
+import { getHrOnboardingSubmissionById } from "./hr-onboarding-submissions";
+
+/**
+ * Maps an onboarding submission's payment details onto the `employee_ids`
+ * payout columns the employee portal reads, so a hire promoted from an
+ * onboarding form sees their bank/processor details pre-filled on first login
+ * instead of an empty Settings form. Only returns the columns we actually have
+ * values for. Returns null when there's nothing worth writing.
+ */
+function onboardingPayoutPatch(sub: {
+  payment_method: string | null;
+  hurupay_email: string | null;
+  bank_full_name: string | null;
+  bank_account_name: string | null;
+  bank_account_number: string | null;
+  bank_swift_code: string | null;
+  bank_full_address: string | null;
+  phone: string | null;
+}): Record<string, string> | null {
+  const patch: Record<string, string> = {};
+  const set = (k: string, v: string | null | undefined) => {
+    const t = (v ?? "").trim();
+    if (t) patch[k] = t;
+  };
+
+  if (sub.payment_method === "hurupay") {
+    patch["preferred_processor"] = "hurupay";
+    set("hurupay_email", sub.hurupay_email);
+  } else if (sub.payment_method === "wires") {
+    patch["preferred_processor"] = "wires";
+    set("bank_name", sub.bank_full_name);
+    set("account_holder_name", sub.bank_account_name);
+    set("account_number", sub.bank_account_number);
+    set("swift_code", sub.bank_swift_code);
+    set("full_address", sub.bank_full_address);
+  }
+  set("phone_number", sub.phone);
+
+  return Object.keys(patch).length > 0 ? patch : null;
+}
 
 const TABLE = "hr_pending_employees";
 const MASTER_TABLE =
   process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE?.trim() || "global_master_list";
+const RATES_TABLE =
+  process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() ||
+  "employee_hourly_rates";
 
 export type HrPendingStatus =
   | "pending_work_email"
@@ -265,29 +308,55 @@ export async function promoteHrPendingEmployee(
     };
   }
 
-  // Master-list columns use mixed-case quoted identifiers ("Personal Email", etc.)
-  // — see references/supabase_global_master_list.sql.
-  const masterPayload = {
-    "Department": row.department,
-    "Name": row.name,
-    "Personal Email": row.personal_email,
-    "Work Email": row.work_email,
-    "Start Date": row.start_date,
-    first_seen_upload_id: uploadId,
-    last_seen_upload_id: uploadId,
-    source_file: "hr_dashboard_add_person",
-  };
-
-  const { data: inserted, error: insertErr } = await sb
+  // Idempotency: global_master_list has a unique index on
+  // (LOWER("Personal Email"), LOWER("Department")). A row for this person+dept
+  // may already exist — e.g. an earlier promote inserted the master row but a
+  // later step failed (pending row still 'ready'), or the person was added from
+  // another source. Reuse that row instead of failing on the duplicate key.
+  let masterId: string;
+  const { data: existingMaster, error: existingErr } = await sb
     .from(MASTER_TABLE)
-    .insert(masterPayload)
     .select("id")
-    .single();
-  if (insertErr)
-    return { row, masterId: null, error: `Master insert failed: ${insertErr.message}` };
+    .ilike("Personal Email", row.personal_email)
+    .ilike("Department", row.department)
+    .limit(1)
+    .maybeSingle();
+  if (existingErr)
+    return { row, masterId: null, error: `Master lookup failed: ${existingErr.message}` };
 
-  // global_master_list.id is UUID — keep as string.
-  const masterId = (inserted as { id: string }).id;
+  if (existingMaster) {
+    masterId = (existingMaster as { id: string }).id;
+    // Make sure the reused row is attached to the current upload so it shows in
+    // active_employees, and refresh the work email in case it was just minted.
+    await sb
+      .from(MASTER_TABLE)
+      .update({ last_seen_upload_id: uploadId, "Work Email": row.work_email })
+      .eq("id", masterId);
+  } else {
+    // Master-list columns use mixed-case quoted identifiers ("Personal Email", etc.)
+    // — see references/supabase_global_master_list.sql.
+    const masterPayload = {
+      "Department": row.department,
+      "Name": row.name,
+      "Personal Email": row.personal_email,
+      "Work Email": row.work_email,
+      "Start Date": row.start_date,
+      first_seen_upload_id: uploadId,
+      last_seen_upload_id: uploadId,
+      source_file: "hr_dashboard_add_person",
+    };
+
+    const { data: inserted, error: insertErr } = await sb
+      .from(MASTER_TABLE)
+      .insert(masterPayload)
+      .select("id")
+      .single();
+    if (insertErr)
+      return { row, masterId: null, error: `Master insert failed: ${insertErr.message}` };
+
+    // global_master_list.id is UUID — keep as string.
+    masterId = (inserted as { id: string }).id;
+  }
 
   const { data: promoted, error: promoteErr } = await sb
     .from(TABLE)
@@ -314,6 +383,82 @@ export async function promoteHrPendingEmployee(
         e instanceof Error ? e.message : String(e)
       }`,
     );
+  }
+
+  // Pre-fill the hire's payout details from their onboarding submission so
+  // their employee-portal Settings aren't blank on first login. Runs after the
+  // backfill so the employee_ids row already exists for this work_email.
+  // Best-effort: a failure here never unwinds the promotion.
+  if (row.onboarding_submission_id) {
+    try {
+      const { row: sub } = await getHrOnboardingSubmissionById(
+        row.onboarding_submission_id,
+      );
+      if (sub) {
+        const patch = onboardingPayoutPatch({
+          payment_method: sub.payment_method,
+          hurupay_email: sub.hurupay_email,
+          bank_full_name: sub.bank_full_name,
+          bank_account_name: sub.bank_account_name,
+          bank_account_number: sub.bank_account_number,
+          bank_swift_code: sub.bank_swift_code,
+          bank_full_address: sub.bank_full_address,
+          phone: sub.phone ?? row.phone,
+        });
+        if (patch) {
+          const { error: payoutErr } = await sb
+            .from("employee_ids")
+            .update(patch)
+            .eq("work_email", row.work_email);
+          if (payoutErr) {
+            console.warn(
+              `[promoteHrPendingEmployee] payout pre-fill skipped: ${payoutErr.message}`,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(
+        `[promoteHrPendingEmployee] payout pre-fill skipped: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  // Seed the hire's hourly rates so Regular Rate / OT Rate exist (and stay
+  // editable) the moment they log in. Only inserts when there's no existing
+  // rates row for this work email — never clobbers rates the hire already has.
+  // Best-effort: a failure here never unwinds the promotion.
+  if (row.regular_rate || row.ot_rate) {
+    try {
+      const { data: existingRate } = await sb
+        .from(RATES_TABLE)
+        .select("id")
+        .eq("Work Email", row.work_email)
+        .maybeSingle();
+      if (!existingRate) {
+        const { error: rateErr } = await sb.from(RATES_TABLE).insert({
+          "Work Email": row.work_email,
+          "Personal Email": row.personal_email,
+          "Name": row.name,
+          "Department": row.department,
+          "Regular Rate": row.regular_rate,
+          "OT Rate": row.ot_rate,
+        });
+        if (rateErr) {
+          console.warn(
+            `[promoteHrPendingEmployee] rate seed skipped: ${rateErr.message}`,
+          );
+        }
+      }
+    } catch (e) {
+      console.warn(
+        `[promoteHrPendingEmployee] rate seed skipped: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
   }
 
   return { row: promoted as HrPendingEmployeeRow, masterId, error: null };

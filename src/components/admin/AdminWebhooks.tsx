@@ -39,6 +39,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     label: 'Paystub Dispatch (n8n)',
     description: 'Used by Payroll Wizard Step 5 to dispatch paystubs.',
   },
+  {
+    slug: 'create_workspace_account',
+    label: 'Create Workspace Account (n8n)',
+    description:
+      'Used by HR Onboarding "Save and stage hire" to provision the Hubstaff workspace account.',
+  },
 ];
 
 function uid() {
