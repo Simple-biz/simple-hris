@@ -260,6 +260,8 @@ export async function promoteHrPendingEmployee(
   /** UUID of the new global_master_list row, or null when promotion failed. */
   masterId: string | null;
   error: string | null;
+  /** Outcome of the best-effort master Google Sheet append (null until reached). */
+  sheet?: { appended: boolean; reason?: string } | null;
 }> {
   const sb = client();
 
@@ -461,7 +463,36 @@ export async function promoteHrPendingEmployee(
     }
   }
 
-  return { row: promoted as HrPendingEmployeeRow, masterId, error: null };
+  // Append the hire to the master Google Sheet so the next Sheet -> Supabase
+  // sync keeps them in `active_employees` (the sync only pulls; it never adds
+  // in-app promotions back to the Sheet). Best-effort + idempotent (the helper
+  // skips if the hire's work/personal email is already on the Sheet) — a
+  // failure here (e.g. service account lacks Editor access) never unwinds the
+  // promotion.
+  let sheet: { appended: boolean; reason?: string } | null = null;
+  try {
+    const { appendMasterSheetRow } = await import(
+      "../google-sheets/append-master-sheet"
+    );
+    sheet = await appendMasterSheetRow({
+      name: row.name,
+      personalEmail: row.personal_email,
+      workEmail: row.work_email,
+      department: row.department,
+      startDate: row.start_date,
+    });
+    if (!sheet.appended) {
+      console.warn(
+        `[promoteHrPendingEmployee] master-sheet append skipped: ${sheet.reason ?? "unknown"}`,
+      );
+    }
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    sheet = { appended: false, reason };
+    console.warn(`[promoteHrPendingEmployee] master-sheet append skipped: ${reason}`);
+  }
+
+  return { row: promoted as HrPendingEmployeeRow, masterId, error: null, sheet };
 }
 
 /**

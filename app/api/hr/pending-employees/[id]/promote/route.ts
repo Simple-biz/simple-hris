@@ -25,7 +25,7 @@ export async function POST(
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
 
-  const { row, masterId, error } = await promoteHrPendingEmployee(id);
+  const { row, masterId, error, sheet } = await promoteHrPendingEmployee(id);
   if (error) {
     // Distinguish validation errors (missing work_email, already promoted) from server errors.
     const status =
@@ -34,5 +34,5 @@ export async function POST(
         : 500;
     return NextResponse.json({ row, masterId, error }, { status });
   }
-  return NextResponse.json({ row, masterId });
+  return NextResponse.json({ row, masterId, sheet });
 }

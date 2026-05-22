@@ -159,11 +159,21 @@ export default function HrOnboarding() {
       const res = await fetch(`/api/hr/pending-employees/${row.id}/promote`, {
         method: 'POST',
       });
-      const json = (await res.json()) as { error?: string };
+      const json = (await res.json()) as {
+        error?: string;
+        sheet?: { appended?: boolean; reason?: string } | null;
+      };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to promote');
-      toast.success(`${row.name} added to the master list`, {
-        description: 'Now visible across Payroll, Manager, and Orphanage views.',
-      });
+      const sheet = json.sheet;
+      if (sheet && sheet.appended === false && sheet.reason !== 'already present in sheet') {
+        toast.warning(`${row.name} added to the master list, but NOT written to the Google Sheet`, {
+          description: `${sheet.reason ?? 'Sheet append failed'} — add them to the Sheet manually, or they may drop out on the next sheet sync.`,
+        });
+      } else {
+        toast.success(`${row.name} added to the master list`, {
+          description: 'Now visible across Payroll, Manager, and Orphanage views.',
+        });
+      }
       await fetchPending();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to promote');

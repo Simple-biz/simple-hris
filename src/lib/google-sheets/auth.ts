@@ -21,7 +21,9 @@ interface GoogleTokenResponse {
   error_description?: string;
 }
 
-let cached: { token: string; expiresAt: number } | null = null;
+// Keyed by scope — a read-only token must not be handed to a write call (and
+// vice-versa), so each scope caches independently.
+const cachedByScope = new Map<string, { token: string; expiresAt: number }>();
 
 /**
  * Returns a fresh access token (cached in-memory until ~30s before expiry).
@@ -40,6 +42,7 @@ export async function getServiceAccountAccessToken(scope: string): Promise<strin
   }
 
   const now = Math.floor(Date.now() / 1000);
+  const cached = cachedByScope.get(scope);
   if (cached && cached.expiresAt - 30 > now) {
     return cached.token;
   }
@@ -90,9 +93,9 @@ export async function getServiceAccountAccessToken(scope: string): Promise<strin
     );
   }
 
-  cached = {
+  cachedByScope.set(scope, {
     token: tokenJson.access_token,
     expiresAt: now + (tokenJson.expires_in ?? 3600),
-  };
+  });
   return tokenJson.access_token;
 }
