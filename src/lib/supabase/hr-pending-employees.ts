@@ -434,16 +434,19 @@ export async function promoteHrPendingEmployee(
   // Best-effort: a failure here never unwinds the promotion.
   if (row.regular_rate || row.ot_rate) {
     try {
-      const { data: existingRate } = await sb
+      // Use limit(1) (not maybeSingle) — maybeSingle errors if duplicate rate
+      // rows already exist for this email, which would mask the check.
+      const { data: existingRates } = await sb
         .from(RATES_TABLE)
         .select("id")
         .eq("Work Email", row.work_email)
-        .maybeSingle();
-      if (!existingRate) {
+        .limit(1);
+      if (!existingRates || existingRates.length === 0) {
+        // NOTE: employee_hourly_rates has no "Name" column — only Work/Personal
+        // Email, Department, Regular/OT Rate (see the table schema).
         const { error: rateErr } = await sb.from(RATES_TABLE).insert({
           "Work Email": row.work_email,
           "Personal Email": row.personal_email,
-          "Name": row.name,
           "Department": row.department,
           "Regular Rate": row.regular_rate,
           "OT Rate": row.ot_rate,
