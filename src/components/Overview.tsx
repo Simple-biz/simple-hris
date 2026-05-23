@@ -65,6 +65,12 @@ import {
   groupDateColumnsByCalendarDay,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import { fetchPabPeriodSettings, isValidManualPabRange } from '@/lib/pab-period-settings';
+import {
+  US_HOLIDAYS_ENABLED_KEY,
+  US_HOLIDAYS_LIST_KEY,
+  parseUsHolidaysList,
+  getEnabledHolidayMap,
+} from '@/lib/us-holidays';
 
 const PAGE_SIZE = 10;
 
@@ -2493,6 +2499,21 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
         const cols = [...allCols];
         const pabCfg = await fetchPabPeriodSettings();
 
+        // Fetch US-holiday forgiveness settings — same shape as PayrollWizard uses.
+        let usHolidayDates: Map<string, string> = new Map();
+        try {
+          const hRes = await fetch(
+            `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY].join(','))}`,
+            { cache: 'no-store' },
+          );
+          const hJson = (await hRes.json()) as { values?: Record<string, string | null> };
+          const hValues = hJson.values ?? {};
+          const hEnabled = hValues[US_HOLIDAYS_ENABLED_KEY] === null || hValues[US_HOLIDAYS_ENABLED_KEY] === undefined
+            ? true
+            : hValues[US_HOLIDAYS_ENABLED_KEY] === 'true';
+          usHolidayDates = getEnabledHolidayMap(parseUsHolidaysList(hValues[US_HOLIDAYS_LIST_KEY] ?? null), hEnabled);
+        } catch { /* no-op — empty holiday map preserves prior behavior */ }
+
         let start: Date;
         let end: Date;
         let monthLabel: string;
@@ -2631,6 +2652,19 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
               if (Number.isFinite(dec)) maxS = Math.max(maxS, Math.round(dec * 3600));
             }
             hoursByDateKey.set(pabDateKey(d), Math.max(hoursByDateKey.get(pabDateKey(d)) ?? 0, maxS));
+          }
+
+          // US holidays force-pass: ensure each holiday in the PAB period reads as >= 7h
+          // so the employee doesn't lose PAB for not logging hours on it.
+          if (usHolidayDates.size > 0) {
+            for (const [iso] of usHolidayDates.entries()) {
+              const [y, m, day] = iso.split('-').map(Number);
+              if (!y || !m || !day) continue;
+              const dt = new Date(y, m - 1, day);
+              if (dt.getTime() < start.getTime() || dt.getTime() > end.getTime()) continue;
+              const key = pabDateKey(dt);
+              if ((hoursByDateKey.get(key) ?? 0) < 7 * 3600) hoursByDateKey.set(key, 7 * 3600);
+            }
           }
 
           // Determine if this employee falls under the HSL rule.

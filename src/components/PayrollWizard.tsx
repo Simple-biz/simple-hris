@@ -34,6 +34,7 @@ import {
   Play,
   StopCircle,
   HardHat,
+  Flag,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { cn } from '@/lib/utils';
@@ -87,6 +88,12 @@ import {
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { parseLocalDateFromIso } from '@/lib/pab-period-settings';
+import {
+  US_HOLIDAYS_ENABLED_KEY,
+  US_HOLIDAYS_LIST_KEY,
+  parseUsHolidaysList,
+  getEnabledHolidayMap,
+} from '@/lib/us-holidays';
 import {
   Dialog,
   DialogContent,
@@ -1168,6 +1175,31 @@ export default function PayrollWizard({
   );
 
   const [approvedDisputeDates, setApprovedDisputeDates] = useState<Map<string, Map<string, number | null>>>(new Map());
+  /** ISO date (YYYY-MM-DD) -> holiday name. Built from app_settings; empty when disabled. */
+  const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
+
+  // Fetch US holiday forgiveness settings — same shape as SystemSettings uses.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY].join(','))}`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as { values?: Record<string, string | null> };
+        if (cancelled) return;
+        const values = json.values ?? {};
+        const enabledVal = values[US_HOLIDAYS_ENABLED_KEY];
+        const enabled = enabledVal === null || enabledVal === undefined ? true : enabledVal === 'true';
+        const list = parseUsHolidaysList(values[US_HOLIDAYS_LIST_KEY] ?? null);
+        setUsHolidayDates(getEnabledHolidayMap(list, enabled));
+      } catch {
+        if (!cancelled) setUsHolidayDates(new Map());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const fileInputWeeklyRef = useRef<HTMLInputElement>(null);
   const masterListFileInputRef = useRef<HTMLInputElement>(null);
@@ -2052,7 +2084,8 @@ export default function PayrollWizard({
           const effectiveSeconds = overrideHours != null ? overrideHours * 3600 : rawSeconds;
           // Force-pass forgiven days so they count toward the 5-day quota
           const isForgiven = !!(forgivenDates?.has(groupDate) && effectiveSeconds >= 4 * 3600);
-          const recordedSeconds = isForgiven ? 7 * 3600 : effectiveSeconds;
+          const isHoliday = usHolidayDates.has(groupDate);
+          const recordedSeconds = (isForgiven || isHoliday) ? 7 * 3600 : effectiveSeconds;
           const [y, m, d] = groupDate.split('-').map(Number);
           hoursByDateKey.set(pabDateKey(new Date(y, m - 1, d)), recordedSeconds);
         }
@@ -2060,11 +2093,13 @@ export default function PayrollWizard({
           eligible.add(email);
         }
       } else {
-        // Standard rule: all Mon–Fri days must be ≥7 h (dispute forgiveness applied).
+        // Standard rule: all Mon–Fri days must be ≥7 h (dispute / holiday forgiveness applied).
         let perfect = true;
         for (const group of weekdayColumnGroups) {
           const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
           const groupDate = isoDateFromColumnGroup(group);
+          // US holidays auto-pass — no override hours needed, the day just doesn't count against PAB.
+          if (groupDate && usHolidayDates.has(groupDate)) continue;
           const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
           // SET semantics: override_hours replaces Hubstaff hours for the day. `null` means the
           // dispute floor-drops without changing hours (e.g. orphanage visit); `0` intentionally
@@ -2092,6 +2127,7 @@ export default function PayrollWizard({
     weekdayColumnGroups,
     allDaysColumnGroups,
     approvedDisputeDates,
+    usHolidayDates,
     employeeDepts,
   ]);
 
@@ -2099,13 +2135,13 @@ export default function PayrollWizard({
    * Per-employee weekday breakdown for the PAB period (merged month). Used in the PA cell.
    */
   const employeeWeekdayHours = useMemo<
-    Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean }[]>
+    Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>
   >(() => {
     const rows = hubstaffRowsForPab;
     if (!rows || rows.length === 0) return new Map();
     if (weekdayColumnGroups.length === 0) return new Map();
 
-    const map = new Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean }[]>();
+    const map = new Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>();
     for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
@@ -2122,26 +2158,37 @@ export default function PayrollWizard({
           // falls through to Hubstaff hours (floor-drop marker); `0` zeros the day out.
           const seconds =
             overrideHours != null ? overrideHours * 3600 : rawSeconds;
-          const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600 && seconds < 7 * 3600);
-          return { col, seconds, passes: seconds >= 7 * 3600 || forgiven, forgivenByDispute: forgiven };
+          const holidayName = groupDate ? (usHolidayDates.get(groupDate) ?? null) : null;
+          const isHoliday = holidayName !== null;
+          const disputeForgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600 && seconds < 7 * 3600);
+          // Holidays take precedence over dispute classification — a holiday day passes regardless of hours
+          const holidayForgiven = isHoliday && seconds < 7 * 3600;
+          return {
+            col,
+            seconds,
+            passes: seconds >= 7 * 3600 || disputeForgiven || isHoliday,
+            forgivenByDispute: disputeForgiven && !holidayForgiven,
+            forgivenByHoliday: holidayForgiven,
+            holidayName,
+          };
         }),
       );
     }
     return map;
-  }, [hubstaffRowsForPab, weekdayColumnGroups, approvedDisputeDates]);
+  }, [hubstaffRowsForPab, weekdayColumnGroups, approvedDisputeDates, usHolidayDates]);
 
   /**
    * Per-employee Mon–Sun breakdown for HSL PAB display. Same structure as
    * employeeWeekdayHours but uses allDaysColumnGroups so Sat/Sun are included.
    */
   const employeeAllDaysHours = useMemo<
-    Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean }[]>
+    Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>
   >(() => {
     const rows = hubstaffRowsForPab;
     if (!rows || rows.length === 0) return new Map();
     if (allDaysColumnGroups.length === 0) return new Map();
 
-    const map = new Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean }[]>();
+    const map = new Map<string, { col: string; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>();
     for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
@@ -2155,13 +2202,23 @@ export default function PayrollWizard({
           const groupDate = isoDateFromColumnGroup(group);
           const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
           const seconds = overrideHours != null ? overrideHours * 3600 : rawSeconds;
-          const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600 && seconds < 7 * 3600);
-          return { col, seconds, passes: seconds >= 7 * 3600 || forgiven, forgivenByDispute: forgiven };
+          const holidayName = groupDate ? (usHolidayDates.get(groupDate) ?? null) : null;
+          const isHoliday = holidayName !== null;
+          const disputeForgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600 && seconds < 7 * 3600);
+          const holidayForgiven = isHoliday && seconds < 7 * 3600;
+          return {
+            col,
+            seconds,
+            passes: seconds >= 7 * 3600 || disputeForgiven || isHoliday,
+            forgivenByDispute: disputeForgiven && !holidayForgiven,
+            forgivenByHoliday: holidayForgiven,
+            holidayName,
+          };
         }),
       );
     }
     return map;
-  }, [hubstaffRowsForPab, allDaysColumnGroups, approvedDisputeDates]);
+  }, [hubstaffRowsForPab, allDaysColumnGroups, approvedDisputeDates, usHolidayDates]);
 
   /**
    * Tri-state PAB display status per employee:
@@ -2222,6 +2279,58 @@ export default function PayrollWizard({
     }
     return map;
   }, [pabMonthRange, employeeWeekdayHours, perfectAttendanceEligible, employeeDepts]);
+
+  /**
+   * US-holiday forgiveness summary scoped to the current PAB month: for each holiday
+   * in the period, which employees had that day waived (zero/under-7h hours that no
+   * longer block PAB). Used by the Validation step to show what was forgiven.
+   */
+  const usHolidayForgivenSummary = useMemo<
+    { iso: string; name: string; date: Date; forgivenEmails: string[]; workedThroughEmails: string[] }[]
+  >(() => {
+    if (!pabMonthRange || usHolidayDates.size === 0) return [];
+    const startT = new Date(pabMonthRange.start.getFullYear(), pabMonthRange.start.getMonth(), pabMonthRange.start.getDate()).getTime();
+    const endRange = hslAdjustedPabEnd ?? pabMonthRange.end;
+    const endT = new Date(endRange.getFullYear(), endRange.getMonth(), endRange.getDate()).getTime();
+
+    const inRangeHolidays: { iso: string; name: string; date: Date }[] = [];
+    for (const [iso, name] of usHolidayDates.entries()) {
+      const [y, m, d] = iso.split('-').map(Number);
+      if (!y || !m || !d) continue;
+      const date = new Date(y, m - 1, d);
+      const t = date.getTime();
+      if (t < startT || t > endT) continue;
+      inRangeHolidays.push({ iso, name, date });
+    }
+    inRangeHolidays.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    if (inRangeHolidays.length === 0) return [];
+
+    const out: { iso: string; name: string; date: Date; forgivenEmails: string[]; workedThroughEmails: string[] }[] = [];
+    for (const h of inRangeHolidays) {
+      const forgiven: string[] = [];
+      const worked: string[] = [];
+      // Walk both breakdown maps — HSL employees live in allDaysHours, standard in weekdayHours
+      const visited = new Set<string>();
+      const consider = (email: string, breakdown: { col: string; seconds: number; forgivenByHoliday: boolean }[]) => {
+        if (visited.has(email)) return;
+        visited.add(email);
+        for (const entry of breakdown) {
+          const d = parseColDate(entry.col);
+          if (!d) continue;
+          const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          if (iso !== h.iso) continue;
+          if (entry.forgivenByHoliday) forgiven.push(email);
+          else if (entry.seconds >= 7 * 3600) worked.push(email);
+          break;
+        }
+      };
+      for (const [email, bd] of employeeAllDaysHours.entries()) consider(email, bd);
+      for (const [email, bd] of employeeWeekdayHours.entries()) consider(email, bd);
+      out.push({ ...h, forgivenEmails: forgiven, workedThroughEmails: worked });
+    }
+    return out;
+  }, [pabMonthRange, hslAdjustedPabEnd, usHolidayDates, employeeWeekdayHours, employeeAllDaysHours]);
 
   /**
    * Auto-apply / remove perfect_attendance toggle whenever eligibility is
@@ -2379,6 +2488,95 @@ export default function PayrollWizard({
       };
     });
   }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled]);
+
+  /**
+   * Tech Bonus week detection — mirrors the logic inside `dispatchData` but
+   * lifted to component scope so the Additions table + Validation totals can
+   * see it. The dispatch step's per-row formula still works because it ORs in
+   * `toggles.tech_bonus`, which the auto-toggle effect below flips on.
+   *
+   * Salary date = weekStart + 8 days (Tuesday after the pay-period Sunday).
+   * The 3rd full Mon-Sun week of salaryDate's month = the Tech Bonus week.
+   */
+  const techBonusWeekInfo = useMemo(() => {
+    const fromFile = calcSourceFile ? parseDateRangeFromFilename(calcSourceFile) : null;
+    const weekStartDate = fromFile?.start ?? null;
+    if (!weekStartDate) return { isTechBonusWeek: false, weekStartDate: null as Date | null, salaryDate: null as Date | null };
+    const salaryDate = new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 8);
+    const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
+    const dow = first.getDay();
+    const daysForward = (8 - dow) % 7;
+    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
+    const thirdWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
+    const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
+    const t = salaryDate.getTime();
+    const isTechBonusWeek = t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
+    return { isTechBonusWeek, weekStartDate, salaryDate };
+  }, [calcSourceFile]);
+
+  /**
+   * Per-employee `start_date + 30d` map. An employee needs 30 days of service
+   * before their first Tech Bonus cycle. `masterEmployees` is the master-list
+   * roster the wizard already fetches in Step 2.
+   */
+  const startDateByEmail = useMemo(() => {
+    const map = new Map<string, Date>();
+    for (const emp of masterEmployees) {
+      const sd = emp.start_date ? new Date(emp.start_date) : null;
+      if (!sd || isNaN(sd.getTime())) continue;
+      const we = normEmail(emp.work_email);
+      const pe = normEmail(emp.personal_email);
+      if (we) map.set(we, sd);
+      if (pe) map.set(pe, sd);
+    }
+    return map;
+  }, [masterEmployees]);
+
+  /**
+   * Set of work emails who should receive the Tech Bonus on the current
+   * dispatch cycle. Used by:
+   *  - the auto-toggle effect below (so `bonusTotals` and the Validation
+   *    grandBonuses pick it up)
+   *  - the Additions table's new Tech column (status pill)
+   */
+  const techBonusEligible = useMemo<Set<string>>(() => {
+    const set = new Set<string>();
+    if (!techBonusWeekInfo.isTechBonusWeek || !techBonusWeekInfo.weekStartDate) return set;
+    const weekStart = techBonusWeekInfo.weekStartDate;
+    for (const r of effectiveCalcResults) {
+      const hasRates = r.regularRate != null || r.otRate != null;
+      if (!hasRates) continue;
+      const em = normEmail(r.email);
+      const sd = em ? startDateByEmail.get(em) : undefined;
+      if (!sd) continue;
+      const eligibleFrom = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() + 30);
+      if (weekStart.getTime() < eligibleFrom.getTime()) continue;
+      set.add(r.email);
+    }
+    return set;
+  }, [techBonusWeekInfo, effectiveCalcResults, startDateByEmail]);
+
+  /**
+   * Auto-apply / remove tech_bonus toggle whenever the week-eligibility set
+   * changes. Mirrors the perfect_attendance auto-toggle. Without this, the
+   * Additions tab + Validation totals never reflect the week-detected bonus.
+   */
+  useEffect(() => {
+    setEmployeeBonuses(prev => {
+      const next = { ...prev };
+      let changed = false;
+      for (const email of Object.keys(employeeDepts)) {
+        const eligible = techBonusEligible.has(email);
+        const current = next[email]?.['tech_bonus'] ?? false;
+        if (eligible !== current) {
+          next[email] = { ...(next[email] ?? {}), tech_bonus: eligible };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [techBonusEligible]);
 
   /**
    * Unified preview items for the "Preview Emails → Orphanage" tab. Pulls
@@ -5942,6 +6140,13 @@ export default function PayrollWizard({
                               PAB<br />
                               <span className="font-mono font-normal text-zinc-400">M T W T F · 7h+</span>
                             </TableHead>
+                            <TableHead className="min-w-[80px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-sky-600 dark:text-sky-400">
+                              Tech<br />
+                              <span className="font-mono font-normal text-zinc-400">
+                                {techBonusWeekInfo.isTechBonusWeek ? 'week 3 - ' : ''}
+                                {formatPHP(1850)}
+                              </span>
+                            </TableHead>
                             {/* Formula-based dept metric columns */}
                             {activeDeptTab === 'accounting' && (() => {
                               const acctDm = deptMetrics['accounting'] ?? {};
@@ -6122,6 +6327,37 @@ export default function PayrollWizard({
                                       >
                                         <span>{label}</span>
                                       </button>
+                                    </TableCell>
+                                  );
+                                })()}
+                                {/* Tech Bonus — week-detected, read-only pill. Manual toggle still available via the dispatch path. */}
+                                {(() => {
+                                  const em = normEmail(emp.email);
+                                  const sd = em ? startDateByEmail.get(em) : undefined;
+                                  const hasRates = emp.regularRate != null || emp.otRate != null;
+                                  const techOn = techBonusEligible.has(emp.email);
+                                  const titleText = techOn
+                                    ? `Auto-applied: salary date ${techBonusWeekInfo.salaryDate?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) ?? ''} lands in the 3rd full Mon–Sun week.`
+                                    : !techBonusWeekInfo.isTechBonusWeek
+                                      ? 'Not the Tech Bonus week. Pays only when the salary date lands in the 3rd full Mon–Sun week of its month.'
+                                      : !hasRates
+                                        ? 'No PH rate — Tech Bonus is PHP-only.'
+                                        : !sd
+                                          ? 'No start date on master list — cannot verify 30-day tenure.'
+                                          : 'Less than 30 days of service — first Tech Bonus is gated until day 30.';
+                                  return (
+                                    <TableCell className="px-1 py-1.5 text-center">
+                                      <span
+                                        title={titleText}
+                                        className={cn(
+                                          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none',
+                                          techOn
+                                            ? 'bg-sky-100 text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30'
+                                            : 'bg-zinc-100 text-zinc-400 ring-1 ring-zinc-300/40 dark:bg-zinc-800/60 dark:text-zinc-500 dark:ring-zinc-700/40',
+                                        )}
+                                      >
+                                        {techOn ? `+${formatPHP(1850)}` : '—'}
+                                      </span>
                                     </TableCell>
                                   );
                                 })()}
@@ -7654,13 +7890,13 @@ export default function PayrollWizard({
             {/* Header */}
             <div className="rounded-xl border border-zinc-200/90 bg-gradient-to-br from-white via-zinc-50/80 to-emerald-50/25 p-4 shadow-sm sm:p-5 dark:border-zinc-800 dark:from-zinc-950/50 dark:via-zinc-900/40 dark:to-emerald-950/15">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Pre-Flight Validation</h3>
                 <p className="text-sm text-zinc-600 dark:text-zinc-400">Final review before dispatching payments</p>
                 {calcSourceFile && (
                   <div className="mt-1 flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400">
                     <FileText className="h-3 w-3 shrink-0" />
-                    <span className="font-mono">{calcSourceFile}</span>
+                    <span className="truncate font-mono">{calcSourceFile}</span>
                   </div>
                 )}
               </div>
@@ -7741,6 +7977,185 @@ export default function PayrollWizard({
               </Card>
             </div>
 
+            {/* US Holidays forgiven in this PAB period */}
+            {usHolidayForgivenSummary.length > 0 && (() => {
+              const totalForgiven = usHolidayForgivenSummary.reduce((s, h) => s + h.forgivenEmails.length, 0);
+              const totalWorkedThrough = usHolidayForgivenSummary.reduce((s, h) => s + h.workedThroughEmails.length, 0);
+              const totalEmps = totalForgiven + totalWorkedThrough;
+              const overallPct = totalEmps > 0 ? Math.round((totalForgiven / totalEmps) * 100) : 0;
+              const holidayWord = `holiday${usHolidayForgivenSummary.length !== 1 ? 's' : ''}`;
+              return (
+                <Card className="relative overflow-hidden border-sky-200/70 bg-gradient-to-br from-sky-50/80 via-white to-indigo-50/30 shadow-sm ring-0 dark:border-sky-900/40 dark:from-sky-950/25 dark:via-zinc-950 dark:to-indigo-950/15">
+                  {/* Soft top-right glow */}
+                  <div className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-sky-400/10 blur-3xl dark:bg-sky-500/10" />
+                  <CardHeader className="relative pb-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-500 text-white shadow-md shadow-sky-500/25 dark:shadow-sky-500/15">
+                          <Flag className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
+                            US Holidays in this PAB Period
+                          </CardTitle>
+                          <CardDescription className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                            {`${usHolidayForgivenSummary.length} ${holidayWord} · days auto-waived so employees stay eligible`}
+                          </CardDescription>
+                        </div>
+                      </div>
+                      <div className="flex flex-shrink-0 items-center gap-1.5">
+                        {totalForgiven > 0 ? (
+                          <Badge className="border-sky-300/60 bg-sky-100 font-medium text-sky-700 dark:border-sky-700/50 dark:bg-sky-950/50 dark:text-sky-200">
+                            <Users className="mr-1 h-3 w-3" />
+                            {totalForgiven} forgiven
+                          </Badge>
+                        ) : (
+                          <Badge className="border-emerald-300/50 bg-emerald-100 font-medium text-emerald-700 dark:border-emerald-700/40 dark:bg-emerald-950/40 dark:text-emerald-300">
+                            <Check className="mr-1 h-3 w-3" />
+                            All clear
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Mini-stats — stacked label-value rows on mobile, 3-card grid on sm+ */}
+                    {totalEmps > 0 && (
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <div className="flex items-center justify-between gap-2 rounded-lg border border-sky-200/70 bg-white/70 px-2.5 py-1.5 backdrop-blur-sm sm:block dark:border-sky-900/40 dark:bg-zinc-900/40">
+                          <div className="text-[9px] font-semibold uppercase tracking-wide text-sky-700/70 dark:text-sky-400/70">Forgiven</div>
+                          <div className="font-mono text-base font-bold leading-none text-sky-700 sm:mt-0.5 dark:text-sky-300">{totalForgiven}</div>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-200/70 bg-white/70 px-2.5 py-1.5 backdrop-blur-sm sm:block dark:border-emerald-900/40 dark:bg-zinc-900/40">
+                          <div className="text-[9px] font-semibold uppercase tracking-wide text-emerald-700/70 dark:text-emerald-400/70">Worked through</div>
+                          <div className="font-mono text-base font-bold leading-none text-emerald-700 sm:mt-0.5 dark:text-emerald-300">{totalWorkedThrough}</div>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-200/70 bg-white/70 px-2.5 py-1.5 backdrop-blur-sm sm:block dark:border-zinc-700/60 dark:bg-zinc-900/40">
+                          <div className="text-[9px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Forgive rate</div>
+                          <div className="font-mono text-base font-bold leading-none text-zinc-700 sm:mt-0.5 dark:text-zinc-200">{overallPct}%</div>
+                        </div>
+                      </div>
+                    )}
+                  </CardHeader>
+
+                  <CardContent className="relative pt-1 pb-4">
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+                      {usHolidayForgivenSummary.map((h, idx) => {
+                        const dayLabel = h.date.toLocaleDateString('en-US', { weekday: 'short' });
+                        const monthLabel = h.date.toLocaleDateString('en-US', { month: 'short' });
+                        const dayNum = h.date.getDate();
+                        const allClear = h.forgivenEmails.length === 0;
+                        const maxChips = 5;
+                        const visibleChips = h.forgivenEmails.slice(0, maxChips);
+                        const extraCount = h.forgivenEmails.length - visibleChips.length;
+                        const remainingNames = h.forgivenEmails.slice(maxChips).map((email) => {
+                          const emp = finalPayRows.find((r) => (normEmail(r.email) ?? r.email.toLowerCase()) === email);
+                          return emp?.name ?? email;
+                        }).join('\n');
+
+                        return (
+                          <motion.div
+                            key={h.iso}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.05 + idx * 0.04, duration: 0.25, ease: 'easeOut' }}
+                            className={cn(
+                              'group flex flex-col rounded-xl border bg-white/85 p-3 backdrop-blur-sm transition-all duration-200',
+                              'hover:shadow-md hover:-translate-y-0.5',
+                              allClear
+                                ? 'border-emerald-200/70 hover:border-emerald-300 dark:border-emerald-900/40 dark:bg-emerald-950/15 dark:hover:border-emerald-800/60'
+                                : 'border-sky-200/70 hover:border-sky-300 dark:border-sky-900/40 dark:bg-sky-950/15 dark:hover:border-sky-800/60',
+                            )}
+                          >
+                            {/* Header row */}
+                            <div className="flex items-start gap-3">
+                              {/* Date block — calendar-tear style */}
+                              <div className={cn(
+                                'flex h-14 w-12 flex-shrink-0 flex-col items-center justify-center overflow-hidden rounded-lg border shadow-sm',
+                                allClear
+                                  ? 'border-emerald-200 bg-gradient-to-b from-emerald-50 to-white dark:border-emerald-800/40 dark:from-emerald-950/30 dark:to-zinc-900/40'
+                                  : 'border-sky-200 bg-gradient-to-b from-sky-50 to-white dark:border-sky-800/40 dark:from-sky-950/30 dark:to-zinc-900/40',
+                              )}>
+                                <div className={cn(
+                                  'w-full py-0.5 text-center text-[8px] font-bold uppercase tracking-wider text-white',
+                                  allClear ? 'bg-emerald-500 dark:bg-emerald-600/80' : 'bg-sky-500 dark:bg-sky-600/80',
+                                )}>
+                                  {monthLabel}
+                                </div>
+                                <div className="font-mono text-lg font-extrabold leading-none text-zinc-800 dark:text-zinc-100">
+                                  {dayNum}
+                                </div>
+                                <div className="text-[8px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                                  {dayLabel}
+                                </div>
+                              </div>
+
+                              {/* Name + status */}
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-xs font-semibold text-zinc-900 dark:text-zinc-100">{h.name}</p>
+                                <p className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                                  {h.date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                                </p>
+                                <div className={cn(
+                                  'mt-1.5 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold',
+                                  allClear
+                                    ? 'border-emerald-300/50 bg-emerald-100/80 text-emerald-700 dark:border-emerald-700/40 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                    : 'border-sky-300/50 bg-sky-100/80 text-sky-700 dark:border-sky-700/40 dark:bg-sky-950/40 dark:text-sky-300',
+                                )}>
+                                  {allClear ? (
+                                    <><Check className="h-2.5 w-2.5" /> All worked 7h+</>
+                                  ) : (
+                                    <><Users className="h-2.5 w-2.5" /> {h.forgivenEmails.length} forgiven</>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Forgiven employee chips (only when there are any) */}
+                            {!allClear && (
+                              <div className="mt-2.5 border-t border-sky-100 pt-2 dark:border-sky-900/30">
+                                <div className="flex flex-wrap items-center gap-1">
+                                  {visibleChips.map((email) => {
+                                    const emp = finalPayRows.find((r) => (normEmail(r.email) ?? r.email.toLowerCase()) === email);
+                                    const name = emp?.name ?? email;
+                                    const initials = name
+                                      .split(/\s+/)
+                                      .filter(Boolean)
+                                      .slice(0, 2)
+                                      .map((w) => w[0]?.toUpperCase() ?? '')
+                                      .join('') || '?';
+                                    return (
+                                      <span
+                                        key={email}
+                                        className="group/chip inline-flex max-w-[8rem] items-center gap-1 rounded-full border border-sky-200 bg-white py-0.5 pl-0.5 pr-1.5 text-[10px] text-sky-900 shadow-sm dark:border-sky-800/50 dark:bg-zinc-900/60 dark:text-sky-100"
+                                        title={`${name} (${email})`}
+                                      >
+                                        <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-indigo-500 text-[8px] font-bold text-white">
+                                          {initials}
+                                        </span>
+                                        <span className="truncate">{name}</span>
+                                      </span>
+                                    );
+                                  })}
+                                  {extraCount > 0 && (
+                                    <span
+                                      className="inline-flex h-5 items-center rounded-full border border-sky-300 bg-sky-50 px-1.5 text-[10px] font-semibold text-sky-700 dark:border-sky-700/60 dark:bg-sky-950/50 dark:text-sky-300"
+                                      title={remainingNames}
+                                    >
+                                      +{extraCount}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
             {/* Final Pay Table */}
             {(() => {
               const vNeedle = validationSearch.toLowerCase().trim();
@@ -7785,6 +8200,7 @@ export default function PayrollWizard({
                   {calcSourceFile && <> · <span className="font-mono">{calcSourceFile}</span></>}
                 </span>
               </div>
+
               <div
                 className="overflow-auto [-ms-overflow-style:none] [scrollbar-gutter:stable]"
                 style={{ maxHeight: 'min(62vh, calc(100dvh - 26rem))' }}
@@ -9482,6 +9898,65 @@ export default function PayrollWizard({
 
         {/* Main Content Area */}
         <div className="flex flex-1 flex-col overflow-hidden min-h-0 rounded-2xl border border-zinc-200 bg-white/80 dark:border-zinc-800 dark:bg-zinc-900/30">
+          {/* Modern wizard-progress bar — sits on top of every step's content.
+              Indigo diagonal stripes march continuously; the bar fills as you
+              advance through the steps and turns emerald at the final step. */}
+          {(() => {
+            const totalSteps = steps.length;
+            const pct = totalSteps > 0 ? Math.round((currentStep / totalSteps) * 100) : 0;
+            const complete = currentStep >= totalSteps;
+            const activeStepLabel = steps.find((s) => s.id === currentStep)?.label ?? '';
+            return (
+              <div className="flex-shrink-0 border-b border-zinc-200 bg-gradient-to-r from-white via-indigo-50/50 to-white px-4 py-2.5 sm:px-5 sm:py-3 dark:border-zinc-800 dark:from-zinc-900/60 dark:via-indigo-950/20 dark:to-zinc-900/60">
+                <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="relative flex h-1.5 w-1.5 flex-shrink-0">
+                      <span className={cn(
+                        'absolute inline-flex h-full w-full rounded-full opacity-75',
+                        complete ? 'animate-ping bg-emerald-400' : 'animate-ping bg-indigo-400',
+                      )} />
+                      <span className={cn(
+                        'relative inline-flex h-1.5 w-1.5 rounded-full',
+                        complete ? 'bg-emerald-500' : 'bg-indigo-500',
+                      )} />
+                    </span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-700 sm:text-[11px] dark:text-zinc-200">
+                      Payroll Progress
+                    </span>
+                    <span className="truncate text-[10px] text-zinc-500 dark:text-zinc-400 sm:text-[11px]">
+                      &middot; {activeStepLabel}
+                    </span>
+                  </div>
+                  <div className="flex flex-shrink-0 items-baseline gap-1.5 font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
+                    <span>Step</span>
+                    <span className="font-semibold text-zinc-700 dark:text-zinc-200">{currentStep}</span>
+                    <span>/</span>
+                    <span>{totalSteps}</span>
+                    <span className={cn(
+                      'ml-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold',
+                      complete
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                        : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300',
+                    )}>
+                      {pct}%
+                    </span>
+                  </div>
+                </div>
+                <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-zinc-200/80 ring-1 ring-inset ring-zinc-300/60 dark:bg-zinc-800 dark:ring-zinc-700/60">
+                  <div
+                    className="progress-stripe h-full rounded-full"
+                    style={{ width: `${pct}%` }}
+                    role="progressbar"
+                    aria-valuenow={pct}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label={`Wizard step ${currentStep} of ${totalSteps}`}
+                  />
+                </div>
+              </div>
+            );
+          })()}
+
           <ScrollArea className="flex-1 p-3 sm:p-4 md:p-8 min-h-0">
             <AnimatePresence mode="wait">
               <motion.div
@@ -10570,12 +11045,18 @@ export default function PayrollWizard({
             ? (employeeAllDaysHours.get(normEmpEmail) ?? [])
             : (employeeWeekdayHours.get(normEmpEmail) ?? []);
           // Map ISO date → breakdown entry so we can look up per-cell data quickly.
-          const byIso = new Map<string, { seconds: number; passes: boolean; forgivenByDispute: boolean }>();
+          const byIso = new Map<string, { seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }>();
           for (const entry of breakdown) {
             const d = parseColDate(entry.col);
             if (!d) continue;
             const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-            byIso.set(iso, { seconds: entry.seconds, passes: entry.passes, forgivenByDispute: entry.forgivenByDispute });
+            byIso.set(iso, {
+              seconds: entry.seconds,
+              passes: entry.passes,
+              forgivenByDispute: entry.forgivenByDispute,
+              forgivenByHoliday: entry.forgivenByHoliday,
+              holidayName: entry.holidayName,
+            });
           }
 
           // Helper: return ISO string of the Monday that starts the Mon–Sun week containing `date`.
@@ -10610,8 +11091,8 @@ export default function PayrollWizard({
                 const dayDow = tempCur.getDay();
                 const dayIso = `${tempCur.getFullYear()}-${String(tempCur.getMonth() + 1).padStart(2, '0')}-${String(tempCur.getDate()).padStart(2, '0')}`;
                 const dayEntry = byIso.get(dayIso);
-                // Forgiven days count as passing (treat as ≥ 7h)
-                const sec = dayEntry ? (dayEntry.forgivenByDispute ? 7 * 3600 : dayEntry.seconds) : 0;
+                // Forgiven days (dispute or US holiday) count as passing (treat as ≥ 7h)
+                const sec = dayEntry ? ((dayEntry.forgivenByDispute || dayEntry.forgivenByHoliday) ? 7 * 3600 : dayEntry.seconds) : 0;
                 if (dayDow === 6) satSec = sec;
                 else if (dayDow === 0) sunSec = sec;
                 else if (sec >= 7 * 3600) goodWeekdays++;
@@ -10630,7 +11111,7 @@ export default function PayrollWizard({
           }
 
           // Build calendar grid (weeks × 7 days) spanning the PAB period.
-          type Cell = { date: Date; iso: string; inRange: boolean; isWeekday: boolean; data: { seconds: number; passes: boolean; forgivenByDispute: boolean } | null };
+          type Cell = { date: Date; iso: string; inRange: boolean; isWeekday: boolean; data: { seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null } | null; holidayName: string | null };
           const cells: Cell[] = [];
           if (pabMonthRange) {
             // HSL weeks run Mon–Sun; standard weeks run Sun–Sat.
@@ -10661,14 +11142,16 @@ export default function PayrollWizard({
                 inRange,
                 isWeekday,
                 data: byIso.get(iso) ?? null,
+                holidayName: usHolidayDates.get(iso) ?? null,
               });
               cursor.setDate(cursor.getDate() + 1);
             }
           }
 
           const totalDays = breakdown.length;
-          const passedDays = breakdown.filter((b) => b.passes && !b.forgivenByDispute).length;
+          const passedDays = breakdown.filter((b) => b.passes && !b.forgivenByDispute && !b.forgivenByHoliday).length;
           const forgivenDays = breakdown.filter((b) => b.forgivenByDispute).length;
+          const holidayDays = breakdown.filter((b) => b.forgivenByHoliday).length;
           // For HSL: Sat/Sun are not "failed" and reconciled weekdays are not "failed"
           const failedDays = breakdown.filter((b) => {
             if (b.passes) return false;
@@ -10842,8 +11325,10 @@ export default function PayrollWizard({
                           <div className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-700/70 dark:text-emerald-400/80">Passed</div>
                         </div>
                         <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-2 py-1.5 text-center dark:border-amber-800/50 dark:bg-amber-950/30">
-                          <div className="font-mono text-base font-bold leading-none text-amber-700 dark:text-amber-300">{forgivenDays}</div>
-                          <div className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700/70 dark:text-amber-400/80">Forgiven</div>
+                          <div className="font-mono text-base font-bold leading-none text-amber-700 dark:text-amber-300">{forgivenDays + holidayDays}</div>
+                          <div className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700/70 dark:text-amber-400/80">
+                            Forgiven{holidayDays > 0 ? ` (${holidayDays} US hol)` : ''}
+                          </div>
                         </div>
                         <div className="rounded-lg border border-red-200 bg-red-50/70 px-2 py-1.5 text-center dark:border-red-800/50 dark:bg-red-950/30">
                           <div className="font-mono text-base font-bold leading-none text-red-700 dark:text-red-300">{failedDays}</div>
@@ -10879,14 +11364,18 @@ export default function PayrollWizard({
                           const weekend = !cell.isWeekday;
                           const data = cell.data;
                           // Determine cell state with HSL-specific rules.
-                          let state: 'idle' | 'passed' | 'forgiven' | 'reconciled' | 'failed' | 'missing';
+                          let state: 'idle' | 'passed' | 'forgiven' | 'holiday' | 'reconciled' | 'failed' | 'missing';
+                          // US holiday takes priority over everything except passing data —
+                          // even if there are no Hubstaff hours, the day is forgiven.
                           if (!cell.inRange) {
                             state = 'idle';
+                          } else if (cell.holidayName && (!data || data.seconds < 7 * 3600)) {
+                            state = 'holiday';
                           } else if (data?.forgivenByDispute) {
                             state = 'forgiven';
                           } else if (weekend) {
                             if (isHsl) {
-                              // HSL Sat/Sun: green if ≥ 7h, neutral gray if not — NEVER red
+                              // HSL Sat/Sun: green if >= 7h, neutral gray if not — NEVER red
                               state = data && data.seconds >= 7 * 3600 ? 'passed' : 'idle';
                             } else {
                               state = 'idle';
@@ -10908,6 +11397,7 @@ export default function PayrollWizard({
                             idle: 'bg-zinc-100/70 text-zinc-400 ring-1 ring-zinc-200/70 dark:bg-zinc-900/50 dark:text-zinc-600 dark:ring-zinc-800/60',
                             passed: 'bg-emerald-200 text-emerald-900 ring-1 ring-emerald-500/70 shadow-[0_1px_2px_rgba(16,185,129,0.15)] dark:bg-emerald-600/40 dark:text-emerald-50 dark:ring-emerald-400/50',
                             forgiven: 'bg-amber-200 text-amber-900 ring-1 ring-amber-500/70 shadow-[0_1px_2px_rgba(245,158,11,0.18)] dark:bg-amber-600/40 dark:text-amber-50 dark:ring-amber-400/50',
+                            holiday: 'bg-sky-200 text-sky-900 ring-1 ring-sky-500/70 shadow-[0_1px_2px_rgba(14,165,233,0.18)] dark:bg-sky-600/40 dark:text-sky-50 dark:ring-sky-400/50',
                             reconciled: 'bg-orange-100 text-orange-900 ring-1 ring-orange-400/60 shadow-[0_1px_2px_rgba(234,88,12,0.10)] dark:bg-orange-700/30 dark:text-orange-50 dark:ring-orange-400/40',
                             failed: 'relative bg-red-200 text-red-900 ring-2 ring-red-500/80 shadow-[0_1px_2px_rgba(239,68,68,0.22)] dark:bg-red-600/40 dark:text-red-50 dark:ring-red-400/70',
                             missing: 'bg-zinc-100 text-zinc-400 border border-dashed border-zinc-300 dark:bg-zinc-900/50 dark:text-zinc-500 dark:border-zinc-700',
@@ -10923,19 +11413,23 @@ export default function PayrollWizard({
                               title={
                                 !cell.inRange
                                   ? `${cell.date.toDateString()} — outside PAB period`
-                                  : (weekend && !isHsl)
-                                    ? `${cell.date.toDateString()} — weekend`
-                                    : data
-                                      ? `${cell.date.toDateString()} · ${formatSeconds(data.seconds)} logged${
-                                          data.forgivenByDispute
-                                            ? ' · ★ forgiven by dispute'
-                                            : state === 'reconciled'
-                                              ? ' · ~ reconciled via Sat+Sun'
-                                              : data.passes
-                                                ? ' · ✓ passes 7h threshold'
-                                                : ` · short by ${formatShortfall(shortfall)}`
-                                        }`
-                                      : `${cell.date.toDateString()} — no Hubstaff data`
+                                  : state === 'holiday'
+                                    ? `${cell.date.toDateString()} — ${cell.holidayName} (US holiday, PAB forgiven)`
+                                    : (weekend && !isHsl)
+                                      ? `${cell.date.toDateString()} — weekend`
+                                      : data
+                                        ? `${cell.date.toDateString()} · ${formatSeconds(data.seconds)} logged${
+                                            cell.holidayName
+                                              ? ` · ${cell.holidayName} (US holiday)`
+                                              : data.forgivenByDispute
+                                                ? ' · ★ forgiven by dispute'
+                                                : state === 'reconciled'
+                                                  ? ' · ~ reconciled via Sat+Sun'
+                                                  : data.passes
+                                                    ? ' · ✓ passes 7h threshold'
+                                                    : ` · short by ${formatShortfall(shortfall)}`
+                                          }`
+                                        : `${cell.date.toDateString()} — no Hubstaff data`
                               }
                               className={cn(
                                 'flex h-[46px] cursor-default flex-col items-center justify-center overflow-hidden rounded-md px-0.5 text-center transition-shadow',
@@ -10955,6 +11449,9 @@ export default function PayrollWizard({
                               )}
                               {state === 'forgiven' && (
                                 <span className="mt-0.5 text-[8px] leading-none opacity-80">★</span>
+                              )}
+                              {state === 'holiday' && (
+                                <span className="mt-0.5 text-[8px] font-semibold leading-none opacity-90" title={cell.holidayName ?? undefined}>US</span>
                               )}
                               {state === 'reconciled' && (
                                 <span className="mt-0.5 text-[8px] leading-none opacity-80">~</span>
@@ -10987,6 +11484,9 @@ export default function PayrollWizard({
                         </span>
                         <span className="flex items-center gap-1">
                           <span className="h-2.5 w-2.5 rounded-sm bg-amber-200 ring-1 ring-amber-500/70 dark:bg-amber-600/40 dark:ring-amber-400/50" /> Forgiven ★
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="h-2.5 w-2.5 rounded-sm bg-sky-200 ring-1 ring-sky-500/70 dark:bg-sky-600/40 dark:ring-sky-400/50" /> US Holiday
                         </span>
                         {isHsl && (
                           <span className="flex items-center gap-1">

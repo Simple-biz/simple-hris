@@ -15,11 +15,24 @@ import {
   Activity,
   ClipboardList,
   ChevronRight,
+  CalendarDays,
+  Flag,
+  Plus,
+  Trash2,
+  Sparkles,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
+import {
+  US_HOLIDAYS_ENABLED_KEY,
+  US_HOLIDAYS_LIST_KEY,
+  computeFederalHolidays,
+  parseUsHolidaysList,
+  serializeUsHolidaysList,
+  type UsHoliday,
+} from '@/lib/us-holidays';
 
 // ─── Current user (hardcoded until RBAC is implemented) ───────────────────────
 
@@ -28,7 +41,7 @@ const CURRENT_USER = { name: 'Fran M', role: 'Senior Admin' };
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
-type RightTab  = 'ot' | 'audit';
+type RightTab  = 'ot' | 'audit' | 'holidays';
 
 // ─── Custom Toggle ────────────────────────────────────────────────────────────
 
@@ -254,6 +267,12 @@ export default function SystemSettings() {
   // ── Right panel tab ──
   const [rightTab, setRightTab] = useState<RightTab>('ot');
 
+  // ── US Holidays state ──
+  const [holidaysEnabled, setHolidaysEnabled] = useState<boolean>(true);
+  const [holidays, setHolidays] = useState<UsHoliday[]>([]);
+  const [newHolidayDate, setNewHolidayDate] = useState<string>('');
+  const [newHolidayName, setNewHolidayName] = useState<string>('');
+
   // ── Load settings ──
   useEffect(() => {
     const load = async () => {
@@ -276,6 +295,18 @@ export default function SystemSettings() {
         }),
       );
       setDeptOt(Object.fromEntries(deptResults));
+
+      // Holidays — default to enabled and seeded with current-year federal holidays
+      const holidayEnabledVal = await fetchSetting(US_HOLIDAYS_ENABLED_KEY).catch(() => null);
+      setHolidaysEnabled(holidayEnabledVal === null ? true : holidayEnabledVal === 'true');
+
+      const holidayListVal = await fetchSetting(US_HOLIDAYS_LIST_KEY).catch(() => null);
+      const parsed = parseUsHolidaysList(holidayListVal);
+      if (parsed.length === 0 && holidayListVal === null) {
+        setHolidays(computeFederalHolidays(new Date().getFullYear()));
+      } else {
+        setHolidays(parsed);
+      }
     };
     load();
   }, []);
@@ -351,6 +382,97 @@ export default function SystemSettings() {
     });
   }, [persist]);
 
+  // ── Holidays handlers ──
+  const persistHolidayList = useCallback(async (next: UsHoliday[], action: string, details: Record<string, unknown>) => {
+    setHolidays(next);
+    setSaveStates((p) => ({ ...p, [US_HOLIDAYS_LIST_KEY]: 'saving' }));
+    try {
+      await saveSetting(US_HOLIDAYS_LIST_KEY, serializeUsHolidaysList(next));
+      void postAuditLog({ action, resource: 'app_settings', resource_id: US_HOLIDAYS_LIST_KEY, details });
+      setSaveStates((p) => ({ ...p, [US_HOLIDAYS_LIST_KEY]: 'saved' }));
+      setTimeout(() => setSaveStates((p) => ({ ...p, [US_HOLIDAYS_LIST_KEY]: 'idle' })), 1500);
+    } catch (e) {
+      setSaveStates((p) => ({ ...p, [US_HOLIDAYS_LIST_KEY]: 'error' }));
+      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      setTimeout(() => setSaveStates((p) => ({ ...p, [US_HOLIDAYS_LIST_KEY]: 'idle' })), 3000);
+    }
+  }, []);
+
+  const handleHolidaysEnabled = useCallback(async (val: boolean) => {
+    setHolidaysEnabled(val);
+    setSaveStates((p) => ({ ...p, [US_HOLIDAYS_ENABLED_KEY]: 'saving' }));
+    try {
+      await saveSetting(US_HOLIDAYS_ENABLED_KEY, String(val));
+      void postAuditLog({
+        action: 'settings.holidays.toggle',
+        resource: 'app_settings',
+        resource_id: US_HOLIDAYS_ENABLED_KEY,
+        details: { enabled: val },
+      });
+      setSaveStates((p) => ({ ...p, [US_HOLIDAYS_ENABLED_KEY]: 'saved' }));
+      toast.success(val ? 'US holiday forgiveness enabled' : 'US holiday forgiveness disabled', { description: 'Saved.' });
+      setTimeout(() => setSaveStates((p) => ({ ...p, [US_HOLIDAYS_ENABLED_KEY]: 'idle' })), 2000);
+    } catch (e) {
+      setHolidaysEnabled(!val);
+      setSaveStates((p) => ({ ...p, [US_HOLIDAYS_ENABLED_KEY]: 'error' }));
+      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      setTimeout(() => setSaveStates((p) => ({ ...p, [US_HOLIDAYS_ENABLED_KEY]: 'idle' })), 3000);
+    }
+  }, []);
+
+  const toggleHoliday = useCallback((date: string, enabled: boolean) => {
+    const next = holidays.map((h) => (h.date === date ? { ...h, enabled } : h));
+    void persistHolidayList(next, 'settings.holidays.entry.toggle', { date, enabled });
+  }, [holidays, persistHolidayList]);
+
+  const removeHoliday = useCallback((date: string) => {
+    const removed = holidays.find((h) => h.date === date);
+    const next = holidays.filter((h) => h.date !== date);
+    void persistHolidayList(next, 'settings.holidays.entry.remove', { date, name: removed?.name });
+  }, [holidays, persistHolidayList]);
+
+  const addHoliday = useCallback(() => {
+    const date = newHolidayDate.trim();
+    const name = newHolidayName.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      toast.error('Invalid date', { description: 'Use the date picker (YYYY-MM-DD).' });
+      return;
+    }
+    if (!name) {
+      toast.error('Holiday name required');
+      return;
+    }
+    if (holidays.some((h) => h.date === date)) {
+      toast.error('Date already in list');
+      return;
+    }
+    const next = [...holidays, { date, name, enabled: true }].sort((a, b) => a.date.localeCompare(b.date));
+    setNewHolidayDate('');
+    setNewHolidayName('');
+    void persistHolidayList(next, 'settings.holidays.entry.add', { date, name });
+  }, [newHolidayDate, newHolidayName, holidays, persistHolidayList]);
+
+  const seedFederalHolidays = useCallback(() => {
+    const year = new Date().getFullYear();
+    const preset = computeFederalHolidays(year);
+    const merged = [...holidays];
+    const have = new Set(merged.map((h) => h.date));
+    let added = 0;
+    for (const h of preset) {
+      if (!have.has(h.date)) {
+        merged.push(h);
+        added++;
+      }
+    }
+    if (added === 0) {
+      toast.info(`All ${year} federal holidays already in list`);
+      return;
+    }
+    merged.sort((a, b) => a.date.localeCompare(b.date));
+    void persistHolidayList(merged, 'settings.holidays.seed_federal', { year, added });
+    toast.success(`Added ${added} federal holiday${added > 1 ? 's' : ''} for ${year}`);
+  }, [holidays, persistHolidayList]);
+
   const activeRules = RULES_GENERAL.filter((r) => rules[r.key]).length;
   const otOffCount  = DEPARTMENTS.filter((d) => deptOt[`ot_dept_${d.key}`] === false).length;
 
@@ -358,19 +480,19 @@ export default function SystemSettings() {
     <div className="flex h-full flex-col overflow-hidden bg-white dark:bg-[#0d1117]">
 
       {/* ── Header ── */}
-      <div className="relative flex-shrink-0 overflow-hidden border-b border-zinc-200 bg-gradient-to-r from-white via-zinc-50/80 to-orange-50/20 px-6 py-4 dark:border-zinc-800 dark:from-[#0d1117] dark:via-[#0f1729]/80 dark:to-[#0d1117]">
+      <div className="relative flex-shrink-0 overflow-hidden border-b border-zinc-200 bg-gradient-to-r from-white via-zinc-50/80 to-orange-50/20 px-4 py-3 sm:px-6 sm:py-4 dark:border-zinc-800 dark:from-[#0d1117] dark:via-[#0f1729]/80 dark:to-[#0d1117]">
         <div className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-orange-500/5 blur-2xl dark:bg-blue-500/5" />
-        <div className="relative flex items-center justify-between">
+        <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/25 dark:from-blue-600 dark:to-blue-700 dark:shadow-blue-500/20">
+            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 shadow-md shadow-orange-500/25 dark:from-blue-600 dark:to-blue-700 dark:shadow-blue-500/20">
               <Settings className="h-4.5 w-4.5 text-white" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-base font-bold text-zinc-900 dark:text-white">System Settings</h1>
-              <p className="text-xs text-zinc-400 dark:text-zinc-500">Payroll rules, overtime, perfect attendance & access</p>
+              <p className="truncate text-xs text-zinc-400 dark:text-zinc-500">Payroll rules, overtime, perfect attendance &amp; access</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 dark:border-violet-800/50 dark:bg-violet-950/20">
               <ToggleRight className="h-3 w-3 text-violet-500" />
               <span className="text-[10px] font-semibold text-violet-700 dark:text-violet-400">{activeRules} rules active</span>
@@ -392,10 +514,12 @@ export default function SystemSettings() {
       </div>
 
       {/* ── Body ── */}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row md:overflow-hidden">
 
-        {/* LEFT — Payroll Rules + Access Control + System Info */}
-        <div className="flex w-72 flex-shrink-0 flex-col overflow-y-auto border-r border-zinc-200 dark:border-zinc-800">
+        {/* LEFT — Payroll Rules + Access Control + System Info.
+            Mobile: full-width above the right panel, capped height with its own scroll.
+            md+:    fixed 18rem rail, scrolls independently from the right panel. */}
+        <div className="flex max-h-[40vh] w-full flex-shrink-0 flex-col overflow-y-auto border-b border-zinc-200 md:max-h-none md:w-72 md:border-b-0 md:border-r dark:border-zinc-800">
 
           {/* Payroll Rules */}
           <div className="border-b border-zinc-100 p-4 dark:border-zinc-800">
@@ -434,6 +558,24 @@ export default function SystemSettings() {
                     <p className="text-[10px] text-zinc-400 dark:text-zinc-600">Per-department OT toggles</p>
                   </div>
                   <ChevronRight className={cn('mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-300 dark:text-zinc-600', rightTab === 'ot' && 'text-red-400')} />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRightTab('holidays')}
+                  className={cn(
+                    'flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left transition-colors',
+                    rightTab === 'holidays'
+                      ? 'border-sky-200 bg-sky-50/60 dark:border-sky-900/40 dark:bg-sky-950/20'
+                      : 'border-zinc-200 bg-zinc-50/60 hover:border-sky-200 hover:bg-sky-50/30 dark:border-zinc-700 dark:bg-zinc-800/20 dark:hover:border-sky-900/30',
+                  )}
+                >
+                  <Flag className={cn('mt-0.5 h-3 w-3 flex-shrink-0', rightTab === 'holidays' ? 'text-sky-500' : 'text-zinc-400')} />
+                  <div className="min-w-0 flex-1">
+                    <p className={cn('text-[11px] font-medium', rightTab === 'holidays' ? 'text-sky-800 dark:text-sky-300' : 'text-zinc-600 dark:text-zinc-400')}>US Holidays</p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-600">Forgive PAB on holidays</p>
+                  </div>
+                  <ChevronRight className={cn('mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-300 dark:text-zinc-600', rightTab === 'holidays' && 'text-sky-400')} />
                 </button>
               </div>
             </div>
@@ -511,25 +653,25 @@ export default function SystemSettings() {
           {rightTab === 'ot' && (
             <>
               {/* Section header + global switch */}
-              <div className="flex flex-shrink-0 items-center justify-between border-b border-zinc-100 px-5 py-3 dark:border-zinc-800">
-                <div className="flex items-center gap-2.5">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-50 dark:bg-red-950/30">
+              <div className="flex flex-shrink-0 flex-col gap-3 border-b border-zinc-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 dark:border-zinc-800">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-red-50 dark:bg-red-950/30">
                     <Clock className="h-3.5 w-3.5 text-red-500" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm font-bold text-zinc-900 dark:text-white">Overtime Pay per Department</p>
-                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">Toggle whether OT hours count in each department's payroll</p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">Toggle whether OT hours count in each department&apos;s payroll</p>
                   </div>
                 </div>
 
                 {/* Global suspend */}
                 <div className={cn(
-                  'flex items-center gap-3 rounded-xl border px-3 py-2 transition-all duration-200',
+                  'flex flex-shrink-0 items-center gap-3 rounded-xl border px-3 py-2 transition-all duration-200',
                   globalOtSuspended
                     ? 'border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-950/30'
                     : 'border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800/40',
                 )}>
-                  <div>
+                  <div className="min-w-0 flex-1 sm:flex-initial">
                     <p className={cn('text-[11px] font-bold', globalOtSuspended ? 'text-red-700 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-300')}>
                       Suspend All OT
                     </p>
@@ -547,7 +689,7 @@ export default function SystemSettings() {
               </div>
 
               {/* Department rows */}
-              <div className="flex-1 overflow-y-auto px-5 py-3">
+              <div className="flex-1 overflow-y-auto px-4 py-3 sm:px-5">
                 <div className="space-y-1.5">
                   {DEPARTMENTS.map((dept) => (
                     <DeptOtRow
@@ -570,6 +712,166 @@ export default function SystemSettings() {
                     <span className="h-2 w-2 rounded-full bg-red-400" />
                     <span className="text-[10px] text-zinc-400">OT excluded (suspended)</span>
                   </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── Holidays tab ── */}
+          {rightTab === 'holidays' && (
+            <>
+              {/* Header + master toggle */}
+              <div className="flex flex-shrink-0 flex-col gap-3 border-b border-zinc-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 dark:border-zinc-800">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-sky-50 dark:bg-sky-950/30">
+                    <Flag className="h-3.5 w-3.5 text-sky-500" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-zinc-900 dark:text-white">US Holidays</p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">Forgive PAB attendance on these dates so employees stay eligible</p>
+                  </div>
+                </div>
+                <div className={cn(
+                  'flex flex-shrink-0 items-center gap-3 rounded-xl border px-3 py-2 transition-all duration-200',
+                  holidaysEnabled
+                    ? 'border-sky-300 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/30'
+                    : 'border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800/40',
+                )}>
+                  <div className="min-w-0 flex-1 sm:flex-initial">
+                    <p className={cn('text-[11px] font-bold', holidaysEnabled ? 'text-sky-700 dark:text-sky-400' : 'text-zinc-600 dark:text-zinc-300')}>
+                      Forgive on holidays
+                    </p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">Master switch for all entries below</p>
+                  </div>
+                  {saveStates[US_HOLIDAYS_ENABLED_KEY] === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />}
+                  {saveStates[US_HOLIDAYS_ENABLED_KEY] === 'saved'  && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+                  <Toggle
+                    checked={holidaysEnabled}
+                    onChange={handleHolidaysEnabled}
+                    disabled={saveStates[US_HOLIDAYS_ENABLED_KEY] === 'saving'}
+                    colorOn="emerald"
+                  />
+                </div>
+              </div>
+
+              {/* Add holiday + seed */}
+              <div className="flex flex-shrink-0 flex-col gap-2 border-b border-zinc-100 bg-zinc-50/40 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-end sm:px-5 dark:border-zinc-800 dark:bg-zinc-900/30">
+                <div className="flex flex-col gap-1 sm:w-auto">
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Date</label>
+                  <input
+                    type="date"
+                    value={newHolidayDate}
+                    onChange={(e) => setNewHolidayDate(e.target.value)}
+                    className="h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-800 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-300 sm:w-auto dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  />
+                </div>
+                <div className="flex flex-col gap-1 sm:flex-1">
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Name</label>
+                  <input
+                    type="text"
+                    value={newHolidayName}
+                    onChange={(e) => setNewHolidayName(e.target.value)}
+                    placeholder="e.g. Memorial Day"
+                    className="h-8 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  />
+                </div>
+                <div className="flex w-full gap-2 sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={addHoliday}
+                    disabled={saveStates[US_HOLIDAYS_LIST_KEY] === 'saving'}
+                    className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border border-sky-300 bg-sky-50 px-3 text-xs font-semibold text-sky-700 transition-colors hover:bg-sky-100 disabled:opacity-50 sm:flex-initial dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-950/60"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={seedFederalHolidays}
+                    disabled={saveStates[US_HOLIDAYS_LIST_KEY] === 'saving'}
+                    className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50 sm:flex-initial dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    title={`Seed federal holidays for ${new Date().getFullYear()}`}
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Seed {new Date().getFullYear()}
+                  </button>
+                </div>
+              </div>
+
+              {/* Holiday list */}
+              <div className="flex-1 overflow-y-auto px-4 py-3 sm:px-5">
+                {holidays.length === 0 ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 py-6 text-xs text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400">
+                    <CalendarDays className="h-4 w-4 text-zinc-400" />
+                    <span>No holidays configured. Add one above or click &quot;Seed {new Date().getFullYear()}&quot; to load federal holidays.</span>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {holidays.map((h) => {
+                      const d = new Date(h.date + 'T00:00:00');
+                      const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
+                      const friendly = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                      const isPast = d.getTime() < new Date(new Date().setHours(0,0,0,0)).getTime();
+                      return (
+                        <div
+                          key={h.date}
+                          className={cn(
+                            'flex items-center gap-3 rounded-lg border px-3 py-2 transition-all',
+                            h.enabled && holidaysEnabled
+                              ? 'border-sky-200 bg-sky-50/40 dark:border-sky-900/40 dark:bg-sky-950/15'
+                              : 'border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-800/30',
+                            isPast && 'opacity-60',
+                          )}
+                        >
+                          <div className="flex w-14 flex-shrink-0 flex-col items-center justify-center rounded-md border border-zinc-200 bg-white px-1 py-1 dark:border-zinc-700 dark:bg-zinc-900">
+                            <span className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400">{weekday}</span>
+                            <span className="font-mono text-xs font-bold text-zinc-800 dark:text-zinc-100">
+                              {d.toLocaleDateString('en-US', { month: 'short' })} {d.getDate()}
+                            </span>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-100">{h.name}</p>
+                            <p className="text-[10px] text-zinc-400 dark:text-zinc-500">{friendly}{isPast && ' · past'}</p>
+                          </div>
+                          <Toggle
+                            checked={h.enabled}
+                            onChange={(v) => toggleHoliday(h.date, v)}
+                            disabled={saveStates[US_HOLIDAYS_LIST_KEY] === 'saving' || !holidaysEnabled}
+                            colorOn="emerald"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeHoliday(h.date)}
+                            disabled={saveStates[US_HOLIDAYS_LIST_KEY] === 'saving'}
+                            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950/30"
+                            title="Remove"
+                            aria-label={`Remove ${h.name}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                  <div className="flex items-center gap-3 text-[10px] text-zinc-400">
+                    <span>{holidays.filter((h) => h.enabled).length} active</span>
+                    <span>{holidays.length} total</span>
+                  </div>
+                  {saveStates[US_HOLIDAYS_LIST_KEY] === 'saving' && (
+                    <span className="flex items-center gap-1 text-[10px] text-zinc-400">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Saving...
+                    </span>
+                  )}
+                  {saveStates[US_HOLIDAYS_LIST_KEY] === 'saved' && (
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-500">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Saved
+                    </span>
+                  )}
                 </div>
               </div>
             </>

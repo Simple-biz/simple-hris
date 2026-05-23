@@ -373,3 +373,67 @@
     content: "";
   }
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+   Modern progress stripe — diagonal indigo/violet bands that march along
+   the X axis. Used as the Payroll Wizard's top-of-content progress bar.
+
+   The 28.284px background period equals sqrt(2) * 20px, which makes the
+   loop seamless at the -45deg angle. Width transitions ease out so the
+   fill grows smoothly when the underlying ratio changes.
+
+   .candy-cane-stripe is kept as an alias for backward compatibility with
+   any in-flight markup; both classes resolve to the same modern look.
+   ──────────────────────────────────────────────────────────────────── */
+.progress-stripe,
+.candy-cane-stripe {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    #6366f1 0,
+    #6366f1 10px,
+    #a5b4fc 10px,
+    #a5b4fc 20px
+  );
+  background-size: 28.284px 28.284px;
+  animation: progress-stripe-march 1.2s linear infinite;
+  will-change: background-position;
+  transition: width 600ms cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.12),
+    0 0 0 1px rgba(99, 102, 241, 0.35),
+    0 1px 6px -1px rgba(99, 102, 241, 0.35);
+}
+
+.dark .progress-stripe,
+.dark .candy-cane-stripe {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    #818cf8 0,
+    #818cf8 10px,
+    #4338ca 10px,
+    #4338ca 20px
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(129, 140, 248, 0.4),
+    0 0 12px -2px rgba(129, 140, 248, 0.35);
+}
+
+@keyframes progress-stripe-march {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 28.284px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-stripe,
+  .candy-cane-stripe {
+    animation: none;
+  }
+}
+

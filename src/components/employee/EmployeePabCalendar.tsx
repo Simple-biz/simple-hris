@@ -35,6 +35,12 @@ import {
   isOrphanageStyleReason,
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
+import {
+  US_HOLIDAYS_ENABLED_KEY,
+  US_HOLIDAYS_LIST_KEY,
+  parseUsHolidaysList,
+  getEnabledHolidayMap,
+} from '@/lib/us-holidays';
 
 type EmployeePabCalendarProps = {
   employeeEmail: string;
@@ -162,6 +168,29 @@ export default function EmployeePabCalendar({
   }>>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY].join(','))}`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as { values?: Record<string, string | null> };
+        if (cancelled) return;
+        const values = json.values ?? {};
+        const enabled = values[US_HOLIDAYS_ENABLED_KEY] === null || values[US_HOLIDAYS_ENABLED_KEY] === undefined
+          ? true
+          : values[US_HOLIDAYS_ENABLED_KEY] === 'true';
+        setUsHolidayDates(getEnabledHolidayMap(parseUsHolidaysList(values[US_HOLIDAYS_LIST_KEY] ?? null), enabled));
+      } catch {
+        if (!cancelled) setUsHolidayDates(new Map());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const email = useMemo(
     () => normEmail(employeeEmail) ?? employeeEmail.toLowerCase(),
@@ -406,6 +435,14 @@ export default function EmployeePabCalendar({
       const key = `${y}-${m}-${day}`;
       hoursByDateKey.set(key, set * 3600);
     }
+    // US holidays: force-pass (treat as >= 7h) so the employee stays PAB-eligible
+    for (const [iso] of usHolidayDates.entries()) {
+      const [y, m, day] = iso.split('-').map(Number);
+      if (!y || !m || !day) continue;
+      const key = `${y}-${m}-${day}`;
+      const existing = hoursByDateKey.get(key) ?? 0;
+      if (existing < 7 * 3600) hoursByDateKey.set(key, 7 * 3600);
+    }
     const weeks = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, hoursByDateKey);
 
     if (!trimToElapsedWeeks) return weeks;
@@ -429,7 +466,7 @@ export default function EmployeePabCalendar({
       return weekStart.getTime() <= cutoff.getTime();
     });
     return trimmed.length > 0 ? trimmed : weeks.slice(0, 1);
-  }, [mergedRow, mergedColumns, pabMonthRange, disputes, trimToElapsedWeeks]);
+  }, [mergedRow, mergedColumns, pabMonthRange, disputes, trimToElapsedWeeks, usHolidayDates]);
 
   const allPabDays = pabCalendar?.flat() ?? [];
   const isPAEligible = allPabDays.length > 0 && allPabDays.every((d) => d.passes);
