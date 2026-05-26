@@ -63,6 +63,7 @@ import {
 } from '@/lib/supabase/pab-day-disputes';
 import HiddenValue from './HiddenValue';
 import GiftShippingCard, { type GiftShippingState } from './GiftShippingCard';
+import DisputeDialog from './DisputeDialog';
 import { Eye, EyeOff, Gift, Hourglass } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -196,12 +197,6 @@ interface DayHours {
 
 interface EmployeeDashboardProps {
   employeeEmail: string;
-  /**
-   * Called when an employee taps a sub-7h day in the PAB calendar. Hands the
-   * date (and Hubstaff seconds, for display) to the disputes page so the form
-   * lands pre-filled.
-   */
-  onNavigateToDisputes?: (prefill?: { date: string; seconds?: number }) => void;
   /** Drives the "finish your profile" nudge — true when no photo is on file. */
   needsPhoto?: boolean;
   /** True when bank / payout details are not filled in yet. */
@@ -333,7 +328,7 @@ const SPARKLES_FLOAT = [
   { left: '93%', delay: '3.3s',  dur: '3.6s', size: '13px' },
 ] as const;
 
-export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes, needsPhoto = false, needsBank = false, onNavigateToProfile }: EmployeeDashboardProps) {
+export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, onNavigateToProfile }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
   // Shared mask state for the hero pay values (Take-Home, Regular, Overtime).
@@ -448,6 +443,11 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes,
   }, []);
 
   const [myDisputes, setMyDisputes] = useState<import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow[]>([]);
+  const [disputeDialog, setDisputeDialog] = useState<{
+    date: string;
+    seconds: number;
+    existingDispute: import('@/lib/supabase/pab-day-disputes').PabDayDisputeRow | null;
+  } | null>(null);
   /** Mobile: PAB rules, bonus status, and pay numbers live in this sheet (charts stay on the main view). */
   const [mobileHelpOpen, setMobileHelpOpen] = useState(false);
   /** Master-list profile fields used to prefill the gift-shipping form. */
@@ -2559,7 +2559,7 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes,
                                 title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltipSuffix}`}
                                 style={{ animation: `pab-cell-in 0.3s ease-out ${wi * 80 + di * 40}ms both` }}
                                 onClick={cellClickable ? () => {
-                                  onNavigateToDisputes?.({ date: dayIso, seconds: day.seconds });
+                                  setDisputeDialog({ date: dayIso, seconds: day.seconds, existingDispute: dispute ?? null });
                                 } : undefined}
                               >
                                 <span className="pointer-events-none absolute left-1 top-0.5 max-w-[calc(100%-1.25rem)] truncate text-[5px] font-medium leading-none tabular-nums text-zinc-400 dark:text-zinc-500">
@@ -2786,6 +2786,22 @@ export default function EmployeeDashboard({ employeeEmail, onNavigateToDisputes,
           </div>
         </DialogContent>
       </Dialog>
+
+      {disputeDialog && (
+        <DisputeDialog
+          open
+          onOpenChange={(open) => { if (!open) setDisputeDialog(null); }}
+          employeeEmail={email}
+          employeeName={profileForShipping.name ?? undefined}
+          disputeDate={disputeDialog.date}
+          hoursWorked={disputeDialog.seconds}
+          existingDispute={disputeDialog.existingDispute}
+          onSubmitted={() => {
+            setDisputeDialog(null);
+            fetchMyDisputes();
+          }}
+        />
+      )}
 
     </div>
   );

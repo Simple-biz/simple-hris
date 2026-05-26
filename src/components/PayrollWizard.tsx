@@ -868,6 +868,16 @@ export default function PayrollWizard({
   const [isRecalcPending, startRecalc] = useTransition();
   const [additionsSearch, setAdditionsSearch] = useState('');
   const [validationSearch, setValidationSearch] = useState('');
+  const [pendingDisputeRows, setPendingDisputeRows] = useState<Array<{
+    id: string;
+    work_email: string;
+    dispute_date: string;
+    reason: string;
+    explanation: string | null;
+    created_by: string | null;
+    status: string;
+  }>>([]);
+  const [decidingDispute, setDecidingDispute] = useState<string | null>(null);
   const [employeeDepts, setEmployeeDepts] = useState<Record<string, string>>({});
   const [employeeBonuses, setEmployeeBonuses] = useState<Record<string, Record<string, boolean>>>({});
   /** Accounting-side per-employee bonus overrides. When present, replaces the auto-computed total. */
@@ -2048,6 +2058,21 @@ export default function PayrollWizard({
       })
       .catch(() => setApprovedDisputeDates(new Map()));
   }, [pabMonthRange]);
+
+  useEffect(() => {
+    if (currentStep !== 3 || !pabMonthRange) return;
+    const s = pabMonthRange.start;
+    const e = pabMonthRange.end;
+    const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+    const dayAfterEnd = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1);
+    const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
+    fetch(`/api/pab-disputes?status=pending&status=approved&status=accounting_approved&from=${from}&to=${to}&limit=500`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then((json: { rows?: Array<{ id: string; work_email: string; dispute_date: string; reason: string; explanation: string | null; created_by: string | null; status: string }> }) => {
+        setPendingDisputeRows(json.rows ?? []);
+      })
+      .catch(() => setPendingDisputeRows([]));
+  }, [currentStep, pabMonthRange]);
 
   /**
    * Computes which employees qualify for Perfect Attendance. Requires a full month of daily
@@ -6056,6 +6081,189 @@ export default function PayrollWizard({
                     </CardContent>
                   </Card>
                 )}
+
+                {/* Pending disputes for this department */}
+                {(() => {
+                  if (pendingDisputeRows.length === 0) return null;
+
+                  // Build a set of all normalized emails that belong to the active dept.
+                  // Include direct Hubstaff email matches AND alias resolution via masterIndex
+                  // so that disputes filed with a personal/alternate email still surface here.
+                  const deptEmailSet = new Set(deptEmployees.map(e => normEmail(e.email) ?? e.email.toLowerCase()));
+
+                  // Also build full email→dept from ALL calc results (not just active dept) for alias resolution.
+                  const allNormEmailToDept = new Map<string, string>();
+                  for (const r of effectiveCalcResults) {
+                    const em = normEmail(r.email);
+                    const dept = employeeDepts[r.email];
+                    if (em && dept) allNormEmailToDept.set(em, dept);
+                  }
+
+                  const resolveInDept = (disputeEmail: string): boolean => {
+                    const em = normEmail(disputeEmail) ?? disputeEmail.trim().toLowerCase();
+                    if (deptEmailSet.has(em)) return true;
+                    // Resolve via masterIndex: dispute email → master record → other emails
+                    const master = masterIndex.byWorkEmail.get(em) ?? masterIndex.byPersonalEmail.get(em);
+                    if (!master) return false;
+                    const we = normEmail(master.work_email);
+                    const pe = normEmail(master.personal_email);
+                    if (we && deptEmailSet.has(we)) return true;
+                    if (pe && deptEmailSet.has(pe)) return true;
+                    if (we && allNormEmailToDept.get(we) === activeDeptTab) return true;
+                    if (pe && allNormEmailToDept.get(pe) === activeDeptTab) return true;
+                    return false;
+                  };
+
+                  const deptDisputes = pendingDisputeRows.filter(r => resolveInDept(r.work_email));
+                  if (deptDisputes.length === 0) return null;
+
+                  const nameByEmail = new Map(deptEmployees.map(e => [normEmail(e.email) ?? e.email.toLowerCase(), e.name]));
+                  const resolveName = (disputeEmail: string): string => {
+                    const em = normEmail(disputeEmail) ?? disputeEmail.trim().toLowerCase();
+                    if (nameByEmail.has(em)) return nameByEmail.get(em)!;
+                    const master = masterIndex.byWorkEmail.get(em) ?? masterIndex.byPersonalEmail.get(em);
+                    return master?.name ?? disputeEmail;
+                  };
+
+                  const refetchApproved = () => {
+                    if (!pabMonthRange) return;
+                    const s = pabMonthRange.start;
+                    const e = pabMonthRange.end;
+                    const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+                    const dayAfterEnd = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1);
+                    const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
+                    fetch(`/api/pab-disputes?status=approved&status=accounting_approved&from=${from}&to=${to}`, { cache: 'no-store' })
+                      .then(r2 => r2.json())
+                      .then((json2: { rows: { work_email: string; dispute_date: string; override_hours: number | null }[] }) => {
+                        const map = new Map<string, Map<string, number | null>>();
+                        for (const row of json2.rows ?? []) {
+                          const em = (row.work_email ?? '').trim().toLowerCase();
+                          if (!em) continue;
+                          if (!map.has(em)) map.set(em, new Map());
+                          map.get(em)!.set(row.dispute_date, row.override_hours);
+                        }
+                        setApprovedDisputeDates(map);
+                      })
+                      .catch(() => {});
+                  };
+
+                  const pendingCount = deptDisputes.filter(r => r.status === 'pending' || r.status === 'pending_orphanage_manager' || r.status === 'orphanage_manager_approved').length;
+                  const approvedCount = deptDisputes.filter(r => r.status === 'approved' || r.status === 'accounting_approved').length;
+
+                  return (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/60 dark:border-amber-800/50 dark:bg-amber-950/20">
+                      <div className="flex items-center gap-2 border-b border-amber-200 px-3 py-2.5 dark:border-amber-800/50">
+                        {pendingCount > 0 && (
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-400 text-[9px] font-bold text-white dark:bg-amber-600">
+                            {pendingCount}
+                          </span>
+                        )}
+                        {approvedCount > 0 && (
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-white dark:bg-emerald-600">
+                            {approvedCount}
+                          </span>
+                        )}
+                        <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300">Attendance Disputes</span>
+                      </div>
+                      <div className="divide-y divide-amber-100 dark:divide-amber-900/30">
+                        {deptDisputes.map((r) => {
+                          const name = resolveName(r.work_email);
+                          const reasonLabel = r.reason.replace(/_/g, ' ');
+                          const isDeciding = decidingDispute === r.id;
+                          const isApproved = r.status === 'approved' || r.status === 'accounting_approved';
+                          const handleRevoke = async () => {
+                            setDecidingDispute(r.id);
+                            try {
+                              const res = await fetch(`/api/pab-disputes/${r.id}?mode=admin`, {
+                                method: 'DELETE',
+                              });
+                              if (res.ok) {
+                                setPendingDisputeRows(prev => prev.filter(d => d.id !== r.id));
+                                refetchApproved();
+                              }
+                            } finally {
+                              setDecidingDispute(null);
+                            }
+                          };
+                          const handleDecide = async (action: 'approve' | 'deny') => {
+                            setDecidingDispute(r.id);
+                            try {
+                              const res = await fetch(`/api/pab-disputes/${r.id}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  action,
+                                  decided_by: sessionEmail ?? 'Accounting',
+                                }),
+                              });
+                              if (res.ok) {
+                                if (action === 'approve') {
+                                  // Keep row in panel with updated status so Revoke button appears
+                                  setPendingDisputeRows(prev => prev.map(d =>
+                                    d.id === r.id ? { ...d, status: 'approved' } : d,
+                                  ));
+                                } else {
+                                  setPendingDisputeRows(prev => prev.filter(d => d.id !== r.id));
+                                }
+                                refetchApproved();
+                              }
+                            } finally {
+                              setDecidingDispute(null);
+                            }
+                          };
+                          return (
+                            <div key={r.id} className="px-3 py-2">
+                              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                <span className="text-[12px] font-semibold text-zinc-800 dark:text-zinc-200">{name}</span>
+                                <span className="font-mono text-[11px] text-amber-700 dark:text-amber-400">{r.dispute_date}</span>
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">{reasonLabel}</span>
+                                {isApproved && (
+                                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">Forgiven</span>
+                                )}
+                              </div>
+                              {r.explanation && (
+                                <p className="mt-0.5 text-[11px] italic text-zinc-500 dark:text-zinc-400">{r.explanation}</p>
+                              )}
+                              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                {!isApproved && (
+                                  <button
+                                    type="button"
+                                    disabled={isDeciding}
+                                    onClick={() => void handleDecide('approve')}
+                                    className="flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-700 dark:hover:bg-emerald-600"
+                                  >
+                                    {isDeciding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                    Forgive
+                                  </button>
+                                )}
+                                {!isApproved && (
+                                  <button
+                                    type="button"
+                                    disabled={isDeciding}
+                                    onClick={() => void handleDecide('deny')}
+                                    className="flex items-center gap-1 rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-600 transition hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                                  >
+                                    <X className="h-3 w-3" />
+                                    Deny
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={isDeciding}
+                                  onClick={() => void handleRevoke()}
+                                  className="flex items-center gap-1 rounded-md border border-red-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:bg-zinc-900 dark:text-red-400 dark:hover:bg-red-950/30"
+                                >
+                                  {isDeciding ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                                  Revoke
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
 
               </div>
 

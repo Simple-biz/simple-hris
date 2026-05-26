@@ -135,7 +135,9 @@
       "Bash(xxd)",
       "Bash(echo \"exit: $? \\(1 = no mangling found, good\\)\")",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -File)",
-      "Bash(rm -f /tmp/check_projects.mjs)"
+      "Bash(rm -f /tmp/check_projects.mjs)",
+      "PowerShell(cmd /c \"type c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\tsconfig.json\")",
+      "PowerShell(cmd /c \"dir c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\components\\\\ui\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

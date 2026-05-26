@@ -42,6 +42,7 @@ import {
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
 import HiddenValue from './HiddenValue';
+import DisputeDialog from './DisputeDialog';
 
 /** Matches PayrollWizard COMMON_BONUSES / EmployeeDashboard. */
 const PERFECT_ATTENDANCE_BONUS_PHP = 5000;
@@ -170,7 +171,6 @@ function mondayOfWeekContaining(d: Date): Date {
 
 type EmployeeMyHoursProps = {
   employeeEmail: string;
-  onNavigateToDisputes?: (prefill?: { date: string; seconds?: number }) => void;
 };
 
 /** One row from `/api/employee-rate-history`. */
@@ -204,12 +204,13 @@ function resolveRateAsOfLocal(
   return null;
 }
 
-export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }: EmployeeMyHoursProps) {
+export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps) {
   const [aliasEmails, setAliasEmails] = useState<string[]>([]);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
+  const [disputeDialog, setDisputeDialog] = useState<{ date: string; seconds: number; existingDispute: PabDayDisputeRow | null } | null>(null);
   const [orphanageVisits, setOrphanageVisits] = useState<PabDayDisputeRow[]>([]);
   const [orphanageLoading, setOrphanageLoading] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -743,7 +744,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
         <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch lg:overflow-hidden">
         <Card
           size="sm"
-          className="flex min-h-[22rem] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 [@media(max-height:850px)]:max-h-[calc(100dvh-9rem)] dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 sm:min-h-[20rem] lg:max-h-[calc(100dvh-8rem)]"
+          className="flex min-h-[34rem] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 [@media(max-height:850px)]:max-h-[calc(100dvh-9rem)] dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 sm:min-h-[28rem] lg:max-h-[calc(100dvh-8rem)]"
         >
           <CardHeader className="shrink-0 space-y-2 pb-2 pt-4 sm:pt-5">
             <div className="flex items-start justify-between gap-2">
@@ -1032,11 +1033,7 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
                             title={`${titleBody}${titleDispute}${rateTooltip}`}
                             onClick={
                               cellClickable
-                                ? () =>
-                                    onNavigateToDisputes?.({
-                                      date: dayIso,
-                                      seconds: day.seconds,
-                                    })
+                                ? () => setDisputeDialog({ date: dayIso, seconds: day.seconds, existingDispute: dispute ?? null })
                                 : undefined
                             }
                           >
@@ -1412,6 +1409,21 @@ export default function EmployeeMyHours({ employeeEmail, onNavigateToDisputes }:
         </div>
 
       </div>
+
+      {disputeDialog && (
+        <DisputeDialog
+          open
+          onOpenChange={(open) => { if (!open) setDisputeDialog(null); }}
+          employeeEmail={email}
+          disputeDate={disputeDialog.date}
+          hoursWorked={disputeDialog.seconds}
+          existingDispute={disputeDialog.existingDispute}
+          onSubmitted={() => {
+            setDisputeDialog(null);
+            void fetchDisputes();
+          }}
+        />
+      )}
     </div>
   );
 }

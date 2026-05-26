@@ -7,11 +7,14 @@ import {
   decideDispute,
   decideOrphanageManagerDispute,
   editDisputeDecision,
+  getDisputeById,
   returnOrphanageDisputeToManagerQueue,
+  revokeDisputeDecision,
   withdrawDispute,
 } from '@/lib/supabase/pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
 import { authorizeEmailAccess, deniedResponse } from '@/lib/auth/authorize-email';
+import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -36,18 +39,55 @@ export async function PATCH(
       body.action !== 'approve' &&
       body.action !== 'deny' &&
       body.action !== 'edit' &&
+      body.action !== 'revoke' &&
       body.action !== 'orphanage_manager_approve' &&
       body.action !== 'orphanage_manager_deny' &&
       body.action !== 'return_to_orphanage'
     ) {
       return NextResponse.json({
-        error: 'action must be approve, deny, edit, orphanage_manager_approve, orphanage_manager_deny, or return_to_orphanage',
+        error: 'action must be approve, deny, edit, revoke, orphanage_manager_approve, orphanage_manager_deny, or return_to_orphanage',
       }, { status: 400 });
     }
 
     const decided_by = body.decided_by?.trim();
     if (!decided_by) {
       return NextResponse.json({ error: 'decided_by is required' }, { status: 400 });
+    }
+
+    if (body.action === 'revoke') {
+      const { row: disputeRow } = await getDisputeById(id);
+      const { error } = await revokeDisputeDecision(id, {
+        revoked_by: decided_by,
+        revoke_note: body.decision_note,
+      });
+      if (error) {
+        const code = error === 'Dispute not found'
+          ? 404
+          : error.includes('Not authorized')
+            ? 403
+            : error.includes('Only approved')
+              ? 400
+              : 500;
+        return NextResponse.json({ error }, { status: code });
+      }
+      if (disputeRow) {
+        const supabase = createSupabaseServiceRoleClient();
+        if (supabase) {
+          void supabase.from('employee_notifications').insert({
+            recipient_email: disputeRow.work_email,
+            type: 'dispute.revoked',
+            tone: 'neutral',
+            title: 'Dispute Approval Revoked',
+            message: `The approval for your attendance dispute on ${disputeRow.dispute_date} has been revoked${body.decision_note ? `: "${body.decision_note}"` : '.'}`,
+            details: {
+              dispute_date: disputeRow.dispute_date,
+              reason: disputeRow.reason,
+              revoke_note: body.decision_note ?? null,
+            },
+          });
+        }
+      }
+      return NextResponse.json({ success: true, error: null });
     }
 
     if (body.action === 'return_to_orphanage') {
@@ -111,6 +151,10 @@ export async function PATCH(
     }
 
     const status = body.action === 'approve' ? 'approved' : 'denied';
+
+    // Fetch dispute before deciding so we have recipient + date for the notification.
+    const { row: disputeRow } = await getDisputeById(id);
+
     const { error, stage } = await decideDispute(id, {
       status: status as 'approved' | 'denied',
       decided_by,
@@ -127,6 +171,29 @@ export async function PATCH(
             ? 400
             : 500;
       return NextResponse.json({ error }, { status: code });
+    }
+
+    // Fire-and-forget: notify the employee of the decision.
+    if (disputeRow) {
+      const isApproved = status === 'approved';
+      const supabase = createSupabaseServiceRoleClient();
+      if (supabase) {
+        void supabase.from('employee_notifications').insert({
+          recipient_email: disputeRow.work_email,
+          type: isApproved ? 'dispute.approved' : 'dispute.denied',
+          tone: isApproved ? 'positive' : 'neutral',
+          title: isApproved ? 'Dispute Approved' : 'Dispute Not Approved',
+          message: isApproved
+            ? `Your attendance dispute for ${disputeRow.dispute_date} was approved. This day now counts toward your PAB eligibility.`
+            : `Your attendance dispute for ${disputeRow.dispute_date} was not approved${body.decision_note ? `: "${body.decision_note}"` : '.'}`,
+          details: {
+            dispute_date: disputeRow.dispute_date,
+            reason: disputeRow.reason,
+            decision_note: body.decision_note ?? null,
+            override_hours: body.override_hours ?? null,
+          },
+        });
+      }
     }
 
     return NextResponse.json({ success: true, stage: stage ?? null, error: null });

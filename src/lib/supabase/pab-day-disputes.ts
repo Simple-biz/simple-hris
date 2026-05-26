@@ -428,6 +428,72 @@ export async function editDisputeDecision(
   return { error: null };
 }
 
+export async function revokeDisputeDecision(
+  id: string,
+  params: {
+    revoked_by: string;
+    revoke_note?: string | null;
+  },
+): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+
+  const actor = params.revoked_by.trim();
+  const actorLower = actor.toLowerCase();
+  if (!(await canActOnDisputes(actorLower))) {
+    return { error: 'Not authorized — only Accounting roles can revoke dispute decisions' };
+  }
+
+  const { row, error: fetchErr } = await getDisputeById(id);
+  if (fetchErr) return { error: fetchErr };
+  if (!row) return { error: 'Dispute not found' };
+
+  const revokableStatuses: PabDisputeStatus[] = ['approved', 'accounting_approved'];
+  if (!revokableStatuses.includes(row.status)) {
+    return { error: 'Only approved disputes can be revoked' };
+  }
+
+  // Orphanage disputes go back to awaiting Accounting review (manager already verified them).
+  // Normal disputes go back to pending.
+  const nextStatus: PabDisputeStatus =
+    row.status === 'accounting_approved' ? 'orphanage_manager_approved' : 'pending';
+
+  const nowIso = new Date().toISOString();
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      status: nextStatus,
+      decided_by: null,
+      decided_at: null,
+      decision_note: params.revoke_note?.trim() || null,
+      override_hours: null,
+      updated_at: nowIso,
+    })
+    .eq('id', id);
+  if (error) return { error: error.message };
+
+  void (async () => {
+    const role = await resolveUserRole(actorLower, 'Admin');
+    await insertAuditLog({
+      user_name: actor,
+      user_role: role,
+      action: 'pab_dispute.revoked',
+      resource: TABLE,
+      resource_id: id,
+      details: {
+        employee: row.work_email,
+        dispute_date: row.dispute_date,
+        reason: row.reason,
+        revoked_by: actor,
+        revoke_note: params.revoke_note ?? null,
+        previous_status: row.status,
+      },
+    });
+  })();
+
+  return { error: null };
+}
+
 export async function decideOrphanageManagerDispute(
   id: string,
   params: {

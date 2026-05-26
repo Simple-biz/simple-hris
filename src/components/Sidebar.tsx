@@ -48,7 +48,7 @@ const navItems = [
   { id: 'rates', label: 'Rates', icon: DollarSign },
   { id: 'payroll-wizard', label: 'Payroll Wizard', icon: Wand2 },
   { id: 'payment-dispatch', label: 'Payment Dispatch', icon: Send },
-  { id: 'disputes', label: 'Orphanage Disputes', icon: AlertCircle },
+  { id: 'disputes', label: 'Disputes', icon: AlertCircle },
   { id: 'announcements', label: 'Announcements', icon: Megaphone },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'settings', label: 'System Settings', icon: Settings },

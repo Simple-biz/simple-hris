@@ -135,6 +135,8 @@ export default function PabDisputeQueue() {
   const [deleteTarget, setDeleteTarget] = useState<PabDayDisputeRow | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+
   const openEdit = useCallback((row: PabDayDisputeRow) => {
     setEditDialog(row);
     const denied =
@@ -175,6 +177,25 @@ export default function PabDisputeQueue() {
   }, [statusFilter]);
 
   useEffect(() => { fetchDisputes(); }, [fetchDisputes]);
+
+  const handleApprove = useCallback(async (d: PabDayDisputeRow) => {
+    setApprovingId(d.id);
+    try {
+      const res = await fetch(`/api/pab-disputes/${d.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve', decided_by: currentUser ?? '' }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Failed');
+      toast.success('Dispute approved');
+      fetchDisputes();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to approve dispute');
+    } finally {
+      setApprovingId(null);
+    }
+  }, [currentUser, fetchDisputes]);
 
   useEffect(() => {
     fetch('/api/app-settings?key=pab_dispute_reason_codes', { cache: 'no-store' })
@@ -392,7 +413,7 @@ export default function PabDisputeQueue() {
           </div>
           <div className="min-w-0">
             <h2 className="text-xl font-bold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
-              PAB Disputes
+              Disputes
             </h2>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
               Approval queue for short-day disputes. Any Accounting user can approve or deny.
@@ -596,17 +617,12 @@ export default function PabDisputeQueue() {
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={!canApprove}
+                              disabled={!canApprove || approvingId === d.id}
                               title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
                               className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
-                              onClick={() => {
-                                setDecideDialog({ dispute: d, action: 'approve' });
-                                setDecisionNote('');
-                                setOverrideHrs('');
-                                setOverrideMins('');
-                              }}
+                              onClick={() => void handleApprove(d)}
                             >
-                              Approve
+                              {approvingId === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Approve'}
                             </Button>
                             <Button
                               size="sm"
@@ -634,19 +650,40 @@ export default function PabDisputeQueue() {
                                 Return
                               </Button>
                             )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled
+                              title="Dispute must be approved before it can be revoked"
+                              className="h-7 border-zinc-200 px-2 text-[11px] text-zinc-400 opacity-50 dark:border-zinc-700 dark:text-zinc-600"
+                            >
+                              Revoke
+                            </Button>
                           </>
                         ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={!canApprove}
-                            title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
-                            className="h-7 border-zinc-300 px-2 text-[11px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300"
-                            onClick={() => openEdit(d)}
-                          >
-                            <Pencil className="mr-1 h-3 w-3" />
-                            Edit
-                          </Button>
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={!canApprove}
+                              title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
+                              className="h-7 border-zinc-300 px-2 text-[11px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300"
+                              onClick={() => openEdit(d)}
+                            >
+                              <Pencil className="mr-1 h-3 w-3" />
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={!canDelete}
+                              title={!canDelete ? 'Requires admin or payroll_manager' : 'Revoke this dispute'}
+                              className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
+                              onClick={() => setDeleteTarget(d)}
+                            >
+                              Revoke
+                            </Button>
+                          </>
                         )}
 
                         {canDelete && (
