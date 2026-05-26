@@ -24,6 +24,7 @@ import { Lock, Menu, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
+
 import { normEmail } from '@/lib/email/norm-email';
 import { isPayoutComplete } from '@/components/employee/employee-payout-fields';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -77,6 +78,7 @@ export default function EmployeeApp() {
   // indicator, and one-time toast notifications when the state flips.
   const { state: lockState, loading: lockLoading } = useDispatchLock();
   const unreadNotifications = useEmployeeNotificationsUnread(employeeEmail);
+
   const previousLocked = useRef<boolean | null>(null);
 
   // Detect transitions (only after first hydration so we don't toast on mount).
@@ -241,6 +243,8 @@ export default function EmployeeApp() {
             needsPhoto={needsPhoto}
             needsBank={needsBank}
             onNavigateToProfile={profileIncomplete ? () => navigate('profile') : undefined}
+            onNavigateToNotifications={() => navigate('notifications')}
+            unreadNotifications={unreadNotifications}
             // onNavigateToDisputes={(prefill) => {
             //   setDisputesPrefill(prefill ?? null);
             //   navigate('disputes');
@@ -350,7 +354,7 @@ export default function EmployeeApp() {
         profilePhotoUrl={profilePhotoUrl}
         googlePhotoUrl={googlePhotoUrl}
         payrollLocked={lockState.locked}
-        unreadNotifications={unreadNotifications}
+
         profileIncomplete={profileIncomplete}
       />
       <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

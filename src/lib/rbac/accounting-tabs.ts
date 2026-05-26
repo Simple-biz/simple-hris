@@ -9,6 +9,7 @@ export const ACCOUNTING_TAB_IDS = [
   'payment-dispatch',
   'disputes',
   'announcements',
+  'notifications',
   's-wall',
   'settings',
 ] as const;
@@ -31,6 +32,7 @@ const TAB_TO_FEATURE: Record<AccountingTabId, string> = {
   'payment-dispatch': 'payment_dispatch',
   'disputes': 'disputes',
   'announcements': 'announcements',
+  'notifications': 'notifications',
   's-wall': 's_wall',
   'settings': 'settings',
 };

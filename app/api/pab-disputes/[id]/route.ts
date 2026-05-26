@@ -73,7 +73,7 @@ export async function PATCH(
       if (disputeRow) {
         const supabase = createSupabaseServiceRoleClient();
         if (supabase) {
-          void supabase.from('employee_notifications').insert({
+          const { error: notifErr } = await supabase.from('employee_notifications').insert({
             recipient_email: disputeRow.work_email,
             type: 'dispute.revoked',
             tone: 'neutral',
@@ -85,6 +85,9 @@ export async function PATCH(
               revoke_note: body.decision_note ?? null,
             },
           });
+          if (notifErr) {
+            console.error('[pab-disputes] revoke notification insert failed:', notifErr.message);
+          }
         }
       }
       return NextResponse.json({ success: true, error: null });
@@ -173,26 +176,30 @@ export async function PATCH(
       return NextResponse.json({ error }, { status: code });
     }
 
-    // Fire-and-forget: notify the employee of the decision.
-    if (disputeRow) {
+    // Notify the employee of the decision. Re-fetch if the pre-fetch row was missing.
+    const notifRow = disputeRow ?? (await getDisputeById(id)).row;
+    if (notifRow) {
       const isApproved = status === 'approved';
       const supabase = createSupabaseServiceRoleClient();
       if (supabase) {
-        void supabase.from('employee_notifications').insert({
-          recipient_email: disputeRow.work_email,
+        const { error: notifErr } = await supabase.from('employee_notifications').insert({
+          recipient_email: notifRow.work_email,
           type: isApproved ? 'dispute.approved' : 'dispute.denied',
           tone: isApproved ? 'positive' : 'neutral',
           title: isApproved ? 'Dispute Approved' : 'Dispute Not Approved',
           message: isApproved
-            ? `Your attendance dispute for ${disputeRow.dispute_date} was approved. This day now counts toward your PAB eligibility.`
-            : `Your attendance dispute for ${disputeRow.dispute_date} was not approved${body.decision_note ? `: "${body.decision_note}"` : '.'}`,
+            ? `Your attendance dispute for ${notifRow.dispute_date} was approved. This day now counts toward your PAB eligibility.`
+            : `Your attendance dispute for ${notifRow.dispute_date} was not approved${body.decision_note ? `: "${body.decision_note}"` : '.'}`,
           details: {
-            dispute_date: disputeRow.dispute_date,
-            reason: disputeRow.reason,
+            dispute_date: notifRow.dispute_date,
+            reason: notifRow.reason,
             decision_note: body.decision_note ?? null,
             override_hours: body.override_hours ?? null,
           },
         });
+        if (notifErr) {
+          console.error('[pab-disputes] notification insert failed:', notifErr.message);
+        }
       }
     }
 

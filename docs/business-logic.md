@@ -152,6 +152,29 @@ Storage keys in `app_settings`:
 
 Resolution in `usePabPeriodSettings`: the hook exposes `activeMonthResolved`, `activeRange` ( = override for active month if present, else `getPabMonthRange(year, month)`), and legacy `validManualRange`.
 
+### US Holiday forgiveness
+
+When enabled, an employee who logs under 7h (or zero) on a configured US holiday keeps PAB eligibility for that day. No dispute/approval row is created -- forgiveness is applied in-memory while eligibility is computed. Logic lives in `src/lib/us-holidays.ts`.
+
+Storage keys in `app_settings`:
+
+| Key | Shape | Notes |
+|---|---|---|
+| `us_holidays_enabled` | boolean string (`'true'`/`'false'`) | Master toggle. Absent -> treated as `true`. |
+| `us_holidays_list` | JSON array of `{ date: "YYYY-MM-DD", name, enabled }` | Per-holiday entries. Seeded with federal holidays via `computeFederalHolidays(year)` from the System Settings "Seed" button. Individual `enabled: false` keeps the date listed but stops it forgiving. |
+
+Helpers: `parseUsHolidaysList()`, `serializeUsHolidaysList()`, and `getEnabledHolidayMap(list, masterEnabled)` -- the last returns a `Map<ISO date, name>` of only the holidays that actively forgive (empty when the master toggle is off).
+
+**Eligibility impact (PayrollWizard).** `usHolidayDates` holds the enabled map. While building `employeeWeekdayHours` / `employeeAllDaysHours`, any day whose ISO date is in `usHolidayDates` and has under 25,200s is flagged `forgivenByHoliday = true`, so it no longer blocks PAB the same way an approved dispute would.
+
+**Validation-step display.** The "US Holidays in this PAB Period" card on Validation (step 7) is driven by the `usHolidayForgivenSummary` memo and is intentionally broader than the forgiveness map:
+
+- It iterates `usHolidaysListFull` -- the *full* list including disabled entries -- so accounting can always see every holiday in the period, not just the ones that auto-forgive.
+- The date window is derived from the **actual Hubstaff date columns loaded for the run** (`hubstaffColsForPab`): take the min/max parseable column date and expand to the full calendar month(s) they span. This deliberately ignores the active-month *setting* so the holidays always match the data being validated -- e.g. a May 17-24 report shows May holidays (incl. Memorial Day on the 25th and any late-month entries) even if the saved active PAB month is stale at April. Falls back to the active PAB month only when no date columns are loaded yet.
+- Per-holiday card colouring: enabled (`isForgivenEnabled` = master on AND entry on) renders sky/emerald with forgiven / worked-through employee chips; disabled renders amber with a "Forgiveness off -- review manually" badge so a holiday that won't auto-forgive is still surfaced for manual review.
+
+**System Settings UI.** Past holidays are no longer dimmed; they keep a plain `. past` text label so they stay clearly visible (a past date is still relevant to the current payroll cycle). The enabled/disabled colouring and master toggle are unchanged.
+
 ### Detection steps (Employee Dashboard)
 
 1. Merge all source files with canonical-to-ISO resolution.

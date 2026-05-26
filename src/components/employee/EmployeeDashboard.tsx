@@ -64,7 +64,7 @@ import {
 import HiddenValue from './HiddenValue';
 import GiftShippingCard, { type GiftShippingState } from './GiftShippingCard';
 import DisputeDialog from './DisputeDialog';
-import { Eye, EyeOff, Gift, Hourglass } from 'lucide-react';
+import { Bell, Eye, EyeOff, Gift, Hourglass } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /* ------------------------------------------------------------------ */
@@ -203,6 +203,10 @@ interface EmployeeDashboardProps {
   needsBank?: boolean;
   /** Jump to the Profile tab so the employee can fill in what's missing. */
   onNavigateToProfile?: () => void;
+  /** Jump to the Notifications tab. */
+  onNavigateToNotifications?: () => void;
+  /** Unread notification count — drives the bell badge in the dashboard header. */
+  unreadNotifications?: number;
 }
 
 /** Align with mapHubstaffHoursRow / PayrollWizard so rows match after Supabase sync. */
@@ -328,7 +332,7 @@ const SPARKLES_FLOAT = [
   { left: '93%', delay: '3.3s',  dur: '3.6s', size: '13px' },
 ] as const;
 
-export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, onNavigateToProfile }: EmployeeDashboardProps) {
+export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, onNavigateToProfile, onNavigateToNotifications, unreadNotifications = 0 }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
   // Shared mask state for the hero pay values (Take-Home, Regular, Overtime).
@@ -1791,6 +1795,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   onClick={() => setGiftDialogOpen(true)}
                 />
               )}
+              {onNavigateToNotifications && (
+                <NotificationBellButton
+                  unreadCount={unreadNotifications}
+                  onClick={onNavigateToNotifications}
+                />
+              )}
               <Button
                 type="button"
                 variant="outline"
@@ -1880,6 +1890,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         <div className="hidden shrink-0 items-center gap-2 lg:flex">
           {giftState.status !== 'none' && (
             <GiftBellButton state={giftState} onClick={() => setGiftDialogOpen(true)} />
+          )}
+          {onNavigateToNotifications && (
+            <NotificationBellButton
+              unreadCount={unreadNotifications}
+              onClick={onNavigateToNotifications}
+            />
           )}
           <Button
             type="button"
@@ -2855,6 +2871,47 @@ function GiftBellButton({
               'pointer-events-none absolute right-1 top-1 inline-flex h-2.5 w-2.5 animate-ping rounded-full opacity-75',
               badgeTone,
             )}
+            aria-hidden
+          />
+        </>
+      )}
+    </button>
+  );
+}
+
+function NotificationBellButton({
+  unreadCount,
+  onClick,
+}: {
+  unreadCount: number;
+  onClick: () => void;
+}) {
+  const label = unreadCount > 0
+    ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
+    : 'Notifications';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-600 shadow-sm transition hover:border-orange-300 hover:bg-orange-50 hover:text-orange-600 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-300 dark:hover:border-orange-900/60 dark:hover:bg-orange-950/30 dark:hover:text-orange-400"
+    >
+      <Bell className="size-4.5" aria-hidden />
+      {unreadCount > 0 && (
+        <>
+          <motion.span
+            key={unreadCount}
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 14 }}
+            className="pointer-events-none absolute -right-1 -top-1 inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-gradient-to-br from-rose-500 via-red-500 to-orange-500 px-1 py-px text-[9px] font-bold tabular-nums text-white ring-2 ring-white dark:ring-zinc-900"
+            aria-hidden
+          >
+            {unreadCount > 99 ? '99+' : unreadCount}
+          </motion.span>
+          <span
+            className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 w-4 animate-ping rounded-full bg-rose-500/50 opacity-75"
             aria-hidden
           />
         </>

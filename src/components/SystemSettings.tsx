@@ -755,46 +755,59 @@ export default function SystemSettings() {
               </div>
 
               {/* Add holiday + seed */}
-              <div className="flex flex-shrink-0 flex-col gap-2 border-b border-zinc-100 bg-zinc-50/40 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-end sm:px-5 dark:border-zinc-800 dark:bg-zinc-900/30">
-                <div className="flex flex-col gap-1 sm:w-auto">
-                  <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Date</label>
-                  <input
-                    type="date"
-                    value={newHolidayDate}
-                    onChange={(e) => setNewHolidayDate(e.target.value)}
-                    className="h-8 w-full rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-800 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-300 sm:w-auto dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                  />
+              <div className="flex-shrink-0 border-b border-zinc-100 bg-gradient-to-b from-sky-50/50 to-zinc-50/30 px-4 py-3.5 sm:px-5 dark:border-zinc-800 dark:from-sky-950/15 dark:to-zinc-900/20">
+                <div className="mb-2.5 flex items-center gap-1.5">
+                  <Plus className="h-3.5 w-3.5 text-sky-500" />
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-300">Add a holiday</span>
                 </div>
-                <div className="flex flex-col gap-1 sm:flex-1">
-                  <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Name</label>
-                  <input
-                    type="text"
-                    value={newHolidayName}
-                    onChange={(e) => setNewHolidayName(e.target.value)}
-                    placeholder="e.g. Memorial Day"
-                    className="h-8 rounded-md border border-zinc-300 bg-white px-2 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                  />
-                </div>
-                <div className="flex w-full gap-2 sm:w-auto">
-                  <button
-                    type="button"
-                    onClick={addHoliday}
-                    disabled={saveStates[US_HOLIDAYS_LIST_KEY] === 'saving'}
-                    className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border border-sky-300 bg-sky-50 px-3 text-xs font-semibold text-sky-700 transition-colors hover:bg-sky-100 disabled:opacity-50 sm:flex-initial dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-950/60"
-                  >
-                    <Plus className="h-3 w-3" />
-                    Add
-                  </button>
-                  <button
-                    type="button"
-                    onClick={seedFederalHolidays}
-                    disabled={saveStates[US_HOLIDAYS_LIST_KEY] === 'saving'}
-                    className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50 sm:flex-initial dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                    title={`Seed federal holidays for ${new Date().getFullYear()}`}
-                  >
-                    <Sparkles className="h-3 w-3" />
-                    Seed {new Date().getFullYear()}
-                  </button>
+                <div className="flex flex-col gap-2.5 sm:flex-row sm:items-end">
+                  <div className="flex flex-col gap-1 sm:w-44">
+                    <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Date</label>
+                    <div className="relative">
+                      <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                      <input
+                        type="date"
+                        value={newHolidayDate}
+                        onChange={(e) => setNewHolidayDate(e.target.value)}
+                        className="h-9 w-full rounded-lg border border-zinc-300 bg-white pl-8 pr-2 text-xs text-zinc-800 transition-shadow focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-sky-900/50"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1 sm:flex-1">
+                    <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Name</label>
+                    <div className="relative">
+                      <Flag className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                      <input
+                        type="text"
+                        value={newHolidayName}
+                        onChange={(e) => setNewHolidayName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') addHoliday(); }}
+                        placeholder="e.g. Memorial Day"
+                        className="h-9 w-full rounded-lg border border-zinc-300 bg-white pl-8 pr-2 text-xs text-zinc-800 transition-shadow placeholder:text-zinc-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-sky-900/50"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={addHoliday}
+                      disabled={saveStates[US_HOLIDAYS_LIST_KEY] === 'saving'}
+                      className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-4 text-xs font-semibold text-white shadow-sm transition-all hover:bg-sky-700 hover:shadow active:scale-[0.98] disabled:opacity-50 sm:flex-initial dark:bg-sky-600 dark:hover:bg-sky-500"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={seedFederalHolidays}
+                      disabled={saveStates[US_HOLIDAYS_LIST_KEY] === 'saving'}
+                      className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50 sm:flex-initial dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                      title={`Seed federal holidays for ${new Date().getFullYear()}`}
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-sky-500" />
+                      Seed {new Date().getFullYear()}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -820,7 +833,6 @@ export default function SystemSettings() {
                             h.enabled && holidaysEnabled
                               ? 'border-sky-200 bg-sky-50/40 dark:border-sky-900/40 dark:bg-sky-950/15'
                               : 'border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-800/30',
-                            isPast && 'opacity-60',
                           )}
                         >
                           <div className="flex w-14 flex-shrink-0 flex-col items-center justify-center rounded-md border border-zinc-200 bg-white px-1 py-1 dark:border-zinc-700 dark:bg-zinc-900">

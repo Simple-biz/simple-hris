@@ -35,6 +35,7 @@ import {
   StopCircle,
   HardHat,
   Flag,
+  AlertTriangle,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { cn } from '@/lib/utils';
@@ -93,6 +94,7 @@ import {
   US_HOLIDAYS_LIST_KEY,
   parseUsHolidaysList,
   getEnabledHolidayMap,
+  type UsHoliday,
 } from '@/lib/us-holidays';
 import {
   Dialog,
@@ -1187,6 +1189,9 @@ export default function PayrollWizard({
   const [approvedDisputeDates, setApprovedDisputeDates] = useState<Map<string, Map<string, number | null>>>(new Map());
   /** ISO date (YYYY-MM-DD) -> holiday name. Built from app_settings; empty when disabled. */
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
+  /** Full holiday list (enabled + disabled) — used for validation-section display. */
+  const [usHolidaysListFull, setUsHolidaysListFull] = useState<UsHoliday[]>([]);
+  const [usHolidaysMasterEnabled, setUsHolidaysMasterEnabled] = useState<boolean>(true);
 
   // Fetch US holiday forgiveness settings — same shape as SystemSettings uses.
   useEffect(() => {
@@ -1204,6 +1209,8 @@ export default function PayrollWizard({
         const enabled = enabledVal === null || enabledVal === undefined ? true : enabledVal === 'true';
         const list = parseUsHolidaysList(values[US_HOLIDAYS_LIST_KEY] ?? null);
         setUsHolidayDates(getEnabledHolidayMap(list, enabled));
+        setUsHolidaysListFull(list);
+        setUsHolidaysMasterEnabled(enabled);
       } catch {
         if (!cancelled) setUsHolidayDates(new Map());
       }
@@ -2311,27 +2318,51 @@ export default function PayrollWizard({
    * longer block PAB). Used by the Validation step to show what was forgiven.
    */
   const usHolidayForgivenSummary = useMemo<
-    { iso: string; name: string; date: Date; forgivenEmails: string[]; workedThroughEmails: string[] }[]
+    { iso: string; name: string; date: Date; forgivenEmails: string[]; workedThroughEmails: string[]; isForgivenEnabled: boolean }[]
   >(() => {
-    if (!pabMonthRange || usHolidayDates.size === 0) return [];
-    const startT = new Date(pabMonthRange.start.getFullYear(), pabMonthRange.start.getMonth(), pabMonthRange.start.getDate()).getTime();
-    const endRange = hslAdjustedPabEnd ?? pabMonthRange.end;
-    const endT = new Date(endRange.getFullYear(), endRange.getMonth(), endRange.getDate()).getTime();
+    if (!pabMonthRange) return [];
+    // Derive the window from the actual Hubstaff date columns loaded for THIS run,
+    // expanded to the full calendar month(s) they span. This keeps the holidays
+    // aligned with the data being validated even if the active-month setting is
+    // stale (e.g. set to April while a May report is loaded). Falls back to the
+    // active PAB month when no date columns are available yet.
+    let minT = Infinity;
+    let maxT = -Infinity;
+    for (const col of hubstaffColsForPab ?? []) {
+      const cd = parseColDate(col);
+      if (!cd) continue;
+      const ct = cd.getTime();
+      if (ct < minT) minT = ct;
+      if (ct > maxT) maxT = ct;
+    }
+    let startT: number;
+    let endT: number;
+    if (minT !== Infinity) {
+      const lo = new Date(minT);
+      const hi = new Date(maxT);
+      startT = new Date(lo.getFullYear(), lo.getMonth(), 1).getTime();
+      endT   = new Date(hi.getFullYear(), hi.getMonth() + 1, 0).getTime(); // last day of hi's month
+    } else {
+      startT = new Date(pabMonthRange.year, pabMonthRange.month, 1).getTime();
+      endT   = new Date(pabMonthRange.year, pabMonthRange.month + 1, 0).getTime();
+    }
 
-    const inRangeHolidays: { iso: string; name: string; date: Date }[] = [];
-    for (const [iso, name] of usHolidayDates.entries()) {
-      const [y, m, d] = iso.split('-').map(Number);
+    // Use the full list so accounting sees every holiday in the period,
+    // even if auto-forgiveness is disabled for that entry.
+    const inRangeHolidays: { iso: string; name: string; date: Date; isForgivenEnabled: boolean }[] = [];
+    for (const h of usHolidaysListFull) {
+      const [y, m, d] = h.date.split('-').map(Number);
       if (!y || !m || !d) continue;
       const date = new Date(y, m - 1, d);
       const t = date.getTime();
       if (t < startT || t > endT) continue;
-      inRangeHolidays.push({ iso, name, date });
+      inRangeHolidays.push({ iso: h.date, name: h.name, date, isForgivenEnabled: usHolidaysMasterEnabled && h.enabled });
     }
     inRangeHolidays.sort((a, b) => a.date.getTime() - b.date.getTime());
 
     if (inRangeHolidays.length === 0) return [];
 
-    const out: { iso: string; name: string; date: Date; forgivenEmails: string[]; workedThroughEmails: string[] }[] = [];
+    const out: { iso: string; name: string; date: Date; forgivenEmails: string[]; workedThroughEmails: string[]; isForgivenEnabled: boolean }[] = [];
     for (const h of inRangeHolidays) {
       const forgiven: string[] = [];
       const worked: string[] = [];
@@ -2355,7 +2386,7 @@ export default function PayrollWizard({
       out.push({ ...h, forgivenEmails: forgiven, workedThroughEmails: worked });
     }
     return out;
-  }, [pabMonthRange, hslAdjustedPabEnd, usHolidayDates, employeeWeekdayHours, employeeAllDaysHours]);
+  }, [pabMonthRange, hubstaffColsForPab, usHolidaysListFull, usHolidaysMasterEnabled, employeeWeekdayHours, employeeAllDaysHours]);
 
   /**
    * Auto-apply / remove perfect_attendance toggle whenever eligibility is
@@ -8185,13 +8216,15 @@ export default function PayrollWizard({
               </Card>
             </div>
 
-            {/* US Holidays forgiven in this PAB period */}
+            {/* US Holidays in this PAB period — always shown when any holiday falls in range */}
             {usHolidayForgivenSummary.length > 0 && (() => {
-              const totalForgiven = usHolidayForgivenSummary.reduce((s, h) => s + h.forgivenEmails.length, 0);
-              const totalWorkedThrough = usHolidayForgivenSummary.reduce((s, h) => s + h.workedThroughEmails.length, 0);
+              const enabledHolidays = usHolidayForgivenSummary.filter((h) => h.isForgivenEnabled);
+              const totalForgiven = enabledHolidays.reduce((s, h) => s + h.forgivenEmails.length, 0);
+              const totalWorkedThrough = enabledHolidays.reduce((s, h) => s + h.workedThroughEmails.length, 0);
               const totalEmps = totalForgiven + totalWorkedThrough;
               const overallPct = totalEmps > 0 ? Math.round((totalForgiven / totalEmps) * 100) : 0;
               const holidayWord = `holiday${usHolidayForgivenSummary.length !== 1 ? 's' : ''}`;
+              const disabledCount = usHolidayForgivenSummary.length - enabledHolidays.length;
               return (
                 <Card className="relative overflow-hidden border-sky-200/70 bg-gradient-to-br from-sky-50/80 via-white to-indigo-50/30 shadow-sm ring-0 dark:border-sky-900/40 dark:from-sky-950/25 dark:via-zinc-950 dark:to-indigo-950/15">
                   {/* Soft top-right glow */}
@@ -8207,7 +8240,9 @@ export default function PayrollWizard({
                             US Holidays in this PAB Period
                           </CardTitle>
                           <CardDescription className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                            {`${usHolidayForgivenSummary.length} ${holidayWord} · days auto-waived so employees stay eligible`}
+                            {`${usHolidayForgivenSummary.length} ${holidayWord}`}
+                            {enabledHolidays.length > 0 && ` · ${enabledHolidays.length} with auto-forgiveness on`}
+                            {disabledCount > 0 && ` · ${disabledCount} need manual review`}
                           </CardDescription>
                         </div>
                       </div>
@@ -8251,6 +8286,7 @@ export default function PayrollWizard({
                         const dayLabel = h.date.toLocaleDateString('en-US', { weekday: 'short' });
                         const monthLabel = h.date.toLocaleDateString('en-US', { month: 'short' });
                         const dayNum = h.date.getDate();
+                        const disabled = !h.isForgivenEnabled;
                         const allClear = h.forgivenEmails.length === 0;
                         const maxChips = 5;
                         const visibleChips = h.forgivenEmails.slice(0, maxChips);
@@ -8269,9 +8305,11 @@ export default function PayrollWizard({
                             className={cn(
                               'group flex flex-col rounded-xl border bg-white/85 p-3 backdrop-blur-sm transition-all duration-200',
                               'hover:shadow-md hover:-translate-y-0.5',
-                              allClear
-                                ? 'border-emerald-200/70 hover:border-emerald-300 dark:border-emerald-900/40 dark:bg-emerald-950/15 dark:hover:border-emerald-800/60'
-                                : 'border-sky-200/70 hover:border-sky-300 dark:border-sky-900/40 dark:bg-sky-950/15 dark:hover:border-sky-800/60',
+                              disabled
+                                ? 'border-amber-200/70 hover:border-amber-300 dark:border-amber-900/40 dark:bg-amber-950/15 dark:hover:border-amber-800/60'
+                                : allClear
+                                  ? 'border-emerald-200/70 hover:border-emerald-300 dark:border-emerald-900/40 dark:bg-emerald-950/15 dark:hover:border-emerald-800/60'
+                                  : 'border-sky-200/70 hover:border-sky-300 dark:border-sky-900/40 dark:bg-sky-950/15 dark:hover:border-sky-800/60',
                             )}
                           >
                             {/* Header row */}
@@ -8279,13 +8317,15 @@ export default function PayrollWizard({
                               {/* Date block — calendar-tear style */}
                               <div className={cn(
                                 'flex h-14 w-12 flex-shrink-0 flex-col items-center justify-center overflow-hidden rounded-lg border shadow-sm',
-                                allClear
-                                  ? 'border-emerald-200 bg-gradient-to-b from-emerald-50 to-white dark:border-emerald-800/40 dark:from-emerald-950/30 dark:to-zinc-900/40'
-                                  : 'border-sky-200 bg-gradient-to-b from-sky-50 to-white dark:border-sky-800/40 dark:from-sky-950/30 dark:to-zinc-900/40',
+                                disabled
+                                  ? 'border-amber-200 bg-gradient-to-b from-amber-50 to-white dark:border-amber-800/40 dark:from-amber-950/30 dark:to-zinc-900/40'
+                                  : allClear
+                                    ? 'border-emerald-200 bg-gradient-to-b from-emerald-50 to-white dark:border-emerald-800/40 dark:from-emerald-950/30 dark:to-zinc-900/40'
+                                    : 'border-sky-200 bg-gradient-to-b from-sky-50 to-white dark:border-sky-800/40 dark:from-sky-950/30 dark:to-zinc-900/40',
                               )}>
                                 <div className={cn(
                                   'w-full py-0.5 text-center text-[8px] font-bold uppercase tracking-wider text-white',
-                                  allClear ? 'bg-emerald-500 dark:bg-emerald-600/80' : 'bg-sky-500 dark:bg-sky-600/80',
+                                  disabled ? 'bg-amber-500 dark:bg-amber-600/80' : allClear ? 'bg-emerald-500 dark:bg-emerald-600/80' : 'bg-sky-500 dark:bg-sky-600/80',
                                 )}>
                                   {monthLabel}
                                 </div>
@@ -8305,11 +8345,15 @@ export default function PayrollWizard({
                                 </p>
                                 <div className={cn(
                                   'mt-1.5 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold',
-                                  allClear
-                                    ? 'border-emerald-300/50 bg-emerald-100/80 text-emerald-700 dark:border-emerald-700/40 dark:bg-emerald-950/40 dark:text-emerald-300'
-                                    : 'border-sky-300/50 bg-sky-100/80 text-sky-700 dark:border-sky-700/40 dark:bg-sky-950/40 dark:text-sky-300',
+                                  disabled
+                                    ? 'border-amber-300/50 bg-amber-100/80 text-amber-700 dark:border-amber-700/40 dark:bg-amber-950/40 dark:text-amber-300'
+                                    : allClear
+                                      ? 'border-emerald-300/50 bg-emerald-100/80 text-emerald-700 dark:border-emerald-700/40 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                      : 'border-sky-300/50 bg-sky-100/80 text-sky-700 dark:border-sky-700/40 dark:bg-sky-950/40 dark:text-sky-300',
                                 )}>
-                                  {allClear ? (
+                                  {disabled ? (
+                                    <><AlertTriangle className="h-2.5 w-2.5" /> Forgiveness off — review manually</>
+                                  ) : allClear ? (
                                     <><Check className="h-2.5 w-2.5" /> All worked 7h+</>
                                   ) : (
                                     <><Users className="h-2.5 w-2.5" /> {h.forgivenEmails.length} forgiven</>

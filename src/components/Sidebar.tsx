@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { motion } from 'motion/react';
 import { useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
@@ -31,6 +32,7 @@ import { allowedAccountingTabsForRoles } from '@/lib/rbac/accounting-tabs';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -101,6 +103,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
 
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(email);
   const { state: lockState } = useDispatchLock();
+  const unreadNotifications = useEmployeeNotificationsUnread(email);
   const allowedTabs = React.useMemo(() => allowedAccountingTabsForRoles(roles), [roles]);
   const allowedTabSet = React.useMemo(() => new Set<string>(allowedTabs), [allowedTabs]);
   const visibleNavItems = React.useMemo(
@@ -161,11 +164,35 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
                   )}
                 />
                 {item.label}
-                {item.id === 'notifications' && lockState.locked
-                  ? <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
-                  : activeTab === item.id && (
-                    <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70" />
-                  )}
+                {item.id === 'notifications' && unreadNotifications > 0 && activeTab !== 'notifications'
+                  ? (
+                    <span className="relative ml-auto inline-flex">
+                      <span className="absolute inset-0 -m-0.5 animate-ping rounded-full bg-rose-500/60" />
+                      <span className="absolute inset-0 animate-pulse rounded-full bg-rose-500/30 blur-[2px]" />
+                      <motion.span
+                        initial={{ opacity: 0, scale: 0.4, y: -4 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        transition={{ type: 'spring', stiffness: 420, damping: 14 }}
+                        key={unreadNotifications}
+                        className={cn(
+                          'relative inline-flex min-w-[1.35rem] items-center justify-center rounded-full px-1.5 py-0.5 text-[10.5px] font-bold tabular-nums text-white',
+                          'bg-gradient-to-br from-rose-500 via-red-500 to-orange-500',
+                          'shadow-[0_0_0_2px_rgba(255,255,255,0.9),0_4px_12px_-2px_rgba(244,63,94,0.6)]',
+                          'dark:shadow-[0_0_0_2px_rgba(13,17,23,0.95),0_4px_14px_-2px_rgba(244,63,94,0.7)]',
+                          'ring-1 ring-rose-300/70 dark:ring-rose-400/40',
+                        )}
+                        aria-label={`${unreadNotifications} unread notifications`}
+                      >
+                        {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                      </motion.span>
+                    </span>
+                  )
+                  : item.id === 'notifications' && unreadNotifications === 0 && lockState.locked
+                    ? <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                    : activeTab === item.id && (
+                      <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70" />
+                    )
+                }
               </button>
             ))}
             {allowedTabSet.has('s-wall') && (
