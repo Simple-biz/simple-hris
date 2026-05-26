@@ -81,3 +81,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: errMsg(err) }, { status: 500 });
   }
 }
+
+// PATCH /api/contractor/profile  — partial update of a single contractor's
+// invoicing currency. Kept separate from POST so admins can set the currency
+// without overwriting the contractor's own profile fields (and vice versa).
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json() as Record<string, unknown>;
+    const email = String(body.contractor_email ?? '').toLowerCase().trim();
+    if (!email) return NextResponse.json({ error: 'Missing contractor_email' }, { status: 400 });
+    const currency = body.currency === 'USD' ? 'USD' : 'PHP';
+
+    const supabase = getServiceClient();
+    const { error } = await supabase
+      .from('contractor_profiles')
+      .upsert({ contractor_email: email, currency }, { onConflict: 'contractor_email' });
+    if (error) throw error;
+    return NextResponse.json({ success: true, currency });
+  } catch (err) {
+    return NextResponse.json({ error: errMsg(err) }, { status: 500 });
+  }
+}

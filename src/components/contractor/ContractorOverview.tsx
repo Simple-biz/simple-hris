@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { FileText, DollarSign, ArrowRight, Loader2, Receipt, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatMoney, normalizeCurrency, sumByCurrency, formatGrouped } from '@/lib/contractor-currency';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -21,6 +22,7 @@ interface InvoiceRow {
   total: number;
   subtotal: number;
   tax_total: number;
+  currency: string | null;
   created_at: string;
 }
 
@@ -90,7 +92,7 @@ export default function ContractorOverview({ contractorEmail, onNavigate }: Cont
   }, [contractorEmail]);
 
   const invoiceCount = invoices.length;
-  const totalBilled = invoices.reduce((sum, inv) => sum + (inv.total ?? 0), 0);
+  const billedByCurrency = sumByCurrency(invoices);
 
   const firstName = contractorEmail.split('@')[0]
     .replace(/[._-]/g, ' ')
@@ -147,11 +149,7 @@ export default function ContractorOverview({ contractorEmail, onNavigate }: Cont
           <StatTile
             icon={DollarSign}
             label="Total billed"
-            value={
-              totalBilled === 0
-                ? '₱0.00'
-                : `₱${totalBilled.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-            }
+            value={formatGrouped(billedByCurrency)}
             hint="Sum of all invoice totals"
             iconBg="bg-emerald-100 dark:bg-emerald-950/50"
             iconColor="text-emerald-600 dark:text-emerald-400"
@@ -233,7 +231,7 @@ export default function ContractorOverview({ contractorEmail, onNavigate }: Cont
                       </p>
                     </div>
                     <span className="ml-4 shrink-0 text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-                      ₱{(inv.total ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {formatMoney(inv.total ?? 0, normalizeCurrency(inv.currency))}
                     </span>
                   </div>
                 ))}

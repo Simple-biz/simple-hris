@@ -29,6 +29,7 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { FEATURE_CATALOG, ROLE_TO_FEATURE_VIEW, type FeatureAccess, type FeatureViewKey } from '@/lib/rbac/feature-permissions';
 import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from '@/lib/hsl-bonus/schema';
+import { normalizeCurrency, type ContractorCurrency } from '@/lib/contractor-currency';
 
 // All known role keys — kept so legacy assignments in the DB (e.g. `viewer`,
 // `payroll_coordinator`, `payroll_manager`) still render correctly in the
@@ -167,6 +168,10 @@ export default function AdminRoles() {
   const [loading, setLoading] = useState(true);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [mutating, setMutating] = useState<RoleKey | null>(null);
+  // Invoicing currency for the selected contractor (PHP/USD). Only meaningful
+  // when the `contractor` role is granted.
+  const [contractorCurrency, setContractorCurrency] = useState<ContractorCurrency>('PHP');
+  const [currencyMutating, setCurrencyMutating] = useState(false);
   const [page, setPage] = useState(1);
   const [viewFilter, setViewFilter] = useState<'all' | 'with_roles'>('all');
   const [departments, setDepartments] = useState<string[]>([]);
@@ -321,10 +326,15 @@ export default function AdminRoles() {
           return out;
         })
         .catch(() => ({} as Partial<Record<FeatureViewKey, Record<string, FeatureAccess>>>)),
-    ]).then(([rs, perms]) => {
+      fetch(`/api/contractor/profile?email=${encodeURIComponent(email)}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j: { profile?: { currency?: string | null } | null }) => normalizeCurrency(j.profile?.currency))
+        .catch(() => 'PHP' as ContractorCurrency),
+    ]).then(([rs, perms, currency]) => {
       if (cancelled) return;
       setRoles(rs);
       setFeaturePerms(perms);
+      setContractorCurrency(currency);
     }).finally(() => {
       if (!cancelled) {
         setRolesLoading(false);
@@ -618,6 +628,37 @@ export default function AdminRoles() {
       toast.error(e instanceof Error ? e.message : 'Failed');
     } finally {
       setMutating(null);
+    }
+  }
+
+  async function setCurrency(currency: ContractorCurrency) {
+    if (currency === contractorCurrency) return;
+    const email = employeeIdentityEmail(selected);
+    if (!email) {
+      toast.error('This person has no email on file — add a work or personal email first.');
+      return;
+    }
+    const prev = contractorCurrency;
+    setContractorCurrency(currency); // optimistic
+    setCurrencyMutating(true);
+    try {
+      const res = await fetch('/api/contractor/profile', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ contractor_email: email, currency }),
+      });
+      const json = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || !json.success) {
+        setContractorCurrency(prev);
+        toast.error(json.error || 'Failed to update currency');
+        return;
+      }
+      toast.success(`Invoices set to ${currency}`);
+    } catch (e) {
+      setContractorCurrency(prev);
+      toast.error(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setCurrencyMutating(false);
     }
   }
 
@@ -1236,6 +1277,39 @@ export default function AdminRoles() {
                                 />
                               );
                             })()}
+
+                            {/* Invoicing currency — only for the contractor
+                                role. Presets every new invoice this person
+                                creates to the chosen currency. */}
+                            {key === 'contractor' && active && (
+                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-200/80 bg-zinc-50/70 px-3 py-2 dark:border-zinc-700/70 dark:bg-zinc-800/40">
+                                <div className="min-w-0">
+                                  <p className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-200">Invoicing currency</p>
+                                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Presets every new invoice this contractor creates.</p>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
+                                  {(['PHP', 'USD'] as const).map((cur) => (
+                                    <button
+                                      key={cur}
+                                      type="button"
+                                      onClick={() => void setCurrency(cur)}
+                                      disabled={currencyMutating}
+                                      className={cn(
+                                        'inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                                        contractorCurrency === cur
+                                          ? 'bg-blue-600 text-white shadow-sm'
+                                          : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800',
+                                      )}
+                                    >
+                                      {currencyMutating && contractorCurrency === cur && (
+                                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                                      )}
+                                      {cur}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </li>
                         );
                       })}

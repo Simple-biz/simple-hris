@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { cn } from '@/lib/utils';
+import { formatMoney, normalizeCurrency, sumByCurrency } from '@/lib/contractor-currency';
 import { KPI_BONUS_ID, DEPARTMENTS, FORMULA_DEPT_KEYS, MANAGER_BONUS_DEPT_KEYS, ACCOUNTING_WEEKDAY_METRICS, calcLeadGenBonus, isDevsDelivery, isDevsChecking, isJeromeRosero, isTeal, calculateDepartmentBonus } from '@/lib/payroll/department-bonus';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -827,6 +828,7 @@ export default function PayrollWizard({
     from_entity_name: string;
     from_name: string;
     total: number;
+    currency: string | null;
     status: string;
   }[]>([]);
   const [contractorInvoicesLoading, setContractorInvoicesLoading] = useState(false);
@@ -7907,7 +7909,7 @@ export default function PayrollWizard({
         const pendingInvoices  = contractorInvoices.filter((i) => i.status === 'pending');
         const approvedInvoices = contractorInvoices.filter((i) => i.status === 'approved');
         const rejectedInvoices = contractorInvoices.filter((i) => i.status === 'rejected');
-        const approvedTotal = approvedInvoices.reduce((s, i) => s + (i.total ?? 0), 0);
+        const approvedByCurrency = sumByCurrency(approvedInvoices);
 
         const monthLabelContractors = pabMonthRange
           ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
@@ -7927,7 +7929,7 @@ export default function PayrollWizard({
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
                 <span className="rounded-full border border-emerald-300/70 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
-                  {approvedInvoices.length} approved · {formatPHP(approvedTotal)}
+                  {approvedInvoices.length} approved · {(['PHP', 'USD'] as const).filter((c) => approvedByCurrency[c] !== 0).map((c) => formatMoney(approvedByCurrency[c], c)).join(' + ') || formatMoney(0, 'PHP')}
                 </span>
                 {pendingInvoices.length > 0 && (
                   <span className="rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-0.5 font-medium text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
@@ -7974,7 +7976,10 @@ export default function PayrollWizard({
                         </td>
                         <td className="px-3 py-3 font-mono text-xs text-zinc-700 dark:text-zinc-300">{inv.invoice_number}</td>
                         <td className="px-3 py-3 text-xs text-zinc-600 dark:text-zinc-400">{inv.invoice_date || '—'}</td>
-                        <td className="px-3 py-3 text-right font-medium text-zinc-900 dark:text-white">{formatPHP(inv.total ?? 0)}</td>
+                        <td className="px-3 py-3 text-right font-medium text-zinc-900 dark:text-white">
+                          <span>{formatMoney(inv.total ?? 0, normalizeCurrency(inv.currency))}</span>
+                          <span className="ml-1.5 rounded border border-zinc-300 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">{normalizeCurrency(inv.currency)}</span>
+                        </td>
                         <td className="px-3 py-3 text-center">
                           <span className={cn(
                             'rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
@@ -8029,15 +8034,17 @@ export default function PayrollWizard({
                   </tbody>
                   {approvedInvoices.length > 0 && (
                     <tfoot className="border-t-2 border-emerald-200/60 bg-emerald-50/40 dark:border-emerald-800/40 dark:bg-emerald-950/30">
-                      <tr>
-                        <td colSpan={3} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
-                          Approved total ({approvedInvoices.length} invoice{approvedInvoices.length !== 1 ? 's' : ''})
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                          {formatPHP(approvedTotal)}
-                        </td>
-                        <td colSpan={2} />
-                      </tr>
+                      {(['PHP', 'USD'] as const).filter((c) => approvedByCurrency[c] !== 0).map((c) => (
+                        <tr key={c}>
+                          <td colSpan={3} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                            Approved total ({c})
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                            {formatMoney(approvedByCurrency[c], c)}
+                          </td>
+                          <td colSpan={2} />
+                        </tr>
+                      ))}
                     </tfoot>
                   )}
                 </table>
@@ -8113,9 +8120,14 @@ export default function PayrollWizard({
             (s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0),
             0,
           );
-        const stepContractorsPHP = contractorInvoices
-          .filter((i) => i.status === 'approved')
-          .reduce((s, i) => s + (i.total ?? 0), 0);
+        // Contractor invoices are kept in their own currency — USD invoices are
+        // NOT converted into the peso outflow. Only PHP invoices feed the peso
+        // total; USD is surfaced separately.
+        const approvedContractorsByCurrency = sumByCurrency(
+          contractorInvoices.filter((i) => i.status === 'approved'),
+        );
+        const stepContractorsPHP = approvedContractorsByCurrency.PHP;
+        const stepContractorsUSD = approvedContractorsByCurrency.USD;
         const totalWeeklyOutflow =
           grandFinal +
           stepOrphanageWagesPHP +
@@ -8207,8 +8219,14 @@ export default function PayrollWizard({
                     </div>
                     {stepContractorsPHP > 0 && (
                       <div className="flex items-center justify-between gap-2">
-                        <span>Contractor invoices ({contractorInvoices.filter(i => i.status === 'approved').length})</span>
-                        <span className="font-mono tabular-nums">{formatPHP(stepContractorsPHP)}</span>
+                        <span>Contractor invoices (PHP)</span>
+                        <span className="font-mono tabular-nums">{formatMoney(stepContractorsPHP, 'PHP')}</span>
+                      </div>
+                    )}
+                    {stepContractorsUSD > 0 && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Contractor invoices (USD, paid separately)</span>
+                        <span className="font-mono tabular-nums">{formatMoney(stepContractorsUSD, 'USD')}</span>
                       </div>
                     )}
                   </div>
@@ -10021,7 +10039,7 @@ export default function PayrollWizard({
                                 {inv.from_entity_name || inv.from_name || inv.contractor_email}
                               </div>
                               <div className="truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">
-                                {inv.invoice_number} · {formatPHP(inv.total ?? 0)}
+                                {inv.invoice_number} · {formatMoney(inv.total ?? 0, normalizeCurrency(inv.currency))} {normalizeCurrency(inv.currency)}
                               </div>
                             </div>
                           </div>

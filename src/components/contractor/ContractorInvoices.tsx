@@ -5,7 +5,6 @@ import { motion, AnimatePresence, type Variants } from 'motion/react';
 import { toast } from 'sonner';
 import {
   Plus,
-  Trash2,
   Eye,
   Loader2,
   Upload,
@@ -17,6 +16,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatMoney, normalizeCurrency, type ContractorCurrency } from '@/lib/contractor-currency';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -58,6 +58,7 @@ interface InvoiceForm {
   invoiceNumber: string;
   invoiceDate: string;
   dueDate: string;
+  currency: ContractorCurrency;
   lineItems: LineItem[];
   notes: string;
   logoUrl: string | null;
@@ -79,6 +80,7 @@ interface SavedInvoice {
   to_city_state_zip: string;
   to_country: string;
   logo_data_url: string | null;
+  currency: string | null;
   line_items: LineItem[];
   notes: string;
   subtotal: number;
@@ -91,6 +93,26 @@ interface SavedInvoice {
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+// Compress an entity name to a slug by keeping every other letter:
+// "Kane LTD" -> "kaneltd" -> "knld" (indices 0,2,4,6).
+function entitySlug(name: string): string {
+  const letters = (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  let out = '';
+  for (let i = 0; i < letters.length; i += 2) out += letters[i];
+  return out;
+}
+
+// "2026-05-26" -> "5-26-26" (M-D-YY, no leading zeros).
+function dateSlug(iso: string): string {
+  const [y, m, d] = (iso || today()).split('-');
+  return `${parseInt(m, 10)}-${parseInt(d, 10)}-${(y ?? '').slice(2)}`;
+}
+
+// e.g. "knld-5-26-26-1" — entity slug, date issued, then 1-based sequence.
+function buildInvoiceNumber(entityName: string, issuedIso: string, seq: number): string {
+  return `${entitySlug(entityName) || 'inv'}-${dateSlug(issuedIso)}-${seq}`;
 }
 
 function uid(): string {
@@ -114,6 +136,7 @@ function defaultForm(): InvoiceForm {
     invoiceNumber: 'INV-1',
     invoiceDate: today(),
     dueDate: '',
+    currency: 'PHP',
     lineItems: [emptyItem()],
     notes: '',
 
@@ -136,10 +159,6 @@ function calcTotals(items: LineItem[]) {
     taxTotal += tax;
   }
   return { subtotal, taxTotal, total: subtotal + taxTotal };
-}
-
-function formatPHP(n: number) {
-  return `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -266,6 +285,7 @@ function InvoiceViewDialog({
 }) {
   if (!invoice) return null;
   const items: LineItem[] = Array.isArray(invoice.line_items) ? invoice.line_items : [];
+  const cur = normalizeCurrency(invoice.currency);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -444,10 +464,10 @@ function InvoiceViewDialog({
                           )}
                         </td>
                         <td className="inv-mono px-4 py-4 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{item.qty}</td>
-                        <td className="inv-mono px-4 py-4 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{formatPHP(item.rate)}</td>
+                        <td className="inv-mono px-4 py-4 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{formatMoney(item.rate, cur)}</td>
                         <td className="inv-mono px-4 py-4 text-right tabular-nums text-zinc-500 dark:text-zinc-500">{item.taxPct}%</td>
                         <td className="inv-mono px-5 py-4 text-right tabular-nums font-bold text-zinc-900 dark:text-zinc-50">
-                          {formatPHP(item.qty * item.rate)}
+                          {formatMoney(item.qty * item.rate, cur)}
                         </td>
                       </tr>
                     ))}
@@ -461,13 +481,13 @@ function InvoiceViewDialog({
                   <div className="flex items-center justify-between text-[14px] text-zinc-500 dark:text-zinc-400">
                     <span>Subtotal</span>
                     <span className="inv-mono tabular-nums font-medium text-zinc-700 dark:text-zinc-300">
-                      {formatPHP(invoice.subtotal)}
+                      {formatMoney(invoice.subtotal, cur)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[14px] text-zinc-500 dark:text-zinc-400">
                     <span>Tax</span>
                     <span className="inv-mono tabular-nums font-medium text-zinc-700 dark:text-zinc-300">
-                      {formatPHP(invoice.tax_total)}
+                      {formatMoney(invoice.tax_total, cur)}
                     </span>
                   </div>
                   <div
@@ -476,7 +496,7 @@ function InvoiceViewDialog({
                   >
                     <span className="inv-mono text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-400">Total Due</span>
                     <span className="inv-mono tabular-nums text-lg font-bold" style={{ color: INV_ACCENT_DARK }}>
-                      {formatPHP(invoice.total)}
+                      {formatMoney(invoice.total, cur)}
                     </span>
                   </div>
                 </div>
@@ -522,6 +542,11 @@ function NewInvoiceForm({
 }) {
   const [form, setForm] = useState<InvoiceForm>(defaultForm);
   const [saving, setSaving] = useState(false);
+  // 1-based sequence for this contractor; feeds the invoice-number suffix.
+  const [invoiceSeq, setInvoiceSeq] = useState(1);
+  // Once the contractor hand-edits the invoice number we stop auto-deriving it
+  // from the entity name + date.
+  const [invoiceNoEdited, setInvoiceNoEdited] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   // Prefill "From" fields from profile and auto-generate invoice number
@@ -531,17 +556,17 @@ function NewInvoiceForm({
       fetch(`/api/contractor/profile?email=${encodeURIComponent(contractorEmail)}`, { cache: 'no-store' }).then((r) => r.json()),
       fetch(`/api/contractor/invoices?email=${encodeURIComponent(contractorEmail)}`, { cache: 'no-store' }).then((r) => r.json()),
     ])
-      .then(([profileJson, invoicesJson]: [{ profile?: (Record<string, string | null> & { logo_data_url?: string | null }) | null }, { invoices?: unknown[] }]) => {
+      .then(([profileJson, invoicesJson]: [{ profile?: (Record<string, string | null> & { logo_data_url?: string | null; currency?: string | null }) | null }, { invoices?: unknown[] }]) => {
         const p = profileJson.profile;
         const count = (invoicesJson.invoices ?? []).length;
-        // C-<INITIALS>-NNN — derived from email local part
-        const localPart = contractorEmail.split('@')[0];
-        const initials = localPart.split(/[._-]/).map((w) => w[0] ?? '').join('').toUpperCase().slice(0, 3);
-        const nextNum = String(count + 1).padStart(3, '0');
-        const invoiceNumber = `C-${initials}-${nextNum}`;
+        // {entity-slug}-{M-D-YY}-{seq}, e.g. "knld-5-26-26-1". Entity name
+        // drives the slug; falls back to the contractor's name, then email.
+        const entityName = p?.from_entity_name?.trim() || p?.from_name?.trim() || contractorEmail.split('@')[0];
+        setInvoiceSeq(count + 1);
+        setInvoiceNoEdited(false);
         setForm((prev) => ({
           ...prev,
-          invoiceNumber,
+          invoiceNumber: buildInvoiceNumber(entityName, prev.invoiceDate || today(), count + 1),
           ...(p ? {
             fromEntityName:   p.from_entity_name?.trim()   || prev.fromEntityName,
             fromName:         p.from_name?.trim()           || prev.fromName,
@@ -549,6 +574,7 @@ function NewInvoiceForm({
             fromCityStateZip: p.from_city_state_zip?.trim() || prev.fromCityStateZip,
             fromCountry:      p.from_country?.trim()        || prev.fromCountry,
             logoUrl:          p.logo_data_url?.trim()       || prev.logoUrl,
+            currency:         normalizeCurrency(p.currency),
           } : {}),
         }));
       })
@@ -557,6 +583,34 @@ function NewInvoiceForm({
 
   const set = useCallback(<K extends keyof InvoiceForm>(key: K, value: InvoiceForm[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const effectiveEntityName = useCallback(
+    (f: InvoiceForm) => f.fromEntityName?.trim() || f.fromName?.trim() || contractorEmail.split('@')[0],
+    [contractorEmail],
+  );
+
+  // Keep the invoice number's date + slug in sync with the invoice date and
+  // entity name — unless the contractor has typed their own number.
+  const setInvoiceDate = useCallback((v: string) => {
+    setForm((prev) => ({
+      ...prev,
+      invoiceDate: v,
+      invoiceNumber: invoiceNoEdited ? prev.invoiceNumber : buildInvoiceNumber(effectiveEntityName(prev), v, invoiceSeq),
+    }));
+  }, [invoiceNoEdited, invoiceSeq, effectiveEntityName]);
+
+  const setEntityName = useCallback((v: string) => {
+    setForm((prev) => {
+      const next = { ...prev, fromEntityName: v };
+      if (!invoiceNoEdited) next.invoiceNumber = buildInvoiceNumber(effectiveEntityName(next), prev.invoiceDate || today(), invoiceSeq);
+      return next;
+    });
+  }, [invoiceNoEdited, invoiceSeq, effectiveEntityName]);
+
+  const setInvoiceNumber = useCallback((v: string) => {
+    setInvoiceNoEdited(true);
+    setForm((prev) => ({ ...prev, invoiceNumber: v }));
   }, []);
 
   const setItem = useCallback((id: string, patch: Partial<LineItem>) => {
@@ -625,7 +679,11 @@ function NewInvoiceForm({
   };
 
   const handleClear = () => {
-    setForm(defaultForm());
+    setInvoiceNoEdited(false);
+    setForm(() => {
+      const base = defaultForm();
+      return { ...base, invoiceNumber: buildInvoiceNumber('', base.invoiceDate, invoiceSeq) };
+    });
   };
 
   return (
@@ -690,7 +748,7 @@ function NewInvoiceForm({
           <div className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">From</div>
           <div>
             <FieldLabel>Entity Name</FieldLabel>
-            <FormInput value={form.fromEntityName} onChange={(v) => set('fromEntityName', v)} placeholder="Your Entity / Company" />
+            <FormInput value={form.fromEntityName} onChange={setEntityName} placeholder="Your Entity / Company" />
           </div>
           <div>
             <FieldLabel>Your Name</FieldLabel>
@@ -750,12 +808,19 @@ function NewInvoiceForm({
         <div className="space-y-3">
           <div className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">Invoice Details</div>
           <div>
+            <FieldLabel>Currency</FieldLabel>
+            <div className="flex h-8 items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 dark:border-zinc-700 dark:bg-zinc-800/50">
+              <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{form.currency}</span>
+              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">set by admin</span>
+            </div>
+          </div>
+          <div>
             <FieldLabel>Invoice #</FieldLabel>
-            <FormInput value={form.invoiceNumber} onChange={(v) => set('invoiceNumber', v)} placeholder="INV-1" />
+            <FormInput value={form.invoiceNumber} onChange={setInvoiceNumber} placeholder="INV-1" />
           </div>
           <div>
             <FieldLabel>Invoice Date</FieldLabel>
-            <FormInput type="date" value={form.invoiceDate} onChange={(v) => set('invoiceDate', v)} />
+            <FormInput type="date" value={form.invoiceDate} onChange={setInvoiceDate} />
           </div>
           <div>
             <FieldLabel>Due Date</FieldLabel>
@@ -840,7 +905,7 @@ function NewInvoiceForm({
                       />
                     </div>
                     <div className="text-right text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                      {formatPHP(amount)}
+                      {formatMoney(amount, form.currency)}
                     </div>
                     <div className="flex justify-end">
                       {form.lineItems.length > 1 && (
@@ -879,15 +944,15 @@ function NewInvoiceForm({
         <div className="w-52 space-y-1.5 text-sm">
           <div className="flex items-center justify-between text-zinc-600 dark:text-zinc-400">
             <span>Sub Total</span>
-            <span className="font-medium text-zinc-800 dark:text-zinc-200">{formatPHP(subtotal)}</span>
+            <span className="font-medium text-zinc-800 dark:text-zinc-200">{formatMoney(subtotal, form.currency)}</span>
           </div>
           <div className="flex items-center justify-between text-zinc-600 dark:text-zinc-400">
             <span>Tax</span>
-            <span className="font-medium text-zinc-800 dark:text-zinc-200">{formatPHP(taxTotal)}</span>
+            <span className="font-medium text-zinc-800 dark:text-zinc-200">{formatMoney(taxTotal, form.currency)}</span>
           </div>
           <div className="flex items-center justify-between rounded-lg bg-zinc-900 px-3 py-2 text-white dark:bg-blue-700">
             <span className="font-bold uppercase tracking-wide">TOTAL</span>
-            <span className="font-bold">{formatPHP(total)}</span>
+            <span className="font-bold">{formatMoney(total, form.currency)}</span>
           </div>
         </div>
       </div>
@@ -951,7 +1016,6 @@ function InvoiceHistory({ contractorEmail, refreshKey }: { contractorEmail: stri
   const [invoices, setInvoices] = useState<SavedInvoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewInvoice, setViewInvoice] = useState<SavedInvoice | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchInvoices = useCallback(() => {
     if (!contractorEmail) return;
@@ -966,22 +1030,6 @@ function InvoiceHistory({ contractorEmail, refreshKey }: { contractorEmail: stri
   useEffect(() => {
     fetchInvoices();
   }, [fetchInvoices, refreshKey]);
-
-  const handleDelete = async (id: string, invoiceNumber: string) => {
-    if (!confirm(`Delete invoice ${invoiceNumber}? This cannot be undone.`)) return;
-    setDeletingId(id);
-    try {
-      const res = await fetch(`/api/contractor/invoices?id=${id}`, { method: 'DELETE' });
-      const json = await res.json();
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to delete');
-      toast.success('Invoice deleted.');
-      fetchInvoices();
-    } catch (err) {
-      toast.error('Failed to delete', { description: String(err) });
-    } finally {
-      setDeletingId(null);
-    }
-  };
 
   if (loading) {
     return (
@@ -1033,34 +1081,18 @@ function InvoiceHistory({ contractorEmail, refreshKey }: { contractorEmail: stri
                 <TableCell className="text-zinc-600 dark:text-zinc-400">{inv.due_date || '—'}</TableCell>
                 <TableCell className="text-zinc-600 dark:text-zinc-400">{inv.to_company || '—'}</TableCell>
                 <TableCell className="text-right font-semibold text-blue-600 dark:text-blue-400">
-                  {formatPHP(inv.total)}
+                  {formatMoney(inv.total, normalizeCurrency(inv.currency))}
                 </TableCell>
                 <TableCell>
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => setViewInvoice(inv)}
-                      className="h-7 w-7 text-zinc-500 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-950/30 dark:hover:text-blue-400"
-                      aria-label="View invoice"
-                    >
-                      <Eye className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      disabled={deletingId === inv.id}
-                      onClick={() => handleDelete(inv.id, inv.invoice_number)}
-                      className="h-7 w-7 text-zinc-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30 dark:hover:text-red-400"
-                      aria-label="Delete invoice"
-                    >
-                      {deletingId === inv.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setViewInvoice(inv)}
+                    className="h-7 w-7 text-zinc-500 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-950/30 dark:hover:text-blue-400"
+                    aria-label="View invoice"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}

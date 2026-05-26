@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
         to_city_state_zip: body.toCityStateZip ?? '',
         to_country:        body.toCountry ?? 'USA',
         logo_data_url:     body.logoUrl ?? null,
+        currency:          body.currency === 'USD' ? 'USD' : 'PHP',
         line_items:        body.lineItems ?? [],
         notes:             body.notes ?? '',
         subtotal:          body.subtotal ?? 0,
@@ -75,15 +76,10 @@ export async function POST(req: NextRequest) {
 }
 
 // DELETE /api/contractor/invoices?id=...
-export async function DELETE(req: NextRequest) {
-  const id = req.nextUrl.searchParams.get('id');
-  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
-  try {
-    const supabase = getServiceClient();
-    const { error } = await supabase.from('contractor_invoices').delete().eq('id', id);
-    if (error) throw error;
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    return NextResponse.json({ error: errMsg(err) }, { status: 500 });
-  }
+// Invoices are sent to Accounting on creation and are not deletable afterwards.
+export async function DELETE() {
+  return NextResponse.json(
+    { error: 'Invoices sent to Accounting cannot be deleted.' },
+    { status: 403 },
+  );
 }
