@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
           from_address:            body.from_address             ?? null,
           from_city_state_zip:     body.from_city_state_zip      ?? null,
           from_country:            body.from_country             ?? null,
+          currency:                body.currency === 'USD' ? 'USD' : 'PHP',
           // Payment gateway
           preferred_processor:     body.preferred_processor      ?? null,
           preferred_bank_slot:     body.preferred_bank_slot      ?? 'primary',

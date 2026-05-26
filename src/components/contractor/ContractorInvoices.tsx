@@ -811,7 +811,7 @@ function NewInvoiceForm({
             <FieldLabel>Currency</FieldLabel>
             <div className="flex h-8 items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 dark:border-zinc-700 dark:bg-zinc-800/50">
               <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{form.currency}</span>
-              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">set by admin</span>
+              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">set in Profile</span>
             </div>
           </div>
           <div>

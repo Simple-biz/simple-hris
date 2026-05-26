@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
+import { normalizeCurrency, CONTRACTOR_CURRENCIES, type ContractorCurrency } from '@/lib/contractor-currency';
 import {
   PROCESSOR_OPTIONS,
   isProcessorId,
@@ -29,6 +30,7 @@ interface ContractorProfileRow {
   from_address?: string | null;
   from_city_state_zip?: string | null;
   from_country?: string | null;
+  currency?: string | null;
   logo_data_url?: string | null;
   preferred_processor?: string | null;
   preferred_bank_slot?: string | null;
@@ -125,6 +127,7 @@ export default function ContractorProfile({
   const [fromAddress, setFromAddress] = useState('');
   const [fromCityStateZip, setFromCityStateZip] = useState('');
   const [fromCountry, setFromCountry] = useState('Philippines');
+  const [currency, setCurrency] = useState<ContractorCurrency>('PHP');
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | ''>('');
@@ -147,6 +150,7 @@ export default function ContractorProfile({
         setFromAddress(row.from_address?.trim() || '');
         setFromCityStateZip(row.from_city_state_zip?.trim() || '');
         setFromCountry(row.from_country?.trim() || 'Philippines');
+        setCurrency(normalizeCurrency(row.currency));
         if (row.preferred_processor && isProcessorId(row.preferred_processor)) {
           setPreferredProcessor(row.preferred_processor);
         }
@@ -205,6 +209,7 @@ export default function ContractorProfile({
           from_address:            fromAddress.trim() || null,
           from_city_state_zip:     fromCityStateZip.trim() || null,
           from_country:            fromCountry.trim() || null,
+          currency:                currency,
           preferred_processor:     preferredProcessor || null,
           preferred_bank_slot:     payout.preferredBankSlot || null,
           hurupay_email:           payout.hurupayEmail || null,
@@ -409,6 +414,27 @@ export default function ContractorProfile({
                           />
                         </FieldGroup>
                       </div>
+
+                      <FieldGroup label="Invoice Currency">
+                        <div className="flex w-fit items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-700 dark:bg-zinc-800/50">
+                          {CONTRACTOR_CURRENCIES.map((cur) => (
+                            <button
+                              key={cur}
+                              type="button"
+                              onClick={() => setCurrency(cur)}
+                              className={cn(
+                                'rounded-md px-4 py-1.5 text-sm font-semibold transition-colors',
+                                currency === cur
+                                  ? 'bg-blue-600 text-white shadow-sm'
+                                  : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800',
+                              )}
+                            >
+                              {cur}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500">Every new invoice you create will use this currency.</p>
+                      </FieldGroup>
                     </div>
                   </SectionShell>
                 )}
