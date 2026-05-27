@@ -17,9 +17,8 @@ import {
   ChevronRight,
   UserCircle,
   Lock,
-  Megaphone,
   Newspaper,
-  ScrollText,
+  Users,
   HeartHandshake,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -55,8 +54,7 @@ const navItems = [
   { id: 'leaves', label: 'Leave', icon: CalendarDays },
   // { id: 'disputes', label: 'My Disputes', icon: FileText }, // hidden — disputes now go through Orphanage Manager → Accounting flow (no employee submission)
   { id: 'mesa', label: 'MESA', icon: HeartHandshake },
-  { id: 'policies', label: 'Policies', icon: ScrollText },
-  { id: 'announcements', label: 'Announcements', icon: Megaphone },
+  { id: 'team', label: 'My Team', icon: Users },
   { id: 'notifications', label: 'Notifications', icon: Bell },
 ];
 

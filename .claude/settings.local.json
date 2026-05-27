@@ -137,7 +137,10 @@
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -File)",
       "Bash(rm -f /tmp/check_projects.mjs)",
       "PowerShell(cmd /c \"type c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\tsconfig.json\")",
-      "PowerShell(cmd /c \"dir c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\components\\\\ui\")"
+      "PowerShell(cmd /c \"dir c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\components\\\\ui\")",
+      "Bash(find C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris *)",
+      "Bash(sed -n '/^export {/,/}/p' components/ui/dialog.tsx)",
+      "Bash(sed -n '/^export {/,/}/p' components/ui/select.tsx)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

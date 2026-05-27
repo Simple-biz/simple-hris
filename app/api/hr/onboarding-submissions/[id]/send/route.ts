@@ -3,7 +3,7 @@ import {
   deniedResponse,
   requireElevatedSession,
 } from "@/lib/auth/authorize-email";
-import { getAppSetting } from "@/lib/supabase/app-settings";
+import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
 import {
   getHrOnboardingSubmissionById,
   rotateHrOnboardingToken,
@@ -13,7 +13,13 @@ import { insertAuditLog } from "@/lib/supabase/audit-log";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** Slug in the Admin -> Webhooks config (webhooks.config). */
+export const ONBOARDING_WEBHOOK_SLUG = "onboarding_send";
+/** Legacy bare-URL app_settings key, kept as a fallback for un-migrated envs. */
 export const ONBOARDING_WEBHOOK_KEY = "hr.onboarding_webhook_url";
+/** Hardcoded production default, used last (see resolveWebhookUrl order). */
+const ONBOARDING_WEBHOOK_DEFAULT =
+  "https://simpledotbiz.app.n8n.cloud/webhook/7cb7afed-ef97-4cb9-92d5-31938695df18";
 
 /**
  * Canonical W-8BEN form, hosted by the IRS. Linking directly means recipients
@@ -29,9 +35,10 @@ const W8BEN_URL = "https://www.irs.gov/pub/irs-pdf/fw8ben.pdf";
  *
  * Fires the configured webhook (n8n, Zapier, etc.) with the onboarding-link
  * details. The webhook is responsible for actually delivering the email, so
- * HR doesn't depend on the browser/OS mail client. URL is stored in
- * `app_settings[hr.onboarding_webhook_url]` so it can be rotated without a
- * redeploy.
+ * HR doesn't depend on the browser/OS mail client. The URL is resolved from
+ * the Admin -> Webhooks config (slug `onboarding_send`), falling back to the
+ * legacy `app_settings[hr.onboarding_webhook_url]` key, so it can be rotated
+ * without a redeploy.
  */
 export async function POST(
   req: Request,
@@ -42,12 +49,15 @@ export async function POST(
 
   const { id } = await context.params;
 
-  const webhookUrl = (await getAppSetting(ONBOARDING_WEBHOOK_KEY))?.trim();
+  const webhookUrl = await resolveWebhookUrl(ONBOARDING_WEBHOOK_SLUG, {
+    legacyKey: ONBOARDING_WEBHOOK_KEY,
+    defaultUrl: ONBOARDING_WEBHOOK_DEFAULT,
+  });
   if (!webhookUrl) {
     return NextResponse.json(
       {
         error:
-          "No onboarding webhook configured. Set `hr.onboarding_webhook_url` in app_settings to the n8n endpoint that should receive the payload.",
+          "No onboarding webhook configured. Set the `onboarding_send` webhook URL in Admin -> Webhooks (or the legacy `hr.onboarding_webhook_url` app_settings key).",
       },
       { status: 400 },
     );

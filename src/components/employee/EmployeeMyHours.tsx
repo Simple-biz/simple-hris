@@ -25,6 +25,7 @@ import {
   effectiveUsdToPhpRateFromStored,
 } from '@/lib/fx/usd-php';
 import { phpHourlyPayFromSeconds } from '@/lib/payroll/money-php';
+import type { MemberMonthlyPay } from '@/lib/payroll/member-monthly-pay';
 import {
   buildCalendarMonthWeeksIncludingWeekends,
   columnsAreAllCanonical,
@@ -219,6 +220,13 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
   const [ratesLoading, setRatesLoading] = useState(true);
+  // Authoritative pay numbers from the SAME server calculator the manager
+  // dashboard uses (member-monthly-pay.ts) — guarantees the pay summary matches
+  // the manager view exactly: all 7 days counted, 40h/week regular cap, OT past
+  // 40h, PAB/Tech bonuses + MESA, per-day rate proration.
+  const [memberPay, setMemberPay] = useState<MemberMonthlyPay | null>(null);
+  const [memberPayLoading, setMemberPayLoading] = useState(true);
+  const [memberPayError, setMemberPayError] = useState<string | null>(null);
 
   const initPab = getCurrentPabMonth();
   const [viewYear, setViewYear] = useState(initPab.year);
@@ -386,6 +394,31 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     void fetchRatesAndFx();
   }, [fetchRatesAndFx]);
 
+  /** Pull this month's pay from the manager dashboard's calculator so the
+   *  numbers are identical to what a manager would see for this employee. */
+  const fetchMemberPay = useCallback(async () => {
+    setMemberPayLoading(true);
+    setMemberPayError(null);
+    try {
+      const res = await fetch(
+        `/api/manager/member-monthly-pay?email=${encodeURIComponent(email)}&year=${viewYear}&month=${viewMonth}&_=${Date.now()}`,
+        { cache: 'no-store' },
+      );
+      const json = (await res.json()) as { data?: MemberMonthlyPay | null; error?: string | null };
+      if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      setMemberPay(json.data ?? null);
+    } catch (e) {
+      setMemberPayError(e instanceof Error ? e.message : 'Failed to load pay summary');
+      setMemberPay(null);
+    } finally {
+      setMemberPayLoading(false);
+    }
+  }, [email, viewYear, viewMonth]);
+
+  useEffect(() => {
+    void fetchMemberPay();
+  }, [fetchMemberPay]);
+
   const monthStart = useMemo(() => new Date(viewYear, viewMonth, 1), [viewYear, viewMonth]);
   const monthEnd = useMemo(() => new Date(viewYear, viewMonth + 1, 0), [viewYear, viewMonth]);
 
@@ -450,11 +483,41 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([fetchMerged(), fetchDisputes(), fetchRatesAndFx(), fetchOrphanageVisits()]);
+      await Promise.all([fetchMerged(), fetchDisputes(), fetchRatesAndFx(), fetchOrphanageVisits(), fetchMemberPay()]);
     } finally {
       setRefreshing(false);
     }
-  }, [fetchMerged, fetchDisputes, fetchRatesAndFx, fetchOrphanageVisits]);
+  }, [fetchMerged, fetchDisputes, fetchRatesAndFx, fetchOrphanageVisits, fetchMemberPay]);
+
+  /**
+   * Pay summary view-model, sourced entirely from the manager calculator so the
+   * employee sees the same figures Lenny/the manager would. `hoursPay` =
+   * regular + OT (pre-bonus); `takeHome` already nets bonuses and the MESA
+   * deduction (grandTotalPayPHP).
+   */
+  const payView = useMemo(() => {
+    const t = memberPay?.totals;
+    if (!t) return null;
+    const hoursPay =
+      t.regularPayPHP != null && t.otPayPHP != null
+        ? Math.round((t.regularPayPHP + t.otPayPHP) * 100) / 100
+        : null;
+    return {
+      totalSec: t.totalSec,
+      regularSec: t.regularSec,
+      otSec: t.otSec,
+      regularPay: t.regularPayPHP,
+      otPay: t.otPayPHP,
+      hoursPay,
+      pab: t.pabBonusPHP,
+      tech: t.techBonusPHP,
+      mesa: t.mesaDeductionPHP,
+      takeHome: t.grandTotalPayPHP,
+      hasRate: memberPay?.hasRate ?? false,
+      otRate: memberPay?.otRate ?? null,
+      hasHours: t.totalSec > 0,
+    };
+  }, [memberPay]);
 
   const goPrevMonth = useCallback(() => {
     setNavDirection(-1);
@@ -1224,21 +1287,25 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
           <CardContent className="flex flex-1 flex-col gap-4 overflow-hidden px-4 pb-5 pt-0 sm:px-5">
             <AnimatePresence mode="wait" initial={false} custom={navDirection}>
               <motion.div
-                key={loading || ratesLoading ? 'loading' : `${viewYear}-${viewMonth}`}
+                key={memberPayLoading ? 'loading' : `${viewYear}-${viewMonth}`}
                 custom={navDirection}
-                initial={loading || ratesLoading ? false : { opacity: 0, x: navDirection * 18 }}
+                initial={memberPayLoading ? false : { opacity: 0, x: navDirection * 18 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: navDirection * -18 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
                 className="flex flex-1 flex-col gap-4"
               >
-            {loading || ratesLoading ? (
+            {memberPayLoading ? (
               <div className="space-y-3 py-2">
                 <div className="h-10 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
                 <div className="h-16 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
                 <div className="h-16 animate-pulse rounded-lg bg-zinc-200 dark:bg-zinc-800" />
               </div>
-            ) : !monthPayEstimate.hasHours ? (
+            ) : memberPayError ? (
+              <p className="py-6 text-center text-xs text-rose-500 dark:text-rose-400">
+                {memberPayError}
+              </p>
+            ) : !payView || !payView.hasHours ? (
               <p className="py-6 text-center text-xs text-zinc-500 dark:text-zinc-500">
                 No Hubstaff hours in this month yet — pay will show once days are logged.
               </p>
@@ -1248,7 +1315,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                   <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-emerald-800/70 dark:text-emerald-400/80">
                     Estimated take-home
                   </p>
-                  {monthTakeHomePay != null ? (
+                  {payView.takeHome != null ? (
                     <HiddenValue
                       iconClass="h-4 w-4"
                       showLabel="Reveal monthly take-home"
@@ -1270,11 +1337,11 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                     >
                       <span className="block">
                         <span className="font-mono text-2xl font-bold tabular-nums tracking-tight text-emerald-800 dark:text-emerald-300">
-                          {formatPHP(monthTakeHomePay)}
+                          {formatPHP(payView.takeHome)}
                         </span>
                         <span className="ml-2 font-mono text-[11px] tabular-nums text-zinc-600 dark:text-zinc-400">
                           ≈{' '}
-                          {(monthTakeHomePay / usdToPhpRate).toLocaleString('en-US', {
+                          {(payView.takeHome / usdToPhpRate).toLocaleString('en-US', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}{' '}
@@ -1288,11 +1355,12 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                       —
                     </p>
                   )}
-                  {monthTakeHomePay != null && (pabBonusAmount > 0 || technologyBonusAmount > 0) && (
+                  {payView.takeHome != null && (payView.pab > 0 || payView.tech > 0 || payView.mesa > 0) && (
                     <p className="mt-1 text-[10px] text-emerald-700/80 dark:text-emerald-400/80">
-                      Hours pay {formatPHP(monthPayEstimate.totalPay ?? 0)}
-                      {pabBonusAmount > 0 ? ` + PAB ${formatPHP(pabBonusAmount)}` : ''}
-                      {technologyBonusAmount > 0 ? ` + Tech ${formatPHP(technologyBonusAmount)}` : ''}
+                      Hours pay {formatPHP(payView.hoursPay ?? 0)}
+                      {payView.pab > 0 ? ` + PAB ${formatPHP(payView.pab)}` : ''}
+                      {payView.tech > 0 ? ` + Tech ${formatPHP(payView.tech)}` : ''}
+                      {payView.mesa > 0 ? ` - MESA ${formatPHP(payView.mesa)}` : ''}
                     </p>
                   )}
                 </div>
@@ -1301,15 +1369,15 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                   <div className="flex justify-between gap-2 border-b border-zinc-200/80 pb-2 dark:border-zinc-800">
                     <span className="text-zinc-500 dark:text-zinc-400">Total hours (month)</span>
                     <span className="font-mono font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
-                      {(monthAllDaysTotalSeconds / 3600).toFixed(2)}h
+                      {(payView.totalSec / 3600).toFixed(2)}h
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-zinc-500 dark:text-zinc-400">Regular</span>
                     <span className="font-mono tabular-nums text-zinc-800 dark:text-zinc-200">
-                      {(monthPayEstimate.regularSec / 3600).toFixed(2)}h
-                      {monthPayEstimate.regularPay != null ? (
-                        <span className="text-zinc-500"> · {formatPHP(monthPayEstimate.regularPay)}</span>
+                      {(payView.regularSec / 3600).toFixed(2)}h
+                      {payView.regularPay != null ? (
+                        <span className="text-zinc-500"> · {formatPHP(payView.regularPay)}</span>
                       ) : (
                         <span className="text-zinc-400"> · —</span>
                       )}
@@ -1318,10 +1386,10 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                   <div className="flex justify-between gap-2">
                     <span className="text-zinc-500 dark:text-zinc-400">Overtime</span>
                     <span className="font-mono tabular-nums text-zinc-800 dark:text-zinc-200">
-                      {(monthPayEstimate.otSec / 3600).toFixed(2)}h
-                      {monthPayEstimate.otPay != null && monthPayEstimate.otSec > 0 ? (
-                        <span className="text-zinc-500"> · {formatPHP(monthPayEstimate.otPay)}</span>
-                      ) : monthPayEstimate.otSec > 0 && monthPayEstimate.otRate == null ? (
+                      {(payView.otSec / 3600).toFixed(2)}h
+                      {payView.otPay != null && payView.otSec > 0 ? (
+                        <span className="text-zinc-500"> · {formatPHP(payView.otPay)}</span>
+                      ) : payView.otSec > 0 && payView.otRate == null ? (
                         <span className="text-amber-600 dark:text-amber-400"> · need OT rate</span>
                       ) : (
                         <span className="text-zinc-400"> · {formatPHP(0)}</span>
@@ -1332,54 +1400,56 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                   <div className="my-1 h-px bg-zinc-200/80 dark:bg-zinc-800" />
 
                   <div className="flex justify-between gap-2">
-                    <span className={pabBonusAmount > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-500 dark:text-zinc-400'}>
+                    <span className={payView.pab > 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-500 dark:text-zinc-400'}>
                       PAB Bonus
                     </span>
                     <span className="font-mono tabular-nums">
-                      {pabBonusAmount > 0 ? (
+                      {payView.pab > 0 ? (
                         <span className="font-medium text-indigo-700 dark:text-indigo-300">
-                          +{formatPHP(pabBonusAmount)}
+                          +{formatPHP(payView.pab)}
                         </span>
-                      ) : !hasRates ? (
+                      ) : !payView.hasRate ? (
                         <span className="text-zinc-400 dark:text-zinc-600">—</span>
-                      ) : !isPAEligible ? (
-                        <span className="text-zinc-500" title="Needs ≥7h on every weekday in the month">
+                      ) : (
+                        <span className="text-zinc-500" title="Needs ≥7h on every weekday once the PAB period closes">
                           {formatPHP(0)}
                           <span className="ml-1 text-[10px] text-zinc-400">· not yet</span>
                         </span>
-                      ) : (
-                        <span className="text-zinc-400">{formatPHP(0)}</span>
                       )}
                     </span>
                   </div>
 
                   <div className="flex justify-between gap-2">
-                    <span className={technologyBonusAmount > 0 ? 'text-sky-600 dark:text-sky-400' : 'text-zinc-500 dark:text-zinc-400'}>
+                    <span className={payView.tech > 0 ? 'text-sky-600 dark:text-sky-400' : 'text-zinc-500 dark:text-zinc-400'}>
                       Tech Bonus
                     </span>
                     <span className="font-mono tabular-nums">
-                      {technologyBonusAmount > 0 ? (
+                      {payView.tech > 0 ? (
                         <span className="font-medium text-sky-700 dark:text-sky-300">
-                          +{formatPHP(technologyBonusAmount)}
+                          +{formatPHP(payView.tech)}
                         </span>
-                      ) : !hasRates ? (
+                      ) : !payView.hasRate ? (
                         <span className="text-zinc-400 dark:text-zinc-600">—</span>
-                      ) : !monthHasEnded ? (
-                        <span className="text-zinc-500">
-                          {formatPHP(0)}
-                          <span className="ml-1 text-[10px] text-zinc-400">· month not yet ended</span>
-                        </span>
                       ) : (
                         <span className="text-zinc-500">
                           {formatPHP(0)}
-                          <span className="ml-1 text-[10px] text-zinc-400">· 30d service pending</span>
+                          <span className="ml-1 text-[10px] text-zinc-400">· not yet</span>
                         </span>
                       )}
                     </span>
                   </div>
+
+                  {payView.mesa > 0 && (
+                    <div className="flex justify-between gap-2">
+                      <span className="text-teal-600 dark:text-teal-400">MESA</span>
+                      <span className="font-mono tabular-nums font-medium text-teal-700 dark:text-teal-300">
+                        -{formatPHP(payView.mesa)}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                {(monthPayEstimate.totalPay == null && monthPayEstimate.hasHours) ? (
+                {(payView.takeHome == null && payView.hasHours) ? (
                   <p className="rounded-lg border border-amber-200/70 bg-amber-50/50 px-2.5 py-2 text-[10px] leading-relaxed text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200/90">
                     Hourly rates aren&apos;t on file for your email — ask HR to add you to{' '}
                     <span className="font-mono">employee_hourly_rates</span> to see PHP totals.

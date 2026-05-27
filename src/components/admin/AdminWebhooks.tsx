@@ -13,6 +13,7 @@ import {
   Send,
   CheckCircle2,
   AlertCircle,
+  Copy as CopyIcon,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -51,11 +52,57 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     description:
       'Fired by the HR Pending-Hires "Promote" button to invite the new hire to Hubstaff.',
   },
+  {
+    slug: 'onboarding_send',
+    label: 'Onboarding Email Send (n8n)',
+    description:
+      'Sends the onboarding invite email. Used by HR Onboarding "Send" (falls back to the legacy hr.onboarding_webhook_url key).',
+  },
+  {
+    slug: 'offboarding',
+    label: 'Offboarding (n8n)',
+    description:
+      'Fired by the HR Offboarding "Confirm offboard" button to deactivate the workspace account and send the termination notice.',
+  },
 ];
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
+
+type WebhookStatus = 'active' | 'inactive' | 'missing';
+
+/** active = toggled on + valid URL; inactive = URL saved but toggle off;
+ *  missing = no URL yet. */
+function entryStatus(entry: { url: string; active: boolean }): WebhookStatus {
+  const url = entry.url.trim();
+  if (entry.active && /^https?:\/\//i.test(url)) return 'active';
+  return url ? 'inactive' : 'missing';
+}
+
+const STATUS_META: Record<
+  WebhookStatus,
+  { label: string; dot: string; pill: string; border: string }
+> = {
+  active: {
+    label: 'Active',
+    dot: 'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.25)]',
+    pill: 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300',
+    border: 'border-l-emerald-500',
+  },
+  inactive: {
+    label: 'Toggle off',
+    dot: 'bg-zinc-400',
+    pill: 'border-zinc-300 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400',
+    border: 'border-l-zinc-300 dark:border-l-zinc-700',
+  },
+  missing: {
+    label: 'No URL set',
+    dot: 'bg-amber-500',
+    pill: 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300',
+    border: 'border-l-amber-400',
+  },
+};
 
 function makeDefault(): WebhookEntry[] {
   return KNOWN_SLUGS.map((k) => ({
@@ -134,6 +181,14 @@ export default function AdminWebhooks() {
     setDirty(true);
   };
 
+  const copyUrl = (url: string) => {
+    if (!url) return;
+    navigator.clipboard?.writeText(url);
+    toast.success('URL copied');
+  };
+
+  const activeCount = entries.filter((e) => entryStatus(e) === 'active').length;
+
   const validationErrors = useMemo(() => {
     const errs: Record<string, string> = {};
     const slugs = new Set<string>();
@@ -204,7 +259,7 @@ export default function AdminWebhooks() {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <header className="flex items-center justify-between gap-4 border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-md shadow-orange-500/30">
             <Webhook className="h-5 w-5" />
@@ -212,93 +267,26 @@ export default function AdminWebhooks() {
           <div>
             <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Webhooks &amp; Automations</h2>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Configure outbound webhooks. Set <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">slug</code> values used by code.
+              Each automation finds its endpoint by <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">slug</code>. Toggle <strong>Active</strong> to make this URL win over the code default.
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <span className="hidden items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-600 sm:inline-flex dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            {activeCount} of {entries.length} active
+          </span>
           <Button variant="outline" onClick={add} className="gap-1.5">
             <Plus className="h-4 w-4" /> Add webhook
           </Button>
           <Button onClick={save} disabled={!dirty || saving} className="gap-1.5">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save changes
+            {dirty ? 'Save changes' : 'Saved'}
           </Button>
         </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="mb-4 grid gap-2">
-          {KNOWN_SLUGS.map((k) => {
-            const entry = entries.find((e) => e.slug === k.slug);
-            const url = entry?.url || '';
-            const isActive = !!(entry?.active && url);
-            const status: 'active' | 'inactive' | 'missing' = isActive
-              ? 'active'
-              : url
-                ? 'inactive'
-                : 'missing';
-            const palette = {
-              active:   'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/60 dark:bg-emerald-950/30',
-              inactive: 'border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/40',
-              missing:  'border-amber-200 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/30',
-            }[status];
-            const dot = {
-              active:   'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.25)]',
-              inactive: 'bg-zinc-400',
-              missing:  'bg-amber-500',
-            }[status];
-            const label = {
-              active:   'Active',
-              inactive: 'Saved (toggle off)',
-              missing:  'Not set',
-            }[status];
-            return (
-              <div key={k.slug} className={cn('flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 text-sm', palette)}>
-                <div className="flex items-center gap-2">
-                  <span className={cn('inline-flex h-2 w-2 rounded-full', dot)} />
-                  <span className="font-mono text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                    {k.slug}
-                  </span>
-                  <span className="rounded-full border border-zinc-300 bg-white px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
-                    {label}
-                  </span>
-                </div>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">→</span>
-                {url ? (
-                  <code
-                    className={cn(
-                      'flex-1 truncate rounded bg-white px-2 py-1 font-mono text-xs dark:bg-zinc-900',
-                      isActive
-                        ? 'text-emerald-700 dark:text-emerald-300'
-                        : 'text-zinc-600 dark:text-zinc-400',
-                    )}
-                    title={url}
-                  >
-                    {url}
-                  </code>
-                ) : (
-                  <span className="flex-1 text-xs italic text-amber-700 dark:text-amber-300">
-                    No webhook URL set — falling back to N8N_DISPATCH_WEBHOOK_URL env var
-                  </span>
-                )}
-                {url && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard?.writeText(url);
-                      toast.success('URL copied');
-                    }}
-                    className="text-[11px] font-medium text-zinc-700 underline-offset-2 hover:underline dark:text-zinc-300"
-                  >
-                    Copy
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
         <div className="grid gap-3">
           {entries.length === 0 && (
             <div className="rounded-lg border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
@@ -307,36 +295,40 @@ export default function AdminWebhooks() {
           )}
           {entries.map((entry) => {
             const err = validationErrors[entry.id];
+            const status = entryStatus(entry);
+            const meta = STATUS_META[status];
+            const title = entry.label || entry.slug || 'New webhook';
             return (
               <Card
                 key={entry.id}
                 className={cn(
-                  'border-zinc-200 transition dark:border-zinc-800',
-                  err && 'border-red-300 dark:border-red-900/60',
-                  entry.active && !err && 'border-l-4 border-l-emerald-500',
-                  !entry.active && 'opacity-80',
+                  'overflow-hidden border-l-4 border-zinc-200 transition dark:border-zinc-800',
+                  err ? 'border-l-red-500' : meta.border,
                 )}
               >
-                <CardContent className="space-y-3 p-4">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={entry.active}
-                        onCheckedChange={(v) => update(entry.id, { active: !!v })}
-                        aria-label="Active"
-                      />
-                      <span className="flex items-center gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                        {entry.active ? (
-                          <>
-                            <Power className="h-3 w-3 text-emerald-500" /> Active
-                          </>
-                        ) : (
-                          <>
-                            <PowerOff className="h-3 w-3 text-zinc-400" /> Inactive
-                          </>
-                        )}
+                <CardContent className="p-0">
+                  {/* Header band: identity + status + primary actions */}
+                  <div className="flex flex-wrap items-center gap-3 border-b border-zinc-100 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+                    <span className={cn('inline-flex h-2.5 w-2.5 shrink-0 rounded-full', meta.dot)} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
+                          {title}
+                        </span>
+                        <span
+                          className={cn(
+                            'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                            meta.pill,
+                          )}
+                        >
+                          {meta.label}
+                        </span>
+                      </div>
+                      <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {entry.slug || 'no-slug'}
                       </span>
                     </div>
+
                     <div className="ml-auto flex items-center gap-2">
                       <Button
                         variant="outline"
@@ -352,66 +344,113 @@ export default function AdminWebhooks() {
                         )}
                         Test
                       </Button>
+
+                      {/* Prominent Active toggle */}
+                      <div
+                        className={cn(
+                          'flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition',
+                          entry.active
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300'
+                            : 'border-zinc-300 bg-white text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400',
+                        )}
+                      >
+                        {entry.active ? (
+                          <Power className="h-3.5 w-3.5" />
+                        ) : (
+                          <PowerOff className="h-3.5 w-3.5" />
+                        )}
+                        {entry.active ? 'Active' : 'Off'}
+                        <Switch
+                          checked={entry.active}
+                          onCheckedChange={(v) => update(entry.id, { active: !!v })}
+                          aria-label="Toggle active"
+                        />
+                      </div>
+
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => remove(entry.id)}
-                        className="gap-1.5 text-red-600 hover:bg-red-500/10 hover:text-red-700"
+                        className="text-red-600 hover:bg-red-500/10 hover:text-red-700"
+                        aria-label="Delete webhook"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                   </div>
 
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <label className="space-y-1.5">
-                      <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Label</span>
-                      <Input
-                        value={entry.label}
-                        onChange={(e) => update(entry.id, { label: e.target.value })}
-                        placeholder="e.g. Paystub Dispatch (n8n)"
-                      />
-                    </label>
-                    <label className="space-y-1.5">
-                      <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                        Slug <span className="text-zinc-400">(stable code identifier)</span>
+                  {/* Body */}
+                  <div className="space-y-3 p-4">
+                    <label className="block space-y-1.5">
+                      <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                        <LinkIcon className="h-3 w-3" /> Endpoint URL
                       </span>
-                      <Input
-                        value={entry.slug}
-                        onChange={(e) =>
-                          update(entry.id, { slug: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })
-                        }
-                        placeholder="paystub_dispatch"
-                        className="font-mono text-sm"
-                      />
+                      <div className="relative">
+                        <Input
+                          value={entry.url}
+                          onChange={(e) => update(entry.id, { url: e.target.value })}
+                          placeholder="https://n8n.example.com/webhook/..."
+                          className="pr-9 font-mono text-sm"
+                        />
+                        {entry.url && (
+                          <button
+                            type="button"
+                            onClick={() => copyUrl(entry.url)}
+                            title="Copy URL"
+                            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                          >
+                            <CopyIcon className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </label>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="space-y-1.5">
+                        <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Label</span>
+                        <Input
+                          value={entry.label}
+                          onChange={(e) => update(entry.id, { label: e.target.value })}
+                          placeholder="e.g. Paystub Dispatch (n8n)"
+                        />
+                      </label>
+                      <label className="space-y-1.5">
+                        <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                          Slug <span className="text-zinc-400">(stable code identifier)</span>
+                        </span>
+                        <Input
+                          value={entry.slug}
+                          onChange={(e) =>
+                            update(entry.id, { slug: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })
+                          }
+                          placeholder="paystub_dispatch"
+                          className="font-mono text-sm"
+                        />
+                      </label>
+                    </div>
+
+                    {entry.description && (
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400">{entry.description}</p>
+                    )}
+
+                    {err ? (
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-red-600">
+                        <AlertCircle className="h-3.5 w-3.5" /> {err}
+                      </div>
+                    ) : status === 'active' ? (
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Live &mdash; this URL is in use.
+                      </div>
+                    ) : status === 'inactive' ? (
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                        <PowerOff className="h-3.5 w-3.5" /> Saved but off &mdash; code falls back to its built-in default.
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                        <AlertCircle className="h-3.5 w-3.5" /> No URL yet &mdash; code uses its built-in default.
+                      </div>
+                    )}
                   </div>
-
-                  <label className="block space-y-1.5">
-                    <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                      <LinkIcon className="h-3 w-3" /> Webhook URL
-                    </span>
-                    <Input
-                      value={entry.url}
-                      onChange={(e) => update(entry.id, { url: e.target.value })}
-                      placeholder="https://n8n.example.com/webhook/..."
-                      className="font-mono text-sm"
-                    />
-                  </label>
-
-                  {entry.description && (
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400">{entry.description}</p>
-                  )}
-
-                  {err ? (
-                    <div className="flex items-center gap-1.5 text-xs text-red-600">
-                      <AlertCircle className="h-3.5 w-3.5" /> {err}
-                    </div>
-                  ) : entry.active && entry.url ? (
-                    <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Ready
-                    </div>
-                  ) : null}
                 </CardContent>
               </Card>
             );
@@ -421,9 +460,10 @@ export default function AdminWebhooks() {
         <div className="mt-6 rounded-lg border border-blue-200 bg-blue-50/60 p-4 text-xs text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-200">
           <p className="font-semibold">How this works</p>
           <p className="mt-1">
-            Code looks up webhooks by <code className="font-mono">slug</code>. The active URL for that slug overrides
-            the <code className="font-mono">N8N_DISPATCH_WEBHOOK_URL</code> environment variable. To add a new
-            automation, give it a slug here and reference it from the API route.
+            Code looks up each webhook by its <code className="font-mono">slug</code>. When a slug is set to
+            <strong> Active</strong>, that URL is used; otherwise the automation falls back to the URL hardcoded in
+            its API route. Use <strong>Test</strong> to fire a sample ping before relying on an endpoint. Don&apos;t
+            forget to <strong>Save changes</strong> &mdash; toggles and edits aren&apos;t persisted until you do.
           </p>
         </div>
       </div>

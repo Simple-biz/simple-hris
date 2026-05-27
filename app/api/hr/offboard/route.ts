@@ -8,6 +8,7 @@ import {
   deniedResponse,
   requireElevatedSession,
 } from "@/lib/auth/authorize-email";
+import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,12 +21,13 @@ const MASTER_TABLE =
  *   • deactivates the @simple.biz Workspace account (Drew's automation)
  *   • sends the termination notice to the personal email on file
  *
- * Configurable via env so test ↔ prod URLs can swap without redeploying code.
- * The default is the production `/webhook/offboarding-endpoint`; override with
- * N8N_OFFBOARDING_WEBHOOK_URL to point at a test (`/webhook-test/...`) endpoint.
+ * URL resolution order (see resolveWebhookUrl):
+ *   1. Admin -> Webhooks entry with slug `offboarding` (active).
+ *   2. N8N_OFFBOARDING_WEBHOOK_URL env var.
+ *   3. The hardcoded production default below.
  */
-const OFFBOARD_WEBHOOK_URL =
-  process.env.N8N_OFFBOARDING_WEBHOOK_URL?.trim() ||
+const OFFBOARD_WEBHOOK_SLUG = "offboarding";
+const OFFBOARD_WEBHOOK_DEFAULT =
   "https://simpledotbiz.app.n8n.cloud/webhook/offboarding-endpoint";
 
 /** Reasons HR can pick when off-boarding. Free-text notes are stored separately
@@ -48,7 +50,10 @@ function getClient() {
  *  must NEVER fail the off-board itself — the DB write is the source of truth;
  *  the webhook is a side-effect for downstream automation. 8s timeout so a
  *  hanging webhook can't tie up the API request indefinitely. */
-async function triggerOffboardWebhook(payload: Record<string, unknown>): Promise<{
+async function triggerOffboardWebhook(
+  url: string,
+  payload: Record<string, unknown>,
+): Promise<{
   fired: boolean;
   status: number | null;
   error: string | null;
@@ -56,7 +61,7 @@ async function triggerOffboardWebhook(payload: Record<string, unknown>): Promise
   const ac = new AbortController();
   const timeout = setTimeout(() => ac.abort(), 8000);
   try {
-    const res = await fetch(OFFBOARD_WEBHOOK_URL, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -64,14 +69,14 @@ async function triggerOffboardWebhook(payload: Record<string, unknown>): Promise
     });
     if (!res.ok) {
       console.error(
-        `[offboard] webhook ${OFFBOARD_WEBHOOK_URL} returned ${res.status} ${res.statusText}`,
+        `[offboard] webhook ${url} returned ${res.status} ${res.statusText}`,
       );
       return { fired: true, status: res.status, error: `HTTP ${res.status}` };
     }
     return { fired: true, status: res.status, error: null };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[offboard] webhook ${OFFBOARD_WEBHOOK_URL} threw: ${msg}`);
+    console.error(`[offboard] webhook ${url} threw: ${msg}`);
     return { fired: false, status: null, error: msg };
   } finally {
     clearTimeout(timeout);
@@ -176,7 +181,12 @@ export async function POST(req: Request) {
   // Trigger Drew's n8n automation. Awaited (with internal timeout) so we can
   // surface the webhook status to the UI; failures don't block the off-board
   // since the DB update has already committed.
-  const webhook = await triggerOffboardWebhook({
+  const offboardWebhookUrl =
+    (await resolveWebhookUrl(OFFBOARD_WEBHOOK_SLUG, {
+      envVars: ["N8N_OFFBOARDING_WEBHOOK_URL"],
+      defaultUrl: OFFBOARD_WEBHOOK_DEFAULT,
+    })) ?? OFFBOARD_WEBHOOK_DEFAULT;
+  const webhook = await triggerOffboardWebhook(offboardWebhookUrl, {
     event: "employee.offboarded",
     work_email,
     personal_email: first["Personal Email"],

@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
+  ArrowRightLeft,
   Camera,
   CheckCircle2,
   ChevronLeft,
@@ -51,8 +52,10 @@ import { HSL_DEPT_KEYS, canAccessHslDept } from '@/lib/hsl-bonus/schema';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { DEPT_INPUT_CONFIG } from '@/lib/payroll/department-bonus';
 import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
+import ManagerTransferDialog from '@/components/manager/ManagerTransferDialog';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
+import { useOnlineEmails } from '@/components/presence/PresenceProvider';
 import {
   MedalProvider,
   MedalPalette,
@@ -668,7 +671,17 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
   const unassigned = teamGate.kind === 'department' && teamGate.departments.length === 0;
   const scoped = teamGate.kind === 'department' && teamGate.departments.length > 0;
   const [ratesHidden, setRatesHidden] = useState(true);
+  // Live presence — drives the green "online" dots on roster rows and the
+  // "Active now" panel. Sourced from the app-wide PresenceProvider so it
+  // reflects everyone signed in to the HRIS, same as the employee My Team tab.
+  const onlineEmails = useOnlineEmails();
+  const isMemberOnline = (m: EmployeeRow): boolean => {
+    const w = normEmail(m.work_email ?? '');
+    const p = normEmail(m.personal_email ?? '');
+    return (!!w && onlineEmails.has(w)) || (!!p && onlineEmails.has(p));
+  };
   const [selectedMember, setSelectedMember] = useState<EmployeeRow | null>(null);
+  const [transferMember, setTransferMember] = useState<EmployeeRow | null>(null);
   const [page, setPage] = useState(1);
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -1244,6 +1257,8 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
             My team
           </h2>
           {members.length > 0 && (
+            <div className="flex items-center gap-2">
+            <ActiveNowButton members={members} onlineEmails={onlineEmails} />
             <motion.div whileTap={{ scale: 0.96 }} transition={{ duration: 0.12 }}>
               <Button
                 type="button"
@@ -1288,6 +1303,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
                 </span>
               </Button>
             </motion.div>
+            </div>
           )}
         </div>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -1535,7 +1551,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
                           <TableHead className="min-w-[110px] text-right">OT</TableHead>
                           <TableHead className="min-w-[200px]">Work email</TableHead>
                           <TableHead className="min-w-[200px]">Personal email</TableHead>
-                          <TableHead className="w-[80px] text-right">Actions</TableHead>
+                          <TableHead className="w-[170px] text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1550,7 +1566,13 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
                             className={cn(isOver && 'bg-amber-50/60 dark:bg-amber-950/20')}
                           >
                             <TableCell className="font-medium text-zinc-900 dark:text-zinc-100">
-                              <span className="inline-flex items-center">
+                              <span className="inline-flex items-center gap-1.5">
+                                {isMemberOnline(m) && (
+                                  <span className="relative flex h-2 w-2 shrink-0" title="Online in HRIS now">
+                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70" />
+                                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                                  </span>
+                                )}
                                 {m.name ?? '—'}
                                 <MedalBadges email={rowEmail} />
                               </span>
@@ -1597,17 +1619,30 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
                               {m.personal_email ?? '—'}
                             </TableCell>
                             <TableCell className="text-right">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setSelectedMember(m)}
-                                className="h-7 gap-1.5 border-blue-200 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
-                                title="View profile and payment history"
-                              >
-                                <UserRound className="h-3.5 w-3.5" />
-                                View
-                              </Button>
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setSelectedMember(m)}
+                                  className="h-7 gap-1.5 border-blue-200 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                                  title="View profile and payment history"
+                                >
+                                  <UserRound className="h-3.5 w-3.5" />
+                                  View
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setTransferMember(m)}
+                                  className="h-7 gap-1.5 border-amber-200 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40"
+                                  title="Request a department transfer (HR approval required)"
+                                >
+                                  <ArrowRightLeft className="h-3.5 w-3.5" />
+                                  Transfer
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         ); })}
@@ -1644,7 +1679,13 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                            <div className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                              {isMemberOnline(m) && (
+                                <span className="relative flex h-2 w-2 shrink-0" title="Online in HRIS now">
+                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70" />
+                                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                                </span>
+                              )}
                               <span className="truncate">{m.name ?? '—'}</span>
                               <MedalBadges email={cardEmail} />
                             </div>
@@ -1711,7 +1752,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
                           </div>
                         </dl>
 
-                        <div className="mt-3 flex justify-end">
+                        <div className="mt-3 flex justify-end gap-1.5">
                           <Button
                             type="button"
                             size="sm"
@@ -1721,6 +1762,16 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
                           >
                             <UserRound className="h-3.5 w-3.5" />
                             View
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setTransferMember(m)}
+                            className="h-7 gap-1.5 border-amber-200 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40"
+                          >
+                            <ArrowRightLeft className="h-3.5 w-3.5" />
+                            Transfer
                           </Button>
                         </div>
                       </motion.div>
@@ -1784,6 +1835,116 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
         member={selectedMember}
         onClose={() => setSelectedMember(null)}
       />
+
+      <ManagerTransferDialog
+        member={transferMember}
+        open={!!transferMember}
+        onOpenChange={(open) => { if (!open) setTransferMember(null); }}
+      />
+    </div>
+  );
+}
+
+/**
+ * "Active now" — a toolbar button that opens a dropdown listing which team
+ * members are currently signed in to the HRIS (live, via the app-wide presence
+ * channel). Mirrors the employee My Team online badges; managers get a roll-up.
+ */
+function ActiveNowButton({
+  members,
+  onlineEmails,
+}: {
+  members: EmployeeRow[];
+  onlineEmails: ReadonlySet<string>;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const onlineMembers = useMemo(() => {
+    return members.filter((m) => {
+      const w = normEmail(m.work_email ?? '');
+      const p = normEmail(m.personal_email ?? '');
+      return (!!w && onlineEmails.has(w)) || (!!p && onlineEmails.has(p));
+    });
+  }, [members, onlineEmails]);
+
+  const count = onlineMembers.length;
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        title="See who is signed in to the HRIS right now"
+        className="h-7 gap-1.5 border-emerald-200 text-xs text-emerald-700 transition-colors hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+      >
+        <span className="relative flex h-2 w-2">
+          {count > 0 && (
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70" />
+          )}
+          <span className={cn('relative inline-flex h-2 w-2 rounded-full', count > 0 ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600')} />
+        </span>
+        Active now
+        <span className="rounded bg-emerald-100 px-1 text-[10px] font-semibold tabular-nums text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+          {count}
+        </span>
+      </Button>
+
+      {open && (
+        <div className="absolute right-0 z-30 mt-2 w-72 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
+          <div className="flex items-center justify-between border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+            <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">Active now</span>
+            <span className="text-[10px] text-zinc-400">{onlineEmails.size} online in HRIS</span>
+          </div>
+          {count === 0 ? (
+            <div className="px-3 py-6 text-center text-xs text-zinc-500 dark:text-zinc-400">
+              No teammates are online right now.
+            </div>
+          ) : (
+            <div className="max-h-72 overflow-y-auto py-1">
+              {onlineMembers.map((m, idx) => {
+                const e = m.work_email ?? m.personal_email ?? '';
+                return (
+                  <div
+                    key={`${e || m.name}-${idx}`}
+                    className="flex items-center gap-2.5 px-3 py-1.5"
+                  >
+                    <span className="relative flex h-2 w-2 shrink-0">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
+                        {m.name ?? (e || '—')}
+                      </div>
+                      {e && (
+                        <div className="truncate font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{e}</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

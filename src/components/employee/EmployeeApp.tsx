@@ -11,10 +11,9 @@ import EmployeeDashboard from './EmployeeDashboard';
 import EmployeeProfile from './EmployeeProfile';
 import AppFooter from '@/components/AppFooter';
 import EmployeeLeaves from './EmployeeLeaves';
-import EmployeePolicies from './EmployeePolicies';
+import EmployeeTeam from './EmployeeTeam';
 import EmployeeMesa from './EmployeeMesa';
 import EmployeeMyHours from './EmployeeMyHours';
-import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import SWall from '@/components/swall/SWall';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 // import MyDisputes from './MyDisputes'; // hidden — disputes now go through Orphanage Manager → Accounting flow
@@ -299,11 +298,9 @@ export default function EmployeeApp() {
             startDate={employeeStartDate ?? null}
           />
         );
-      case 'policies':
-        return <EmployeePolicies department={employeeDepartment} />;
-      case 'announcements':
+      case 'team':
         return (
-          <EmployeeAnnouncementsTab
+          <EmployeeTeam
             employeeEmail={employeeEmail}
             department={employeeDepartment}
           />
@@ -396,29 +393,3 @@ export default function EmployeeApp() {
   );
 }
 
-function EmployeeAnnouncementsTab({
-  employeeEmail,
-  department,
-}: {
-  employeeEmail: string | null;
-  department: string | null;
-}) {
-  const scope: string[] = department ? [department] : [];
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
-        <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
-          Announcements
-        </h1>
-        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
-          Company-wide and team updates. New posts appear live.
-        </p>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-4 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
-        <div className="mx-auto max-w-2xl">
-          <AnnouncementWall scope={scope} viewerEmail={employeeEmail} />
-        </div>
-      </div>
-    </div>
-  );
-}

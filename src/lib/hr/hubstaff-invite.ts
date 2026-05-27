@@ -1,4 +1,4 @@
-import { getAppSetting } from "@/lib/supabase/app-settings";
+import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
 
 /**
  * Fires the n8n "hubstaff invite user" webhook when HR promotes a hire to the
@@ -25,26 +25,11 @@ const ORGANIZATION_ID = 724122;
 const ROLE = "project_user";
 const TRACKABLE = true;
 
-interface WebhookEntry {
-  slug: string;
-  url: string;
-  active: boolean;
-}
-
-async function resolveWebhookUrl(): Promise<string> {
-  try {
-    const raw = await getAppSetting("webhooks.config");
-    if (raw) {
-      const list = JSON.parse(raw) as WebhookEntry[];
-      const match = list.find(
-        (e) => e.slug === HUBSTAFF_INVITE_WEBHOOK_SLUG && e.active && e.url,
-      );
-      if (match?.url) return match.url;
-    }
-  } catch {
-    // fall through to env / default
-  }
-  return process.env.N8N_HUBSTAFF_INVITE_WEBHOOK_URL || DEFAULT_WEBHOOK_URL;
+function resolveHubstaffInviteUrl(): Promise<string> {
+  return resolveWebhookUrl(HUBSTAFF_INVITE_WEBHOOK_SLUG, {
+    envVars: ["N8N_HUBSTAFF_INVITE_WEBHOOK_URL"],
+    defaultUrl: DEFAULT_WEBHOOK_URL,
+  }).then((url) => url ?? DEFAULT_WEBHOOK_URL);
 }
 
 export type HubstaffInviteInput = {
@@ -98,7 +83,7 @@ export async function inviteHubstaffUser(
 
   let url: string;
   try {
-    url = await resolveWebhookUrl();
+    url = await resolveHubstaffInviteUrl();
   } catch (e) {
     return {
       ok: false,

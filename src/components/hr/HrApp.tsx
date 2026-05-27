@@ -33,6 +33,7 @@ import HrOffboarding from './HrOffboarding';
 import HrMesa from './HrMesa';
 import GiftTracker from '@/components/orphanage/GiftTracker';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
+import HrTransfers from './HrTransfers';
 import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import SWall from '@/components/swall/SWall';
@@ -158,6 +159,7 @@ export default function HrApp() {
               {activeTab === 'onboarding' && <HrOnboarding />}
               {activeTab === 'offboarding' && <HrOffboarding />}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
+              {activeTab === 'transfers' && <HrTransfers />}
               {activeTab === 'gift-tracker' && <GiftTracker viewerEmail={viewerEmail} />}
               {activeTab === 'mesa' && <HrMesa />}
               {activeTab === 'announcements' && <HrAnnouncements viewerEmail={viewerEmail} />}

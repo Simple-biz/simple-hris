@@ -1,23 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAppSetting } from '@/lib/supabase/app-settings';
-
-interface WebhookEntry {
-  slug: string;
-  url: string;
-  active: boolean;
-}
-
-async function resolveWebhookUrl(slug: string): Promise<string | null> {
-  try {
-    const raw = await getAppSetting('webhooks.config');
-    if (!raw) return null;
-    const list = JSON.parse(raw) as WebhookEntry[];
-    const match = list.find((e) => e.slug === slug && e.active && e.url);
-    return match?.url ?? null;
-  } catch {
-    return null;
-  }
-}
+import { resolveWebhookUrl } from '@/lib/webhooks/resolve-webhook';
 
 /**
  * Forwards a paystub dispatch to the n8n workflow webhook.
@@ -34,8 +16,9 @@ async function resolveWebhookUrl(slug: string): Promise<string | null> {
  *   }>
  */
 export async function POST(req: NextRequest) {
-  const webhookUrl =
-    (await resolveWebhookUrl('paystub_dispatch')) || process.env.N8N_DISPATCH_WEBHOOK_URL;
+  const webhookUrl = await resolveWebhookUrl('paystub_dispatch', {
+    envVars: ['N8N_DISPATCH_WEBHOOK_URL'],
+  });
   if (!webhookUrl) {
     return NextResponse.json(
       { error: 'No paystub_dispatch webhook configured (Admin → Webhooks) and N8N_DISPATCH_WEBHOOK_URL env var unset' },

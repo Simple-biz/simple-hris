@@ -1,5 +1,5 @@
 import { request as httpsRequest } from "https";
-import { getAppSetting } from "@/lib/supabase/app-settings";
+import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
 
 /**
  * Fires the n8n "create workspace account" webhook when HR stages a new hire
@@ -23,26 +23,11 @@ export const CREATE_WORKSPACE_WEBHOOK_SLUG = "create_workspace_account";
 const DEFAULT_WEBHOOK_URL =
   "https://simpledotbiz.app.n8n.cloud/webhook/create-workspace-account";
 
-interface WebhookEntry {
-  slug: string;
-  url: string;
-  active: boolean;
-}
-
-async function resolveWebhookUrl(): Promise<string> {
-  try {
-    const raw = await getAppSetting("webhooks.config");
-    if (raw) {
-      const list = JSON.parse(raw) as WebhookEntry[];
-      const match = list.find(
-        (e) => e.slug === CREATE_WORKSPACE_WEBHOOK_SLUG && e.active && e.url,
-      );
-      if (match?.url) return match.url;
-    }
-  } catch {
-    // fall through to env / default
-  }
-  return process.env.N8N_CREATE_WORKSPACE_WEBHOOK_URL || DEFAULT_WEBHOOK_URL;
+function resolveCreateWorkspaceUrl(): Promise<string> {
+  return resolveWebhookUrl(CREATE_WORKSPACE_WEBHOOK_SLUG, {
+    envVars: ["N8N_CREATE_WORKSPACE_WEBHOOK_URL"],
+    defaultUrl: DEFAULT_WEBHOOK_URL,
+  }).then((url) => url ?? DEFAULT_WEBHOOK_URL);
 }
 
 export type CreateWorkspaceAccountInput = {
@@ -117,7 +102,7 @@ export async function createWorkspaceAccount(
 
   let url: string;
   try {
-    url = await resolveWebhookUrl();
+    url = await resolveCreateWorkspaceUrl();
   } catch (e) {
     return {
       ok: false,

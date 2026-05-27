@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import {
+  ArrowRightLeft,
   Bell,
   CalendarDays,
   Gift,
@@ -30,7 +31,7 @@ import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 'gift-tracker' | 'mesa' | 'announcements' | 's-wall' | 'notifications';
+export type HrTab = 'overview' | 'onboarding' | 'offboarding' | 'leaves' | 'transfers' | 'gift-tracker' | 'mesa' | 'announcements' | 's-wall' | 'notifications';
 
 interface HrSidebarProps {
   activeTab: HrTab;
@@ -142,6 +143,7 @@ export default function HrSidebar({
             {navBtn('onboarding', 'Onboarding', LogIn)}
             {navBtn('offboarding', 'Offboarding', UserMinus)}
             {navBtn('leaves', 'Leave Requests', CalendarDays)}
+            {navBtn('transfers', 'Transfers', ArrowRightLeft)}
             {navBtn('gift-tracker', 'Gift Tracker', Gift)}
             {navBtn('mesa', 'MESA', HeartHandshake)}
             {navBtn('announcements', 'Announcements', Megaphone)}
