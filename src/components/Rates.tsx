@@ -19,7 +19,6 @@ import {
   Plus,
   Rows3,
   Search,
-  Trash2,
   UserCheck,
   UserCog,
   UserPlus,
@@ -555,15 +554,10 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     }
   }
 
-  // Delete state
-  const [deleteTarget, setDeleteTarget] = useState<EmployeeRateProfileSummary | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
   // Suspend state — stores the profile.id currently being toggled, or null
   const [isSuspending, setIsSuspending] = useState<string | null>(null);
-  // MESA Program toggle state
-  const [isMesaToggling, setIsMesaToggling] = useState<string | null>(null);
 
   function extractEmailsFromSummary(p: EmployeeRateProfileSummary): { workEmail: string | null; personalEmail: string | null } {
     return {
@@ -601,35 +595,6 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   function extractEmails(target: EmployeeRateProfileSummary | EmployeeRateProfile): { workEmail: string | null; personalEmail: string | null } {
     if ("fields" in target) return extractEmailsFromProfile(target);
     return extractEmailsFromSummary(target);
-  }
-
-  async function handleDeleteEmployee() {
-    if (!deleteTarget) return;
-    setIsDeleting(true);
-    try {
-      const { workEmail, personalEmail } = extractEmails(deleteTarget);
-      const res = await fetch("/api/delete-employee", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workEmail,
-          personalEmail,
-          name: deleteTarget.displayName || null,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Failed to delete employee");
-      toast.success(`${deleteTarget.displayName} deleted`);
-      setDeleteTarget(null);
-      setProfileOpen(false);
-      setActiveProfile(null);
-      setActiveProfileSummary(null);
-      await fetchProfiles();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to delete employee");
-    } finally {
-      setIsDeleting(false);
-    }
   }
 
   async function handleToggleSuspend(profile: EmployeeRateProfileSummary | EmployeeRateProfile, suspend: boolean) {
@@ -677,32 +642,6 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     }
   }
 
-  async function handleToggleMesa(profile: EmployeeRateProfileSummary, enroll: boolean) {
-    const { workEmail, personalEmail } = extractEmailsFromSummary(profile);
-    if (!workEmail && !personalEmail) {
-      toast.error("Cannot identify employee — no email found");
-      return;
-    }
-    setIsMesaToggling(profile.id);
-    try {
-      const res = await fetch("/api/toggle-mesa-member", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workEmail, personalEmail, mesaMember: enroll, name: profile.displayName || null }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Failed to update MESA status");
-      toast.success(`${profile.displayName} ${enroll ? "enrolled in" : "removed from"} MESA Program`);
-      await fetchProfiles();
-      setActiveProfileSummary((prev) =>
-        prev && prev.id === profile.id ? { ...prev, mesaMember: enroll } : prev,
-      );
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update MESA status");
-    } finally {
-      setIsMesaToggling(null);
-    }
-  }
 
   const fetchProfiles = async () => {
     try {
@@ -1648,36 +1587,6 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                         <UserX className="size-3.5" />
                                       )}
                                     </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      disabled={isMesaToggling === p.id}
-                                      onClick={() => handleToggleMesa(p, !row.mesaMember)}
-                                      title={row.mesaMember ? `Remove ${p.displayName} from MESA Program` : `Enroll ${p.displayName} in MESA Program (₱100/paycheck deduction)`}
-                                      className={cn(
-                                        "h-7 w-7 p-0",
-                                        row.mesaMember
-                                          ? "text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40"
-                                          : "text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:text-teal-400 dark:hover:bg-teal-950/40",
-                                      )}
-                                    >
-                                      {isMesaToggling === p.id ? (
-                                        <Loader2 className="size-3.5 animate-spin" />
-                                      ) : (
-                                        <span className="text-[9px] font-black leading-none tracking-tight">M</span>
-                                      )}
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-7 w-7 p-0 text-red-500 hover:bg-red-50 hover:text-red-600 dark:text-red-400 dark:hover:bg-red-950/40"
-                                      onClick={() => setDeleteTarget(p)}
-                                      title={`Delete ${p.displayName}`}
-                                    >
-                                      <Trash2 className="size-3.5" />
-                                    </Button>
                                   </div>
                                 </td>
                               </tr>
@@ -1841,36 +1750,6 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                               <UserX className="size-3.5" />
                             )}
                           </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={isMesaToggling === p.id}
-                            onClick={() => handleToggleMesa(p, !row.mesaMember)}
-                            title={row.mesaMember ? `Remove ${p.displayName} from MESA Program` : `Enroll ${p.displayName} in MESA Program (₱100/paycheck deduction)`}
-                            className={cn(
-                              "h-8 w-8 p-0 text-xs font-bold",
-                              row.mesaMember
-                                ? "border-teal-200 text-teal-600 hover:border-teal-300 hover:bg-teal-50 dark:border-teal-800/60 dark:text-teal-400 dark:hover:bg-teal-950/40"
-                                : "border-teal-300 text-teal-600 hover:border-teal-400 hover:bg-teal-50 dark:border-teal-700/60 dark:text-teal-400 dark:hover:bg-teal-950/40",
-                            )}
-                          >
-                            {isMesaToggling === p.id ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : (
-                              <span className="text-[9px] font-black leading-none tracking-tight">M</span>
-                            )}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-8 w-8 border-zinc-200 p-0 text-red-500 hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-zinc-700 dark:text-red-400 dark:hover:border-red-800 dark:hover:bg-red-950/40"
-                            onClick={() => setDeleteTarget(p)}
-                            title={`Delete ${p.displayName}`}
-                          >
-                            <Trash2 className="size-3.5" />
-                          </Button>
                         </div>
                       </div>
                     );
@@ -1880,80 +1759,6 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
             </div>
           )}
       </section>
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
-      >
-        <DialogContent
-          showCloseButton
-          className={cn(
-            "w-[min(92vw,420px)] max-w-[min(92vw,420px)] rounded-2xl border-red-100/60 bg-gradient-to-br from-white via-red-50/20 to-orange-50/30 p-0",
-            "shadow-[0_25px_50px_-12px_rgba(0,0,0,0.18)] dark:border-red-950/40 dark:from-[#0d1117] dark:via-[#150a0a] dark:to-[#0d1117] dark:shadow-black/50",
-            "sm:max-w-[min(92vw,420px)]",
-            "duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
-            "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.93] data-open:slide-in-from-bottom-8",
-            "data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.97] data-closed:slide-out-to-bottom-4 data-closed:duration-[180ms] data-closed:ease-in",
-          )}
-        >
-          <DialogHeader className="border-b border-red-100/60 bg-gradient-to-r from-red-50/70 to-orange-50/50 px-6 py-5 dark:border-red-950/40 dark:from-red-950/30 dark:to-[#0d1117]">
-            <div className="flex items-center gap-3">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/60">
-                <Trash2 className="size-4 text-red-600 dark:text-red-400" />
-              </div>
-              <div>
-                <DialogTitle className="text-base font-semibold text-zinc-900 dark:text-white">
-                  Delete employee
-                </DialogTitle>
-                <DialogDescription className="mt-0.5 text-sm text-zinc-500 dark:text-zinc-400">
-                  This cannot be undone.
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
-          <div className="px-6 py-5">
-            <p className="text-sm text-zinc-700 dark:text-zinc-300">
-              Are you sure you want to delete{" "}
-              <span className="font-semibold text-zinc-900 dark:text-white">
-                {deleteTarget?.displayName}
-              </span>
-              ? Their record will be removed from{" "}
-              <span className="text-xs">employee_hourly_rates</span> and{" "}
-              <span className="text-xs">global_master_list</span>.
-            </p>
-          </div>
-          <DialogFooter className="border-t border-red-100/60 bg-gradient-to-r from-red-50/50 to-orange-50/30 px-6 py-4 dark:border-red-950/40 dark:from-red-950/20 dark:to-[#0d1117]">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setDeleteTarget(null)}
-              disabled={isDeleting}
-              className="text-zinc-600 hover:bg-red-50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-red-950/30 dark:hover:text-white"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={handleDeleteEmployee}
-              disabled={isDeleting}
-              className="gap-1.5 bg-red-600 text-white hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600"
-            >
-              {isDeleting ? (
-                <>
-                  <Loader2 className="size-3.5 animate-spin" />
-                  Deleting…
-                </>
-              ) : (
-                <>
-                  <Trash2 className="size-3.5" />
-                  Delete
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/*
         Add Employee Modal — rebuilt 2026-04-25.
@@ -2504,40 +2309,6 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                               Suspend
                             </>
                           )}
-                        </Button>
-                        {activeProfileSummary && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={isMesaToggling === activeProfile.id}
-                            onClick={() => handleToggleMesa(activeProfileSummary, !activeProfileSummary.mesaMember)}
-                            title={activeProfileSummary.mesaMember ? 'Remove from MESA Program' : 'Enroll in MESA Program (₱100/paycheck deduction)'}
-                            className={cn(
-                              "h-8 gap-1.5",
-                              activeProfileSummary.mesaMember
-                                ? "border-teal-200 text-teal-700 hover:border-teal-300 hover:bg-teal-50 dark:border-teal-900/50 dark:text-teal-400 dark:hover:bg-teal-950/30"
-                                : "border-zinc-200 text-zinc-500 hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-teal-900/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400",
-                            )}
-                          >
-                            {isMesaToggling === activeProfile.id ? (
-                              <Loader2 className="size-3.5 animate-spin" />
-                            ) : (
-                              <span className="text-[10px] font-black leading-none">
-                                {activeProfileSummary.mesaMember ? '✕ MESA' : '+ MESA'}
-                              </span>
-                            )}
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-8 gap-1.5 border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/30"
-                          onClick={() => {
-                            if (activeProfileSummary) setDeleteTarget(activeProfileSummary);
-                          }}
-                        >
-                          <Trash2 className="size-3.5" />
-                          Delete
                         </Button>
                       </>
                     )}

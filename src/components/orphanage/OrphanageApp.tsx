@@ -1099,14 +1099,6 @@ export default function OrphanageApp() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 flex-1 flex-col"
             >
-              <div className="shrink-0 border-b border-pink-100/70 bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-pink-950/40 dark:bg-zinc-950">
-                <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
-                  Simple Wall
-                </h1>
-                <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
-                  Company-wide social feed. Post updates, react, and comment — live via Realtime.
-                </p>
-              </div>
               <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] dark:bg-[#0d1117]">
                 <SWall viewerEmail={viewerEmail} canPost sourceLabel="Orphanage" />
               </div>

@@ -21,6 +21,7 @@ import {
   ChevronDown,
   Clock,
   HandHeart,
+  Heart,
   HeartHandshake,
   ImagePlus,
   Languages,
@@ -80,9 +81,10 @@ export function SWallNavLabel() {
 // renders a disabled-feeling link rather than a 404.
 const SOCIAL_LINKS = [
   { key: 'facebook', label: 'Facebook', href: '#', hover: 'hover:text-[#1877F2] hover:bg-[#1877F2]/10' },
-  { key: 'youtube',  label: 'YouTube',  href: '#', hover: 'hover:text-[#FF0000] hover:bg-[#FF0000]/10' },
+  { key: 'youtube',  label: 'YouTube',  href: 'https://www.youtube.com/@Orphans_PH', hover: 'hover:text-[#FF0000] hover:bg-[#FF0000]/10' },
   { key: 'x',        label: 'X',        href: '#', hover: 'hover:text-zinc-900 hover:bg-zinc-900/10 dark:hover:text-white dark:hover:bg-white/10' },
   { key: 'tiktok',   label: 'TikTok',   href: '#', hover: 'hover:text-zinc-900 hover:bg-zinc-900/10 dark:hover:text-white dark:hover:bg-white/10' },
+  { key: 'simple',   label: 'Simple',   href: 'https://www.simple.biz/', hover: 'hover:text-rose-500 hover:bg-rose-500/10' },
 ] as const;
 
 type SocialKey = (typeof SOCIAL_LINKS)[number]['key'];
@@ -90,6 +92,9 @@ type SocialKey = (typeof SOCIAL_LINKS)[number]['key'];
 function SocialGlyph({ kind, className }: { kind: SocialKey; className?: string }) {
   // Brand SVGs — paths from simpleicons.org (CC0). Inlined to avoid adding a dep.
   const common = { viewBox: '0 0 24 24', fill: 'currentColor', 'aria-hidden': true } as const;
+  if (kind === 'simple') {
+    return <Heart className={className} fill="currentColor" aria-hidden />;
+  }
   if (kind === 'facebook') {
     return (
       <svg {...common} className={className}>
@@ -494,7 +499,7 @@ export default function SWall({ viewerEmail, canPost, viewerName, sourceLabel }:
     <div className="flex h-full min-h-0 flex-col bg-zinc-50 dark:bg-[#0a0a0c]">
       {/* ── Minimal sticky header ── */}
       <header className="sticky top-0 z-10 shrink-0 border-b border-zinc-200/70 bg-white/85 px-4 py-3 backdrop-blur-md dark:border-zinc-800/70 dark:bg-zinc-950/80">
-        <div className="mx-auto flex max-w-[1100px] items-center gap-3">
+        <div className="mx-auto flex max-w-[1240px] items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/favicon2.png" alt="" className="h-7 w-7 shrink-0 object-contain" />
           <h1 className="text-[17px] font-bold tracking-tight text-zinc-900 dark:text-white">
@@ -508,7 +513,7 @@ export default function SWall({ viewerEmail, canPost, viewerName, sourceLabel }:
 
       {/* ── 2-col layout: centered feed + slim right rail ── */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-[1100px] gap-6 px-3 py-5 sm:px-5">
+        <div className="mx-auto flex max-w-[1240px] gap-8 px-3 py-5 sm:px-5 xl:gap-10">
           {/* ── Feed (centered, capped width like Twitter) ── */}
           <main className="mx-auto min-w-0 flex-1 space-y-3 sm:max-w-[600px]">
             {canPost && (
@@ -551,7 +556,7 @@ export default function SWall({ viewerEmail, canPost, viewerName, sourceLabel }:
           </main>
 
           {/* ── Right rail — social + announcements + policies, hidden on small screens ── */}
-          <aside className="hidden w-[290px] shrink-0 space-y-3 lg:block">
+          <aside className="hidden w-[340px] shrink-0 space-y-3 lg:block xl:w-[360px]">
             <div className="sticky top-[68px] space-y-3">
               <SocialLinksPanel />
               <CEOAnnouncementsPanel announcements={announcements} loading={loading} />
@@ -582,11 +587,11 @@ function SocialLinksPanel() {
             aria-label={s.label}
             title={s.label}
             className={cn(
-              'flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 transition-colors dark:text-zinc-400',
+              'flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:scale-110 active:scale-95 dark:text-zinc-400',
               s.hover,
             )}
           >
-            <SocialGlyph kind={s.key} className="h-4 w-4" />
+            <SocialGlyph kind={s.key} className="h-4 w-4 transition-transform duration-200" />
           </a>
         ))}
       </div>
@@ -623,51 +628,86 @@ function CompanyPoliciesPanel() {
               <button
                 type="button"
                 onClick={() => toggle(section.id)}
-                className="flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                aria-expanded={isOpen}
+                className="group/pol flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors duration-200 hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
               >
-                <span className="text-[12px] font-semibold text-zinc-700 dark:text-zinc-300">
+                <span
+                  className={cn(
+                    'text-[12px] font-semibold transition-colors duration-200',
+                    isOpen
+                      ? 'text-zinc-900 dark:text-white'
+                      : 'text-zinc-700 group-hover/pol:text-zinc-900 dark:text-zinc-300 dark:group-hover/pol:text-white',
+                  )}
+                >
                   {section.label}
                 </span>
-                <ChevronDown
+                <span
                   className={cn(
-                    'h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform duration-200',
-                    isOpen && 'rotate-180',
+                    'flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition-colors duration-200',
+                    isOpen
+                      ? 'bg-violet-100 text-violet-600 dark:bg-violet-900/40 dark:text-violet-300'
+                      : 'text-zinc-400 group-hover/pol:bg-zinc-200/70 group-hover/pol:text-zinc-600 dark:group-hover/pol:bg-zinc-800 dark:group-hover/pol:text-zinc-300',
                   )}
-                />
+                >
+                  <ChevronDown
+                    className={cn(
+                      'h-3.5 w-3.5 transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
+                      isOpen && '-rotate-180',
+                    )}
+                  />
+                </span>
               </button>
 
-              <div
-                className={cn(
-                  'grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-                  isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
-                )}
-              >
-                <div className="overflow-hidden">
-                  <div
-                    className={cn(
-                      'divide-y divide-zinc-100 transition-opacity duration-200 ease-in-out dark:divide-zinc-800/60',
-                      isOpen ? 'opacity-100 delay-100' : 'opacity-0 delay-0',
-                    )}
+              <AnimatePresence initial={false}>
+                {isOpen && (
+                  <motion.div
+                    key="content"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{
+                      height: { duration: 0.34, ease: [0.22, 1, 0.36, 1] },
+                      opacity: { duration: 0.22, ease: 'easeOut' },
+                    }}
+                    className="overflow-hidden"
                   >
-                    {section.policies.map((policy) => {
-                      const Icon = policy.icon;
-                      return (
-                        <div key={policy.title} className="flex items-start gap-2.5 bg-zinc-50/60 px-4 py-2.5 dark:bg-zinc-900/30">
-                          <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
-                          <div className="min-w-0">
-                            <p className="text-[11.5px] font-semibold leading-snug text-zinc-800 dark:text-zinc-200">
-                              {policy.title}
-                            </p>
-                            <p className="mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-500">
-                              {policy.body}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
+                    <motion.div
+                      initial="closed"
+                      animate="open"
+                      exit="closed"
+                      variants={{
+                        open: { transition: { staggerChildren: 0.05, delayChildren: 0.08 } },
+                        closed: {},
+                      }}
+                      className="divide-y divide-zinc-100 dark:divide-zinc-800/60"
+                    >
+                      {section.policies.map((policy) => {
+                        const Icon = policy.icon;
+                        return (
+                          <motion.div
+                            key={policy.title}
+                            variants={{
+                              open: { opacity: 1, y: 0, transition: { duration: 0.25, ease: 'easeOut' } },
+                              closed: { opacity: 0, y: -6 },
+                            }}
+                            className="flex items-start gap-2.5 bg-zinc-50/60 px-4 py-2.5 dark:bg-zinc-900/30"
+                          >
+                            <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
+                            <div className="min-w-0">
+                              <p className="text-[11.5px] font-semibold leading-snug text-zinc-800 dark:text-zinc-200">
+                                {policy.title}
+                              </p>
+                              <p className="mt-0.5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-500">
+                                {policy.body}
+                              </p>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           );
         })}
@@ -810,16 +850,33 @@ function AnnouncementRow({ announcement: a }: { announcement: AnnouncementItem }
       <p className="mb-1 text-[12.5px] font-bold leading-snug text-zinc-900 dark:text-white">
         {a.title}
       </p>
-      <p className="text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-400">
-        {preview}
-      </p>
+      <motion.div layout className="overflow-hidden">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.p
+            key={expanded ? 'full' : 'preview'}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-400"
+          >
+            {preview}
+          </motion.p>
+        </AnimatePresence>
+      </motion.div>
       {isLong && (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="mt-1 text-[11px] font-medium text-amber-600 hover:underline dark:text-amber-400"
+          className="group/more mt-1 inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 transition-colors hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
         >
           {expanded ? 'Show less' : 'Read more'}
+          <ChevronDown
+            className={cn(
+              'h-3 w-3 transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
+              expanded && '-rotate-180',
+            )}
+          />
         </button>
       )}
     </div>
@@ -1147,47 +1204,67 @@ function SWallComposer({
               />
 
               {/* @mention list — inline, shows 3 rows then scrolls */}
-              {mentionQuery !== null && mentionMatches.length > 0 && (
-                <div className="mt-1.5 overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-lg dark:border-zinc-700/80 dark:bg-zinc-900">
-                  {mentionMatches.slice(0, 3).map((profile, i) => (
-                    <button
-                      key={profile.work_email}
-                      type="button"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        insertMention(profile);
-                      }}
-                      className={cn(
-                        'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors',
-                        'border-b border-zinc-100 last:border-0 dark:border-zinc-800',
-                        i === mentionDropdownIdx
-                          ? 'bg-violet-50 dark:bg-violet-950/40'
-                          : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60',
-                      )}
-                    >
-                      <SwallAvatar email={profile.work_email} name={profile.name} size={30} />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
-                          {profile.name ?? profile.work_email.split('@')[0]}
-                        </p>
-                        <p className="truncate text-[11px] text-zinc-400 dark:text-zinc-500">
-                          {profile.work_email}
-                        </p>
-                      </div>
-                      {i === mentionDropdownIdx && (
-                        <span className="shrink-0 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:bg-violet-900/40 dark:text-violet-300">
-                          ↵
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                  {mentionMatches.length > 3 && (
-                    <p className="px-3 py-1.5 text-[11px] text-zinc-400 dark:text-zinc-600">
-                      +{mentionMatches.length - 3} more — keep typing to narrow
-                    </p>
-                  )}
-                </div>
-              )}
+              <AnimatePresence>
+                {mentionQuery !== null && mentionMatches.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                    transition={{ type: 'spring', stiffness: 460, damping: 30 }}
+                    className="mt-1.5 origin-top overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-lg dark:border-zinc-700/80 dark:bg-zinc-900"
+                  >
+                    {mentionMatches.slice(0, 3).map((profile, i) => (
+                      <motion.button
+                        key={profile.work_email}
+                        type="button"
+                        initial={{ opacity: 0, x: -8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.04 + i * 0.04, duration: 0.18, ease: 'easeOut' }}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          insertMention(profile);
+                        }}
+                        onMouseEnter={() => setMentionDropdownIdx(i)}
+                        className={cn(
+                          'flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors duration-150',
+                          'border-b border-zinc-100 last:border-0 dark:border-zinc-800',
+                          i === mentionDropdownIdx
+                            ? 'bg-violet-50 dark:bg-violet-950/40'
+                            : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60',
+                        )}
+                      >
+                        <SwallAvatar email={profile.work_email} name={profile.name} size={30} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
+                            {profile.name ?? profile.work_email.split('@')[0]}
+                          </p>
+                          <p className="truncate text-[11px] text-zinc-400 dark:text-zinc-500">
+                            {profile.work_email}
+                          </p>
+                        </div>
+                        <AnimatePresence>
+                          {i === mentionDropdownIdx && (
+                            <motion.span
+                              initial={{ opacity: 0, scale: 0.6 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.6 }}
+                              transition={{ type: 'spring', stiffness: 500, damping: 24 }}
+                              className="shrink-0 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:bg-violet-900/40 dark:text-violet-300"
+                            >
+                              {'↵'}
+                            </motion.span>
+                          )}
+                        </AnimatePresence>
+                      </motion.button>
+                    ))}
+                    {mentionMatches.length > 3 && (
+                      <p className="px-3 py-1.5 text-[11px] text-zinc-400 dark:text-zinc-600">
+                        +{mentionMatches.length - 3} more {'—'} keep typing to narrow
+                      </p>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Image previews */}
               {imagePreviews.length > 0 && (
@@ -1553,16 +1630,18 @@ function SWallPostCard({
               onReact(post.id, primary, post.my_reactions.includes(primary));
             }}
             className={cn(
-              'group/btn flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium transition-colors',
+              'group/btn flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-medium transition-colors duration-200 active:scale-95',
               post.my_reactions.length > 0
                 ? 'text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30'
                 : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800/70 dark:hover:text-zinc-200',
             )}
           >
             {post.my_reactions.length > 0 ? (
-              <EmEmoji native={post.my_reactions[0]!} size="16" />
+              <span className="transition-transform duration-200 group-hover/btn:scale-125 group-active/btn:scale-90">
+                <EmEmoji native={post.my_reactions[0]!} size="16" />
+              </span>
             ) : (
-              <ThumbsUp className="h-3.5 w-3.5 transition-transform group-hover/btn:scale-110" />
+              <ThumbsUp className="h-3.5 w-3.5 transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] group-hover/btn:-rotate-12 group-hover/btn:scale-110" />
             )}
             <span className="tabular-nums">
               {totalReactions > 0 ? totalReactions : 'Like'}

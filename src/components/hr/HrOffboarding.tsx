@@ -411,7 +411,7 @@ export default function HrOffboarding() {
                   </thead>
                   <tbody className="divide-y divide-emerald-100/70 bg-white/85 dark:divide-emerald-900/35 dark:bg-zinc-950/40">
                     {rosterPageRows.map((r, i) => (
-                      <tr key={`${r.work_email ?? r.personal_email ?? i}`} className="align-middle hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20">
+                      <tr key={`${r.employee_id ?? r.work_email ?? r.personal_email ?? 'row'}-${i}`} className="align-middle hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20">
                         <td data-label="Employee ID" className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{r.employee_id ?? '—'}</td>
                         <td data-label="Name" className="px-4 py-2.5 text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</td>
                         <td data-label="Department" className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>

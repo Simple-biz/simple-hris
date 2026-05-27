@@ -1,13 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   Clock,
+  HeartCrack,
   Loader2,
+  MoreHorizontal,
+  Plane,
   Send,
   ShieldCheck,
+  Thermometer,
+  Trash2,
+  User,
   Users,
   XCircle,
 } from 'lucide-react';
@@ -20,7 +28,55 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
 
-const LEAVE_TYPES = ['Vacation', 'Sick', 'Personal', 'Bereavement', 'Other'] as const;
+type LeaveTypeMeta = {
+  value: string;
+  label: string;
+  hint: string;
+  icon: typeof Plane;
+  iconClass: string;
+};
+
+const LEAVE_TYPES: LeaveTypeMeta[] = [
+  {
+    value: 'Vacation',
+    label: 'Vacation',
+    hint: 'Planned time off',
+    icon: Plane,
+    iconClass: 'text-sky-500',
+  },
+  {
+    value: 'Sick',
+    label: 'Sick',
+    hint: 'Not feeling well',
+    icon: Thermometer,
+    iconClass: 'text-rose-500',
+  },
+  {
+    value: 'Personal',
+    label: 'Personal',
+    hint: 'Personal matters',
+    icon: User,
+    iconClass: 'text-violet-500',
+  },
+  {
+    value: 'Bereavement',
+    label: 'Bereavement',
+    hint: 'Loss of a loved one',
+    icon: HeartCrack,
+    iconClass: 'text-zinc-500',
+  },
+  {
+    value: 'Other',
+    label: 'Other',
+    hint: 'Something else',
+    icon: MoreHorizontal,
+    iconClass: 'text-amber-500',
+  },
+];
+
+function leaveTypeMeta(value: string): LeaveTypeMeta {
+  return LEAVE_TYPES.find((t) => t.value === value) ?? LEAVE_TYPES[LEAVE_TYPES.length - 1];
+}
 
 type StatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'cancelled';
 
@@ -91,6 +147,7 @@ export default function EmployeeLeaves({
   const [endDate, setEndDate] = useState('');
   const [reason, setReason] = useState('');
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   const load = useCallback(async () => {
@@ -186,6 +243,25 @@ export default function EmployeeLeaves({
     }
   }
 
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/leave-requests/${id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employee_email: employeeEmail }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error || 'Delete failed');
+      toast.success('Request removed');
+      setRows((prev) => prev.filter((r) => r.id !== id));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   const counts = useMemo(() => {
     const c = { pending: 0, approved: 0, rejected: 0, cancelled: 0 };
     for (const r of rows) {
@@ -272,20 +348,7 @@ export default function EmployeeLeaves({
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="leave-type">Leave type</Label>
-                  <select
-                    id="leave-type"
-                    value={leaveType}
-                    onChange={(e) => setLeaveType(e.target.value)}
-                    className={cn(
-                      'h-10 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm dark:border-zinc-800 dark:bg-zinc-900',
-                    )}
-                  >
-                    {LEAVE_TYPES.map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
+                  <LeaveTypeSelect value={leaveType} onChange={setLeaveType} />
                 </div>
                 <div className="space-y-1.5 sm:col-span-2">
                   <Label htmlFor="leave-reason">Reason (optional)</Label>
@@ -375,6 +438,9 @@ export default function EmployeeLeaves({
                 {filteredRows.map((r) => {
                   const managers = splitManagers(r.manager_email);
                   const days = daysBetween(r.start_date, r.end_date);
+                  const meta = leaveTypeMeta(r.leave_type);
+                  const TypeIcon = meta.icon;
+                  const canDelete = r.status === 'cancelled' || r.status === 'rejected';
                   return (
                     <li
                       key={r.id}
@@ -382,7 +448,8 @@ export default function EmployeeLeaves({
                     >
                       <div className="min-w-0 flex-1 space-y-1.5">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-zinc-900 dark:text-zinc-100">
+                          <span className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
+                            <TypeIcon className={cn('h-3.5 w-3.5', meta.iconClass)} />
                             {r.leave_type}
                           </span>
                           {statusBadge(r.status)}
@@ -441,6 +508,25 @@ export default function EmployeeLeaves({
                           Cancel
                         </Button>
                       )}
+                      {canDelete && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-label="Delete request"
+                          title="Remove from your list"
+                          className="shrink-0 gap-1.5 self-start text-zinc-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30 dark:hover:text-rose-400 sm:self-center"
+                          disabled={deletingId === r.id}
+                          onClick={() => void handleDelete(r.id)}
+                        >
+                          {deletingId === r.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                          Delete
+                        </Button>
+                      )}
                     </li>
                   );
                 })}
@@ -450,6 +536,167 @@ export default function EmployeeLeaves({
         </Card>
       </div>
     </div>
+  );
+}
+
+function LeaveTypeSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number; up: boolean } | null>(
+    null,
+  );
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLUListElement>(null);
+  const selected = leaveTypeMeta(value);
+  const SelectedIcon = selected.icon;
+
+  useEffect(() => setMounted(true), []);
+
+  const reposition = useCallback(() => {
+    const btn = triggerRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const gap = 6;
+    const estPanelHeight = LEAVE_TYPES.length * 48 + 8;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const up = spaceBelow < estPanelHeight + gap && rect.top > spaceBelow;
+    setPos({
+      top: up ? rect.top - gap : rect.bottom + gap,
+      left: rect.left,
+      width: rect.width,
+      up,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    reposition();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, [open, reposition]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      const target = e.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={cn(
+          'flex h-10 w-full items-center gap-2.5 rounded-md border bg-white px-3 text-left text-sm transition-colors dark:bg-zinc-900',
+          open
+            ? 'border-orange-300 ring-2 ring-orange-200/70 dark:border-blue-700 dark:ring-blue-900/50'
+            : 'border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700',
+        )}
+      >
+        <SelectedIcon className={cn('h-4 w-4 shrink-0', selected.iconClass)} />
+        <span className="flex-1 truncate font-medium text-zinc-900 dark:text-zinc-100">
+          {selected.label}
+        </span>
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 shrink-0 text-zinc-400 transition-transform duration-200 ease-out',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+
+      {mounted && pos
+        ? createPortal(
+            <ul
+              ref={panelRef}
+              role="listbox"
+              aria-hidden={!open}
+              style={{
+                position: 'fixed',
+                top: pos.up ? undefined : pos.top,
+                bottom: pos.up ? window.innerHeight - pos.top : undefined,
+                left: pos.left,
+                width: pos.width,
+              }}
+              className={cn(
+                'z-50 max-h-[60vh] overflow-y-auto rounded-md border border-zinc-200 bg-white p-1 shadow-xl transition-all duration-200 ease-out dark:border-zinc-700 dark:bg-zinc-900',
+                pos.up ? 'origin-bottom' : 'origin-top',
+                open
+                  ? 'pointer-events-auto translate-y-0 scale-100 opacity-100'
+                  : cn(
+                      'pointer-events-none scale-95 opacity-0',
+                      pos.up ? 'translate-y-1' : '-translate-y-1',
+                    ),
+              )}
+            >
+              {LEAVE_TYPES.map((t, i) => {
+                const Icon = t.icon;
+                const active = t.value === value;
+                return (
+                  <li key={t.value}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      tabIndex={open ? 0 : -1}
+                      onClick={() => {
+                        onChange(t.value);
+                        setOpen(false);
+                      }}
+                      style={{ transitionDelay: open ? `${i * 25}ms` : '0ms' }}
+                      className={cn(
+                        'flex w-full items-center gap-2.5 rounded px-2.5 py-2 text-left text-sm transition-all duration-200 ease-out',
+                        open ? 'translate-y-0 opacity-100' : '-translate-y-1 opacity-0',
+                        active
+                          ? 'bg-orange-50 dark:bg-blue-950/40'
+                          : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60',
+                      )}
+                    >
+                      <Icon className={cn('h-4 w-4 shrink-0', t.iconClass)} />
+                      <span className="flex-1">
+                        <span className="block font-medium text-zinc-900 dark:text-zinc-100">
+                          {t.label}
+                        </span>
+                        <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">
+                          {t.hint}
+                        </span>
+                      </span>
+                      {active && <CheckCircle2 className="h-4 w-4 shrink-0 text-orange-500" />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 

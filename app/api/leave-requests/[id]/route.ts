@@ -7,6 +7,7 @@ import {
   LEAVE_DELETE_UNRESTRICTED_ROLES,
   adminDeleteLeaveRequest,
   cancelLeaveRequestIfOwned,
+  deleteLeaveRequestIfOwned,
   getLeaveRequestById,
   isAuthorizedLeaveApprover,
   listManagersForDepartment,
@@ -185,6 +186,48 @@ export async function DELETE(
   try {
     const { id } = await context.params;
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+
+    // Owner self-delete: an employee removing one of their own terminal (cancelled/rejected)
+    // requests. Identified by an `employee_email` in the body — no privileged role required.
+    // Ownership + allowed status are enforced inside deleteLeaveRequestIfOwned.
+    let ownerEmail: string | null = null;
+    try {
+      const body = (await request.json()) as { employee_email?: string } | null;
+      ownerEmail = body?.employee_email
+        ? normEmail(body.employee_email) ?? body.employee_email.trim().toLowerCase()
+        : null;
+    } catch {
+      ownerEmail = null;
+    }
+
+    if (ownerEmail) {
+      const { row, error } = await deleteLeaveRequestIfOwned({ id, employee_email: ownerEmail });
+      if (error) return NextResponse.json({ error }, { status: 500 });
+      if (!row) {
+        return NextResponse.json(
+          { error: 'Only your own cancelled or rejected requests can be deleted.' },
+          { status: 403 },
+        );
+      }
+
+      void insertAuditLog({
+        user_name: ownerEmail,
+        user_role: 'Employee',
+        action: 'leave.owner_deleted',
+        resource: 'leave_requests',
+        resource_id: id,
+        details: {
+          leave_type: row.leave_type,
+          start_date: row.start_date,
+          end_date: row.end_date,
+          prior_status: row.status,
+          department: row.department,
+        },
+        ip_address: clientIp(request),
+      });
+
+      return NextResponse.json({ success: true, error: null });
+    }
 
     const session = await getServerSession(authOptions);
     const user = session?.user as

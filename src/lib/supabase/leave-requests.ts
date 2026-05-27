@@ -170,6 +170,36 @@ export async function cancelLeaveRequestIfOwned(params: {
 }
 
 /**
+ * Owner-initiated hard delete. Lets an employee permanently remove one of their OWN
+ * leave requests once it is in a terminal, non-approved state (cancelled or rejected) so
+ * they can tidy up their list. Pending requests must be cancelled first (PATCH cancel);
+ * approved requests are left intact to preserve the manager's decision trail.
+ *
+ * Ownership + status are enforced in the query itself (matched id + email + status), so a
+ * mismatched owner or a still-pending/approved row deletes nothing. Returns the row
+ * snapshot when a row was actually removed so the API can audit-log it.
+ */
+export async function deleteLeaveRequestIfOwned(params: {
+  id: string;
+  employee_email: string;
+}): Promise<{ row: LeaveRequestRow | null; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { row: null, error: 'Supabase not configured' };
+
+  const { data, error } = await supabase
+    .from(tableName())
+    .delete()
+    .eq('id', params.id)
+    .ilike('employee_email', params.employee_email.trim().toLowerCase())
+    .in('status', ['cancelled', 'rejected'])
+    .select('*')
+    .maybeSingle();
+
+  if (error) return { row: null, error: error.message };
+  return { row: (data as LeaveRequestRow) ?? null, error: null };
+}
+
+/**
  * Roles allowed to PERMANENTLY DELETE a leave request (any status, regardless of who filed it).
  *
  *  - `admin` / `payroll_manager` — unrestricted, can delete any request in any department.

@@ -18,7 +18,6 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -121,6 +120,7 @@ export default function AdminWebhooks() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -203,6 +203,23 @@ export default function AdminWebhooks() {
     return errs;
   }, [entries]);
 
+  const persist = async (list: WebhookEntry[], opts?: { silent?: boolean }) => {
+    const res = await fetch('/api/app-settings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        key: SETTINGS_KEY,
+        value: JSON.stringify(
+          list.map((e) => ({ ...e, updated_at: new Date().toISOString() })),
+        ),
+      }),
+    });
+    const json = (await res.json()) as { error: string | null };
+    if (json.error) throw new Error(json.error);
+    if (!opts?.silent) toast.success('Webhooks saved.');
+    setDirty(false);
+  };
+
   const save = async () => {
     if (Object.keys(validationErrors).length) {
       toast.error('Fix validation errors before saving.');
@@ -210,24 +227,35 @@ export default function AdminWebhooks() {
     }
     setSaving(true);
     try {
-      const res = await fetch('/api/app-settings', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          key: SETTINGS_KEY,
-          value: JSON.stringify(
-            entries.map((e) => ({ ...e, updated_at: new Date().toISOString() })),
-          ),
-        }),
-      });
-      const json = (await res.json()) as { error: string | null };
-      if (json.error) throw new Error(json.error);
-      toast.success('Webhooks saved.');
-      setDirty(false);
+      await persist(entries);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Save failed.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Toggling Active persists immediately so it survives a refresh.
+  const toggleActive = async (entry: WebhookEntry) => {
+    const next = !entry.active;
+    if (next && !/^https?:\/\//i.test(entry.url.trim())) {
+      toast.error('Add a valid http(s):// URL before activating.');
+      return;
+    }
+    const list = entries.map((e) =>
+      e.id === entry.id ? { ...e, active: next } : e,
+    );
+    setEntries(list);
+    setTogglingId(entry.id);
+    try {
+      await persist(list, { silent: true });
+      toast.success(next ? `${entry.label || entry.slug} activated` : `${entry.label || entry.slug} turned off`);
+    } catch (err) {
+      // Roll back on failure.
+      setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, active: entry.active } : e)));
+      toast.error(err instanceof Error ? err.message : 'Could not save toggle.');
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -345,27 +373,44 @@ export default function AdminWebhooks() {
                         Test
                       </Button>
 
-                      {/* Prominent Active toggle */}
-                      <div
+                      {/* Prominent Active toggle — single clickable pill, persists on click */}
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={entry.active}
+                        aria-label={entry.active ? 'Active — click to turn off' : 'Off — click to activate'}
+                        disabled={togglingId === entry.id}
+                        onClick={() => toggleActive(entry)}
                         className={cn(
-                          'flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition',
+                          'flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition disabled:opacity-60',
                           entry.active
-                            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300'
-                            : 'border-zinc-300 bg-white text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400',
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300'
+                            : 'border-zinc-300 bg-white text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800',
                         )}
                       >
-                        {entry.active ? (
+                        {togglingId === entry.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : entry.active ? (
                           <Power className="h-3.5 w-3.5" />
                         ) : (
                           <PowerOff className="h-3.5 w-3.5" />
                         )}
                         {entry.active ? 'Active' : 'Off'}
-                        <Switch
-                          checked={entry.active}
-                          onCheckedChange={(v) => update(entry.id, { active: !!v })}
-                          aria-label="Toggle active"
-                        />
-                      </div>
+                        {/* Visible track + thumb so the on/off state always reads clearly */}
+                        <span
+                          className={cn(
+                            'relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors',
+                            entry.active ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform',
+                              entry.active ? 'translate-x-3.5' : 'translate-x-0.5',
+                            )}
+                          />
+                        </span>
+                      </button>
 
                       <Button
                         variant="ghost"

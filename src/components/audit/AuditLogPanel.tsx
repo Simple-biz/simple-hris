@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
   Banknote,
+  Building2,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -13,9 +14,11 @@ import {
   ClipboardList,
   Clock,
   FileSpreadsheet,
+  FolderSync,
   KeyRound,
   Layers,
   Loader2,
+  Network,
   RefreshCw,
   Search,
   Settings,
@@ -36,8 +39,11 @@ const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 type CategoryId =
   | 'all'
   | 'settings'
+  | 'sync'
   | 'csv'
   | 'employees'
+  | 'hr'
+  | 'teams'
   | 'auth'
   | 'rbac'
   | 'leave'
@@ -79,6 +85,16 @@ const CATEGORIES: CategoryDef[] = [
     match: (a) => a.startsWith('settings.'),
   },
   {
+    // Google-Sheet → DB syncs (rates, master list, HSL, offboarded). Listed
+    // before `csv` so e.g. `csv.rates.sync` is tagged as a sync, not an upload.
+    id: 'sync',
+    label: 'Sheet Syncs',
+    shortLabel: 'Sync',
+    Icon: FolderSync,
+    tone: { dot: 'bg-teal-500', chip: 'bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300' },
+    match: (a) => a.includes('.sync'),
+  },
+  {
     id: 'csv',
     label: 'CSV uploads',
     shortLabel: 'CSV',
@@ -98,12 +114,31 @@ const CATEGORIES: CategoryDef[] = [
       !a.startsWith('employee.password_reset'),
   },
   {
+    id: 'hr',
+    label: 'HR (Onboarding / Offboarding)',
+    shortLabel: 'HR',
+    Icon: Building2,
+    tone: { dot: 'bg-rose-500', chip: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' },
+    match: (a) => a.startsWith('hr.'),
+  },
+  {
+    id: 'teams',
+    label: 'Teams & Transfers',
+    shortLabel: 'Teams',
+    Icon: Network,
+    tone: { dot: 'bg-indigo-500', chip: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300' },
+    match: (a) => a.startsWith('department_'),
+  },
+  {
     id: 'auth',
     label: 'Authentication',
     shortLabel: 'Auth',
     Icon: KeyRound,
     tone: { dot: 'bg-cyan-500', chip: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300' },
-    match: (a) => a.startsWith('employee.login') || a.startsWith('employee.password_reset'),
+    match: (a) =>
+      a.startsWith('employee.login') ||
+      a.startsWith('employee.password_reset') ||
+      a.startsWith('auth.'),
   },
   {
     id: 'rbac',
@@ -175,6 +210,32 @@ export function formatRelativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
+/** Pull the first non-null value among several candidate keys in `details`. */
+function pick(details: Record<string, unknown> | null, ...keys: string[]): unknown {
+  if (!details) return undefined;
+  for (const k of keys) {
+    if (details[k] != null) return details[k];
+  }
+  return undefined;
+}
+
+/**
+ * Builds a " — N rows (X new, Y updated, …)" tail from a sync result so the
+ * audit row says what the sync actually changed instead of just "synced".
+ */
+function syncSummary(details: Record<string, unknown> | null): string {
+  const rows = pick(details, 'rows', 'rowCount', 'parsed_rows');
+  const parts: string[] = [];
+  const inserted = pick(details, 'inserted');
+  const updated = pick(details, 'updated');
+  const reonboarded = pick(details, 'reonboarded');
+  if (inserted != null) parts.push(`${inserted} new`);
+  if (updated != null) parts.push(`${updated} updated`);
+  if (reonboarded != null && Number(reonboarded) > 0) parts.push(`${reonboarded} re-onboarded`);
+  const detail = parts.length ? ` (${parts.join(', ')})` : '';
+  return rows != null ? ` — ${rows} rows${detail}` : detail || ' — completed';
+}
+
 export function formatActionLabel(action: string, details: Record<string, unknown> | null): string {
   switch (action) {
     case 'settings.rule.toggle':
@@ -193,6 +254,24 @@ export function formatActionLabel(action: string, details: Record<string, unknow
       return `Rates CSV uploaded: ${details?.file ?? 'file'} (${details?.rows ?? '?'} rows)`;
     case 'csv.delete':
       return `CSV deleted: ${details?.file ?? details?.resource_id ?? 'file'}`;
+
+    // ── Google-Sheet syncs ──────────────────────────────────────────────
+    case 'csv.rates.sync':
+      return `Rates synced from Google Sheet${syncSummary(details)}`;
+    case 'csv.rates.sync.error':
+      return `Rates sheet sync FAILED: ${String(details?.error ?? 'unknown error')}`;
+    case 'csv.master.sync':
+      return `Master list synced from Google Sheet${syncSummary(details)}`;
+    case 'csv.master.sync.error':
+      return `Master list sheet sync FAILED: ${String(details?.error ?? 'unknown error')}`;
+    case 'csv.hsl.sync':
+      return `HSL team members synced from Google Sheet${syncSummary(details)}`;
+    case 'csv.hsl.sync.error':
+      return `HSL sheet sync FAILED: ${String(details?.error ?? 'unknown error')}`;
+    case 'offboarded.sheet.sync':
+      return `Offboarded sheet synced — ${String(details?.matched ?? '?')} matched, ${String(details?.updated ?? 0)} stamped off-boarded${Number(details?.not_found ?? 0) > 0 ? `, ${String(details?.not_found)} not found` : ''}`;
+    case 'offboarded.sheet.sync.error':
+      return `Offboarded sheet sync FAILED: ${String(details?.error ?? 'unknown error')}`;
     case 'employee.create':
       return `Employee added: ${details?.name ?? details?.work_email ?? 'Unknown'}`;
     case 'employee.delete':
@@ -257,6 +336,61 @@ export function formatActionLabel(action: string, details: Record<string, unknow
       return `Payroll dispatch started — disputes paused`;
     case 'payroll.dispatch.unlocked':
       return `Payroll dispatch ended — disputes re-opened`;
+
+    // ── Employee rates / auth ───────────────────────────────────────────
+    case 'employee.rates.revoke': {
+      const revoked = details?.revoked as Record<string, unknown> | null;
+      return `Rate history entry revoked: ${String(details?.employee ?? '?')}${revoked?.effective_from ? ` (effective ${String(revoked.effective_from)})` : ''}`;
+    }
+    case 'auth.force_logout':
+      return `Forced logout: ${String(details?.resource_id ?? pick(details, 'email') ?? '?')}${details?.reason ? ` (${String(details.reason)})` : ''}`;
+
+    // ── HR onboarding / offboarding ─────────────────────────────────────
+    case 'hr.employee.offboarded':
+      return `Off-boarded: ${String(details?.target_email ?? '?')}${details?.reason ? ` — ${String(details.reason)}` : ''}${details?.webhook_fired ? ' · workspace deactivation fired' : ''}`;
+    case 'hr.employee.reonboarded':
+      return `Re-onboarded: ${String(details?.target_email ?? '?')}`;
+    case 'hr.onboarding.set_work_email':
+      return `Work email assigned: ${String(details?.name ?? '?')} → ${String(details?.work_email ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+    case 'hr.onboarding.send_webhook': {
+      const ok = !details?.webhook_error;
+      return `Onboarding invite ${ok ? 'sent' : 'FAILED'}: ${String(details?.to ?? '?')}${ok ? '' : ` — ${String(details?.webhook_error)}`}`;
+    }
+
+    // ── Teams & transfers ───────────────────────────────────────────────
+    case 'department_transfer.requested':
+      return `Transfer requested: ${String(details?.employee_email ?? '?')} (${String(details?.from_department ?? '?')} → ${String(details?.to_department ?? '?')})`;
+    case 'department_transfer.cancelled':
+      return `Transfer request cancelled: ${String(details?.employee_email ?? '?')}`;
+    case 'department_manager.assigned':
+      return `Manager assigned: ${String(details?.manager_email ?? '?')} → ${String(details?.department ?? '?')}`;
+    case 'department_manager.revoked':
+      return `Manager revoked: ${String(details?.manager_email ?? '?')} ← ${String(details?.department ?? '?')}`;
+
+    // ── Leave (deletions) ───────────────────────────────────────────────
+    case 'leave.owner_deleted':
+      return `Leave deleted by owner: ${String(pick(details, 'employee_email') ?? '?')} (${String(details?.leave_type ?? '?')})`;
+    case 'leave.admin_deleted':
+      return `Leave deleted by admin: ${String(pick(details, 'employee_email') ?? '?')} (${String(details?.leave_type ?? '?')})`;
+
+    // ── PAB disputes (revoke / admin delete) ────────────────────────────
+    case 'pab_dispute.revoked':
+      return `PAB dispute revoked: ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')} by ${String(details?.revoked_by ?? '?')}`;
+    case 'pab_dispute.admin_deleted':
+      return `PAB dispute deleted (admin): ${String(details?.employee ?? '?')} ${String(details?.dispute_date ?? '?')}`;
+
+    // ── Misc ────────────────────────────────────────────────────────────
+    case 'orphanage_budget.created':
+      return `Orphanage budget request: ${String(details?.visit_type ?? 'visit')}${details?.final_amount != null ? ` — ₱${String(details.final_amount)}` : ''}`;
+    case 'fpu.enroll':
+      return `FPU enrollment: ${String(details?.full_name ?? details?.email ?? '?')}${details?.department ? ` (${String(details.department)})` : ''}`;
+    case 'employee_gift_shipping.edited': {
+      const fields = (details?.fields_changed as string[] | undefined)?.join(', ');
+      return `Gift shipping edited: ${String(details?.personal_email ?? '?')}${fields ? ` (${fields})` : ''}`;
+    }
+    case 'employee_gift_shipping.deleted':
+      return `Gift shipping deleted: ${String(details?.resource_id ?? details?.personal_email ?? '?')}`;
+
     default:
       return action;
   }
@@ -297,6 +431,27 @@ function actionDot(action: string): string {
   if (action === 'payroll.dispatch.locked') return 'bg-rose-500';
   if (action === 'payroll.dispatch.unlocked') return 'bg-emerald-500';
   if (action === 'csv.rates.upload') return 'bg-sky-600';
+  // Sheet syncs — teal; their .error variants go red.
+  if (action.endsWith('.sync')) return 'bg-teal-500';
+  if (action.endsWith('.sync.error')) return 'bg-red-600';
+  if (action === 'employee.rates.revoke') return 'bg-amber-600';
+  if (action === 'auth.force_logout') return 'bg-rose-600';
+  if (action === 'hr.employee.offboarded') return 'bg-rose-600';
+  if (action === 'hr.employee.reonboarded') return 'bg-teal-500';
+  if (action === 'hr.onboarding.set_work_email') return 'bg-sky-500';
+  if (action === 'hr.onboarding.send_webhook') return 'bg-rose-400';
+  if (action === 'department_transfer.requested') return 'bg-indigo-500';
+  if (action === 'department_transfer.cancelled') return 'bg-zinc-500';
+  if (action === 'department_manager.assigned') return 'bg-indigo-500';
+  if (action === 'department_manager.revoked') return 'bg-pink-600';
+  if (action === 'leave.owner_deleted') return 'bg-zinc-500';
+  if (action === 'leave.admin_deleted') return 'bg-rose-600';
+  if (action === 'pab_dispute.revoked') return 'bg-rose-500';
+  if (action === 'pab_dispute.admin_deleted') return 'bg-red-600';
+  if (action === 'orphanage_budget.created') return 'bg-amber-500';
+  if (action === 'fpu.enroll') return 'bg-emerald-500';
+  if (action === 'employee_gift_shipping.edited') return 'bg-yellow-500';
+  if (action === 'employee_gift_shipping.deleted') return 'bg-rose-500';
   return 'bg-zinc-400';
 }
 
@@ -387,8 +542,11 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
     const out: Record<CategoryId, number> = {
       all: auditLogs.length,
       settings: 0,
+      sync: 0,
       csv: 0,
       employees: 0,
+      hr: 0,
+      teams: 0,
       auth: 0,
       rbac: 0,
       leave: 0,
@@ -497,7 +655,7 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
           <div>
             <p className="text-sm font-bold text-zinc-900 dark:text-white">Audit Log</p>
             <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
-              Same activity feed as System Settings — payroll, employees, CSV, login, roles, and leave
+              Same activity feed as System Settings — payroll, employees, sheet syncs, CSV, HR, login, roles, and leave
             </p>
           </div>
         </div>

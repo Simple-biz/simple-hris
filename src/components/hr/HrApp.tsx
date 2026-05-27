@@ -1369,14 +1369,6 @@ function HrAnnouncements({ viewerEmail }: { viewerEmail: string | null }) {
 function HrSwallTab({ viewerEmail }: { viewerEmail: string | null }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
-        <h1 className="text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
-          Simple Wall
-        </h1>
-        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
-          Company-wide social feed. Post updates, react, and comment — live via Realtime.
-        </p>
-      </div>
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] dark:bg-[#0d1117]">
         <SWall viewerEmail={viewerEmail} canPost sourceLabel="HR" />
       </div>
