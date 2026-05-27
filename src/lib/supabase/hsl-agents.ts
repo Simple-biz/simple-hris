@@ -3,7 +3,7 @@ import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "./s
 /**
  * Lookups against the `active_hsl_agents` view (the "current upload" of the
  * HSL pay-plan Google Sheet — see `references/hsl_agents_upload_archive.sql`
- * and `docs/csv-imports.md`).
+ * and `docs/features/csv-imports.md`).
  *
  * The view already returns rows with friendly column names like
  * `"Department/Role"` and `"KPI/Bonus"` — those columns are aliased from the

@@ -31,7 +31,7 @@ The **Technology Bonus** (₱1,850) is a separate monthly-cycle rule: service ti
 
 ## Calculation rules (canonical for Simple HRIS)
 
-Authoritative detail lives in [Documentation/BUSINESS_LOGIC.md](Documentation/BUSINESS_LOGIC.md). Summary:
+Authoritative detail lives in [Documentation/BUSINESS_LOGIC.md](../reference/business-logic.md). Summary:
 
 ### Perfect Attendance Bonus (PAB)
 
@@ -87,7 +87,7 @@ Recommended **next steps** (if you want parity with a spreadsheet or clearer ops
 
 ### Pending code change — `src/lib/payroll/constants.ts`
 
-Deduplicate **₱5,000** / **₱1,850** per [Documentation/problem.md](Documentation/problem.md):
+Deduplicate **₱5,000** / **₱1,850** per [Documentation/problem.md](../notes/problem.md):
 
 1. Add `src/lib/payroll/constants.ts` exporting `PERFECT_ATTENDANCE_BONUS_PHP = 5000` and `TECHNOLOGY_BONUS_PHP = 1850`.
 2. In [src/components/PayrollWizard.tsx](src/components/PayrollWizard.tsx), import those constants and use them in `COMMON_BONUSES` and in the Step 3 intro copy (replace hardcoded “₱1,850” / “₱5,000” strings with `formatPHP(...).replace(/\.\d{2}$/, '')` so labels stay in sync).

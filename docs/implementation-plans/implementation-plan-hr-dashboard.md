@@ -9,7 +9,7 @@
 | **Status** | Phase 0 complete — HR view shell scaffolded (`/hr` route, sidebar, view-switcher entry, profile-photo unification across all role views) |
 | **Next phase** | Phase 1 — Onboarding "Add person" form wired into Global Master List |
 | **Related code** | `app/hr/page.tsx`, `src/components/hr/HrApp.tsx`, `src/components/hr/HrSidebar.tsx`, `src/lib/rbac/views.ts`, `src/lib/supabase/employees.ts`, `src/hooks/useViewerProfilePhoto.ts` |
-| **Related docs** | [`business-logic.md`](./business-logic.md), [`csv-imports.md`](./csv-imports.md), [`data-sources.md`](./data-sources.md), [`implementation-plan-orphanage-visit-pab.md`](./implementation-plan-orphanage-visit-pab.md) |
+| **Related docs** | [`business-logic.md`](../reference/business-logic.md), [`csv-imports.md`](../features/csv-imports.md), [`data-sources.md`](../reference/data-sources.md), [`implementation-plan-orphanage-visit-pab.md`](./implementation-plan-orphanage-visit-pab.md) |
 
 ---
 
@@ -92,7 +92,7 @@ A primary action button labeled **"Add person"** (or "Add employee") on the HR d
 
 Selecting a Team / Department / Job Description must:
 
-1. Pre-fill **Regular Rate** from the canonical rate source (the same `employee_hourly_rates` / Rates Google Sheet feeding payroll today — see [`data-sources.md`](./data-sources.md) → "Rates").
+1. Pre-fill **Regular Rate** from the canonical rate source (the same `employee_hourly_rates` / Rates Google Sheet feeding payroll today — see [`data-sources.md`](../reference/data-sources.md) → "Rates").
 2. Pre-fill **Overtime Rate** the same way.
 3. Allow either rate to be **manually overridden** (custom rate exceptions are a real case).
 
@@ -174,7 +174,7 @@ HR does not own this. Attendance lands with **Jackie** or the **managers**. The 
 
 ### 5.2 PAB forgiveness (orphanage example)
 
-> Already implemented — this is the existing flow that confirms why the unified roster matters. See [`implementation-plan-orphanage-visit-pab.md`](./implementation-plan-orphanage-visit-pab.md) and [`orphanage-dispute-flow.md`](./orphanage-dispute-flow.md).
+> Already implemented — this is the existing flow that confirms why the unified roster matters. See [`implementation-plan-orphanage-visit-pab.md`](./implementation-plan-orphanage-visit-pab.md) and [`orphanage-dispute-flow.md`](../features/orphanage-dispute-flow.md).
 
 - Insufficient Hubstaff hours (e.g. < 7h) → marked absent.
 - If the absence is excused (orphanage visit), Allison and Ellie hand a name list to Accounting for **forgiveness**.
@@ -221,7 +221,7 @@ These shipped while drafting this plan and unblock the rest of Phase 1:
 
 ### Phase 2 — Bulk entry + Offboarding trigger
 
-1. **CSV import flow** for the New Hire Checklist sheet → staged review → bulk commit. (Re-use the import infrastructure from [`csv-imports.md`](./csv-imports.md).)
+1. **CSV import flow** for the New Hire Checklist sheet → staged review → bulk commit. (Re-use the import infrastructure from [`csv-imports.md`](../features/csv-imports.md).)
 2. **Search + Off Board** action with reason picker, wired to Drew's automation (webhook contract TBD).
 3. **Off-boarded view filter** on the HR roster + retained-row badge.
 

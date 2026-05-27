@@ -10,12 +10,12 @@ Read the documents in this folder **before** making changes to the codebase. The
 
 | File | What it covers |
 |---|---|
-| [SYSTEM_ARCHITECTURE.md](./SYSTEM_ARCHITECTURE.md) | Tech stack, repository structure, routing model (admin + employee portal), Supabase client strategy, design system, environment variables, key architectural decisions |
-| [DATA_SOURCES.md](./DATA_SOURCES.md) | All Supabase tables (schema + queries), all API routes, direct pg Pool usage, data flow diagram, CSV upload dedup, email normalization, **PAB canonical column resolution**, **All Time accumulation** |
-| [COMPONENTS.md](./COMPONENTS.md) | Every UI component — admin (Overview, PayrollWizard, Rates, Sidebar) + **employee portal** (Dashboard with PAB calendar, Profile with bank info, Settings, Avatar), shadcn primitives, **PAB helper module** |
-| [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md) | All business rules: payroll formulas, overtime threshold, **PAB month boundaries** (week ownership by Monday), **PAB calendar grid**, **canonical column resolution**, **All Time mode**, department auto-assignment, per-department bonus schedules, CSV upload rules, data integrity policies |
-| [API_REFERENCE.md](./API_REFERENCE.md) | Complete REST API documentation: all 14 endpoints with methods, request/response shapes, validation, tables, service role requirements, **planned payroll automation endpoints** (finalize, paystub, dispatch) |
-| [IMPLEMENTATION_PLAN_RBAC.md](./IMPLEMENTATION_PLAN_RBAC.md) | Planned RBAC system: 6 roles, full permission matrix, Supabase Auth integration, API route guards, UI gating, RLS policies, audit logging, 5-phase implementation plan |
+| [SYSTEM_ARCHITECTURE.md](./system-architecture.md) | Tech stack, repository structure, routing model (admin + employee portal), Supabase client strategy, design system, environment variables, key architectural decisions |
+| [DATA_SOURCES.md](./data-sources.md) | All Supabase tables (schema + queries), all API routes, direct pg Pool usage, data flow diagram, CSV upload dedup, email normalization, **PAB canonical column resolution**, **All Time accumulation** |
+| [COMPONENTS.md](./components.md) | Every UI component across all **eight role dashboards** -- Accounting (App, Sidebar, Overview, Rates, PayrollWizard, Disputes), Admin, Employee, Manager, HR, CEO, Orphanage, Contractor, Payroll Clerk -- plus the **Dashboard Map**, **Auth/RBAC/Role-routing** glue, shared components (S-Wall, Announcements, Notifications, Presence, Audit), the **PAB helper module**, and shadcn primitives |
+| [BUSINESS_LOGIC.md](./business-logic.md) | All business rules: payroll formulas, overtime threshold, **PAB month boundaries** (week ownership by Monday), **PAB calendar grid**, **canonical column resolution**, **All Time mode**, department auto-assignment, per-department bonus schedules, CSV upload rules, data integrity policies |
+| [API_REFERENCE.md](./api-reference.md) | Complete REST API documentation: all 14 endpoints with methods, request/response shapes, validation, tables, service role requirements, **planned payroll automation endpoints** (finalize, paystub, dispatch) |
+| [IMPLEMENTATION_PLAN_RBAC.md](../implementation-plans/implementation-plan-rbac.md) | Planned RBAC system: 6 roles, full permission matrix, Supabase Auth integration, API route guards, UI gating, RLS policies, audit logging, 5-phase implementation plan |
 
 ---
 
@@ -36,10 +36,11 @@ Read the documents in this folder **before** making changes to the codebase. The
 - **Step 5 (Dispatch)**: Currently a placeholder — no payment API is called
 - **Hogan Cycle toggle**: Flag only — no filtering logic implemented yet
 - **Lead Gen department**: No bonuses, explicitly excluded by policy
-- **No auth currently**: User is hardcoded as "Fran M / Senior Admin". RBAC plan exists in `IMPLEMENTATION_PLAN_RBAC.md`.
+- **Auth + RBAC** *(implemented)*: NextAuth Google SSO restricted to the `simple.biz` Workspace; JWT stamped with roles from `employee_roles`. `middleware.ts` gates every page route + enforces `?email=` ownership. Two authz layers: role grants (which dashboards/tabs) + a Hidden/View/Edit per-feature overlay (`employee_feature_permissions`, wired on Accounting today; `admin` bypasses). Role revoke triggers a force-logout map that invalidates stale JWTs.
+- **Eight role dashboards**: Accounting (`/`), Admin (`/admin`), Employee (`/employee`), Manager (`/manager`), HR (`/hr`), CEO (`/ceo`), Orphanage (`/orphanage`), Contractor (`/contractor`); Payroll Clerk dispatch is at `/payroll-clerk` and also the Accounting Payment Dispatch tab. Users land on their highest-priority view and hop between entitled views via the sidebar ViewSwitcher (`src/lib/rbac/views.ts`).
 - **Employee Portal**: Accessible at `/employee?email=...` — provides Dashboard (hours/pay/PAB), Profile (with bank info), and Settings (bank info editing).
 - **System Overview CSV selector**: Dropdown to view stats for a specific source file or "All Time" (aggregated). Defaults to latest file.
-- **Bonus & Status panel**: Real-time PAB eligibility metrics (eligible/not eligible counts + progress bar), Technology Bonus status; dispute counts still summarized at a high level (detailed flow is `pab_day_disputes` / [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#pab-day-dispute-system)).
+- **Bonus & Status panel**: Real-time PAB eligibility metrics (eligible/not eligible counts + progress bar), Technology Bonus status; dispute counts still summarized at a high level (detailed flow is `pab_day_disputes` / [BUSINESS_LOGIC.md](./business-logic.md#pab-day-dispute-system)).
 - **Rates avatars**: Employee table and profile modal show avatars (photo/Gravatar/initials). Photo URL fields are hidden from the field list.
 
 ---

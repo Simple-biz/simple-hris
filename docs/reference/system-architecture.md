@@ -35,7 +35,7 @@ simple-hris/
 ├── app/                         # Next.js App Router (shell only)
 │   ├── layout.tsx               # ThemeProvider, font loading, global meta
 │   ├── page.tsx                 # Renders <AppShell /> from src/App.tsx
-│   └── api/                     # 9 API route handlers (server-side only)
+│   └── api/                     # many API route handlers (server-side only); see API_REFERENCE.md
 │       ├── employees/           # GET  — master list
 │       ├── employee-hourly-rates/     # GET  — rates table
 │       ├── employee-rate-profiles/    # GET  — merged multi-table profile
@@ -55,12 +55,11 @@ simple-hris/
 │   ├── types.ts                 # Shared TypeScript types
 │   ├── constants.ts             # Mock data (MOCK_USERS, MOCK_TIME_RECORDS)
 │   ├── index.css                # Global styles, Tailwind theme variables
-│   ├── components/
-│   │   ├── Sidebar.tsx          # Navigation + user info + theme toggle
-│   │   ├── Overview.tsx         # Dashboard stats + employee table
-│   │   ├── PayrollWizard.tsx    # 5-step payroll workflow (2,987 lines)
-│   │   ├── Rates.tsx            # Rate profiles + add/delete/edit
-│   │   └── ThemeProvider.tsx    # next-themes wrapper
+│   ├── components/              # organized by dashboard + shared layer
+│   │   ├── (Accounting)         # App.tsx, Sidebar, Overview, Rates, PayrollWizard
+│   │   ├── admin/ employee/ manager/ hr/ ceo/ contractor/ orphanage/ payroll-clerk/
+│   │   ├── announcements/ swall/ notifications/ presence/ audit/ rbac/ auth/
+│   │   └── ThemeProvider.tsx    # see COMPONENTS.md for the full per-dashboard reference
 │   └── lib/
 │       ├── utils.ts             # cn() — clsx + tailwind-merge
 │       ├── hash.ts              # SHA-256 CSV dedup
@@ -80,41 +79,24 @@ simple-hris/
 
 ## Application Shell & Routing
 
-`app/layout.tsx` loads the fonts (Inter, JetBrains Mono via Google Fonts), wraps the app in `<ThemeProvider>`, and sets metadata. `app/page.tsx` renders `<AppShell />`.
+`app/layout.tsx` loads the fonts (Inter, JetBrains Mono via Google Fonts), wraps the app in `<NextAuthProvider>` (which nests NextAuth `SessionProvider` + `PresenceProvider`) and `<ThemeProvider>`, and sets metadata.
 
-`src/App.tsx` owns a single `activeTab` state string. The sidebar sets it; the main content area renders the corresponding view. There is **no URL-based routing** for the admin side — this is intentional for a single-user internal tool where deep-linking is unnecessary.
+The app is no longer a single-operator tool. It is **eight role dashboards**, each served by its own Next.js route segment and gated by a NextAuth (Google SSO) session. `middleware.ts` requires a valid JWT on every page route, enforces `?email=` ownership, and bounces contractor-only users off employee routes. After login, `app/login/page.tsx` resolves the user's roles and routes them to the highest-priority dashboard they are entitled to; the in-sidebar **ViewSwitcher** lets multi-role users hop between dashboards. The mapping lives in `src/lib/rbac/views.ts`. See COMPONENTS.md -> "Dashboard Map" and "Auth, RBAC & Role Routing" for the per-dashboard details.
 
-```
-Admin activeTab values (src/App.tsx):
-  "overview"       → <Overview />
-  "rates"          → <Rates />
-  "payroll-wizard" → <PayrollWizard />
-  "hogan-suite"    → placeholder card
-  "disputes"       → placeholder card
-  "settings"       → placeholder card
-```
+| View | Route | Top component | Granting role(s) |
+|---|---|---|---|
+| Accounting | `/` -> `/accounting` | `src/App.tsx` (`AppShell`) | `payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `viewer` |
+| Admin | `/admin` | `app/admin/page.tsx` | `admin` |
+| Employee | `/employee` | `EmployeeApp` | everyone except pure contractors |
+| Manager | `/manager` | `ManagerApp` | `manager` |
+| HR | `/hr` | `HrApp` | `admin`, `hr_coordinator` |
+| CEO | `/ceo` | `CeoApp` | `ceo` |
+| Orphanage | `/orphanage` | `OrphanageApp` | `orphanage_manager` |
+| Contractor | `/contractor` | `ContractorApp` | `contractor` |
 
-### Employee Portal
+Each dashboard is still an `activeTab`-driven SPA internally (the sidebar sets a tab string; the main area renders the matching view; no per-tab URL routing) -- but the **dashboard itself is now a real route**, and tabs are gated by roles plus the per-feature-permission overlay (`src/lib/rbac/feature-permissions.ts`, enforced today on the Accounting view via `src/lib/rbac/accounting-tabs.ts`). Every shell resolves its viewer from `?email=` (validated, normalized, cached in `sessionStorage[SESSION_EMAIL_KEY]`).
 
-The employee-facing portal lives at `/employee?email=...` (`app/employee/page.tsx` → `EmployeeApp.tsx`). It uses URL-based email identification and has its own tab-based navigation:
-
-```
-Employee activeTab values (src/components/employee/EmployeeApp.tsx):
-  "dashboard"  → <EmployeeDashboard />   — Hours, pay, PAB calendar
-  "profile"    → <EmployeeProfile />     — Directory info, bank details
-  "hours"      → placeholder
-  "disputes"   → placeholder
-  "settings"   → <EmployeeSettings />   — Bank info editing
-```
-
-Key differences from the admin shell:
-- **PAB Calendar**: Full-month calendar grid showing Mon–Fri pass/fail per day, with skeleton loading and staggered animations
-- **All Time mode**: File selector includes "All Time" option that aggregates pay across all source files
-- **Canonical column resolution**: Weekly source files with `monday`/`tuesday` columns are resolved to ISO dates during merge
-- **Profile hero**: Large avatar with hover camera overlay, department/job/ID badges
-- **Bank info**: Displayed in profile, editable via Settings tab redirect
-
----
+The **Accounting** shell (`src/App.tsx`) tabs are: `overview`, `rates`, `payroll-wizard`, `payment-dispatch`, `disputes`, `notifications`, `settings`, `announcements`, `s-wall`. The **Employee** portal (`/employee?email=...`) tabs include `dashboard` (hours/pay/PAB calendar), `profile`, `hours` (My Hours calendar), `disputes`, `leaves`, `team`, `mesa`, `reports`, `policies`, and `settings`. The **Payroll Clerk** dispatch view (`PayrollDispatch`) is mounted both at `/payroll-clerk` and as the Accounting "Payment Dispatch" tab.
 
 ## Supabase Client Strategy
 
@@ -234,16 +216,11 @@ Hubstaff CSVs use day-name date headers (`"Mon 3/24"`) while the Supabase table 
 **7. Client-side CSV re-parse for PA detection**
 After uploading a CSV, the component re-parses the CSV text client-side (`parseCsv()`) and uses it to set `hubstaffDisplayColumns` / `hubstaffDisplayRows` directly — rather than re-fetching from Supabase. This guarantees Perfect Attendance detection in Step 3 always has real daily values, even if the Supabase date columns don't match. The `dailyDataMissing` flag detects the case where Supabase daily columns are all null and shows a warning banner.
 
-**8. No authentication (planned)**
-The admin app currently has no session gate — the user identity is hardcoded as `"Fran M / Senior Admin"`. A full RBAC implementation plan with 6 roles, API guards, RLS policies, and audit logging is documented in `Documentation/IMPLEMENTATION_PLAN_RBAC.md`.
+**8. NextAuth (Google SSO) + role-based access control** *(implemented)*
+Authentication is Google SSO restricted to the `simple.biz` Workspace, via NextAuth with JWT sessions (`src/lib/auth/auth-options.ts`). On sign-in the JWT is stamped with the user's active roles (from `employee_roles`); `middleware.ts` gates every page route and enforces `?email=` ownership. Authorization has two layers: **role grants** (`employee_roles`, managed in Admin -> Roles) decide which dashboards/tabs a user sees, and a **per-feature-permission overlay** (`employee_feature_permissions`, Hidden/View/Edit per tab) further restricts them (wired today on the Accounting view). `admin` bypasses the overlay. Because roles are baked into the JWT at sign-in, a **force-logout map** (`app_settings.auth.force_logout_map`) invalidates stale tokens immediately on role revoke / permission change. Grants/revokes are audit-logged. (The original plan is in `IMPLEMENTATION_PLAN_RBAC.md`; a couple of spots like the System Settings panel still show a hardcoded actor -- see COMPONENTS.md.)
 
 **9. Flat analytic table for weekly reports (`disbursement_records`)** *(added 2026-04-28)*
-The Reports tab in Payment Dispatch reads from a flat `public.disbursement_records` table — one row per (Hubstaff cycle, employee). It's seeded from the existing tables (`hubstaff_hours` × `employee_hourly_rates` × `payment_dispatches`) by `references/seed_disbursement_records.sql`. Two triggers on `payment_dispatches` (`*_sync_disbursement` for INSERT/UPDATE, `*_unsync_disbursement` for DELETE) keep the flat table live without the API doing the join itself. **Why:** the original report endpoint joined three tables + ran `computeCurrentPay()` on every render — fine for 7 cycles, painful at a year of pulls. The flat table makes a weekly rollup a single grouped scan. See [PAYMENT_DISPATCH.md §6.5](./PAYMENT_DISPATCH.md) and [DATA_SOURCES.md §5](./DATA_SOURCES.md) for the full schema.
+The Reports tab in Payment Dispatch reads from a flat `public.disbursement_records` table — one row per (Hubstaff cycle, employee). It's seeded from the existing tables (`hubstaff_hours` × `employee_hourly_rates` × `payment_dispatches`) by `references/seed_disbursement_records.sql`. Two triggers on `payment_dispatches` (`*_sync_disbursement` for INSERT/UPDATE, `*_unsync_disbursement` for DELETE) keep the flat table live without the API doing the join itself. **Why:** the original report endpoint joined three tables + ran `computeCurrentPay()` on every render — fine for 7 cycles, painful at a year of pulls. The flat table makes a weekly rollup a single grouped scan. See [PAYMENT_DISPATCH.md §6.5](../features/payment-dispatch.md) and [DATA_SOURCES.md §5](./data-sources.md) for the full schema.
 
-**10. Employee / Accounting login (`/login`)**
-A unified login page at `/login` authenticates users via bcrypt-hashed passwords stored in `employee_hourly_rates`. The form has an **Employee / Accounting** role toggle; on success the verified work email is written to `sessionStorage` (`employee_session_email`, `employee_session_role`) and the user is routed to `/employee` (Employee) or `/` (Accounting). The admin dashboard gate is currently disabled pending full wiring; the login form and APIs are live.
-
-- **`POST /api/employee-login`** — calls Supabase RPC `verify_employee_password(p_email, p_password)` which returns `password_hash = crypt(p_password, password_hash)`. Successes and failures are written to `audit_log` (`employee.login.success` / `employee.login.failed`) with the submitted work email in `details`.
-- **`POST /api/employee-forgot-password`** — verifies identity via RPC `verify_employee_identity(p_email, p_start_mmddyy)` (work email + `MMDDYY` of start date). On match, writes `employee.password_reset.requested` to `audit_log` for the accounting team to action out-of-band. No password is ever returned.
-- **Temp password convention**: `MMDDYY` of the employee's start date (e.g. June 5 2026 → `060526`). Hashes are generated via pgcrypto `crypt(pwd, gen_salt('bf'))` during a one-time backfill and on new-employee creation (planned).
-- **Password columns** on `employee_hourly_rates`: `password_hash`, `previous_password_hash`, `password_updated_at`. Plaintext is never stored.
+**10. Login (`/login`) -- Google SSO primary, legacy password fallback**
+The primary sign-in is Google SSO (see decision 8). After NextAuth resolves the session, `app/login/page.tsx` fetches the user's roles (`GET /api/employee-roles`) and redirects to the highest-priority dashboard via `viewsForRoles` / `VIEW_ROUTES`. A **legacy email + password path** also exists (`EmployeeLogin` -> `POST /api/employee-login`, password = `MMDDYY` of start date, verified via Supabase RPC `verify_employee_password`; forgot-password via `verify_employee_identity` + `POST /api/employee-forgot-password`). Password columns on `employee_hourly_rates`: `password_hash`, `previous_password_hash`, `password_updated_at` (pgcrypto bcrypt; plaintext never stored). Login successes/failures are written to `audit_log`.

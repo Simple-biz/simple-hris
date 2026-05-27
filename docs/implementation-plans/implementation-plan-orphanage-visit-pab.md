@@ -13,9 +13,9 @@
 > Sections 1–6 below describe the original employee-filed flow and remain accurate for the **non-orphanage-style** reasons (`medical`, `power_outage`, `internet_issue`, `family_emergency`, `other`) which are still employee-filed.
 >
 > **For the current orphanage-style flow**, see:
-> - [BUSINESS_LOGIC.md → PAB Day-Dispute System](./BUSINESS_LOGIC.md#pab-day-dispute-system) — current rules
-> - [API_REFERENCE.md](./API_REFERENCE.md#post-apipab-disputesorphanage-manager-submit) — `/api/pab-disputes/orphanage-manager-submit` and `/api/pab-disputes/orphanage-overlap`
-> - [COMPONENTS.md](./COMPONENTS.md#srccomponentsorphanagecreateorphanagestyledisputedialogtsx) — `CreateOrphanageStyleDisputeDialog` reference
+> - [BUSINESS_LOGIC.md → PAB Day-Dispute System](../reference/business-logic.md#pab-day-dispute-system) — current rules
+> - [API_REFERENCE.md](../reference/api-reference.md#post-apipab-disputesorphanage-manager-submit) — `/api/pab-disputes/orphanage-manager-submit` and `/api/pab-disputes/orphanage-overlap`
+> - [COMPONENTS.md](../reference/components.md#srccomponentsorphanagecreateorphanagestyledisputedialogtsx) — `CreateOrphanageStyleDisputeDialog` reference
 > - `references/backfill_orphanage_day_after_disputes.sql` — one-time D+1 backfill (run after deploy)
 
 | | |

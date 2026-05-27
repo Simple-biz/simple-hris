@@ -171,7 +171,7 @@ Fetches the configured rates Sheet and pipes it through the rates ingest. Return
 
 ### Hubstaff
 
-#### `POST /api/hubstaff-hours`, `GET ?source_files=1`, `GET ?source_file=<f>`, `DELETE ?source_file=<f>` — unchanged this session. See [api-reference.md](./api-reference.md).
+#### `POST /api/hubstaff-hours`, `GET ?source_files=1`, `GET ?source_file=<f>`, `DELETE ?source_file=<f>` — unchanged this session. See [api-reference.md](../reference/api-reference.md).
 
 ---
 

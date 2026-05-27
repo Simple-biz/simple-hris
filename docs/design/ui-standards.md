@@ -12,7 +12,7 @@ Cross-references:
 - [`docs/responsive-design.md`](./responsive-design.md) — breakpoints, safe
   areas, drawer pattern, short-viewport handling. This document does **not**
   re-derive any of that; it builds on top of it.
-- [`docs/components.md`](./components.md) — what each component does and why.
+- [`docs/components.md`](../reference/components.md) — what each component does and why.
   This document covers visual standards (look, feel, spacing).
 - `components/ui/*.tsx` — the shadcn/base-ui primitives (`Button`, `Badge`,
   `Card`, `Dialog`, `Input`, `Tabs`, `Table`, etc.).

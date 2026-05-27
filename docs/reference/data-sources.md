@@ -50,7 +50,7 @@ The canonical employee directory. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEES
 - `POST /api/add-employee` — inserts a new row
 - `DELETE /api/delete-employee` — deletes by email or name match
 - `POST /api/global-master-list` — CSV import (`replaceGlobalMasterListFromCsvText()` in `src/lib/supabase/global-master-list-db.ts`). Service role only. **Layout:** rows 1–2 must contain the text `MASTERLIST`; row 3 is the fixed header row (Department + Name or Personal Email); row 4+ are data. Hubstaff-style headers on row 3 are rejected. **No DELETE — uses upload-archive flow** (per `project_upload_archive_schema.md` in memory): upserts on `(LOWER("Personal Email"), LOWER("Department"))`, bumps `last_seen_upload_id` for matched rows, inserts new rows with `first_seen = last_seen = new upload`, promotes the new `master_list_uploads` row to `is_current = true`. Active roster is then read from the `active_employees` view, not the table directly.
-- `POST /api/cron/sync-master-from-sheet` *(added 2026-05-07)* — **manual button-only** Google Sheet sync that pulls the configured MASTERLIST sheet via a service-account JWT and pipes it through the same ingest. See [csv-imports.md](./csv-imports.md) for full details (auto-detected header row, synthesized sentinel rows, env vars).
+- `POST /api/cron/sync-master-from-sheet` *(added 2026-05-07)* — **manual button-only** Google Sheet sync that pulls the configured MASTERLIST sheet via a service-account JWT and pipes it through the same ingest. See [csv-imports.md](../features/csv-imports.md) for full details (auto-detected header row, synthesized sentinel rows, env vars).
 
 > **Recent ingest fixes (2026-05-07):** the function now (a) dedupes within-CSV identity-key duplicates before insert, (b) does case-insensitive existing-row lookup via a single full-table read, and (c) parallelizes UPDATEs in chunks of 20. A ~700-row sync went from ~3 minutes + duplicate-key errors to ~5 seconds clean. The result now also returns `duplicatesInCsv` counting collapsed rows.
 
@@ -84,7 +84,7 @@ Per-employee rate table. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RA
 - `DELETE /api/delete-employee` — deletes by email or name
 - `POST /api/update-employee-rates` — updates `Regular Rate` + `OT Rate` by email
 - `POST /api/employee-hourly-rates-upload` — All-Dept payroll CSV import (`replaceEmployeeHourlyRatesFromCsv()` in `src/lib/supabase/rates-upload-db.ts`). Service role only. Reads only the 5 columns it cares about (Work Email, Personal Email, Week, Regular Rate, OT Rate). Multiple weekly rows per employee are expected — picks the latest `Week M/D/YY - M/D/YY` per work email.
-- `POST /api/cron/sync-rates-from-sheet` *(added 2026-05-07)* — **manual button-only** Google Sheet sync that pulls the All-Dept rates sheet via the same service-account auth and pipes it through the rates ingest. See [csv-imports.md](./csv-imports.md).
+- `POST /api/cron/sync-rates-from-sheet` *(added 2026-05-07)* — **manual button-only** Google Sheet sync that pulls the All-Dept rates sheet via the same service-account auth and pipes it through the rates ingest. See [csv-imports.md](../features/csv-imports.md).
 
 > **Recent ingest fixes (2026-05-07):** rates ingest got the same case-insensitive lookup + parallel-UPDATE fixes as the master list. Existing-row lookup is now a single full-table SELECT folded case-insensitively in memory; UPDATEs run in parallel chunks of 20.
 
@@ -182,7 +182,7 @@ Employee-entered identity and payout table. This is the Supabase table used by t
 
 ### 5. `disbursement_records` *(added 2026-04-28)*
 
-Flat analytic table — one row per (Hubstaff cycle, employee). Backs the Weekly Disbursement Reports feature in Payment Dispatch. See [PAYMENT_DISPATCH.md §6.5](./PAYMENT_DISPATCH.md) for the full spec.
+Flat analytic table — one row per (Hubstaff cycle, employee). Backs the Weekly Disbursement Reports feature in Payment Dispatch. See [PAYMENT_DISPATCH.md §6.5](../features/payment-dispatch.md) for the full spec.
 
 **Columns:**
 

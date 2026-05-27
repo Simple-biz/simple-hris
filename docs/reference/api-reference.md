@@ -2,9 +2,9 @@
 
 Complete documentation for all REST API endpoints. Base URL: `http://localhost:3000` (development).
 
-> **Auth status** (as of 2026-04-21): most endpoints are still **unauthenticated** pending SSO. The PAB dispute decide/edit endpoints (`PATCH /api/pab-disputes/[id]`) enforce server-side role-based access via `canActOnDisputes(email)` — caller must hold an active role from `DISPUTE_ACTOR_ROLES` in `employee_roles`. Orphanage-visit endpoints still trust a client-supplied `admin_name` (auth gap). See [IMPLEMENTATION_PLAN_RBAC.md](./IMPLEMENTATION_PLAN_RBAC.md) and [AUDIT_2026-04-21.md](./AUDIT_2026-04-21.md) for the full picture.
+> **Auth status** (as of 2026-04-21): most endpoints are still **unauthenticated** pending SSO. The PAB dispute decide/edit endpoints (`PATCH /api/pab-disputes/[id]`) enforce server-side role-based access via `canActOnDisputes(email)` — caller must hold an active role from `DISPUTE_ACTOR_ROLES` in `employee_roles`. Orphanage-visit endpoints still trust a client-supplied `admin_name` (auth gap). See [IMPLEMENTATION_PLAN_RBAC.md](../implementation-plans/implementation-plan-rbac.md) and [AUDIT_2026-04-21.md](../audits/audit-2026-04-21.md) for the full picture.
 
-> **Google Sheet sync endpoints** (`/api/cron/sync-master-from-sheet`, `/api/cron/sync-rates-from-sheet`) and the new **`?uploads=1`** GET shapes on the master + rates upload routes are documented inline below. For the full feature picture (Admin tab, env setup, ingest fixes, troubleshooting), see [csv-imports.md](./csv-imports.md).
+> **Google Sheet sync endpoints** (`/api/cron/sync-master-from-sheet`, `/api/cron/sync-rates-from-sheet`) and the new **`?uploads=1`** GET shapes on the master + rates upload routes are documented inline below. For the full feature picture (Admin tab, env setup, ingest fixes, troubleshooting), see [csv-imports.md](../features/csv-imports.md).
 
 ---
 
@@ -166,7 +166,7 @@ Manual-button-only Google Sheet sync for the master list. Reads the configured G
 
 Emits `[fetch-master-sheet]` and `[sync-master-from-sheet] result` console diagnostics for debugging row drops. Audit log entry `csv.master.sync` (or `csv.master.sync.error` on failure).
 
-See [csv-imports.md](./csv-imports.md) for the full feature doc.
+See [csv-imports.md](../features/csv-imports.md) for the full feature doc.
 
 ---
 
@@ -395,7 +395,7 @@ Manual-button-only Google Sheet sync for the rates ledger. Reads the configured 
 
 **Response** `200`: same shape as the master sync but with the rates ingest result fields (`uniqueEmployees`, `skippedNoWorkEmail`, `skippedNoRate`).
 
-Audit log entry `csv.rates.sync` (or `csv.rates.sync.error` on failure). See [csv-imports.md](./csv-imports.md).
+Audit log entry `csv.rates.sync` (or `csv.rates.sync.error` on failure). See [csv-imports.md](../features/csv-imports.md).
 
 ---
 
@@ -866,7 +866,7 @@ https://www.gravatar.com/avatar/{md5_hash}?s={size}&d={default}&r=pg
 
 ## 10. PAB Day Disputes
 
-Endpoints backing the PAB dispute flow (employees challenge failing days; Accounting approves / denies) and the admin Orphanage Visits roster. Behaviour is documented in [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#pab-day-dispute-system).
+Endpoints backing the PAB dispute flow (employees challenge failing days; Accounting approves / denies) and the admin Orphanage Visits roster. Behaviour is documented in [BUSINESS_LOGIC.md](./business-logic.md#pab-day-dispute-system).
 
 > **Auth status** (as of 2026-04-21): dispute decide/edit endpoints enforce role-based access on the server via `canActOnDisputes(email)` against `employee_roles`. The orphanage-visits endpoints currently accept `admin_name` as a client-supplied string and do **not** enforce auth — this gap is tracked and will be closed once SSO lands.
 
@@ -883,7 +883,7 @@ List disputes, optionally filtered.
 - `reason` (optional): filter by dispute reason code
 - `limit` (optional): integer; default unlimited, typical caller sets `500`
 
-**Response** `200`: Same shape as before. `status` may be any value from `PabDisputeStatus` (see [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#pab-day-dispute-system)).
+**Response** `200`: Same shape as before. `status` may be any value from `PabDisputeStatus` (see [BUSINESS_LOGIC.md](./business-logic.md#pab-day-dispute-system)).
 
 ```json
 {
@@ -1104,7 +1104,7 @@ Use `orphanage_manager_deny` to deny. Moves row to `orphanage_manager_approved` 
 }
 ```
 
-`status` must be `approved` or `denied`. For `orphanage_visit`, the stored status is mapped to `accounting_approved` / `accounting_denied` automatically. Use `edit` with `status: "denied"` and `override_hours: null` to **revoke PAB forgiveness** after an approval (see [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#editing-decided-disputes)). Pending / in-review rows cannot use `edit`.
+`status` must be `approved` or `denied`. For `orphanage_visit`, the stored status is mapped to `accounting_approved` / `accounting_denied` automatically. Use `edit` with `status: "denied"` and `override_hours: null` to **revoke PAB forgiveness** after an approval (see [BUSINESS_LOGIC.md](./business-logic.md#editing-decided-disputes)). Pending / in-review rows cannot use `edit`.
 
 **Response** `200`:
 ```json
@@ -1268,7 +1268,7 @@ Audit log: `pab_dispute.withdrawn` with `source: "admin_orphanage_roster"`.
 
 ## 11. Payment Dispatches
 
-The Payment Dispatch feature exposes three endpoints under `/api/payment-dispatches/`. See [PAYMENT_DISPATCH.md](./PAYMENT_DISPATCH.md) for the broader feature context.
+The Payment Dispatch feature exposes three endpoints under `/api/payment-dispatches/`. See [PAYMENT_DISPATCH.md](../features/payment-dispatch.md) for the broader feature context.
 
 ### `GET /api/payment-dispatches`
 
@@ -1358,13 +1358,13 @@ Side effects:
 
 ### `GET /api/payroll-dispatch-lock` & `POST /api/payroll-dispatch-lock`
 
-Read / set the global `payroll.dispatch_locked` flag. Documented in [PAYMENT_DISPATCH.md §6](./PAYMENT_DISPATCH.md).
+Read / set the global `payroll.dispatch_locked` flag. Documented in [PAYMENT_DISPATCH.md §6](../features/payment-dispatch.md).
 
 ---
 
 ## 12. Disbursement Reports
 
-> Added 2026-04-28. Backed by `public.disbursement_records` (one row per (week, employee)) seeded by `references/seed_disbursement_records.sql`. See [PAYMENT_DISPATCH.md §6.5](./PAYMENT_DISPATCH.md) for the full feature doc.
+> Added 2026-04-28. Backed by `public.disbursement_records` (one row per (week, employee)) seeded by `references/seed_disbursement_records.sql`. See [PAYMENT_DISPATCH.md §6.5](../features/payment-dispatch.md) for the full feature doc.
 
 ### `GET /api/payment-dispatches/reports`
 
@@ -1630,7 +1630,7 @@ Live health probe powering the Admin → Diagnostics tab. Runs server-side probe
 **Tables**: `app_settings`, `hubstaff_uploads`, `active_employees` (view), `audit_log`, `disbursement_records`, `employee_hourly_rates`
 **Service Role**: Required (for read-through past RLS on operational tables)
 
-See [docs/system-diagnostics.md](../docs/system-diagnostics.md) for the architecture, edge animation system, and how to extend with new probes.
+See [docs/system-diagnostics.md](../features/system-diagnostics.md) for the architecture, edge animation system, and how to extend with new probes.
 
 ---
 

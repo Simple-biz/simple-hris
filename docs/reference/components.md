@@ -77,7 +77,7 @@ On viewports narrower than `md` (768px), a top bar with a menu button opens the 
 
 Also renders a global `<Toaster>` (sonner) for toast notifications that can be triggered from any child component.
 
-See [RESPONSIVE-DESIGN.md](./RESPONSIVE-DESIGN.md) for breakpoints, safe areas, and testing notes.
+See [RESPONSIVE-DESIGN.md](../design/responsive-design.md) for breakpoints, safe areas, and testing notes.
 
 **RBAC tab gating** (no longer single-operator). On mount `App` fetches the viewer's roles (`GET /api/employee-roles`) and feature permissions (`GET /api/employee-feature-permissions`) in parallel, then computes `allowedAccountingTabsForUser(roles, featurePerms)`. `navigate()` and a settling effect bounce the user off any tab they cannot access (onto `allowedTabs[0]` or `payment-dispatch`), but only after `permsLoaded` flips so the initial render does not kick a non-admin off `overview`. `initialData` (from the server prefetch in `app/accounting/page.tsx`) lets Overview + PayrollWizard skip mount-time fetches.
 
@@ -96,11 +96,11 @@ The `activeTab` cases are: `overview` -> `Overview`, `rates` -> `Rates`, `payrol
 - **Approve / Deny** — for rows awaiting Accounting (`pending` or `orphanage_manager_approved`). Orphanage-style rows do not collect hour overrides at approval (manager-submitted disputes always have `override_hours = null` and the field is hidden); other reasons can set override hours in the dialog.
 - **Return** — only for orphanage-style with `orphanage_manager_approved`; calls `PATCH` with `return_to_orphanage` and optional note.
 - **Edit** — for terminal rows. Toggle Approved/Denied, adjust hours (non-orphanage-style), notes. When the row currently grants PAB forgiveness (`disputeGrantsPabForgiveness`), shows **Revoke PAB forgiveness** → confirm dialog → `PATCH` `edit` with `status: denied` and `override_hours: null`.
-- **Delete** *(2026-05-02)* — trash icon button gated by `DISPUTE_DELETE_ROLES` (`admin`, `payroll_manager`). Available on rows in **any** status. Confirmation dialog warns when deleting a previously-decided dispute. On confirm, calls `DELETE /api/pab-disputes/[id]?mode=admin`. Audit log: `pab_dispute.admin_deleted`. See [docs/delete-authorization.md](../docs/delete-authorization.md).
+- **Delete** *(2026-05-02)* — trash icon button gated by `DISPUTE_DELETE_ROLES` (`admin`, `payroll_manager`). Available on rows in **any** status. Confirmation dialog warns when deleting a previously-decided dispute. On confirm, calls `DELETE /api/pab-disputes/[id]?mode=admin`. Audit log: `pab_dispute.admin_deleted`. See [docs/delete-authorization.md](../features/delete-authorization.md).
 
 All reason-specific gating uses `isOrphanageStyleReason(reason)` rather than the literal `reason === 'orphanage_visit'` check — so `ceo_visitation` follows the same hour-override / two-stage approval / day-after-removed semantics as orphanage_visit.
 
-See [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md#pab-day-dispute-system) and [API_REFERENCE.md](./API_REFERENCE.md#patch-apipab-disputesid).
+See [BUSINESS_LOGIC.md](./business-logic.md#pab-day-dispute-system) and [API_REFERENCE.md](./api-reference.md#patch-apipab-disputesid).
 
 ---
 
@@ -171,8 +171,8 @@ Shared leave-request queue mounted by both **Accounting** (`/`) and **Manager** 
 
 **Per-row actions:**
 
-- **Approve / Reject** — only on `pending` rows. Opens a dialog requesting the approver email + optional note. The approver must satisfy at least one of the four authorization paths (stored manager, live `department_managers`, legacy json map, or settings allow lists). See [API_REFERENCE.md](./API_REFERENCE.md#patch-apileave-requestsid).
-- **Delete** *(2026-05-02)* — trash icon button gated by `LEAVE_DELETE_ROLES` (`admin`, `payroll_manager`, `manager`). Visible on rows in any status when the user holds one of those roles. Confirmation dialog warns when deleting a previously-actioned request. On confirm, calls `DELETE /api/leave-requests/[id]`. Audit log: `leave.admin_deleted` with `details.scope = 'unrestricted' | 'department'`. Managers are scoped to their own department server-side via `isAuthorizedLeaveApprover`. See [docs/delete-authorization.md](../docs/delete-authorization.md).
+- **Approve / Reject** — only on `pending` rows. Opens a dialog requesting the approver email + optional note. The approver must satisfy at least one of the four authorization paths (stored manager, live `department_managers`, legacy json map, or settings allow lists). See [API_REFERENCE.md](./api-reference.md#patch-apileave-requestsid).
+- **Delete** *(2026-05-02)* — trash icon button gated by `LEAVE_DELETE_ROLES` (`admin`, `payroll_manager`, `manager`). Visible on rows in any status when the user holds one of those roles. Confirmation dialog warns when deleting a previously-actioned request. On confirm, calls `DELETE /api/leave-requests/[id]`. Audit log: `leave.admin_deleted` with `details.scope = 'unrestricted' | 'department'`. Managers are scoped to their own department server-side via `isAuthorizedLeaveApprover`. See [docs/delete-authorization.md](../features/delete-authorization.md).
 
 ---
 
@@ -569,7 +569,7 @@ Updates via POST to `/api/update-employee-ids`.
 
 ### `EmployeeAvatar.tsx` — Avatar Component
 
-Displays employee photo with fallback chain: **Google SSO photo → uploaded photo (Supabase Storage) → Gravatar → initials** (orange-to-blue gradient circle). Each layer self-heals if the image fails to load. Google photos use `referrerPolicy="no-referrer"` to avoid `googleusercontent.com` 403s. See [DATA_SOURCES.md](./DATA_SOURCES.md) for migration prerequisites.
+Displays employee photo with fallback chain: **Google SSO photo → uploaded photo (Supabase Storage) → Gravatar → initials** (orange-to-blue gradient circle). Each layer self-heals if the image fails to load. Google photos use `referrerPolicy="no-referrer"` to avoid `googleusercontent.com` 403s. See [DATA_SOURCES.md](./data-sources.md) for migration prerequisites.
 
 ### `EmployeeMyHours.tsx` — My Hours
 
@@ -650,7 +650,7 @@ Edge stroke colour = max-of-endpoint-statuses; markers tinted to match.
 
 **Admin gate**: visible only when the AdminSidebar's `securityNav` includes `'diagnostics'` AND the page mounts via `app/admin/page.tsx`. The Accounting / Manager / Employee / Orphanage shells have no reference to `SystemDiagnostics`. The probe endpoint additionally enforces `roles.includes('admin')` server-side so probe data is unreachable from non-admin sessions.
 
-See [docs/system-diagnostics.md](../docs/system-diagnostics.md) for the architecture, probe definitions, and extension guide. See [API_REFERENCE.md](./API_REFERENCE.md#127-admin-diagnostics) for the live endpoint shape.
+See [docs/system-diagnostics.md](../features/system-diagnostics.md) for the architecture, probe definitions, and extension guide. See [API_REFERENCE.md](./api-reference.md#127-admin-diagnostics) for the live endpoint shape.
 
 ---
 
@@ -668,7 +668,7 @@ Server-side probe helpers consumed by `app/api/admin/diagnostics/route.ts`. Each
 
 **AdminSidebar nav** — left rail for the Admin shell at `app/admin/page.tsx`. Two grouped nav arrays:
 
-- **systemNav**: Overview, Roles & permissions, Employees, Webhooks
+- **systemNav**: Overview, Roles & permissions, Employees, Webhooks, CSV imports
 - **securityNav**: Audit log, **Diagnostics** *(2026-05-02)*, API tokens, Backups
 
 Diagnostics uses the `Radar` icon and is **only present in this sidebar** — not in the Accounting/Manager/Employee/Orphanage sidebars. Combined with the server-side `roles.includes('admin')` gate on `/api/admin/diagnostics`, this means the entire feature is admin-only at every layer.
@@ -691,7 +691,7 @@ An earlier attempt at a global `transition-property: background-color, …` on e
 
 ## Admin Dashboard (`src/components/admin/`)
 
-The Admin shell (`app/admin/page.tsx`) hosts five primary tab components plus the shared `AuditLogPanel` (audit tab) and `NotificationsPanel` (notifications tab). `AdminSidebar.tsx` and `SystemDiagnostics.tsx` are documented in their own sections below; the shell mounts both.
+The Admin shell (`app/admin/page.tsx`) hosts five primary tab components plus the shared `AuditLogPanel` (audit tab) and `NotificationsPanel` (notifications tab). `AdminSidebar.tsx` and `SystemDiagnostics.tsx` are documented in their own sections above; the shell mounts both.
 
 ### `app/admin/page.tsx`
 
@@ -773,13 +773,7 @@ Standalone bulk-ingest console -- roster, payroll-rates, Hubstaff, and HSL data 
 
 Tables/views (named in UI text): `global_master_list`/`master_list_uploads`, `employee_hourly_rates`/`rates_uploads`, `hubstaff_hours`/`hubstaff_uploads`, `hsl_team_members`/`hsl_agent_uploads` (+ `active_hsl_agents` view). All ingest endpoints require the service-role key and write audit rows. Delete is Hubstaff-only today.
 
-### `src/components/admin/AdminSidebar.tsx`
-
-Left rail for the Admin shell. Two grouped nav arrays:
-- **systemNav**: Overview, Roles & permissions, Employees, Webhooks, CSV imports
-- **securityNav**: Audit log, **Diagnostics**, API tokens, Backups
-
-Receives `counts` from the page (employees / roles / webhook alert badges). Diagnostics uses the `Radar` icon and is **only present in this sidebar** -- combined with the server-side `roles.includes('admin')` gate on `/api/admin/diagnostics`, the whole diagnostics feature is admin-only at every layer.
+`AdminSidebar` receives `counts` from the page (employees / roles / webhook-alert badges); it is documented in its own section above.
 
 ---
 
