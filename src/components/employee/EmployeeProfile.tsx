@@ -27,7 +27,7 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import { PROCESSOR_OPTIONS, type ProcessorId } from '@/lib/employee-payment-processors';
-import { SKILL_SET_TITLES } from '@/lib/skill-set-titles';
+import { SKILL_SET_TITLES, hasAnySkillSetContent } from '@/lib/skill-set-titles';
 import {
   PreferredPaymentMethodRadios,
   PayoutDetailsFields,
@@ -42,9 +42,11 @@ interface EmployeeProfileProps {
   profilePhotoUrl: string | null;
   /** Google SSO profile picture (`session.user.image`) — fallback when no Supabase upload. */
   googlePhotoUrl?: string | null;
+  focusTab?: TabId;
   onProfilePhotoUpdated: (url: string) => void;
   /** Notifies the shell whether payout/bank details are now complete (clears the nudge). */
   onPayoutCompletionChange?: (complete: boolean) => void;
+  onSkillSetCompletionChange?: (complete: boolean) => void;
   /** When accounting starts payroll processing, bank / payout editing is disabled. */
   payrollLocked?: boolean;
 }
@@ -164,6 +166,34 @@ function Row({
   );
 }
 
+function SetupNudge({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[12.5px] dark:border-amber-500/30 dark:bg-amber-500/10 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-start gap-2.5">
+        <span className="relative mt-0.5 flex h-3 w-3 shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/70" />
+          <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-500" />
+        </span>
+        <div className="min-w-0">
+          <p className="font-semibold text-amber-950 dark:text-amber-100">{title}</p>
+          <p className="mt-0.5 leading-relaxed text-amber-900/80 dark:text-amber-100/75">
+            {description}
+          </p>
+        </div>
+      </div>
+      {action && <div className="shrink-0 sm:pl-3">{action}</div>}
+    </div>
+  );
+}
+
 function CompactStat({
   label,
   value,
@@ -228,10 +258,16 @@ function TabBar({
   active,
   onChange,
   hasAddress,
+  needsPhoto,
+  needsBank,
+  needsSkillSet,
 }: {
   active: TabId;
   onChange: (id: TabId) => void;
   hasAddress: boolean;
+  needsPhoto: boolean;
+  needsBank: boolean;
+  needsSkillSet: boolean;
 }) {
   const tabs: { id: TabId; label: string; sub: string }[] = [
     { id: 'overview', label: 'Overview', sub: hasAddress ? 'Identity, employment, address' : 'Identity & employment' },
@@ -250,6 +286,10 @@ function TabBar({
       >
         {tabs.map((t) => {
           const isActive = active === t.id;
+          const hasIssue =
+            (t.id === 'overview' && needsPhoto) ||
+            (t.id === 'payment' && needsBank) ||
+            (t.id === 'skillsets' && needsSkillSet);
           return (
             <button
               key={t.id}
@@ -268,6 +308,15 @@ function TabBar({
               <span className="mt-0.5 block whitespace-nowrap text-[11px] text-zinc-400 dark:text-zinc-500">
                 {t.sub}
               </span>
+              {hasIssue && (
+                <span
+                  className="absolute right-1.5 top-2 flex h-2.5 w-2.5"
+                  aria-label={`${t.label} setup needed`}
+                >
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/70" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-white dark:ring-[#0a0a0a]" />
+                </span>
+              )}
               {isActive && (
                 <motion.span
                   layoutId="profile-tab-underline"
@@ -336,8 +385,10 @@ export default function EmployeeProfile({
   employeeEmail,
   profilePhotoUrl,
   googlePhotoUrl = null,
+  focusTab = 'overview',
   onProfilePhotoUpdated,
   onPayoutCompletionChange,
+  onSkillSetCompletionChange,
   payrollLocked = false,
 }: EmployeeProfileProps) {
   const norm = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
@@ -359,6 +410,10 @@ export default function EmployeeProfile({
 
   const [activeTab, setActiveTab] = useState<TabId>('overview');
 
+  useEffect(() => {
+    setActiveTab(focusTab);
+  }, [focusTab]);
+
   interface Commendation { id: string; note: string | null; awarded_by: string; awarded_at: string; }
   const [commendations, setCommendations] = useState<Commendation[]>([]);
   const [commendationsLoading, setCommendationsLoading] = useState(false);
@@ -377,12 +432,14 @@ export default function EmployeeProfile({
   const [skillSet, setSkillSet] = useState<SkillSetFields>(EMPTY_SKILL_SET);
   const [skillSetBaseline, setSkillSetBaseline] = useState<SkillSetFields>(EMPTY_SKILL_SET);
   const [skillSetLoading, setSkillSetLoading] = useState(false);
+  const [skillSetLoaded, setSkillSetLoaded] = useState(false);
   const [skillSetSaving, setSkillSetSaving] = useState(false);
   const [skillSetSavedAt, setSkillSetSavedAt] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setSkillSetLoading(true);
+    setSkillSetLoaded(false);
     void fetch(`/api/employee-skill-sets?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { row: null }))
       .then((d: { row: SkillSetFields | null }) => {
@@ -397,10 +454,14 @@ export default function EmployeeProfile({
         };
         setSkillSet(fields);
         setSkillSetBaseline(fields);
+        onSkillSetCompletionChange?.(hasAnySkillSetContent(fields));
       })
       .catch(() => {})
       .finally(() => {
-        if (!cancelled) setSkillSetLoading(false);
+        if (!cancelled) {
+          setSkillSetLoading(false);
+          setSkillSetLoaded(true);
+        }
       });
     return () => { cancelled = true; };
   }, [employeeEmail]);
@@ -430,6 +491,7 @@ export default function EmployeeProfile({
       const json = (await res.json()) as { row?: SkillSetFields; error?: string | null };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
       setSkillSetBaseline({ ...skillSet });
+      onSkillSetCompletionChange?.(hasAnySkillSetContent(skillSet));
       setSkillSetSavedAt(new Date().toLocaleTimeString());
       toast.success('Skill Sets saved');
     } catch (e) {
@@ -682,6 +744,10 @@ export default function EmployeeProfile({
       .join(', ') ||
     null;
 
+  const needsProfilePhoto = !displayProfilePhotoUrl && !googlePhotoUrl;
+  const needsPayoutSetup = !isPayoutComplete((bankInfo as unknown as Record<string, unknown>) ?? null);
+  const needsSkillSetSetup = skillSetLoaded && !hasAnySkillSetContent(skillSet);
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-[#0a0a0a]">
       <div className="mx-auto w-full max-w-[1024px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 sm:pb-20 lg:px-10 lg:pt-14">
@@ -725,6 +791,16 @@ export default function EmployeeProfile({
                 disabled={uploadingPhoto}
               />
             </button>
+            {needsProfilePhoto && (
+              <span
+                className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-white ring-2 ring-white dark:ring-[#0a0a0a]"
+                title="Upload a profile photo"
+                aria-label="Profile photo needed"
+              >
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/60" />
+                <Camera className="relative h-3 w-3" aria-hidden />
+              </span>
+            )}
           </div>
 
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -763,6 +839,27 @@ export default function EmployeeProfile({
 
         </motion.section>
 
+        {needsProfilePhoto && (
+          <div className="mt-6">
+            <SetupNudge
+              title="Profile photo needed"
+              description="Upload a clear profile photo so teammates and managers can recognize you across rosters."
+              action={
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 rounded-lg bg-amber-600 text-xs text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingPhoto}
+                >
+                  {uploadingPhoto ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Camera className="mr-1.5 h-3 w-3" />}
+                  Upload
+                </Button>
+              }
+            />
+          </div>
+        )}
+
         {/* ─────────── Error / missing roster banner ─────────── */}
         {error && (
           <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[13px] dark:border-amber-900/40 dark:bg-amber-950/30">
@@ -797,7 +894,14 @@ export default function EmployeeProfile({
 
         {/* ─────────── Tabs ─────────── */}
         <div className="mt-8 border-b border-zinc-200 dark:border-zinc-800 sm:mt-10">
-          <TabBar active={activeTab} onChange={setActiveTab} hasAddress={hasAnyAddress} />
+          <TabBar
+            active={activeTab}
+            onChange={setActiveTab}
+            hasAddress={hasAnyAddress}
+            needsPhoto={needsProfilePhoto}
+            needsBank={needsPayoutSetup}
+            needsSkillSet={needsSkillSetSetup}
+          />
         </div>
 
         {/* ─────────── Tab content ─────────── */}
@@ -983,6 +1087,24 @@ export default function EmployeeProfile({
                           </p>
                         </div>
                       )}
+                      {needsPayoutSetup && !payrollLocked && (
+                        <SetupNudge
+                          title="Payment details needed"
+                          description="Add your preferred disbursement channel and required account details so payroll can route your pay."
+                          action={
+                            !payoutEditing ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-8 rounded-lg bg-amber-600 text-xs text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
+                                onClick={() => setPayoutEditing(true)}
+                              >
+                                Add details
+                              </Button>
+                            ) : undefined
+                          }
+                        />
+                      )}
                       {!bankInfo && !payrollLocked && (
                         <p className="text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                           Choose a payment channel and complete the corresponding fields. Your first
@@ -1055,6 +1177,12 @@ export default function EmployeeProfile({
                       </div>
                     ) : (
                       <div className="space-y-5 py-4">
+                        {needsSkillSetSetup && (
+                          <SetupNudge
+                            title="Skill Sets needed"
+                            description="Add your role, current focus, skills, or strengths so teammates can understand how to collaborate with you."
+                          />
+                        )}
                         <label className="block">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className="text-[12px] font-medium text-zinc-700 dark:text-zinc-200">

@@ -32,3 +32,22 @@ export const SKILL_SET_TITLES = [
 ] as const;
 
 export type SkillSetTitle = (typeof SKILL_SET_TITLES)[number];
+
+export interface SkillSetCompletionFields {
+  role_title?: string | null;
+  currently_working_on?: string | null;
+  skills?: string | null;
+  strengths?: string | null;
+  member_notes?: string | null;
+}
+
+export function hasAnySkillSetContent(fields: SkillSetCompletionFields | null | undefined): boolean {
+  if (!fields) return false;
+  return Boolean(
+    fields.role_title?.trim() ||
+      fields.currently_working_on?.trim() ||
+      fields.skills?.trim() ||
+      fields.strengths?.trim() ||
+      fields.member_notes?.trim(),
+  );
+}

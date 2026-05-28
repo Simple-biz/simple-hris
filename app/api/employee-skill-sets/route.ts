@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ row, error: null });
 }
 
-/** PUT — employee self-edit. Body: { work_email, currently_working_on, skills, strengths, member_notes } */
+/** PUT — employee self-edit. Body: { work_email, role_title, currently_working_on, skills, strengths, member_notes } */
 export async function PUT(req: NextRequest) {
   let body: UpsertSkillSetInput;
   try {

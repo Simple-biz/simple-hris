@@ -201,8 +201,10 @@ interface EmployeeDashboardProps {
   needsPhoto?: boolean;
   /** True when bank / payout details are not filled in yet. */
   needsBank?: boolean;
+  /** True when the employee has not added Skill Sets content yet. */
+  needsSkillSet?: boolean;
   /** Jump to the Profile tab so the employee can fill in what's missing. */
-  onNavigateToProfile?: () => void;
+  onNavigateToProfile?: (target?: 'overview' | 'payment' | 'skillsets') => void;
   /** Jump to the Notifications tab. */
   onNavigateToNotifications?: () => void;
   /** Unread notification count — drives the bell badge in the dashboard header. */
@@ -332,7 +334,7 @@ const SPARKLES_FLOAT = [
   { left: '93%', delay: '3.3s',  dur: '3.6s', size: '13px' },
 ] as const;
 
-export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, onNavigateToProfile, onNavigateToNotifications, unreadNotifications = 0 }: EmployeeDashboardProps) {
+export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, needsSkillSet = false, onNavigateToProfile, onNavigateToNotifications, unreadNotifications = 0 }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
   // Shared mask state for the hero pay values (Take-Home, Regular, Overtime).
@@ -1741,12 +1743,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         </div>
       </header>
 
-      {/* Profile setup nudge — prompts new sign-ins to add a photo + bank
-          details. Hidden once both are on file. */}
+      {/* Profile setup nudge — photo, payout, and Skill Sets. Hidden when complete. */}
       {onNavigateToProfile && (
         <ProfileCompletionCard
           needsPhoto={needsPhoto}
           needsBank={needsBank}
+          needsSkillSet={needsSkillSet}
           onGoToProfile={onNavigateToProfile}
         />
       )}

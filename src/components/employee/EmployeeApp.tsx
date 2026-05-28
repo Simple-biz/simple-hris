@@ -26,11 +26,13 @@ import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotifications
 
 import { normEmail } from '@/lib/email/norm-email';
 import { isPayoutComplete } from '@/components/employee/employee-payout-fields';
+import { hasAnySkillSetContent, type SkillSetCompletionFields } from '@/lib/skill-set-titles';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 
 const SESSION_KEY = 'employee_session_email';
+type EmployeeProfileFocusTab = 'overview' | 'payment' | 'skillsets';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -45,6 +47,7 @@ export default function EmployeeApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [profileFocusTab, setProfileFocusTab] = useState<EmployeeProfileFocusTab>('overview');
   // Disputes prefill — kept for future use if the flow is re-enabled
   // const [disputesPrefill, setDisputesPrefill] = useState<{ date: string; seconds?: number } | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -59,6 +62,7 @@ export default function EmployeeApp() {
   // Whether payout/bank details are filled in. null = not yet known (suppresses
   // the nudge until the first fetch lands so it doesn't flash on load).
   const [payoutComplete, setPayoutComplete] = useState<boolean | null>(null);
+  const [skillSetComplete, setSkillSetComplete] = useState<boolean | null>(null);
 
   // Google SSO profile photo — falls back through Supabase upload → Gravatar in EmployeeAvatar.
   // Only honored when the NextAuth session email matches the employee being viewed, so
@@ -134,27 +138,31 @@ export default function EmployeeApp() {
       setEmployeeDepartment(null);
       setEmployeeId(null);
       setPayoutComplete(null);
+      setSkillSetComplete(null);
       return;
     }
     const norm = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
     let cancelled = false;
     (async () => {
       try {
-        const [photoRes, empRes, rateRes, idsRes] = await Promise.all([
+        const [photoRes, empRes, rateRes, idsRes, skillSetRes] = await Promise.all([
           fetch(`/api/employee-profile-photo?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' }),
           fetch(`/api/employees?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' }),
           fetch(`/api/employee-hourly-rates?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' }),
           fetch(`/api/employee-ids?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' }),
+          fetch(`/api/employee-skill-sets?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' }),
         ]);
         const photoJson = (await photoRes.json()) as { profilePhotoUrl?: string | null };
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[] };
         const rateJson = (await rateRes.json()) as { rows?: EmployeeHourlyRateRow[] };
         const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[] };
+        const skillSetJson = (await skillSetRes.json()) as { row?: SkillSetCompletionFields | null };
         if (cancelled) return;
 
         setProfilePhotoUrl(photoJson.profilePhotoUrl?.trim() || null);
         const myId = (idsJson.rows ?? [])[0];
         setPayoutComplete(isPayoutComplete((myId as unknown as Record<string, unknown>) ?? null));
+        setSkillSetComplete(hasAnySkillSetContent(skillSetJson.row));
 
         let master = (empJson.employees ?? []).find((e) => {
           const we = normEmail(e.work_email ?? '');
@@ -203,11 +211,21 @@ export default function EmployeeApp() {
   // aren't nagged. Gate on payoutComplete !== null so nothing flashes pre-fetch.
   const needsPhoto = !profilePhotoUrl && !googlePhotoUrl;
   const needsBank = payoutComplete === false;
-  const profileIncomplete = payoutComplete !== null && (needsPhoto || needsBank);
+  const needsSkillSet = skillSetComplete === false;
+  const profileIncomplete =
+    payoutComplete !== null &&
+    skillSetComplete !== null &&
+    (needsPhoto || needsBank || needsSkillSet);
+  const profileSetupCount = [needsPhoto, needsBank, needsSkillSet].filter(Boolean).length;
 
-  const navigate = (tab: string) => {
+  const navigate = (tab: string, profileTarget?: EmployeeProfileFocusTab) => {
+    if (tab === 'profile' && profileTarget) setProfileFocusTab(profileTarget);
     setActiveTab(tab);
     setMobileNavOpen(false);
+  };
+
+  const navigateToProfileSetup = (target?: EmployeeProfileFocusTab) => {
+    navigate('profile', target ?? (needsPhoto ? 'overview' : needsBank ? 'payment' : 'skillsets'));
   };
 
   useEffect(() => {
@@ -241,7 +259,8 @@ export default function EmployeeApp() {
             employeeEmail={employeeEmail}
             needsPhoto={needsPhoto}
             needsBank={needsBank}
-            onNavigateToProfile={profileIncomplete ? () => navigate('profile') : undefined}
+            needsSkillSet={needsSkillSet}
+            onNavigateToProfile={profileIncomplete ? navigateToProfileSetup : undefined}
             onNavigateToNotifications={() => navigate('notifications')}
             unreadNotifications={unreadNotifications}
             // onNavigateToDisputes={(prefill) => {
@@ -256,8 +275,10 @@ export default function EmployeeApp() {
             employeeEmail={employeeEmail}
             profilePhotoUrl={profilePhotoUrl}
             googlePhotoUrl={googlePhotoUrl}
+            focusTab={profileFocusTab}
             onProfilePhotoUpdated={(url) => setProfilePhotoUrl(url)}
             onPayoutCompletionChange={(complete) => setPayoutComplete(complete)}
+            onSkillSetCompletionChange={(complete) => setSkillSetComplete(complete)}
             payrollLocked={lockState.locked}
           />
         );
@@ -345,6 +366,7 @@ export default function EmployeeApp() {
         payrollLocked={lockState.locked}
 
         profileIncomplete={profileIncomplete}
+        profileSetupCount={profileSetupCount}
       />
       <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-orange-100 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-blue-950/60 dark:bg-[#0d1117]/95 md:hidden">
@@ -384,4 +406,3 @@ export default function EmployeeApp() {
     </div>
   );
 }
-

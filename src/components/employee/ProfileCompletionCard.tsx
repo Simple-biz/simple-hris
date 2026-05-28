@@ -1,41 +1,44 @@
 'use client';
 
 import { motion } from 'motion/react';
-import { Camera, CreditCard, ArrowRight, BadgeCheck } from 'lucide-react';
+import { Camera, CreditCard, ArrowRight, BadgeCheck, Sparkles } from 'lucide-react';
 
 interface ProfileCompletionCardProps {
   /** No uploaded photo and no Google SSO photo on file. */
   needsPhoto: boolean;
   /** Payout / bank details not filled in yet. */
   needsBank: boolean;
-  /** Jump to the Profile tab (Payment section). */
-  onGoToProfile: () => void;
+  /** Skill Sets are still empty. */
+  needsSkillSet?: boolean;
+  /** Jump to the Profile tab, optionally targeting a section. */
+  onGoToProfile: (target?: 'overview' | 'payment' | 'skillsets') => void;
 }
 
 /**
- * Dashboard nudge shown right after sign-in when an employee still has to add a
- * profile photo and/or their bank/payout details. Renders nothing once both are
- * done. Mirrors the GiftShippingCard placement on the Overview tab.
+ * Dashboard nudge shown right after sign-in when an employee still needs a
+ * profile photo, bank/payout details, and/or Skill Sets. Renders nothing once
+ * all are done. Mirrors the GiftShippingCard placement on the Overview tab.
  */
 export default function ProfileCompletionCard({
   needsPhoto,
   needsBank,
+  needsSkillSet = false,
   onGoToProfile,
 }: ProfileCompletionCardProps) {
-  if (!needsPhoto && !needsBank) return null;
+  if (!needsPhoto && !needsBank && !needsSkillSet) return null;
 
-  const items: { icon: typeof Camera; label: string }[] = [];
-  if (needsPhoto) items.push({ icon: Camera, label: 'Upload a profile photo' });
-  if (needsBank) items.push({ icon: CreditCard, label: 'Add your bank / payout details' });
+  const items: { icon: typeof Camera; label: string; target: 'overview' | 'payment' | 'skillsets' }[] = [];
+  if (needsPhoto) items.push({ icon: Camera, label: 'Upload a profile photo', target: 'overview' });
+  if (needsBank) items.push({ icon: CreditCard, label: 'Add your bank / payout details', target: 'payment' });
+  if (needsSkillSet) items.push({ icon: Sparkles, label: 'Fill in your Skill Sets', target: 'skillsets' });
 
   return (
-    <motion.button
-      type="button"
-      onClick={onGoToProfile}
+    <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      className="group relative flex w-full shrink-0 items-center gap-4 overflow-hidden rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50 via-orange-50/60 to-white px-4 py-3.5 text-left shadow-sm transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 dark:border-amber-500/30 dark:from-amber-500/10 dark:via-orange-500/5 dark:to-transparent sm:px-5"
+      className="relative flex w-full shrink-0 items-center gap-4 overflow-hidden rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50 via-orange-50/60 to-white px-4 py-3.5 text-left shadow-sm transition-shadow hover:shadow-md dark:border-amber-500/30 dark:from-amber-500/10 dark:via-orange-500/5 dark:to-transparent sm:px-5"
+      role="region"
       aria-label="Finish setting up your profile"
     >
       {/* Pulsing alert dot */}
@@ -52,23 +55,29 @@ export default function ProfileCompletionCard({
           Finish setting up your profile
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-          {items.map(({ icon: Icon, label }) => (
-            <span
+          {items.map(({ icon: Icon, label, target }) => (
+            <button
               key={label}
-              className="inline-flex items-center gap-1.5 text-xs text-amber-800/90 dark:text-amber-200/80"
+              type="button"
+              onClick={() => onGoToProfile(target)}
+              className="inline-flex items-center gap-1.5 rounded-full px-1 py-0.5 text-xs text-amber-800/90 transition-colors hover:bg-amber-100/80 hover:text-amber-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 dark:text-amber-200/80 dark:hover:bg-amber-500/15 dark:hover:text-amber-100"
             >
               <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
               {label}
-            </span>
+            </button>
           ))}
         </div>
       </div>
 
-      <span className="hidden shrink-0 items-center gap-1.5 rounded-full bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors group-hover:bg-amber-700 sm:inline-flex dark:bg-amber-500 dark:group-hover:bg-amber-400 dark:text-amber-950">
+      <button
+        type="button"
+        onClick={() => onGoToProfile(items[0]?.target)}
+        className="hidden shrink-0 items-center gap-1.5 rounded-full bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-amber-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 sm:inline-flex dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-amber-950"
+      >
         Go to Profile
-        <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden />
-      </span>
+        <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+      </button>
       <ArrowRight className="h-4 w-4 shrink-0 text-amber-600 sm:hidden dark:text-amber-400" aria-hidden />
-    </motion.button>
+    </motion.div>
   );
 }

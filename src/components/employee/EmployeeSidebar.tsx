@@ -45,6 +45,7 @@ interface EmployeeSidebarProps {
   payrollLocked?: boolean;
   /** Profile photo and/or bank details still missing — flags the Profile nav item. */
   profileIncomplete?: boolean;
+  profileSetupCount?: number;
 }
 
 const navItems = [
@@ -71,6 +72,7 @@ export default function EmployeeSidebar({
   payrollLocked = false,
 
   profileIncomplete = false,
+  profileSetupCount = 0,
 }: EmployeeSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
@@ -160,12 +162,12 @@ export default function EmployeeSidebar({
                 {item.label}
                 {item.id === 'profile' && profileIncomplete && activeTab !== 'profile' && (
                   <span
-                    className="relative ml-auto flex h-2.5 w-2.5"
+                    className="relative ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold leading-none text-white ring-2 ring-white dark:ring-[#0d1117]"
                     aria-label="Profile setup incomplete"
-                    title="Add your photo and bank details"
+                    title="Finish profile photo, payment details, and Skill Sets"
                   >
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/70" />
-                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-white dark:ring-[#0d1117]" />
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/60" />
+                    <span className="relative">{profileSetupCount || 1}</span>
                   </span>
                 )}
                 {item.id === 'disputes' && payrollLocked && (
