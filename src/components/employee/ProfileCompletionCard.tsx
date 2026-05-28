@@ -27,10 +27,15 @@ export default function ProfileCompletionCard({
 }: ProfileCompletionCardProps) {
   if (!needsPhoto && !needsBank && !needsSkillSet) return null;
 
-  const items: { icon: typeof Camera; label: string; target: 'overview' | 'payment' | 'skillsets' }[] = [];
-  if (needsPhoto) items.push({ icon: Camera, label: 'Upload a profile photo', target: 'overview' });
-  if (needsBank) items.push({ icon: CreditCard, label: 'Add your bank / payout details', target: 'payment' });
-  if (needsSkillSet) items.push({ icon: Sparkles, label: 'Fill in your Skill Sets', target: 'skillsets' });
+  const items: {
+    icon: typeof Camera;
+    label: string;
+    target: 'overview' | 'payment' | 'skillsets';
+    pulse: boolean;
+  }[] = [];
+  if (needsPhoto) items.push({ icon: Camera, label: 'Upload a profile photo', target: 'overview', pulse: true });
+  if (needsBank) items.push({ icon: CreditCard, label: 'Add your bank / payout details', target: 'payment', pulse: false });
+  if (needsSkillSet) items.push({ icon: Sparkles, label: 'Fill in your Skill Sets', target: 'skillsets', pulse: true });
 
   return (
     <motion.div
@@ -55,13 +60,19 @@ export default function ProfileCompletionCard({
           Finish setting up your profile
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-          {items.map(({ icon: Icon, label, target }) => (
+          {items.map(({ icon: Icon, label, target, pulse }) => (
             <button
               key={label}
               type="button"
               onClick={() => onGoToProfile(target)}
-              className="inline-flex items-center gap-1.5 rounded-full px-1 py-0.5 text-xs text-amber-800/90 transition-colors hover:bg-amber-100/80 hover:text-amber-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 dark:text-amber-200/80 dark:hover:bg-amber-500/15 dark:hover:text-amber-100"
+              className="relative inline-flex items-center gap-1.5 rounded-full px-1 py-0.5 text-xs text-amber-800/90 transition-colors hover:bg-amber-100/80 hover:text-amber-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 dark:text-amber-200/80 dark:hover:bg-amber-500/15 dark:hover:text-amber-100"
             >
+              {pulse && (
+                <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5" aria-hidden>
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500/70" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white dark:ring-[#0d1117]" />
+                </span>
+              )}
               <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
               {label}
             </button>
