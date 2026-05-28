@@ -698,7 +698,6 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
               const online = isOnline(t);
               const self = isSelf(t);
               const email = t.workEmail ?? t.personalEmail;
-              const seenRel = online ? null : formatLastSeen(lastSeenFor(t));
               const seenIso = online ? null : lastSeenFor(t);
               const ss = skillSetFor(t);
               const hasSS = hasAnySkillSet(ss);
