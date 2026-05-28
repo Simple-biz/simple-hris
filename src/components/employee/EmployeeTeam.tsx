@@ -798,6 +798,24 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                       </div>
                     )}
 
+                    {/* Skeleton placeholder for teammates who haven't shared
+                        a profile yet — keeps card heights visually consistent
+                        across the grid and signals "nothing here yet". */}
+                    {!hasSS && (
+                      <div
+                        className="mt-2 space-y-2"
+                        aria-label="No profile shared yet"
+                      >
+                        <div className="flex items-start gap-2">
+                          <div className="skeleton-shimmer mt-0.5 h-3.5 w-3.5 shrink-0 rounded-sm" />
+                          <div className="flex-1 space-y-1.5">
+                            <div className="skeleton-shimmer h-3 w-full rounded" />
+                            <div className="skeleton-shimmer h-3 w-3/5 rounded" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Hint to open profile modal */}
                     {hasSS && (
                       <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-2.5 text-[11px] text-zinc-400 dark:border-zinc-800/60 dark:text-zinc-500">
@@ -810,13 +828,11 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                         />
                       </div>
                     )}
-                    {!online && seenRel && !hasSS && (
-                      <p
-                        className="mt-4 truncate border-t border-zinc-100 pt-2.5 text-[11px] text-zinc-400 dark:border-zinc-800/60 dark:text-zinc-500"
-                        title={seenIso ? new Date(seenIso).toLocaleString() : undefined}
-                      >
-                        Last seen {seenRel}
-                      </p>
+                    {!hasSS && (
+                      <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-2.5 dark:border-zinc-800/60">
+                        <div className="skeleton-shimmer h-3 w-24 rounded" />
+                        <div className="skeleton-shimmer h-3 w-3 rounded-sm" />
+                      </div>
                     )}
                   </div>
 
