@@ -10,7 +10,6 @@ import {
   Mail,
   MailQuestion,
   Pencil,
-  Plus,
   RefreshCw,
   Search,
   Trash2,
@@ -24,7 +23,6 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import React from 'react';
-import AddPersonDialog from './AddPersonDialog';
 import DeptFilter from './DeptFilter';
 import HrOnboardingForm from './HrOnboardingForm';
 import {
@@ -83,7 +81,6 @@ export default function HrOnboarding() {
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('');
   const [tab, setTab] = useState<TabFilter>('pending');
-  const [addOpen, setAddOpen] = useState(false);
   const [setEmailFor, setSetEmailFor] = useState<HrPendingEmployeeRow | null>(null);
   const [confirmCancel, setConfirmCancel] = useState<HrPendingEmployeeRow | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<HrPendingEmployeeRow | null>(null);
@@ -287,14 +284,6 @@ export default function HrOnboarding() {
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <Button
-              size="lg"
-              className="h-11 border-0 bg-white px-5 font-semibold text-emerald-700 shadow-md shadow-black/10 hover:bg-white/90 dark:bg-zinc-100 dark:text-emerald-800 dark:hover:bg-white"
-              onClick={() => setAddOpen(true)}
-            >
-              <Plus className="mr-1.5 h-4 w-4" />
-              Add person
-            </Button>
-            <Button
               variant="outline"
               size="sm"
               className="border-white/35 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 hover:text-white"
@@ -410,7 +399,7 @@ export default function HrOnboarding() {
               <Users className="h-8 w-8 text-emerald-400/60" />
               <p className="text-sm text-zinc-600 dark:text-zinc-400">
                 {pending.length === 0
-                  ? 'No pending hires yet — click “Add person” to stage your first one.'
+                  ? 'No pending hires yet — use the Onboarding Form tab to stage your first one.'
                   : 'No pending hires match this filter.'}
               </p>
             </div>
@@ -616,13 +605,6 @@ export default function HrOnboarding() {
       </Card>
       </>
       )}
-
-      {/* Add Person dialog */}
-      <AddPersonDialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
-        onCreated={() => void fetchPending()}
-      />
 
       {/* Set work email dialog */}
       <SetWorkEmailDialog

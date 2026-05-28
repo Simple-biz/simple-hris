@@ -624,9 +624,8 @@ export async function listManagerPendingHires(
     .order("created_at", { ascending: false })
     .range(0, 499);
   if (error) return { rows: [], error: error.message };
-  // Department comparison is case-insensitive/trim-tolerant since hr_pending_employees
-  // stores whatever the AddPersonDialog typed but department_managers may
-  // capitalize differently.
+  // Department comparison is case-insensitive/trim-tolerant: hr_pending_employees
+  // stores whatever was typed during intake, but department_managers may capitalize differently.
   const wanted = new Set(departments.map((d) => d.trim().toLowerCase()));
   const rows = ((data ?? []) as HrPendingEmployeeRow[]).filter((r) =>
     wanted.has((r.department ?? "").trim().toLowerCase()),

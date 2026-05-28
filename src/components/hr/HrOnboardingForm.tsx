@@ -914,8 +914,6 @@ function GenerateLinkDialog({
   );
 }
 
-// ─── Department dropdown (Base UI Select, matches AddPersonDialog style) ──
-
 // --- Set-work-email dialog (mints @simple.biz + stages a pending hire) -----
 
 function SetOnboardingWorkEmailDialog({
@@ -1315,8 +1313,6 @@ function SetOnboardingWorkEmailDialog({
   );
 }
 
-// --- Department dropdown (Base UI Select, matches AddPersonDialog style) ---
-
 function DepartmentSelect({
   value,
   onChange,
@@ -1531,8 +1527,6 @@ function ProjectMultiSelect({
     </SelectPrimitive.Root>
   );
 }
-
-// ─── Section / Field wrappers (reuse the AddPersonDialog visual rhythm) ───
 
 function DialogSection({
   label,

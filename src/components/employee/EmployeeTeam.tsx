@@ -87,6 +87,26 @@ function TeamAvatar({ name, email }: { name: string; email: string | null }) {
   );
 }
 
+/* ── "Last seen" formatting ─────────────────────────────────────────────── */
+
+/** "just now" / "5m ago" / "3h ago" / "2d ago" / dated for older than a week.
+ *  Returns null when the timestamp is missing or unparseable so callers can
+ *  decide whether to fall back to a plain "Offline" label. */
+function formatLastSeen(iso: string | null): string | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  const secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (secs < 60) return 'just now';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 /* ── Main ──────────────────────────────────────────────────────────────── */
 
 export default function EmployeeTeam({ employeeEmail, department }: Props) {
@@ -145,6 +165,12 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
   const onlineEmails = useOnlineEmails();
   const selfNorm = normEmail(employeeEmail ?? '') ?? employeeEmail?.trim().toLowerCase() ?? null;
   const deptNorm = selectedDept.trim().toLowerCase() || null;
+
+  // Last-seen lookup: { normEmail -> ISO timestamp }. Empty until fetched and
+  // refreshed each time the roster changes (or on a slow tick so a teammate
+  // who just went offline shows "Last seen just now" rather than the old
+  // value from minutes ago).
+  const [lastSeen, setLastSeen] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -216,10 +242,51 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
     };
   }, [deptNorm, selectedDept]);
 
+  // Fetch last-seen timestamps for every teammate whenever the roster changes.
+  // Also poll on a slow interval so "Last seen 1m ago" creeps forward without
+  // the user reloading the page.
+  useEffect(() => {
+    if (teammates.length === 0) {
+      setLastSeen({});
+      return;
+    }
+    const emails = teammates.flatMap((t) => [
+      normEmail(t.workEmail ?? '') ?? '',
+      normEmail(t.personalEmail ?? '') ?? '',
+    ]).filter(Boolean);
+    if (emails.length === 0) return;
+
+    let cancelled = false;
+    const fetchLastSeen = () => {
+      fetch(`/api/presence/last-seen?emails=${encodeURIComponent(emails.join(','))}`, {
+        cache: 'no-store',
+      })
+        .then((r) => r.json())
+        .then((j: { lastSeen?: Record<string, string> }) => {
+          if (!cancelled) setLastSeen(j.lastSeen ?? {});
+        })
+        .catch(() => {
+          /* non-fatal — UI just falls back to the dot/pill */
+        });
+    };
+    fetchLastSeen();
+    const interval = window.setInterval(fetchLastSeen, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [teammates]);
+
   const isOnline = (t: Teammate): boolean => {
     const w = normEmail(t.workEmail ?? '');
     const p = normEmail(t.personalEmail ?? '');
     return (!!w && onlineEmails.has(w)) || (!!p && onlineEmails.has(p));
+  };
+
+  const lastSeenFor = (t: Teammate): string | null => {
+    const w = normEmail(t.workEmail ?? '');
+    const p = normEmail(t.personalEmail ?? '');
+    return (w && lastSeen[w]) || (p && lastSeen[p]) || null;
   };
 
   const isSelf = (t: Teammate): boolean => {
@@ -411,6 +478,8 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                 const online = isOnline(t);
                 const self = isSelf(t);
                 const email = t.workEmail ?? t.personalEmail;
+                const seenRel = online ? null : formatLastSeen(lastSeenFor(t));
+                const seenIso = online ? null : lastSeenFor(t);
                 return (
                   <div
                     key={t.id}
@@ -448,6 +517,14 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                       <p className="truncate text-sm text-zinc-500 dark:text-zinc-400">
                         {email ?? 'No email on file'}
                       </p>
+                      {!online && seenRel && (
+                        <p
+                          className="mt-0.5 truncate text-xs text-zinc-400 dark:text-zinc-500"
+                          title={seenIso ? new Date(seenIso).toLocaleString() : undefined}
+                        >
+                          Last seen {seenRel}
+                        </p>
+                      )}
                     </div>
 
                     {/* Status pill */}
@@ -458,6 +535,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                           ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
                           : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800/60 dark:text-zinc-400',
                       )}
+                      title={!online && seenIso ? new Date(seenIso).toLocaleString() : undefined}
                     >
                       <span
                         className={cn(
@@ -465,7 +543,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                           online ? 'bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-500',
                         )}
                       />
-                      {online ? 'Online' : 'Offline'}
+                      {online ? 'Online' : seenRel ? seenRel : 'Offline'}
                     </span>
                   </div>
                 );

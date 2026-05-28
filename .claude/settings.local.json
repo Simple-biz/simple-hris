@@ -143,7 +143,8 @@
       "Bash(sed -n '/^export {/,/}/p' components/ui/select.tsx)",
       "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1)",
       "PowerShell(npx tsc --noEmit -p tsconfig.json; \"exit code: $LASTEXITCODE\")",
-      "Read(//c/c/Users/Itachi/Desktop/simple-hris/**)"
+      "Read(//c/c/Users/Itachi/Desktop/simple-hris/**)",
+      "Bash(vercel --version)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

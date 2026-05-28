@@ -60,6 +60,24 @@ function useSelfEmail(): string | null {
   return raw ? (normEmail(raw) ?? raw.trim().toLowerCase()) : null;
 }
 
+/** How often each client pings `/api/presence/heartbeat` so My Team can show
+ *  "Last seen 5m ago" for offline teammates. Realtime presence alone is
+ *  broadcast-only — the timestamp is gone the moment a tab closes. */
+const HEARTBEAT_INTERVAL_MS = 60_000;
+
+function sendHeartbeat(email: string, name: string | null): void {
+  // Fire-and-forget. `keepalive` lets the final beat survive a tab close so
+  // the DB stamp matches "actually went offline at T".
+  fetch('/api/presence/heartbeat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, name }),
+    keepalive: true,
+  }).catch(() => {
+    /* network errors are non-fatal — next interval will retry */
+  });
+}
+
 export default function PresenceProvider({ children }: { children: ReactNode }) {
   const { data: session } = useSession();
   const selfEmail = useSelfEmail();
@@ -106,6 +124,40 @@ export default function PresenceProvider({ children }: { children: ReactNode }) 
 
     return () => {
       void supabase.removeChannel(channel);
+    };
+  }, [selfEmail]);
+
+  // Persist a "last seen" stamp so offline teammates can be shown as
+  // "Last seen Xm ago" — the realtime channel alone forgets immediately on
+  // disconnect. Beat on mount, every minute while visible, on visibility
+  // changes, and once more on tab close (keepalive: true).
+  useEffect(() => {
+    if (!selfEmail) return;
+
+    sendHeartbeat(selfEmail, nameRef.current);
+
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        sendHeartbeat(selfEmail, nameRef.current);
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        sendHeartbeat(selfEmail, nameRef.current);
+      }
+    };
+    const onUnload = () => {
+      sendHeartbeat(selfEmail, nameRef.current);
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onUnload);
+
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onUnload);
     };
   }, [selfEmail]);
 
