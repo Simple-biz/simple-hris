@@ -215,14 +215,51 @@
     );
     background-size: 200% 100%;
   }
+
+  /* Generic shimmer — solid base color with a bright highlight band that
+     sweeps left-to-right. The base gives the bar enough contrast to be
+     visible on white cards; the highlight is what animates. */
+  @keyframes skeleton-shimmer-sweep {
+    0% {
+      background-position: -150% 0;
+    }
+    100% {
+      background-position: 250% 0;
+    }
+  }
+  .skeleton-shimmer {
+    background-color: rgb(228 228 231); /* zinc-200 base */
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.85) 50%,
+      transparent 100%
+    );
+    background-size: 50% 100%;
+    background-repeat: no-repeat;
+    animation: skeleton-shimmer-sweep 1.6s linear infinite;
+  }
+  .dark .skeleton-shimmer {
+    background-color: rgb(39 39 42); /* zinc-800 base */
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.08) 50%,
+      transparent 100%
+    );
+    background-size: 50% 100%;
+    background-repeat: no-repeat;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .initial-calc-skeleton-bar {
+  .initial-calc-skeleton-bar,
+  .skeleton-shimmer {
     animation: none;
     background: rgb(228 228 231);
   }
-  .dark .initial-calc-skeleton-bar {
+  .dark .initial-calc-skeleton-bar,
+  .dark .skeleton-shimmer {
     background: rgb(63 63 70);
   }
 }
