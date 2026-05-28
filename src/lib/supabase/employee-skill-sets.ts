@@ -2,6 +2,7 @@ import { createSupabaseServiceRoleClient } from './server';
 
 export interface EmployeeSkillSetRow {
   work_email: string;
+  role_title: string;
   currently_working_on: string;
   skills: string;
   strengths: string;
@@ -12,6 +13,7 @@ export interface EmployeeSkillSetRow {
 
 export interface UpsertSkillSetInput {
   work_email: string;
+  role_title?: string;
   currently_working_on?: string;
   skills?: string;
   strengths?: string;
@@ -19,10 +21,11 @@ export interface UpsertSkillSetInput {
 }
 
 const SELECT_COLS =
-  'work_email, currently_working_on, skills, strengths, member_notes, created_at, updated_at';
+  'work_email, role_title, currently_working_on, skills, strengths, member_notes, created_at, updated_at';
 
 const EMPTY = (workEmail: string): EmployeeSkillSetRow => ({
   work_email: workEmail,
+  role_title: '',
   currently_working_on: '',
   skills: '',
   strengths: '',
@@ -77,6 +80,7 @@ export async function upsertSkillSet(
   }
 
   const row: Record<string, string> = { work_email: norm(input.work_email) };
+  if (input.role_title !== undefined) row.role_title = String(input.role_title);
   if (input.currently_working_on !== undefined) {
     row.currently_working_on = String(input.currently_working_on);
   }

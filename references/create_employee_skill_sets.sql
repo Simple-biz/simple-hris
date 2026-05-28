@@ -6,6 +6,7 @@
 -- email, lower-cased and trimmed by the normalize trigger.
 --
 -- Fields:
+--   role_title           - curated role/title shown on My Team
 --   currently_working_on - short status of what the employee is focused on now
 --   skills               - free-form list / paragraph of technical skills
 --   strengths            - free-form list / paragraph of strengths
@@ -17,6 +18,7 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS public.employee_skill_sets (
   work_email           TEXT PRIMARY KEY,
+  role_title           TEXT NOT NULL DEFAULT '',
   currently_working_on TEXT NOT NULL DEFAULT '',
   skills               TEXT NOT NULL DEFAULT '',
   strengths            TEXT NOT NULL DEFAULT '',

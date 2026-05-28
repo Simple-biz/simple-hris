@@ -13,6 +13,7 @@ export interface TeamRosterProfile {
 }
 
 export interface TeamRosterSkillSet {
+  role_title: string;
   currently_working_on: string;
   skills: string;
   strengths: string;
@@ -35,6 +36,7 @@ interface ActiveEmployeeRow {
 }
 
 const EMPTY_SET: TeamRosterSkillSet = {
+  role_title: '',
   currently_working_on: '',
   skills: '',
   strengths: '',
@@ -130,6 +132,7 @@ export async function getTeamRoster(
     const k = normEmail(r.work_email);
     if (!k) continue;
     skillSets[k] = {
+      role_title: r.role_title ?? '',
       currently_working_on: r.currently_working_on ?? '',
       skills: r.skills ?? '',
       strengths: r.strengths ?? '',

@@ -14,6 +14,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { useOnlineEmails } from '@/components/presence/PresenceProvider';
 
 interface SkillSetEntry {
+  role_title: string;
   currently_working_on: string;
   skills: string;
   strengths: string;
@@ -23,7 +24,8 @@ interface SkillSetEntry {
 function hasAnySkillSet(s: SkillSetEntry | undefined): boolean {
   if (!s) return false;
   return Boolean(
-    s.currently_working_on?.trim() ||
+    s.role_title?.trim() ||
+      s.currently_working_on?.trim() ||
       s.skills?.trim() ||
       s.strengths?.trim() ||
       s.member_notes?.trim(),
@@ -701,7 +703,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
               const seenIso = online ? null : lastSeenFor(t);
               const ss = skillSetFor(t);
               const hasSS = hasAnySkillSet(ss);
-              const roleLine = t.department?.trim() || null;
+              const roleLine = ss?.role_title?.trim() || t.department?.trim() || null;
               const workingOn = ss?.currently_working_on?.trim() || null;
               const interactive = hasSS;
               return (
@@ -932,8 +934,13 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                       <DialogTitle className="text-xl font-bold leading-tight text-zinc-900 dark:text-white">
                         {t.name}
                       </DialogTitle>
+                      {ss?.role_title?.trim() && (
+                        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                          {ss.role_title}
+                        </p>
+                      )}
                       {t.department && (
-                        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">
                           {t.department}
                         </p>
                       )}

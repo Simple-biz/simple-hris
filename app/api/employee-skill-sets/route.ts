@@ -5,11 +5,13 @@ import {
   upsertSkillSet,
   type UpsertSkillSetInput,
 } from '@/lib/supabase/employee-skill-sets';
+import { SKILL_SET_TITLES } from '@/lib/skill-set-titles';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const MAX_FIELD_LEN = 4000;
+const VALID_ROLE_TITLES = new Set<string>(SKILL_SET_TITLES);
 
 /**
  * GET ?email=foo@bar       -> single row (returns empty defaults if missing)
@@ -52,6 +54,7 @@ export async function PUT(req: NextRequest) {
   }
 
   const fields: (keyof UpsertSkillSetInput)[] = [
+    'role_title',
     'currently_working_on',
     'skills',
     'strengths',
@@ -65,6 +68,12 @@ export async function PUT(req: NextRequest) {
         { status: 400 },
       );
     }
+  }
+  if (body.role_title && !VALID_ROLE_TITLES.has(body.role_title)) {
+    return NextResponse.json(
+      { row: null, error: 'role_title is not a valid option' },
+      { status: 400 },
+    );
   }
 
   const { row, error } = await upsertSkillSet(body);

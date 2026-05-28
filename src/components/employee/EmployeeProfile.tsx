@@ -27,6 +27,7 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import { PROCESSOR_OPTIONS, type ProcessorId } from '@/lib/employee-payment-processors';
+import { SKILL_SET_TITLES } from '@/lib/skill-set-titles';
 import {
   PreferredPaymentMethodRadios,
   PayoutDetailsFields,
@@ -81,6 +82,7 @@ function matchesEmployeeEmail(emp: EmployeeRow, n: string): boolean {
 type TabId = 'overview' | 'compensation' | 'payment' | 'skillsets' | 'reports';
 
 interface SkillSetFields {
+  role_title: string;
   currently_working_on: string;
   skills: string;
   strengths: string;
@@ -88,6 +90,7 @@ interface SkillSetFields {
 }
 
 const EMPTY_SKILL_SET: SkillSetFields = {
+  role_title: '',
   currently_working_on: '',
   skills: '',
   strengths: '',
@@ -386,6 +389,7 @@ export default function EmployeeProfile({
         if (cancelled) return;
         const row = d.row ?? EMPTY_SKILL_SET;
         const fields: SkillSetFields = {
+          role_title: row.role_title ?? '',
           currently_working_on: row.currently_working_on ?? '',
           skills: row.skills ?? '',
           strengths: row.strengths ?? '',
@@ -402,6 +406,7 @@ export default function EmployeeProfile({
   }, [employeeEmail]);
 
   const skillSetDirty =
+    skillSet.role_title !== skillSetBaseline.role_title ||
     skillSet.currently_working_on !== skillSetBaseline.currently_working_on ||
     skillSet.skills !== skillSetBaseline.skills ||
     skillSet.strengths !== skillSetBaseline.strengths ||
@@ -415,6 +420,7 @@ export default function EmployeeProfile({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           work_email: norm,
+          role_title: skillSet.role_title,
           currently_working_on: skillSet.currently_working_on,
           skills: skillSet.skills,
           strengths: skillSet.strengths,
@@ -1049,6 +1055,30 @@ export default function EmployeeProfile({
                       </div>
                     ) : (
                       <div className="space-y-5 py-4">
+                        <label className="block">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                              Role / Title
+                            </span>
+                            <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                              Shown on your My Team card
+                            </span>
+                          </div>
+                          <select
+                            value={skillSet.role_title}
+                            onChange={(e) =>
+                              setSkillSet((s) => ({ ...s, role_title: e.target.value }))
+                            }
+                            className="mt-1.5 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13px] text-zinc-900 focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-blue-800 dark:focus:ring-blue-900/40"
+                          >
+                            <option value="">Select a title...</option>
+                            {SKILL_SET_TITLES.map((title) => (
+                              <option key={title} value={title}>
+                                {title}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <SkillSetField
                           label="Currently Working On"
                           hint="What you are focused on right now"
