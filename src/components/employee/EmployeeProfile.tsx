@@ -78,7 +78,21 @@ function matchesEmployeeEmail(emp: EmployeeRow, n: string): boolean {
 
 /* ───────── Visual primitives ───────── */
 
-type TabId = 'overview' | 'compensation' | 'payment' | 'reports';
+type TabId = 'overview' | 'compensation' | 'payment' | 'skillsets' | 'reports';
+
+interface SkillSetFields {
+  currently_working_on: string;
+  skills: string;
+  strengths: string;
+  member_notes: string;
+}
+
+const EMPTY_SKILL_SET: SkillSetFields = {
+  currently_working_on: '',
+  skills: '',
+  strengths: '',
+  member_notes: '',
+};
 
 function Section({
   title,
@@ -171,6 +185,42 @@ function CompactStat({
   );
 }
 
+function SkillSetField({
+  label,
+  hint,
+  value,
+  onChange,
+  placeholder,
+  rows = 3,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  rows?: number;
+}) {
+  return (
+    <label className="block">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+          {label}
+        </span>
+        {hint && (
+          <span className="text-[11px] text-zinc-400 dark:text-zinc-500">{hint}</span>
+        )}
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={rows}
+        className="mt-1.5 w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] leading-relaxed text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-orange-500/40 dark:focus:ring-orange-500/20"
+      />
+    </label>
+  );
+}
+
 function TabBar({
   active,
   onChange,
@@ -184,6 +234,7 @@ function TabBar({
     { id: 'overview', label: 'Overview', sub: hasAddress ? 'Identity, employment, address' : 'Identity & employment' },
     { id: 'compensation', label: 'Compensation', sub: 'Rates & currency' },
     { id: 'payment', label: 'Payment', sub: 'Disbursement details' },
+    { id: 'skillsets', label: 'Skill Sets', sub: 'Visible to teammates' },
     { id: 'reports', label: 'Reports', sub: 'Commendations & recognition' },
   ];
 
@@ -318,6 +369,69 @@ export default function EmployeeProfile({
       .finally(() => { if (!cancelled) setCommendationsLoading(false); });
     return () => { cancelled = true; };
   }, [employeeEmail]);
+
+  // Skill Sets - editable by the employee, read-only on the My Team page.
+  const [skillSet, setSkillSet] = useState<SkillSetFields>(EMPTY_SKILL_SET);
+  const [skillSetBaseline, setSkillSetBaseline] = useState<SkillSetFields>(EMPTY_SKILL_SET);
+  const [skillSetLoading, setSkillSetLoading] = useState(false);
+  const [skillSetSaving, setSkillSetSaving] = useState(false);
+  const [skillSetSavedAt, setSkillSetSavedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSkillSetLoading(true);
+    void fetch(`/api/employee-skill-sets?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { row: null }))
+      .then((d: { row: SkillSetFields | null }) => {
+        if (cancelled) return;
+        const row = d.row ?? EMPTY_SKILL_SET;
+        const fields: SkillSetFields = {
+          currently_working_on: row.currently_working_on ?? '',
+          skills: row.skills ?? '',
+          strengths: row.strengths ?? '',
+          member_notes: row.member_notes ?? '',
+        };
+        setSkillSet(fields);
+        setSkillSetBaseline(fields);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setSkillSetLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [employeeEmail]);
+
+  const skillSetDirty =
+    skillSet.currently_working_on !== skillSetBaseline.currently_working_on ||
+    skillSet.skills !== skillSetBaseline.skills ||
+    skillSet.strengths !== skillSetBaseline.strengths ||
+    skillSet.member_notes !== skillSetBaseline.member_notes;
+
+  const saveSkillSet = async () => {
+    setSkillSetSaving(true);
+    try {
+      const res = await fetch('/api/employee-skill-sets', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_email: norm,
+          currently_working_on: skillSet.currently_working_on,
+          skills: skillSet.skills,
+          strengths: skillSet.strengths,
+          member_notes: skillSet.member_notes,
+        }),
+      });
+      const json = (await res.json()) as { row?: SkillSetFields; error?: string | null };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+      setSkillSetBaseline({ ...skillSet });
+      setSkillSetSavedAt(new Date().toLocaleTimeString());
+      toast.success('Skill Sets saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save Skill Sets');
+    } finally {
+      setSkillSetSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!bankInfo) {
@@ -896,6 +1010,79 @@ export default function EmployeeProfile({
                       <ArrowUpRight className="h-3 w-3 text-zinc-400" />
                     </div>
                   )}
+                </>
+              )}
+
+              {activeTab === 'skillsets' && (
+                <>
+                  <Section
+                    title="Skill Sets"
+                    description="Visible to your teammates as read-only on the My Team page"
+                    action={
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        {skillSetSavedAt && !skillSetDirty && (
+                          <span className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex">
+                            <CheckCircle className="h-3 w-3" />
+                            Saved {skillSetSavedAt}
+                          </span>
+                        )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={skillSetSaving || skillSetLoading || !skillSetDirty}
+                          onClick={saveSkillSet}
+                          className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
+                        >
+                          {skillSetSaving ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Save className="h-3 w-3" />
+                          )}
+                          Save
+                        </Button>
+                      </div>
+                    }
+                  >
+                    {skillSetLoading ? (
+                      <div className="flex items-center justify-center py-10">
+                        <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                      </div>
+                    ) : (
+                      <div className="space-y-5 py-4">
+                        <SkillSetField
+                          label="Currently Working On"
+                          hint="What you are focused on right now"
+                          value={skillSet.currently_working_on}
+                          onChange={(v) => setSkillSet((s) => ({ ...s, currently_working_on: v }))}
+                          placeholder="e.g. Migrating the bonus engine to per-day rate history"
+                        />
+                        <SkillSetField
+                          label="Skills"
+                          hint="Languages, tools, frameworks, methodologies"
+                          value={skillSet.skills}
+                          onChange={(v) => setSkillSet((s) => ({ ...s, skills: v }))}
+                          placeholder="e.g. TypeScript, React, Postgres, Figma, copywriting"
+                          rows={4}
+                        />
+                        <SkillSetField
+                          label="Strengths"
+                          hint="What you bring to the team"
+                          value={skillSet.strengths}
+                          onChange={(v) => setSkillSet((s) => ({ ...s, strengths: v }))}
+                          placeholder="e.g. Calm under pressure, fast feedback loops, customer empathy"
+                          rows={3}
+                        />
+                        <SkillSetField
+                          label="Member Notes"
+                          hint="Anything else teammates might want to know"
+                          value={skillSet.member_notes}
+                          onChange={(v) => setSkillSet((s) => ({ ...s, member_notes: v }))}
+                          placeholder="e.g. Best reached on Slack between 9am-3pm PHT"
+                          rows={3}
+                        />
+                      </div>
+                    )}
+                  </Section>
                 </>
               )}
 

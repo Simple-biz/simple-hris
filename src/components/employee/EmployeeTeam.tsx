@@ -1,12 +1,47 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Loader2, Search, Shield, Users, WifiOff } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, Search, Shield, Sparkles, Users, WifiOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import { useOnlineEmails } from '@/components/presence/PresenceProvider';
+
+interface SkillSetEntry {
+  currently_working_on: string;
+  skills: string;
+  strengths: string;
+  member_notes: string;
+}
+
+function hasAnySkillSet(s: SkillSetEntry | undefined): boolean {
+  if (!s) return false;
+  return Boolean(
+    s.currently_working_on?.trim() ||
+      s.skills?.trim() ||
+      s.strengths?.trim() ||
+      s.member_notes?.trim(),
+  );
+}
+
+function SkillBlock({ label, value }: { label: string; value: string }) {
+  const text = value?.trim();
+  return (
+    <div className="rounded-xl border border-orange-100/80 bg-white/80 px-3 py-2.5 dark:border-blue-950/60 dark:bg-[#0d1117]/60">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+        {label}
+      </div>
+      {text ? (
+        <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-zinc-800 dark:text-zinc-200">
+          {text}
+        </p>
+      ) : (
+        <p className="mt-1 text-[12.5px] italic text-zinc-400 dark:text-zinc-600">Not shared</p>
+      )}
+    </div>
+  );
+}
 
 interface Teammate {
   id: string;
@@ -277,10 +312,60 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
     };
   }, [teammates]);
 
+  // Read-only Skill Sets shared by teammates. Bulk-fetched once per roster so
+  // each row can lazy-render an expanded panel without a per-click roundtrip.
+  // Keyed by lower-cased work email.
+  const [skillSets, setSkillSets] = useState<Record<string, SkillSetEntry>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (teammates.length === 0) {
+      setSkillSets({});
+      return;
+    }
+    const emails = teammates
+      .map((t) => normEmail(t.workEmail ?? '') ?? '')
+      .filter(Boolean);
+    if (emails.length === 0) return;
+    let cancelled = false;
+    fetch(`/api/employee-skill-sets?emails=${encodeURIComponent(emails.join(','))}`, {
+      cache: 'no-store',
+    })
+      .then((r) => (r.ok ? r.json() : { rows: [] }))
+      .then((j: { rows?: (SkillSetEntry & { work_email: string })[] }) => {
+        if (cancelled) return;
+        const map: Record<string, SkillSetEntry> = {};
+        for (const row of j.rows ?? []) {
+          map[row.work_email] = {
+            currently_working_on: row.currently_working_on ?? '',
+            skills: row.skills ?? '',
+            strengths: row.strengths ?? '',
+            member_notes: row.member_notes ?? '',
+          };
+        }
+        setSkillSets(map);
+      })
+      .catch(() => {
+        /* non-fatal */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teammates]);
+
   const isOnline = (t: Teammate): boolean => {
     const w = normEmail(t.workEmail ?? '');
     const p = normEmail(t.personalEmail ?? '');
     return (!!w && onlineEmails.has(w)) || (!!p && onlineEmails.has(p));
+  };
+
+  const skillSetFor = (t: Teammate): SkillSetEntry | undefined => {
+    const w = normEmail(t.workEmail ?? '');
+    return w ? skillSets[w] : undefined;
+  };
+
+  const toggleExpanded = (id: string) => {
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   const lastSeenFor = (t: Teammate): string | null => {
@@ -480,71 +565,124 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
                 const email = t.workEmail ?? t.personalEmail;
                 const seenRel = online ? null : formatLastSeen(lastSeenFor(t));
                 const seenIso = online ? null : lastSeenFor(t);
+                const ss = skillSetFor(t);
+                const hasSS = hasAnySkillSet(ss);
+                const isOpen = !!expanded[t.id];
                 return (
-                  <div
-                    key={t.id}
-                    className="flex items-center gap-4 p-4 transition-colors hover:bg-orange-50/40 dark:hover:bg-blue-950/20"
-                  >
-                    <div className="relative shrink-0">
-                      <TeamAvatar name={t.name} email={email} />
-                      {/* Presence dot on the avatar */}
-                      <span
-                        className={cn(
-                          'absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-white dark:ring-[#0d1117]',
-                          online ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
-                        )}
-                        aria-hidden
-                      />
-                    </div>
+                  <div key={t.id}>
+                    <div
+                      className={cn(
+                        'flex items-center gap-4 p-4 transition-colors',
+                        hasSS
+                          ? 'cursor-pointer hover:bg-orange-50/40 dark:hover:bg-blue-950/20'
+                          : 'hover:bg-orange-50/20 dark:hover:bg-blue-950/10',
+                      )}
+                      onClick={hasSS ? () => toggleExpanded(t.id) : undefined}
+                      role={hasSS ? 'button' : undefined}
+                      tabIndex={hasSS ? 0 : undefined}
+                      aria-expanded={hasSS ? isOpen : undefined}
+                      onKeyDown={
+                        hasSS
+                          ? (e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                toggleExpanded(t.id);
+                              }
+                            }
+                          : undefined
+                      }
+                    >
+                      <div className="relative shrink-0">
+                        <TeamAvatar name={t.name} email={email} />
+                        {/* Presence dot on the avatar */}
+                        <span
+                          className={cn(
+                            'absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-white dark:ring-[#0d1117]',
+                            online ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
+                          )}
+                          aria-hidden
+                        />
+                      </div>
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h4 className="truncate text-[0.95rem] font-semibold leading-snug text-zinc-900 dark:text-white">
-                          {t.name}
-                        </h4>
-                        {t.isManager && (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
-                            <Shield className="h-2.5 w-2.5" />
-                            Manager
-                          </span>
-                        )}
-                        {self && (
-                          <span className="shrink-0 rounded-md bg-orange-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-700 dark:bg-blue-950/50 dark:text-orange-300">
-                            You
-                          </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className="truncate text-[0.95rem] font-semibold leading-snug text-zinc-900 dark:text-white">
+                            {t.name}
+                          </h4>
+                          {t.isManager && (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
+                              <Shield className="h-2.5 w-2.5" />
+                              Manager
+                            </span>
+                          )}
+                          {self && (
+                            <span className="shrink-0 rounded-md bg-orange-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-700 dark:bg-blue-950/50 dark:text-orange-300">
+                              You
+                            </span>
+                          )}
+                          {hasSS && (
+                            <span
+                              className="inline-flex shrink-0 items-center gap-1 rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700 dark:bg-sky-950/50 dark:text-sky-300"
+                              title="Shared a skill set"
+                            >
+                              <Sparkles className="h-2.5 w-2.5" />
+                              Skills
+                            </span>
+                          )}
+                        </div>
+                        <p className="truncate text-sm text-zinc-500 dark:text-zinc-400">
+                          {email ?? 'No email on file'}
+                        </p>
+                        {!online && seenRel && (
+                          <p
+                            className="mt-0.5 truncate text-xs text-zinc-400 dark:text-zinc-500"
+                            title={seenIso ? new Date(seenIso).toLocaleString() : undefined}
+                          >
+                            Last seen {seenRel}
+                          </p>
                         )}
                       </div>
-                      <p className="truncate text-sm text-zinc-500 dark:text-zinc-400">
-                        {email ?? 'No email on file'}
-                      </p>
-                      {!online && seenRel && (
-                        <p
-                          className="mt-0.5 truncate text-xs text-zinc-400 dark:text-zinc-500"
-                          title={seenIso ? new Date(seenIso).toLocaleString() : undefined}
-                        >
-                          Last seen {seenRel}
-                        </p>
+
+                      {/* Status pill */}
+                      <span
+                        className={cn(
+                          'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium',
+                          online
+                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
+                            : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800/60 dark:text-zinc-400',
+                        )}
+                        title={!online && seenIso ? new Date(seenIso).toLocaleString() : undefined}
+                      >
+                        <span
+                          className={cn(
+                            'h-1.5 w-1.5 rounded-full',
+                            online ? 'bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-500',
+                          )}
+                        />
+                        {online ? 'Online' : seenRel ? seenRel : 'Offline'}
+                      </span>
+
+                      {hasSS && (
+                        <ChevronRight
+                          className={cn(
+                            'h-4 w-4 shrink-0 text-zinc-400 transition-transform dark:text-zinc-600',
+                            isOpen && 'rotate-90 text-orange-500 dark:text-orange-400',
+                          )}
+                          aria-hidden
+                        />
                       )}
                     </div>
 
-                    {/* Status pill */}
-                    <span
-                      className={cn(
-                        'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium',
-                        online
-                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
-                          : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800/60 dark:text-zinc-400',
-                      )}
-                      title={!online && seenIso ? new Date(seenIso).toLocaleString() : undefined}
-                    >
-                      <span
-                        className={cn(
-                          'h-1.5 w-1.5 rounded-full',
-                          online ? 'bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-500',
-                        )}
-                      />
-                      {online ? 'Online' : seenRel ? seenRel : 'Offline'}
-                    </span>
+                    {hasSS && isOpen && ss && (
+                      <div className="border-t border-orange-100/80 bg-gradient-to-br from-orange-50/40 via-white to-sky-50/30 px-4 py-4 dark:border-blue-950/60 dark:from-blue-950/30 dark:via-[#0d1117] dark:to-blue-950/20 sm:px-6">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <SkillBlock label="Currently Working On" value={ss.currently_working_on} />
+                          <SkillBlock label="Skills" value={ss.skills} />
+                          <SkillBlock label="Strengths" value={ss.strengths} />
+                          <SkillBlock label="Member Notes" value={ss.member_notes} />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

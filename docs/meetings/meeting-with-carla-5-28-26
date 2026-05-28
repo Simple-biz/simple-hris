@@ -1,0 +1,47 @@
+Here is a summary of the meeting discussion, focusing on the logic and features needed for the system (HRIS) you are creating.
+
+### **HRIS Logic Requirements for MD File**
+
+#### **I. System Setup and Deployment**
+
+  * **Go-Live Status:** The HRIS system is currently live.
+  * **Data Preparation:** Before onboarding, the global Master list must be cleaned up against the payroll dashboard and Hubstaff data, including fixing department classifications, adding missing U.S. simple Biz employees, removing off-boarded employees, and correcting email addresses.
+  * **Parallel Testing (Next Week):** During the next PAB payroll cycle, the new HRIS must be tested side-by-side with the old system (Payroll Wizard) to verify that the calculated amounts and values match for accuracy.
+  * **Initial Testing Rollout:** The system will first be sent to managers via email with a sign-in link for testing and feedback collection before presenting it to Carla's boss.
+
+#### **II. Payroll Wizard and General Logic**
+
+  * **USD to PHP Exchange Rate Logic (Crucial):** Implement a manual lock-in mechanism for the USD to PHP exchange rate during the "Initial calculation" step of the Payroll Wizard.
+      * **UI/UX Improvement:** When a user clicks "Start processing," add a tutorial or "focus mode" that highlights the step to manually change and lock the USD to PHP rate.
+  * **Reports Status:** Reports should be marked as "draft" if they have not yet been "dispatched".
+  * **Currency Management for Contractors:**
+      * **Currency Logic:** When a user is assigned the contractor role, their currency (PHP, USD, or ZAR) should be set at that time and made read-only on their profile to prevent toggling errors.
+      * **ZAR Currency:** Add support for South African Rand (ZAR) for contractors in South Africa.
+      * **Invoice Number Logic:** The contractor invoice number should follow a specific sequence, such as using the first three letters of the name, skipping the second letter, and including the day's date (e.g., Crabmego skips the second 'A' and 'L').
+
+#### **III. Hogan Specialist Logic (HSL) Payroll Rules**
+
+  * **Multiple Pay Rates:** HSL employees require specific calculation logic that distinguishes between weekday and weekend work.
+      * **Weekend Differential:** The weekend rate (Saturday/Sunday) is 15 pesos higher than the Monday through Friday rate.
+      * **Overtime Calculation:** Overtime hours must be pooled from both Monday-Friday and weekend hours, and the total overtime should be paid as an overtime differential of the base rate.
+  * **Bug to Fix:** Investigate and fix why an HSL employee was marked "ineligible" despite meeting the requirements (reconciling on three weeks and having Saturday hours).
+
+#### **IV. MESA Program Logic**
+
+  * **Enrollment Requirement:** Enrollment logic must verify that an employee has completed the FPU (Financial Peace University) class.
+  * **Eligibility Display:** The MESA enrollment button should be grayed out if the employee is not eligible (e.g., not meeting the three-month tenure requirement).
+  * **Opt-Out Feature:** Add an "opt-out" button to the employee dashboard.
+  * **Disbursement Requests:**
+      * **Request/Return Functions:** Implement separate functions for **Disbursement Request** (requesting money) and **Disbursement Return** (returning money).
+      * **Receipt/Approval Logic:** Employees have two weeks to send receipts for approved purchases (e.g., medical emergency, emergency power supply).
+      * **Opt-Out Enforcement:** If an employee uses the funds for unapproved purchases, they are automatically "opted out" of the program.
+      * **Opt-Out Consequence:** When opted out, any remaining balance is sent to the employee, and they cannot rejoin until they complete another FPU course.
+  * **Bug to Fix:** Ensure MESA deductions are correctly displayed within the Payroll Wizard additions/deductions tabs, as the deduction is currently only visible in the exported reports.
+
+#### **V. Additional Features and Bugs**
+
+  * **Roles & Permissions UI:** Add "deselect all" and "select all" buttons for easier selection management.
+  * **US Employee Exclusion:** Ensure US employees (who are paid through QuickBooks) are not processed by the HRIS system, as it is meant for offshore personnel.
+  * **Bonus Logic:** New logic will be needed to handle future bonus additions, such as the one planned for the AI team based on story points (noted as a feature request).
+  * **Rate Change:** The system correctly reflects rate changes immediately on the employee calendar based on the effective date.
+  * **Offboarding:** Deleting an off-boarded employee works; the status of the RoboForm deletion automation fix is still unclear.
