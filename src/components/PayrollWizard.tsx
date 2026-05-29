@@ -87,6 +87,13 @@ import {
   USD_TO_PHP_DECIMAL_SHIFT,
   effectiveUsdToPhpRateFromStored,
 } from '@/lib/fx/usd-php';
+import { logAudit, valuesDiffer } from '@/lib/audit/client-log';
+import type { AuditCycleContext } from '@/lib/supabase/audit-log';
+import AuditTrailPanel from '@/components/payroll-clerk/AuditTrailPanel';
+import {
+  auditEventsToAoa,
+  type ClientAuditEvent,
+} from '@/lib/audit/client-format';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { parseLocalDateFromIso } from '@/lib/pab-period-settings';
@@ -1266,6 +1273,76 @@ export default function PayrollWizard({
     };
   }, []);
 
+  // ── Audit: derive the current cycle context attached to every wizard event.
+  // Includes the active Hubstaff source file (cycle key), the period parsed
+  // from its filename, and the snapshot USD->PHP rate at the moment of the
+  // event. Consumed by the Reports tab drill-down + CSV export.
+  const auditCycle = useMemo<AuditCycleContext>(() => {
+    const file = calcSourceFile;
+    if (!file) {
+      return {
+        source_file: null,
+        period_start: null,
+        period_end: null,
+        fx_rate: usdToPhpRate,
+      };
+    }
+    const range = parseDateRangeFromFilename(file);
+    const toIso = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+    return {
+      source_file: file,
+      period_start: range ? toIso(range.start) : null,
+      period_end: range ? toIso(range.end) : null,
+      fx_rate: usdToPhpRate,
+    };
+  }, [calcSourceFile, usdToPhpRate]);
+
+  // ── Audit: fire wizard.opened exactly once when the wizard hydrates.
+  // Waits until the wizard knows its operator (sessionEmail) or has at least
+  // surfaced a cycle hint, so the event isn't logged with empty context.
+  const wizardOpenedAuditRef = useRef(false);
+  useEffect(() => {
+    if (wizardOpenedAuditRef.current) return;
+    if (!sessionEmail && !calcSourceFile) return;
+    wizardOpenedAuditRef.current = true;
+    void logAudit({
+      user_name: sessionEmail ?? 'anonymous',
+      user_role: 'payroll_clerk',
+      action: 'wizard.opened',
+      resource: 'payroll_wizard',
+      cycle: auditCycle,
+      details: {
+        session_started_at: wizardStartedAt.toISOString(),
+      },
+    });
+  }, [sessionEmail, calcSourceFile, auditCycle, wizardStartedAt]);
+
+  // ── Audit: log every cycle switch (after the initial value settles).
+  const lastAuditedCycleFileRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!calcSourceFile) return;
+    if (lastAuditedCycleFileRef.current === calcSourceFile) return;
+    const prev = lastAuditedCycleFileRef.current;
+    lastAuditedCycleFileRef.current = calcSourceFile;
+    if (prev === null) return; // first settle — already covered by wizard.opened
+    void logAudit({
+      user_name: sessionEmail ?? 'anonymous',
+      user_role: 'payroll_clerk',
+      action: 'wizard.cycle_selected',
+      resource: 'payroll_wizard',
+      cycle: auditCycle,
+      details: {
+        previous_source_file: prev,
+        new_source_file: calcSourceFile,
+      },
+    });
+  }, [calcSourceFile, auditCycle, sessionEmail]);
+
   // Fetch overtime settings (global + per-department) — single bulk call to
   // /api/app-settings?keys=… instead of one round-trip per key.
   useEffect(() => {
@@ -2413,23 +2490,109 @@ export default function PayrollWizard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfectAttendanceEligible]);
 
+  // ── Audit: stable ref holding the latest values referenced by the
+  // additions/adjustments handlers. Lets handlers stay `useCallback([])`
+  // while still reading fresh state for old-vs-new diffing.
+  const auditCtxRef = useRef({
+    sessionEmail: sessionEmail ?? null,
+    auditCycle,
+    employeeBonuses,
+    employeeDepts,
+    bonusOverrides,
+    employeeMetrics,
+    deptMetrics,
+  });
+  useEffect(() => {
+    auditCtxRef.current = {
+      sessionEmail: sessionEmail ?? null,
+      auditCycle,
+      employeeBonuses,
+      employeeDepts,
+      bonusOverrides,
+      employeeMetrics,
+      deptMetrics,
+    };
+  }, [
+    sessionEmail,
+    auditCycle,
+    employeeBonuses,
+    employeeDepts,
+    bonusOverrides,
+    employeeMetrics,
+    deptMetrics,
+  ]);
+
   const toggleEmployeeBonus = React.useCallback((email: string, bonusId: string, enabled: boolean) => {
+    const ctx = auditCtxRef.current;
+    const prevValue = ctx.employeeBonuses[email]?.[bonusId] ?? false;
     setEmployeeBonuses(prev => ({
       ...prev,
       [email]: { ...(prev[email] ?? {}), [bonusId]: enabled },
     }));
+    if (valuesDiffer(prevValue, enabled)) {
+      void logAudit({
+        user_name: ctx.sessionEmail ?? 'anonymous',
+        user_role: 'payroll_clerk',
+        action: 'wizard.bonus_edited',
+        resource: 'employee_bonus',
+        resource_id: email,
+        cycle: ctx.auditCycle,
+        details: {
+          employee_email: email,
+          field: bonusId,
+          previous_value: prevValue,
+          new_value: enabled,
+        },
+      });
+    }
   }, []);
 
   const assignToDept = React.useCallback((email: string, deptKey: string) => {
+    const ctx = auditCtxRef.current;
+    const prevValue = ctx.employeeDepts[email] ?? null;
     setEmployeeDepts(prev => ({ ...prev, [email]: deptKey }));
+    if (valuesDiffer(prevValue, deptKey)) {
+      void logAudit({
+        user_name: ctx.sessionEmail ?? 'anonymous',
+        user_role: 'payroll_clerk',
+        action: 'wizard.addition_edited',
+        resource: 'employee_department',
+        resource_id: email,
+        cycle: ctx.auditCycle,
+        details: {
+          employee_email: email,
+          field: 'department',
+          previous_value: prevValue,
+          new_value: deptKey,
+        },
+      });
+    }
   }, []);
 
   const removeFromDept = React.useCallback((email: string) => {
+    const ctx = auditCtxRef.current;
+    const prevValue = ctx.employeeDepts[email] ?? null;
     setEmployeeDepts(prev => {
       const next = { ...prev };
       delete next[email];
       return next;
     });
+    if (prevValue !== null) {
+      void logAudit({
+        user_name: ctx.sessionEmail ?? 'anonymous',
+        user_role: 'payroll_clerk',
+        action: 'wizard.addition_edited',
+        resource: 'employee_department',
+        resource_id: email,
+        cycle: ctx.auditCycle,
+        details: {
+          employee_email: email,
+          field: 'department',
+          previous_value: prevValue,
+          new_value: null,
+        },
+      });
+    }
   }, []);
 
   const applyBonusToAllInDept = React.useCallback((
@@ -2438,6 +2601,12 @@ export default function PayrollWizard({
     enabled: boolean,
     emailsInDept: string[],
   ) => {
+    const ctx = auditCtxRef.current;
+    const changedEmails: string[] = [];
+    for (const email of emailsInDept) {
+      const prev = ctx.employeeBonuses[email]?.[bonusId] ?? false;
+      if (valuesDiffer(prev, enabled)) changedEmails.push(email);
+    }
     setEmployeeBonuses(prev => {
       const next = { ...prev };
       for (const email of emailsInDept) {
@@ -2445,20 +2614,108 @@ export default function PayrollWizard({
       }
       return next;
     });
+    if (changedEmails.length > 0) {
+      void logAudit({
+        user_name: ctx.sessionEmail ?? 'anonymous',
+        user_role: 'payroll_clerk',
+        action: 'wizard.bonus_edited',
+        resource: 'employee_bonus_bulk',
+        resource_id: _deptKey,
+        cycle: ctx.auditCycle,
+        details: {
+          department: _deptKey,
+          field: bonusId,
+          new_value: enabled,
+          changed_count: changedEmails.length,
+          total_count: emailsInDept.length,
+          changed_emails: changedEmails,
+        },
+      });
+    }
   }, []);
 
   const updateEmployeeMetric = React.useCallback((email: string, metric: string, value: number) => {
+    const ctx = auditCtxRef.current;
+    const prevValue = ctx.employeeMetrics[email]?.[metric];
     setEmployeeMetrics(prev => ({
       ...prev,
       [email]: { ...(prev[email] ?? {}), [metric]: value },
     }));
+    if (valuesDiffer(prevValue ?? 0, value)) {
+      void logAudit({
+        user_name: ctx.sessionEmail ?? 'anonymous',
+        user_role: 'payroll_clerk',
+        action: 'wizard.addition_edited',
+        resource: 'employee_metric',
+        resource_id: email,
+        cycle: ctx.auditCycle,
+        details: {
+          employee_email: email,
+          field: metric,
+          previous_value: prevValue ?? null,
+          new_value: value,
+        },
+      });
+    }
   }, []);
 
   const updateDeptMetric = React.useCallback((deptKey: string, metric: string, value: number) => {
+    const ctx = auditCtxRef.current;
+    const prevValue = ctx.deptMetrics[deptKey]?.[metric];
     setDeptMetrics(prev => ({
       ...prev,
       [deptKey]: { ...(prev[deptKey] ?? {}), [metric]: value },
     }));
+    if (valuesDiffer(prevValue ?? 0, value)) {
+      void logAudit({
+        user_name: ctx.sessionEmail ?? 'anonymous',
+        user_role: 'payroll_clerk',
+        action: 'wizard.addition_edited',
+        resource: 'dept_metric',
+        resource_id: deptKey,
+        cycle: ctx.auditCycle,
+        details: {
+          department: deptKey,
+          field: metric,
+          previous_value: prevValue ?? null,
+          new_value: value,
+        },
+      });
+    }
+  }, []);
+
+  /**
+   * Updates a per-employee manual bonus override.
+   *   - value=number → set the override
+   *   - value=null   → clear the override (revert to auto-computed)
+   * Audited as `wizard.bonus_edited` with the old → new diff so reviewers can
+   * see exactly which manual overrides changed.
+   */
+  const updateBonusOverride = React.useCallback((email: string, value: number | null) => {
+    const ctx = auditCtxRef.current;
+    const prevValue = ctx.bonusOverrides[email] ?? null;
+    setBonusOverrides(prev => {
+      const next = { ...prev };
+      if (value === null) delete next[email];
+      else next[email] = value;
+      return next;
+    });
+    if (valuesDiffer(prevValue, value)) {
+      void logAudit({
+        user_name: ctx.sessionEmail ?? 'anonymous',
+        user_role: 'payroll_clerk',
+        action: 'wizard.bonus_edited',
+        resource: 'bonus_override',
+        resource_id: email,
+        cycle: ctx.auditCycle,
+        details: {
+          employee_email: email,
+          field: 'bonus_override_php',
+          previous_value: prevValue,
+          new_value: value,
+        },
+      });
+    }
   }, []);
 
   /**
@@ -3770,6 +4027,26 @@ export default function PayrollWizard({
         { icon: goingLocked ? '🔒' : '🔓' },
       );
       setConfirmingLockToggle(false);
+      void logAudit({
+        user_name: sessionEmail ?? 'anonymous',
+        user_role: 'payroll_clerk',
+        action: goingLocked ? 'dispatch.lock_acquired' : 'dispatch.lock_released',
+        resource: 'dispatch_lock',
+        cycle: auditCycle,
+        details: {
+          previous_value: !goingLocked,
+          new_value: goingLocked,
+          // Step the operator was on when they triggered the toggle —
+          // helps reviewers reconstruct what stage of the wizard the
+          // lock acquire/release happened during.
+          wizard_step: currentStep,
+          wizard_step_label: steps[currentStep - 1]?.label ?? null,
+          // Lock metadata observed in the prior state — useful for
+          // audits where ownership of the lock changed.
+          previous_locked_by: lockState.lockedBy ?? null,
+          previous_locked_at: lockState.lockedAt ?? null,
+        },
+      });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not update lock');
     } finally {
@@ -6497,6 +6774,13 @@ export default function PayrollWizard({
                                 )}
                               </TableHead>
                             ))}
+                            <TableHead
+                              className="min-w-[60px] px-1 py-2 text-right text-[9px] font-medium leading-tight text-rose-600 dark:text-rose-400"
+                              title="MESA deduction — applied automatically to employees enrolled in MESA (mesa_member=true on their rates row)"
+                            >
+                              MESA<br />
+                              <span className="font-mono font-normal text-zinc-400">-{formatPHP(100)}</span>
+                            </TableHead>
                             <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                               Bonus
                             </TableHead>
@@ -7015,6 +7299,22 @@ export default function PayrollWizard({
                                     </TableCell>
                                   );
                                 })}
+                                {/* MESA deduction — automatic -PHP100 for MESA members; shown so reviewers can see the deduction inline (it was previously only visible in the exported XLSX). */}
+                                <TableCell
+                                  className={cn(
+                                    'px-1 py-1.5 text-right font-mono text-[11px] tabular-nums',
+                                    empMesaDeduction > 0
+                                      ? 'font-semibold text-rose-600 dark:text-rose-400'
+                                      : 'text-zinc-300 dark:text-zinc-700',
+                                  )}
+                                  title={
+                                    empMesaDeduction > 0
+                                      ? `MESA member — ${formatPHP(empMesaDeduction)} deducted from net pay`
+                                      : 'Not enrolled in MESA'
+                                  }
+                                >
+                                  {empMesaDeduction > 0 ? `-${formatPHP(empMesaDeduction)}` : '—'}
+                                </TableCell>
                                 <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-bold">
                                   {isRecalcPending ? (
                                     <span className="inline-block h-3 w-12 animate-pulse rounded bg-emerald-200/60 dark:bg-emerald-900/40" />
@@ -7029,7 +7329,7 @@ export default function PayrollWizard({
                                           const raw = e.target.value;
                                           const next = raw === '' ? 0 : Number(raw);
                                           if (!Number.isFinite(next)) return;
-                                          setBonusOverrides((prev) => ({ ...prev, [emp.email]: next }));
+                                          updateBonusOverride(emp.email, next);
                                         }}
                                         title={hasOverride ? `Auto-computed: ${formatPHP(autoBonus)}` : 'Auto-computed bonus — edit to override'}
                                         className={cn(
@@ -7044,11 +7344,7 @@ export default function PayrollWizard({
                                       {hasOverride && (
                                         <button
                                           type="button"
-                                          onClick={() => setBonusOverrides((prev) => {
-                                            const next = { ...prev };
-                                            delete next[emp.email];
-                                            return next;
-                                          })}
+                                          onClick={() => updateBonusOverride(emp.email, null)}
                                           title={`Revert to auto: ${formatPHP(autoBonus)}`}
                                           className="text-zinc-400 hover:text-red-500"
                                         >
@@ -7100,31 +7396,66 @@ export default function PayrollWizard({
                           )}
                         </span>
                       </div>
-                      <div className="flex flex-wrap items-center gap-4">
-                        <span className="text-xs text-zinc-500">
-                          Dept Bonuses:{' '}
-                          {isRecalcPending ? (
-                            <span className="inline-block h-3 w-20 animate-pulse rounded bg-emerald-200/60 align-middle dark:bg-emerald-900/40" />
-                          ) : (
-                            <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                              +{formatPHP(
-                                deptEmployees.reduce((sum, e) => sum + getEffectiveBonus(e.email), 0),
+                      {(() => {
+                        // Pre-compute dept-level totals once so we can both
+                        // surface MESA in the summary AND subtract it from the
+                        // final-pay total (previously the footer overstated
+                        // pay by ignoring MESA — only the per-row Final cell
+                        // and the exported XLSX got it right).
+                        const deptMesaTotal = deptEmployees.reduce((sum, e) => {
+                          const rr = ratesByEmail.get(normEmail(e.email) ?? '');
+                          return sum + (e.initialPay != null && rr?.mesa_member ? 100 : 0);
+                        }, 0);
+                        const deptMesaCount = deptEmployees.reduce((n, e) => {
+                          const rr = ratesByEmail.get(normEmail(e.email) ?? '');
+                          return n + (e.initialPay != null && rr?.mesa_member ? 1 : 0);
+                        }, 0);
+                        const deptBonusTotal = deptEmployees.reduce(
+                          (sum, e) => sum + getEffectiveBonus(e.email),
+                          0,
+                        );
+                        const deptFinalTotal = deptEmployees.reduce(
+                          (sum, e) => sum + (e.initialPay ?? 0) + getEffectiveBonus(e.email),
+                          0,
+                        ) - deptMesaTotal;
+                        return (
+                          <div className="flex flex-wrap items-center gap-4">
+                            <span
+                              className="text-xs text-zinc-500"
+                              title={
+                                deptMesaCount === 0
+                                  ? 'No MESA members in this department'
+                                  : `${deptMesaCount} MESA member${deptMesaCount === 1 ? '' : 's'} × ${formatPHP(100)}`
+                              }
+                            >
+                              MESA:{' '}
+                              {deptMesaTotal > 0 ? (
+                                <span className="font-mono font-bold text-rose-600 dark:text-rose-400">
+                                  -{formatPHP(deptMesaTotal)}
+                                </span>
+                              ) : (
+                                <span className="font-mono text-zinc-400 dark:text-zinc-500">—</span>
                               )}
                             </span>
-                          )}
-                        </span>
-                        <span className="text-xs text-zinc-500">
-                          Dept Final Pay:{' '}
-                          <span className="font-mono font-bold text-zinc-900 dark:text-white">
-                            {formatPHP(
-                              deptEmployees.reduce(
-                                (sum, e) => sum + (e.initialPay ?? 0) + getEffectiveBonus(e.email),
-                                0,
-                              ),
-                            )}
-                          </span>
-                        </span>
-                      </div>
+                            <span className="text-xs text-zinc-500">
+                              Dept Bonuses:{' '}
+                              {isRecalcPending ? (
+                                <span className="inline-block h-3 w-20 animate-pulse rounded bg-emerald-200/60 align-middle dark:bg-emerald-900/40" />
+                              ) : (
+                                <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                  +{formatPHP(deptBonusTotal)}
+                                </span>
+                              )}
+                            </span>
+                            <span className="text-xs text-zinc-500">
+                              Dept Final Pay:{' '}
+                              <span className="font-mono font-bold text-zinc-900 dark:text-white">
+                                {formatPHP(deptFinalTotal)}
+                              </span>
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                   </div>
@@ -7728,8 +8059,30 @@ export default function PayrollWizard({
         const setTenureStatus = (id: string, status: 'approved' | 'rejected' | 'pending') => {
           setTenureGiftAccountingStatus((prev) => {
             const next = { ...prev };
+            const prevValue = prev[id] ?? 'pending';
             if (status === 'pending') delete next[id];
             else next[id] = status;
+            if (valuesDiffer(prevValue, status)) {
+              const row = tenureGiftRows.find((r) => r.id === id);
+              void logAudit({
+                user_name: sessionEmail ?? 'anonymous',
+                user_role: 'payroll_clerk',
+                action: 'tenure.gift_decided',
+                resource: 'tenure_gifts',
+                resource_id: id,
+                cycle: auditCycle,
+                details: {
+                  field: 'accounting_status',
+                  previous_value: prevValue,
+                  new_value: status,
+                  employee_email: row?.personal_email ?? null,
+                  gift_name: row?.gift_name ?? null,
+                  gift_price_php: row?.gift_price_php ?? null,
+                  milestone_index: row?.milestone_index ?? null,
+                  milestone_date: row?.milestone_date ?? null,
+                },
+              });
+            }
             return next;
           });
         };
@@ -8718,7 +9071,11 @@ export default function PayrollWizard({
                     const res = await fetch('/api/dispatch-paystubs', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ pay_period: payPeriodPayload, employees }),
+                      body: JSON.stringify({
+                        pay_period: payPeriodPayload,
+                        employees,
+                        cycle: auditCycle,
+                      }),
                     });
                     const data = await res.json();
                     if (!res.ok) {
@@ -8906,7 +9263,7 @@ export default function PayrollWizard({
                 variant="outline"
                 size="sm"
                 className="h-8 gap-2 border-emerald-300/70 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
-                onClick={() => {
+                onClick={async () => {
                   const salariesAoa: (string | number | null)[][] = [
                     ['Employee', 'Email', 'Department', 'Hours', 'Regular', 'OT', 'Bonuses', 'MESA', 'Net Pay'],
                     ...snap.employees.map((e) => [
@@ -8954,10 +9311,33 @@ export default function PayrollWizard({
                     ]),
                   ];
 
+                  // Fetch the audit trail for this cycle so it can be embedded
+                  // as an "Audit Log" sheet alongside the other three. Best-effort:
+                  // if the fetch fails the rest of the workbook still downloads.
+                  let auditAoa: (string | number | null)[][] = [];
+                  if (auditCycle.source_file) {
+                    try {
+                      const params = new URLSearchParams({ source_file: auditCycle.source_file });
+                      if (auditCycle.period_start) params.set('period_start', auditCycle.period_start);
+                      if (auditCycle.period_end) params.set('period_end', auditCycle.period_end);
+                      const res = await fetch(`/api/payroll-wizard/audit?${params.toString()}`, { cache: 'no-store' });
+                      const json = (await res.json()) as { bundle?: { events?: ClientAuditEvent[] }; error?: string | null };
+                      if (!json.error && json.bundle?.events) {
+                        auditAoa = auditEventsToAoa(json.bundle.events);
+                      }
+                    } catch {
+                      // non-fatal — XLSX still gets a header-only Audit Log sheet below
+                    }
+                  }
+                  if (auditAoa.length === 0) {
+                    auditAoa = auditEventsToAoa([]); // header-only fallback
+                  }
+
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(salariesAoa), 'Salaries');
                   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(budgetAoa), 'Budget Requests');
                   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(giftsAoa), 'Gifts');
+                  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(auditAoa), 'Audit Log');
 
                   // Timestamp like "2026-05-14 09-32-18" — filesystem-safe (no colons).
                   const d = snap.startedAt;
@@ -8965,7 +9345,10 @@ export default function PayrollWizard({
                   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
                   const filename = `Payroll Wizard - ${isDraft ? 'Draft' : 'Official'} - ${stamp}.xlsx`;
                   XLSX.writeFile(wb, filename);
-                  toast.success(`Downloaded ${filename}`);
+                  const auditCount = Math.max(0, auditAoa.length - 1);
+                  toast.success(`Downloaded ${filename}`, {
+                    description: `Includes Audit Log sheet (${auditCount} event${auditCount === 1 ? '' : 's'})`,
+                  });
                 }}
               >
                 <Download className="size-3.5" />
@@ -9129,6 +9512,19 @@ export default function PayrollWizard({
                   )}
                 </div>
               </div>
+            )}
+
+            {/* Audit Trail — everything recorded against this cycle: who started
+                the wizard, every edit (additions / bonuses / orphanage / tenure /
+                gifts), contractor approvals/rejections, lock toggles, FX rate
+                snapshots, and the final dispatch event with success/failure. */}
+            {auditCycle.source_file && (
+              <AuditTrailPanel
+                sourceFile={auditCycle.source_file}
+                periodStart={auditCycle.period_start ?? null}
+                periodEnd={auditCycle.period_end ?? null}
+                showExportButton
+              />
             )}
 
             {/* Back to start */}

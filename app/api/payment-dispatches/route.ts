@@ -68,9 +68,24 @@ export async function POST(req: NextRequest) {
     resource_id: row.id,
     details: {
       recipient_email: row.recipient_email,
+      recipient_name: row.recipient_name,
       processor: row.processor,
       amount_usd: row.amount_usd,
-      cycle_id: row.cycle_id,
+      amount_php: row.amount_php,
+      transaction_id: row.transaction_id,
+      bank_used: row.bank_used,
+      sent_date: row.sent_date,
+      status: row.status,
+      cycle: {
+        cycle_id: row.cycle_id,
+        source_file: row.cycle_source_file ?? null,
+        period_start: row.cycle_period_start ?? null,
+        period_end: row.cycle_period_end ?? null,
+        fx_rate:
+          row.amount_php && row.amount_usd
+            ? Number((Number(row.amount_php) / Number(row.amount_usd)).toFixed(4))
+            : null,
+      },
     },
   });
 

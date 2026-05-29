@@ -144,7 +144,10 @@
       "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1)",
       "PowerShell(npx tsc --noEmit -p tsconfig.json; \"exit code: $LASTEXITCODE\")",
       "Read(//c/c/Users/Itachi/Desktop/simple-hris/**)",
-      "Bash(vercel --version)"
+      "Bash(vercel --version)",
+      "PowerShell(npx tsc --noEmit 2>&1)",
+      "PowerShell($out = npx tsc --noEmit 2>&1; if \\($LASTEXITCODE -eq 0\\) { \"TYPECHECK PASSED\" } else { \"TYPECHECK FAILED with exit $LASTEXITCODE\"; $out | Select-Object -First 80 })",
+      "Bash(cd \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" && head -n 1339 src/components/payroll-clerk/DispatchReports.tsx > /tmp/dr_truncated.tsx && wc -l /tmp/dr_truncated.tsx)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

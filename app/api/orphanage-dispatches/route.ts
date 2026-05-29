@@ -6,6 +6,7 @@ import {
   type OrphanageDispatchStatus,
   type OrphanageDispatchType,
 } from '@/lib/supabase/orphanage-dispatches';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
 
 /** GET /api/orphanage-dispatches
  *  ?pending=1  → pending items queue (budget requests + gift shippings awaiting payment)
@@ -75,5 +76,28 @@ export async function POST(req: NextRequest) {
   });
 
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  if (row) {
+    void insertAuditLog({
+      user_name: row.paid_by || row.created_by || 'unknown',
+      user_role: 'payroll_clerk',
+      action: 'orphanage.dispatched',
+      resource: 'orphanage_dispatches',
+      resource_id: row.id,
+      details: {
+        dispatch_type: row.dispatch_type,
+        budget_request_id: row.budget_request_id,
+        gift_shipping_id: row.gift_shipping_id,
+        label: row.label,
+        submitter_email: row.submitter_email,
+        amount_php: row.amount_php,
+        status: row.status,
+        transaction_id: row.transaction_id,
+        bank_used: row.bank_used,
+        sent_date: row.sent_date,
+      },
+    });
+  }
+
   return NextResponse.json({ row }, { status: 201 });
 }

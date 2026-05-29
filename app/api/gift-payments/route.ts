@@ -4,6 +4,7 @@ import {
   replaceGiftPayments,
   type GiftPaymentDraft,
 } from '@/lib/supabase/gift-payments';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -21,12 +22,44 @@ export async function PUT(request: Request) {
     const body = (await request.json()) as {
       records?: GiftPaymentDraft[];
       created_by?: string | null;
+      cycle?: {
+        source_file?: string | null;
+        period_start?: string | null;
+        period_end?: string | null;
+        fx_rate?: number | null;
+      } | null;
     };
     if (!Array.isArray(body.records)) {
       return NextResponse.json({ error: 'Missing records[]' }, { status: 400 });
     }
     const { error } = await replaceGiftPayments(body.records, body.created_by ?? null);
     if (error) return NextResponse.json({ error }, { status: 500 });
+
+    const totalUsd = body.records.reduce((sum, r) => {
+      const v = typeof r.total_usd === 'number' ? r.total_usd : parseFloat(String(r.total_usd ?? '0'));
+      return sum + (Number.isFinite(v) ? v : 0);
+    }, 0);
+
+    void insertAuditLog({
+      user_name: body.created_by ?? 'unknown',
+      user_role: 'payroll_clerk',
+      action: 'gift.payment_edited',
+      resource: 'gift_payments',
+      resource_id: null,
+      details: {
+        record_count: body.records.length,
+        total_usd: Number(totalUsd.toFixed(2)),
+        cycle: body.cycle ?? null,
+        periods: Array.from(
+          new Set(
+            body.records
+              .map((r) => r.period_label)
+              .filter((v): v is string => typeof v === 'string' && v.length > 0),
+          ),
+        ),
+      },
+    });
+
     return NextResponse.json({ error: null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

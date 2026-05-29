@@ -5,7 +5,39 @@ import { createSupabaseServiceRoleClient } from './server';
 export type AuditAction =
   | 'settings.rule.toggle'
   | 'settings.ot.global'
-  | 'settings.ot.department';
+  | 'settings.ot.department'
+  // Payroll Wizard lifecycle + edits
+  | 'wizard.opened'
+  | 'wizard.cycle_selected'
+  | 'wizard.edited'
+  | 'wizard.bonus_edited'
+  | 'wizard.addition_edited'
+  | 'wizard.fx_rate_changed'
+  // Contractor decisions
+  | 'contractor.decided'
+  // Orphanage / tenure / gift decisions
+  | 'orphanage.budget_decided'
+  | 'orphanage.dispatched'
+  | 'tenure.gift_decided'
+  | 'gift.payment_edited'
+  // Dispatch lifecycle
+  | 'dispatch.lock_acquired'
+  | 'dispatch.lock_released'
+  | 'payment.dispatched'
+  | 'paystubs.dispatched';
+
+/**
+ * Cycle context attached to every payroll-wizard audit event so the Reports
+ * tab can scope events to a cycle. Stored under `details.cycle` so consumers
+ * can filter via `details->'cycle'->>'source_file'`.
+ */
+export type AuditCycleContext = {
+  source_file?: string | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  cycle_id?: string | null;
+  fx_rate?: number | null;
+};
 
 export type AuditLogEntry = {
   id: string;
