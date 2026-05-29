@@ -139,7 +139,7 @@ function LoginPageInner() {
             <section className="relative hidden overflow-hidden rounded-[2rem] border border-white/70 bg-white/45 p-10 shadow-[0_28px_90px_rgba(15,23,42,0.10)] backdrop-blur-2xl lg:flex lg:flex-col lg:justify-between">
               <div className="space-y-6">
                 <div className="inline-flex items-center gap-2 rounded-full border border-zinc-200/70 bg-white/80 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.24em] text-zinc-500">
-                  Payroll Operations
+                  Simple HRIS
                 </div>
                 <div className="space-y-4">
                   <h2 className="max-w-lg text-5xl font-semibold tracking-[-0.04em] text-zinc-950">
@@ -178,9 +178,7 @@ function LoginPageInner() {
               <div className="rounded-2xl border border-white/90 bg-white/80 p-3 shadow-sm backdrop-blur-xl">
                 <img src="/simple-logo.png" alt="Simple" className="h-12 w-auto" />
               </div>
-              <h1 className="text-2xl font-semibold tracking-[-0.03em] text-zinc-950">
-                Simple HRIS
-              </h1>
+
               <p className="max-w-xs text-sm leading-6 text-zinc-600">
                 Sign in with your{' '}
                 <span className="font-semibold text-zinc-900">@simple.biz</span>{' '}

@@ -147,7 +147,16 @@
       "Bash(vercel --version)",
       "PowerShell(npx tsc --noEmit 2>&1)",
       "PowerShell($out = npx tsc --noEmit 2>&1; if \\($LASTEXITCODE -eq 0\\) { \"TYPECHECK PASSED\" } else { \"TYPECHECK FAILED with exit $LASTEXITCODE\"; $out | Select-Object -First 80 })",
-      "Bash(cd \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" && head -n 1339 src/components/payroll-clerk/DispatchReports.tsx > /tmp/dr_truncated.tsx && wc -l /tmp/dr_truncated.tsx)"
+      "Bash(cd \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" && head -n 1339 src/components/payroll-clerk/DispatchReports.tsx > /tmp/dr_truncated.tsx && wc -l /tmp/dr_truncated.tsx)",
+      "PowerShell(npm ls -g --depth=0 2>$null; Write-Output \"---\"; \\(Get-Command impeccable -ErrorAction SilentlyContinue\\).Source)",
+      "PowerShell(pip show impeccable 2>$null)",
+      "PowerShell(pipx list 2>$null)",
+      "WebFetch(domain:github.com)",
+      "PowerShell(Get-ChildItem -Path \"$env:USERPROFILE\\\\.claude\\\\skills\" -ErrorAction SilentlyContinue | Select-Object Name)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(IMPECCABLE_CRITIQUE_META='{\"target\":\"login page\",\"total_score\":25,\"p0_count\":1,\"p1_count\":2}' node .claude/skills/impeccable/scripts/critique-storage.mjs write src-components-employee-employeelogin-tsx C:/tmp/login-critique-body.md)",
+      "Bash(echo \"EXIT_TSC:$?\")",
+      "Bash(git checkout *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
