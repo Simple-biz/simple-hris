@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
   ArrowRightLeft,
+  Briefcase,
   Camera,
   CheckCircle2,
   ChevronLeft,
@@ -17,6 +18,7 @@ import {
   Eye,
   EyeOff,
   Inbox,
+  Mail,
   Menu,
   Search,
   Sparkles,
@@ -27,14 +29,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Toaster } from '@/components/ui/sonner';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
@@ -56,6 +50,8 @@ import ManagerTransferDialog from '@/components/manager/ManagerTransferDialog';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useOnlineEmails } from '@/components/presence/PresenceProvider';
+import { TeamAvatar } from '@/components/team/team-ui';
+import { formatCurrentProjects } from '@/lib/skill-set-titles';
 import {
   MedalProvider,
   MedalPalette,
@@ -589,6 +585,17 @@ interface TeamPanelProps {
   viewerEmail: string | null;
 }
 
+/** Shared-profile fields shown on roster cards + the member dialog. */
+interface TeamSkillSet {
+  role_title: string;
+  currently_working_on: string;
+  skills: string;
+  strengths: string;
+  member_notes: string;
+  projects: string[];
+  current_projects: string[];
+}
+
 function AnimatedRate({
   value,
   hidden,
@@ -643,7 +650,7 @@ function AnimatedRate({
   );
 }
 
-const TEAM_PAGE_SIZE = 10;
+const TEAM_PAGE_SIZE = 8;
 
 function memberHourlyRate(member: EmployeeRow): number | null {
   return member.hsl_hourly_rate ?? member.regular_rate ?? null;
@@ -678,9 +685,86 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [medalOpen, setMedalOpen] = useState(false);
-  const showRateCol = members.some(
-    (m) => memberHourlyRate(m) != null || memberOtRate(m) != null,
+
+  // Skill sets (role / currently-working-on / manager notes) for the team —
+  // bulk-fetched so the roster cards and the member dialog can show the same
+  // shared-profile data the employee My Team view renders. Keyed by normalized
+  // work email.
+  const [skillSets, setSkillSets] = useState<Record<string, TeamSkillSet>>({});
+  const teamWorkEmails = useMemo(
+    () => members.map((m) => normEmail(m.work_email ?? '') ?? '').filter(Boolean),
+    [members],
   );
+  const teamWorkEmailsKey = teamWorkEmails.join(',');
+  useEffect(() => {
+    if (!teamWorkEmailsKey) {
+      setSkillSets({});
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/employee-skill-sets?emails=${encodeURIComponent(teamWorkEmailsKey)}`, {
+      cache: 'no-store',
+    })
+      .then((r) => r.json())
+      .then((j: { rows?: (TeamSkillSet & { work_email: string })[] }) => {
+        if (cancelled) return;
+        const map: Record<string, TeamSkillSet> = {};
+        for (const row of j.rows ?? []) {
+          const k = normEmail(row.work_email ?? '') ?? '';
+          if (k) map[k] = row;
+        }
+        setSkillSets(map);
+      })
+      .catch(() => {
+        /* non-fatal — cards just render without skill-set detail */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teamWorkEmailsKey]);
+
+  // Last-seen timestamps so offline members read "Last seen 5m ago" rather than
+  // a bare dot — mirrors the employee My Team poll.
+  const [lastSeen, setLastSeen] = useState<Record<string, string>>({});
+  const teamAllEmails = useMemo(
+    () =>
+      members
+        .flatMap((m) => [normEmail(m.work_email ?? '') ?? '', normEmail(m.personal_email ?? '') ?? ''])
+        .filter(Boolean),
+    [members],
+  );
+  const teamAllEmailsKey = teamAllEmails.join(',');
+  useEffect(() => {
+    if (!teamAllEmailsKey) return;
+    let cancelled = false;
+    const load = () =>
+      fetch(`/api/presence/last-seen?emails=${encodeURIComponent(teamAllEmailsKey)}`, {
+        cache: 'no-store',
+      })
+        .then((r) => r.json())
+        .then((j: { lastSeen?: Record<string, string> }) => {
+          if (!cancelled) setLastSeen(j.lastSeen ?? {});
+        })
+        .catch(() => {
+          /* non-fatal */
+        });
+    load();
+    const interval = window.setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [teamAllEmailsKey]);
+
+  const skillSetFor = (m: EmployeeRow): TeamSkillSet | undefined => {
+    const w = normEmail(m.work_email ?? '');
+    return w ? skillSets[w] : undefined;
+  };
+  const lastSeenFor = (m: EmployeeRow): string | null => {
+    const w = normEmail(m.work_email ?? '');
+    const p = normEmail(m.personal_email ?? '');
+    return (w && lastSeen[w]) || (p && lastSeen[p]) || null;
+  };
 
   // ── My Team wallpaper banner — saved per-department in Supabase. The
   //    scope follows the **department filter dropdown** the manager picks
@@ -1537,11 +1621,6 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
             </div>
           ) : (
             (() => {
-              // Show role only for HSL roster entries; show rate columns when any
-              // member has either HSL pay-plan rates or employee_hourly_rates values.
-              const showHslRoleCol = members.some(
-                (m) => (m.hsl_role ?? '').trim() !== '',
-              );
               const formatPhp = (v: number | null | undefined): string => {
                 if (v == null) return '—';
                 return `₱${v.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -1555,14 +1634,16 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.2, ease: 'easeOut' }}
                   >
-                  {/* Desktop / tablet: table */}
+                  {/* Roster card grid — mirrors the employee My Team view,
+                      with manager rates + actions layered on. Medal drag-drop
+                      is wired at the grid level via each card's data-email. */}
                   <div
-                    className="hidden overflow-x-auto md:block"
+                    className="grid grid-cols-1 gap-4 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3 xl:grid-cols-4"
                     onDragOver={(e) => {
                       if (!draggedMedal) return;
                       e.preventDefault();
-                      const tr = (e.target as HTMLElement).closest('tr[data-email]') as HTMLElement | null;
-                      setDragOverEmail(tr?.dataset.email ?? null);
+                      const card = (e.target as HTMLElement).closest('[data-email]') as HTMLElement | null;
+                      setDragOverEmail(card?.dataset.email ?? null);
                     }}
                     onDragLeave={(e) => {
                       if (!e.currentTarget.contains(e.relatedTarget as Node)) {
@@ -1571,250 +1652,150 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
                     }}
                     onDrop={(e) => {
                       e.preventDefault();
-                      const tr = (e.target as HTMLElement).closest('tr[data-email]') as HTMLElement | null;
-                      const email = tr?.dataset.email;
-                      const name = tr?.dataset.name ?? null;
+                      const card = (e.target as HTMLElement).closest('[data-email]') as HTMLElement | null;
+                      const email = card?.dataset.email;
+                      const name = card?.dataset.name ?? null;
                       if (email) openAwardForDrop(email, name);
                       setDragOverEmail(null);
                     }}
                   >
-                    <Table>
-                      <TableHeader>
-                        <TableRow className="hover:bg-transparent">
-                          <TableHead className="w-[220px]">Name</TableHead>
-                          <TableHead>Department</TableHead>
-                          {showHslRoleCol && (
-                            <TableHead className="min-w-[180px]">Department/Role</TableHead>
+                    {pageSlice.map((m, idx) => {
+                      const cardEmail = m.personal_email ?? m.work_email ?? undefined;
+                      const avatarEmail = m.work_email ?? m.personal_email ?? null;
+                      const isOver = !!draggedMedal && !!cardEmail && dragOverEmail === cardEmail;
+                      const online = isMemberOnline(m);
+                      const ss = skillSetFor(m);
+                      const roleLine = ss?.role_title?.trim() || m.hsl_role?.trim() || null;
+                      const workingOn = formatCurrentProjects(ss?.current_projects, ss?.currently_working_on);
+                      const seenIso = online ? null : lastSeenFor(m);
+                      return (
+                        <motion.div
+                          key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}
+                          data-email={cardEmail}
+                          data-name={m.name ?? undefined}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.22, delay: Math.min(idx * 0.025, 0.18), ease: 'easeOut' }}
+                          className={cn(
+                            'group relative flex min-h-[232px] flex-col overflow-hidden rounded-2xl border border-blue-100/70 bg-white shadow-sm ring-1 ring-blue-500/5 transition-[transform,box-shadow,border-color] duration-300 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md dark:border-blue-950/50 dark:bg-zinc-950/80 dark:ring-blue-400/10 dark:hover:border-blue-900',
+                            isOver && 'bg-amber-50/50 ring-2 ring-amber-400/70 dark:bg-amber-950/10',
                           )}
-                          <TableHead className="min-w-[110px] text-right">Hourly</TableHead>
-                          <TableHead className="min-w-[110px] text-right">OT</TableHead>
-                          <TableHead className="min-w-[200px]">Work email</TableHead>
-                          <TableHead className="min-w-[200px]">Personal email</TableHead>
-                          <TableHead className="w-[170px] text-right">Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {pageSlice.map((m, idx) => {
-                          const rowEmail = m.personal_email ?? m.work_email ?? undefined;
-                          const isOver = !!draggedMedal && !!rowEmail && dragOverEmail === rowEmail;
-                          return (
-                          <TableRow
-                            key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}
-                            data-email={rowEmail}
-                            data-name={m.name ?? undefined}
-                            className={cn(isOver && 'bg-amber-50/60 dark:bg-amber-950/20')}
+                        >
+                          <div
+                            className="flex-1 cursor-pointer p-4"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setSelectedMember(m)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setSelectedMember(m);
+                              }
+                            }}
                           >
-                            <TableCell className="font-medium text-zinc-900 dark:text-zinc-100">
-                              <span className="inline-flex items-center gap-1.5">
-                                {isMemberOnline(m) && (
-                                  <span className="relative flex h-2 w-2 shrink-0" title="Online in HRIS now">
-                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70" />
-                                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-                                  </span>
-                                )}
-                                {m.name ?? '—'}
-                                <MedalBadges email={rowEmail} />
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-zinc-600 dark:text-zinc-400">
-                              {m.department ?? '—'}
-                            </TableCell>
-                            {showHslRoleCol && (
-                              <TableCell className="text-zinc-600 dark:text-zinc-400">
-                                <div className="flex flex-wrap gap-1">
-                                  {m.hsl_role ? (
-                                    <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
-                                      {m.hsl_role}
+                            {/* Header: avatar + name + role */}
+                            <div className="flex items-start gap-3">
+                              <div className="relative shrink-0">
+                                <TeamAvatar name={m.name ?? '—'} email={avatarEmail} />
+                                <span
+                                  className={cn(
+                                    'absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white dark:ring-zinc-950',
+                                    online ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
+                                  )}
+                                  title={online ? 'Online in HRIS now' : seenIso ? `Last seen ${new Date(seenIso).toLocaleString()}` : 'Offline'}
+                                  aria-hidden
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <h4 className="truncate text-[0.95rem] font-semibold leading-snug text-zinc-900 dark:text-white">
+                                    {m.name ?? '—'}
+                                  </h4>
+                                  <MedalBadges email={cardEmail} />
+                                </div>
+                                {/* Title — the headline detail */}
+                                <p
+                                  className="mt-0.5 truncate text-[13px] font-medium leading-snug text-zinc-700 dark:text-zinc-200"
+                                  title={roleLine ?? undefined}
+                                >
+                                  {roleLine ?? 'No title set'}
+                                </p>
+                                <div className="mt-1 flex flex-wrap items-center gap-1">
+                                  {m.department && (
+                                    <span className="rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+                                      {m.department}
                                     </span>
-                                  ) : (
-                                    <span className="text-zinc-300 dark:text-zinc-700">—</span>
                                   )}
                                   {m.mesa_member && (
-                                    <span title="MESA Program — ₱100 deducted per paycheck" className="inline-flex items-center rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
-                                      MESA
+                                    <span title="MESA Program — ₱100 deducted per paycheck" className="rounded-md border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10px] font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+                                      MESA −₱100
                                     </span>
                                   )}
                                 </div>
-                              </TableCell>
-                            )}
-                            <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
-                              <AnimatedRate
-                                value={memberHourlyRate(m)}
-                                hidden={ratesHidden}
-                                formatPhp={formatPhp}
-                              />
-                            </TableCell>
-                            <TableCell className="text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
-                              <AnimatedRate
-                                value={memberOtRate(m)}
-                                hidden={ratesHidden}
-                                formatPhp={formatPhp}
-                              />
-                            </TableCell>
-                            <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                              {m.work_email ?? '—'}
-                            </TableCell>
-                            <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                              {m.personal_email ?? '—'}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex items-center justify-end gap-1.5">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setSelectedMember(m)}
-                                  className="h-7 gap-1.5 border-blue-200 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
-                                  title="View profile and payment history"
-                                >
-                                  <UserRound className="h-3.5 w-3.5" />
-                                  View
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setTransferMember(m)}
-                                  className="h-7 gap-1.5 border-amber-200 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40"
-                                  title="Request a department transfer (HR approval required)"
-                                >
-                                  <ArrowRightLeft className="h-3.5 w-3.5" />
-                                  Transfer
-                                </Button>
                               </div>
-                            </TableCell>
-                          </TableRow>
-                        ); })}
-                      </TableBody>
-                    </Table>
-                  </div>
+                            </div>
 
-                  {/* Mobile: stacked cards */}
-                  <div className="flex flex-col gap-2.5 p-3 md:hidden">
-                    {pageSlice.map((m, idx) => {
-                      const cardEmail = m.personal_email ?? m.work_email ?? undefined;
-                      const isCardOver = !!draggedMedal && !!cardEmail && dragOverEmail === cardEmail;
-                      return (
-                      <motion.div
-                        key={`${m.work_email ?? m.personal_email ?? m.name}-${idx}`}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{
-                          duration: 0.22,
-                          delay: Math.min(idx * 0.025, 0.18),
-                          ease: 'easeOut',
-                        }}
-                        onDragOver={(e) => { if (!draggedMedal) return; e.preventDefault(); setDragOverEmail(cardEmail ?? null); }}
-                        onDragLeave={() => setDragOverEmail(null)}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          if (cardEmail) openAwardForDrop(cardEmail, m.name ?? null);
-                          setDragOverEmail(null);
-                        }}
-                        className={cn(
-                          'rounded-xl border border-blue-100/70 bg-white/95 p-3 shadow-sm ring-1 ring-blue-500/5 dark:border-blue-950/50 dark:bg-zinc-950/80 dark:ring-blue-400/10',
-                          isCardOver && 'ring-amber-400/60 bg-amber-50/40 dark:bg-amber-950/10',
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                              {isMemberOnline(m) && (
-                                <span className="relative flex h-2 w-2 shrink-0" title="Online in HRIS now">
-                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70" />
-                                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-                                </span>
+                            {/* Currently working on — the primary card content */}
+                            <div className="mt-3 rounded-lg border border-zinc-100 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/40">
+                              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                <Briefcase className="h-3 w-3" />
+                                Currently working on
+                              </div>
+                              {workingOn ? (
+                                <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-zinc-800 dark:text-zinc-200" title={workingOn}>
+                                  {workingOn}
+                                </p>
+                              ) : (
+                                <p className="mt-1 text-[12.5px] italic text-zinc-400 dark:text-zinc-600">
+                                  Nothing shared yet
+                                </p>
                               )}
-                              <span className="truncate">{m.name ?? '—'}</span>
-                              <MedalBadges email={cardEmail} />
-                            </div>
-                            <div className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                              {m.department ?? '—'}
                             </div>
                           </div>
-                          <div className="flex shrink-0 flex-col items-end gap-1">
-                            {m.hsl_role && (
-                              <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
-                                {m.hsl_role}
+
+                          {/* Subtle footer detail line — rates + email kept quiet */}
+                          <div className="flex items-center justify-between gap-2 px-4 pb-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+                            <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+                              <AnimatedRate value={memberHourlyRate(m)} hidden={ratesHidden} formatPhp={formatPhp} />
+                              <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                              OT <AnimatedRate value={memberOtRate(m)} hidden={ratesHidden} formatPhp={formatPhp} />
+                            </span>
+                            <span className="inline-flex min-w-0 items-center gap-1">
+                              <Mail className="h-3 w-3 shrink-0" />
+                              <span className="truncate font-mono" title={m.work_email ?? m.personal_email ?? undefined}>
+                                {m.work_email ?? m.personal_email ?? '—'}
                               </span>
-                            )}
-                            {m.mesa_member && (
-                              <span
-                                title="MESA Program — ₱100 deducted per paycheck"
-                                className="rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 text-[10px] font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300"
-                              >
-                                MESA −₱100
-                              </span>
-                            )}
+                            </span>
                           </div>
-                        </div>
 
-                        <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-zinc-100 bg-gradient-to-br from-zinc-50 to-blue-50/40 px-3 py-2 dark:border-zinc-800 dark:from-zinc-900/60 dark:to-blue-950/20">
-                          <div className="flex flex-col gap-0.5">
-                            <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                              Hourly
-                            </div>
-                            <div className="font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
-                              <AnimatedRate
-                                value={memberHourlyRate(m)}
-                                hidden={ratesHidden}
-                                formatPhp={formatPhp}
-                              />
-                            </div>
+                          {/* Actions */}
+                          <div className="flex items-center justify-end gap-1.5 border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800/60">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setSelectedMember(m)}
+                              className="h-7 gap-1.5 border-blue-200 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+                              title="View profile and payment history"
+                            >
+                              <UserRound className="h-3.5 w-3.5" />
+                              View
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setTransferMember(m)}
+                              className="h-7 gap-1.5 border-amber-200 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40"
+                              title="Request a department transfer (HR approval required)"
+                            >
+                              <ArrowRightLeft className="h-3.5 w-3.5" />
+                              Transfer
+                            </Button>
                           </div>
-                          <div className="flex flex-col gap-0.5">
-                            <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                              OT
-                            </div>
-                            <div className="font-mono text-sm tabular-nums text-zinc-800 dark:text-zinc-200">
-                              <AnimatedRate
-                                value={memberOtRate(m)}
-                                hidden={ratesHidden}
-                                formatPhp={formatPhp}
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <dl className="mt-3 grid gap-1 text-[11px]">
-                          <div className="flex items-baseline gap-1.5">
-                            <dt className="shrink-0 text-zinc-500 dark:text-zinc-400">Work</dt>
-                            <dd className="truncate font-mono text-zinc-700 dark:text-zinc-300">
-                              {m.work_email ?? '—'}
-                            </dd>
-                          </div>
-                          <div className="flex items-baseline gap-1.5">
-                            <dt className="shrink-0 text-zinc-500 dark:text-zinc-400">Personal</dt>
-                            <dd className="truncate font-mono text-zinc-700 dark:text-zinc-300">
-                              {m.personal_email ?? '—'}
-                            </dd>
-                          </div>
-                        </dl>
-
-                        <div className="mt-3 flex justify-end gap-1.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setSelectedMember(m)}
-                            className="h-7 gap-1.5 border-blue-200 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
-                          >
-                            <UserRound className="h-3.5 w-3.5" />
-                            View
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setTransferMember(m)}
-                            className="h-7 gap-1.5 border-amber-200 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40"
-                          >
-                            <ArrowRightLeft className="h-3.5 w-3.5" />
-                            Transfer
-                          </Button>
-                        </div>
-                      </motion.div>
-                    ); })}
+                        </motion.div>
+                      );
+                    })}
                   </div>
                   </motion.div>
 
@@ -1873,6 +1854,24 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
       <ManagerMemberDialog
         member={selectedMember}
         onClose={() => setSelectedMember(null)}
+        skillSet={selectedMember ? skillSetFor(selectedMember) : undefined}
+        initialMemberNotes={selectedMember ? skillSetFor(selectedMember)?.member_notes ?? '' : ''}
+        onMemberNotesSaved={(notes) => {
+          const w = normEmail(selectedMember?.work_email ?? '');
+          if (!w) return;
+          setSkillSets((prev) => ({
+            ...prev,
+            [w]: {
+              role_title: prev[w]?.role_title ?? '',
+              currently_working_on: prev[w]?.currently_working_on ?? '',
+              skills: prev[w]?.skills ?? '',
+              strengths: prev[w]?.strengths ?? '',
+              member_notes: notes,
+              projects: prev[w]?.projects ?? [],
+              current_projects: prev[w]?.current_projects ?? [],
+            },
+          }));
+        }}
       />
 
       <ManagerTransferDialog

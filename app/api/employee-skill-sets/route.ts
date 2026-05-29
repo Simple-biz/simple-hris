@@ -40,7 +40,13 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ row, error: null });
 }
 
-/** PUT — employee self-edit. Body: { work_email, role_title, currently_working_on, skills, strengths, member_notes } */
+/**
+ * PUT — employee self-edit. Body: { work_email, role_title, currently_working_on, skills, strengths }
+ *
+ * `member_notes` is intentionally NOT writable here: it is a manager-authored
+ * note about the teammate, edited only via PUT /api/manager/member-notes. Any
+ * member_notes sent to this endpoint is stripped before the upsert.
+ */
 export async function PUT(req: NextRequest) {
   let body: UpsertSkillSetInput;
   try {
@@ -53,12 +59,14 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ row: null, error: 'work_email is required' }, { status: 400 });
   }
 
+  // Employees cannot author their own member notes — drop the field if present.
+  delete body.member_notes;
+
   const fields: (keyof UpsertSkillSetInput)[] = [
     'role_title',
     'currently_working_on',
     'skills',
     'strengths',
-    'member_notes',
   ];
   for (const k of fields) {
     const v = body[k];
@@ -72,6 +80,31 @@ export async function PUT(req: NextRequest) {
   if (body.role_title && !VALID_ROLE_TITLES.has(body.role_title)) {
     return NextResponse.json(
       { row: null, error: 'role_title is not a valid option' },
+      { status: 400 },
+    );
+  }
+
+  // Free-typed string arrays. The personal `projects` list is unlimited; only
+  // the "currently working on" selection is bounded (1-2, display joins them
+  // with " and "). Each name length is bounded as a guard.
+  const MAX_CURRENT_PROJECTS = 2;
+  const MAX_PROJECT_NAME_LEN = 120;
+  for (const k of ['projects', 'current_projects'] as const) {
+    const v = body[k];
+    if (v === undefined) continue;
+    if (!Array.isArray(v) || v.some((p) => typeof p !== 'string')) {
+      return NextResponse.json({ row: null, error: `${k} must be an array of strings` }, { status: 400 });
+    }
+    if (v.some((p) => p.length > MAX_PROJECT_NAME_LEN)) {
+      return NextResponse.json(
+        { row: null, error: `project names must be at most ${MAX_PROJECT_NAME_LEN} characters` },
+        { status: 400 },
+      );
+    }
+  }
+  if (Array.isArray(body.current_projects) && body.current_projects.length > MAX_CURRENT_PROJECTS) {
+    return NextResponse.json(
+      { row: null, error: `Select at most ${MAX_CURRENT_PROJECTS} current projects` },
       { status: 400 },
     );
   }

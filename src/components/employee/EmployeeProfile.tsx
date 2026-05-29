@@ -5,6 +5,7 @@ import {
   Loader2,
   AlertCircle,
   Camera,
+  Trash2,
   Pencil,
   Lock,
   Save,
@@ -12,11 +13,14 @@ import {
   X,
   MapPin,
   ArrowUpRight,
+  Plus,
+  Briefcase,
 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import EmployeeAvatar from './EmployeeAvatar';
+import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import {
   OFFICIAL_USD_TO_PHP_RATE,
@@ -43,7 +47,7 @@ interface EmployeeProfileProps {
   /** Google SSO profile picture (`session.user.image`) — fallback when no Supabase upload. */
   googlePhotoUrl?: string | null;
   focusTab?: TabId;
-  onProfilePhotoUpdated: (url: string) => void;
+  onProfilePhotoUpdated: (url: string | null) => void;
   /** Notifies the shell whether payout/bank details are now complete (clears the nudge). */
   onPayoutCompletionChange?: (complete: boolean) => void;
   onSkillSetCompletionChange?: (complete: boolean) => void;
@@ -89,6 +93,10 @@ interface SkillSetFields {
   skills: string;
   strengths: string;
   member_notes: string;
+  /** Free-typed personal list of project names. */
+  projects: string[];
+  /** The 1-2 the employee is currently on (subset of projects), in display order. */
+  current_projects: string[];
 }
 
 const EMPTY_SKILL_SET: SkillSetFields = {
@@ -97,7 +105,11 @@ const EMPTY_SKILL_SET: SkillSetFields = {
   skills: '',
   strengths: '',
   member_notes: '',
+  projects: [],
+  current_projects: [],
 };
+
+const MAX_CURRENT_PROJECTS = 2;
 
 function Section({
   title,
@@ -254,6 +266,160 @@ function SkillSetField({
   );
 }
 
+/**
+ * Projects editor — the employee free-types the projects they work on, then
+ * marks 1-2 they are currently on. The selected ones display joined with
+ * " and " on their own + their teammates' My Team cards.
+ */
+function ProjectsField({
+  projects,
+  current,
+  onChange,
+}: {
+  projects: string[];
+  current: string[];
+  onChange: (projects: string[], current: string[]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const addProject = () => {
+    const name = draft.trim();
+    if (!name) return;
+    if (projects.some((p) => p.toLowerCase() === name.toLowerCase())) {
+      setDraft('');
+      return;
+    }
+    onChange([...projects, name], current);
+    setDraft('');
+  };
+
+  const removeProject = (name: string) => {
+    onChange(
+      projects.filter((p) => p !== name),
+      current.filter((p) => p !== name),
+    );
+  };
+
+  const toggleCurrent = (name: string) => {
+    if (current.includes(name)) {
+      onChange(projects, current.filter((p) => p !== name));
+    } else if (current.length < MAX_CURRENT_PROJECTS) {
+      onChange(projects, [...current, name]);
+    }
+  };
+
+  const preview = current.length > 0 ? current.join(' and ') : null;
+
+  return (
+    <div className="block">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+          Projects
+        </span>
+        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+          Add what you work on, then mark 1–2 you’re currently on
+        </span>
+      </div>
+
+      {/* Add a project */}
+      <div className="mt-1.5 flex gap-2">
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addProject();
+            }
+          }}
+          placeholder="e.g. Gridline Billing System"
+          className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-orange-500/40 dark:focus:ring-orange-500/20"
+        />
+        <Button
+          type="button"
+          size="sm"
+          onClick={addProject}
+          disabled={!draft.trim()}
+          className="h-auto gap-1.5 rounded-lg bg-zinc-900 px-3 text-xs text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-700 dark:hover:bg-zinc-600"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add
+        </Button>
+      </div>
+
+      {/* Project list with current toggles */}
+      {projects.length > 0 ? (
+        <ul className="mt-2.5 space-y-1.5">
+          {projects.map((name) => {
+            const isCurrent = current.includes(name);
+            const atLimit = !isCurrent && current.length >= MAX_CURRENT_PROJECTS;
+            return (
+              <li
+                key={name}
+                className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-950/50"
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleCurrent(name)}
+                  disabled={atLimit}
+                  title={
+                    isCurrent
+                      ? 'Currently working on this — click to unset'
+                      : atLimit
+                        ? `You can mark at most ${MAX_CURRENT_PROJECTS} as current`
+                        : 'Mark as currently working on'
+                  }
+                  className={cn(
+                    'inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition-colors disabled:cursor-not-allowed disabled:opacity-40',
+                    isCurrent
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300'
+                      : 'border-zinc-200 bg-zinc-50 text-zinc-500 hover:border-emerald-300 hover:text-emerald-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400',
+                  )}
+                >
+                  {isCurrent && <CheckCircle className="h-3 w-3" />}
+                  {isCurrent ? 'Current' : 'Set current'}
+                </button>
+                <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-800 dark:text-zinc-200" title={name}>
+                  {name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeProject(name)}
+                  title="Remove project"
+                  aria-label={`Remove ${name}`}
+                  className="inline-flex shrink-0 items-center justify-center rounded-md p-1 text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="mt-2 rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2.5 text-[12.5px] italic text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-600">
+          No projects added yet.
+        </p>
+      )}
+
+      {/* Live preview of what teammates will see */}
+      <div className="mt-2 flex items-start gap-1.5 text-[12px] text-zinc-500 dark:text-zinc-400">
+        <Briefcase className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        {preview ? (
+          <span>
+            Currently working on{' '}
+            <span className="font-medium text-zinc-700 dark:text-zinc-200">{preview}</span>
+          </span>
+        ) : (
+          <span className="italic text-zinc-400 dark:text-zinc-600">
+            Mark 1–2 projects as current so your team can see what you’re on.
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TabBar({
   active,
   onChange,
@@ -394,6 +560,7 @@ export default function EmployeeProfile({
   const norm = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [removingPhoto, setRemovingPhoto] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -451,6 +618,8 @@ export default function EmployeeProfile({
           skills: row.skills ?? '',
           strengths: row.strengths ?? '',
           member_notes: row.member_notes ?? '',
+          projects: Array.isArray(row.projects) ? row.projects : [],
+          current_projects: Array.isArray(row.current_projects) ? row.current_projects : [],
         };
         setSkillSet(fields);
         setSkillSetBaseline(fields);
@@ -468,10 +637,10 @@ export default function EmployeeProfile({
 
   const skillSetDirty =
     skillSet.role_title !== skillSetBaseline.role_title ||
-    skillSet.currently_working_on !== skillSetBaseline.currently_working_on ||
     skillSet.skills !== skillSetBaseline.skills ||
     skillSet.strengths !== skillSetBaseline.strengths ||
-    skillSet.member_notes !== skillSetBaseline.member_notes;
+    JSON.stringify(skillSet.projects) !== JSON.stringify(skillSetBaseline.projects) ||
+    JSON.stringify(skillSet.current_projects) !== JSON.stringify(skillSetBaseline.current_projects);
 
   const saveSkillSet = async () => {
     setSkillSetSaving(true);
@@ -482,10 +651,10 @@ export default function EmployeeProfile({
         body: JSON.stringify({
           work_email: norm,
           role_title: skillSet.role_title,
-          currently_working_on: skillSet.currently_working_on,
           skills: skillSet.skills,
           strengths: skillSet.strengths,
-          member_notes: skillSet.member_notes,
+          projects: skillSet.projects,
+          current_projects: skillSet.current_projects,
         }),
       });
       const json = (await res.json()) as { row?: SkillSetFields; error?: string | null };
@@ -657,6 +826,24 @@ export default function EmployeeProfile({
     }
   };
 
+  const onAvatarRemove = async () => {
+    setRemovingPhoto(true);
+    try {
+      const res = await fetch(
+        `/api/employee-profile-photo?email=${encodeURIComponent(employeeEmail)}`,
+        { method: 'DELETE' },
+      );
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error || 'Could not remove photo');
+      onProfilePhotoUpdated(null);
+      toast.success('Profile photo removed');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not remove photo');
+    } finally {
+      setRemovingPhoto(false);
+    }
+  };
+
   const avatarInitials = useMemo(() => {
     const n = displayName.replace(/—/g, '').trim();
     if (n) {
@@ -759,12 +946,25 @@ export default function EmployeeProfile({
           className="flex items-center gap-4 sm:gap-6"
         >
           <div className="group relative shrink-0">
+            {/* Pulsing ring — draws the eye to an empty placeholder so the
+                employee finishes their profile. */}
+            {needsProfilePhoto && (
+              <span
+                className="pointer-events-none absolute -inset-1 rounded-full bg-amber-400/40 motion-safe:animate-ping dark:bg-amber-400/30"
+                aria-hidden
+              />
+            )}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={uploadingPhoto}
-              className="relative block h-16 w-16 overflow-hidden rounded-full ring-1 ring-zinc-200 transition-all duration-200 hover:ring-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 focus-visible:ring-offset-2 dark:ring-zinc-800 dark:hover:ring-zinc-700 sm:h-20 sm:w-20"
-              aria-label="Replace photograph"
+              disabled={uploadingPhoto || removingPhoto}
+              className={cn(
+                'relative block h-16 w-16 overflow-hidden rounded-full ring-1 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 focus-visible:ring-offset-2 sm:h-20 sm:w-20',
+                needsProfilePhoto
+                  ? 'ring-2 ring-amber-400 dark:ring-amber-500'
+                  : 'ring-zinc-200 hover:ring-zinc-300 dark:ring-zinc-800 dark:hover:ring-zinc-700',
+              )}
+              aria-label={needsProfilePhoto ? 'Add a profile photo' : 'Replace photograph'}
             >
               <EmployeeAvatar
                 photoUrl={displayProfilePhotoUrl}
@@ -775,31 +975,62 @@ export default function EmployeeProfile({
                 pixelSize={192}
               />
               <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                {uploadingPhoto ? (
+                {uploadingPhoto || removingPhoto ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Camera className="h-4 w-4" />
                 )}
               </span>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                className="sr-only"
-                aria-label="Upload profile photo"
-                onChange={onAvatarFileChange}
-                disabled={uploadingPhoto}
-              />
             </button>
-            {needsProfilePhoto && (
-              <span
-                className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-white ring-2 ring-white dark:ring-[#0a0a0a]"
-                title="Upload a profile photo"
-                aria-label="Profile photo needed"
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="sr-only"
+              aria-label="Upload profile photo"
+              onChange={onAvatarFileChange}
+              disabled={uploadingPhoto || removingPhoto}
+            />
+
+            {/* Persistent change-photo badge — always visible so the avatar
+                reads as editable whether or not a photo is set. */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingPhoto || removingPhoto}
+              className={cn(
+                'absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full text-white shadow-sm ring-2 ring-white transition-colors disabled:opacity-60 dark:ring-[#0a0a0a]',
+                needsProfilePhoto
+                  ? 'bg-amber-500 hover:bg-amber-600'
+                  : 'bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600',
+              )}
+              title={needsProfilePhoto ? 'Add a profile photo' : 'Change photo'}
+              aria-label={needsProfilePhoto ? 'Add a profile photo' : 'Change photo'}
+            >
+              {uploadingPhoto ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Camera className="h-3 w-3" aria-hidden />
+              )}
+            </button>
+
+            {/* Remove badge — only for a manually-uploaded photo (a Google SSO
+                photo can't be deleted; readers fall back to it). */}
+            {displayProfilePhotoUrl && (
+              <button
+                type="button"
+                onClick={onAvatarRemove}
+                disabled={uploadingPhoto || removingPhoto}
+                className="absolute -right-0.5 -top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white text-zinc-500 shadow-sm ring-1 ring-zinc-200 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-60 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-700 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                title="Remove photo"
+                aria-label="Remove photo"
               >
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500/60" />
-                <Camera className="relative h-3 w-3" aria-hidden />
-              </span>
+                {removingPhoto ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Trash2 className="h-2.5 w-2.5" aria-hidden />
+                )}
+              </button>
             )}
           </div>
 
@@ -1207,12 +1438,12 @@ export default function EmployeeProfile({
                             ))}
                           </select>
                         </label>
-                        <SkillSetField
-                          label="Currently Working On"
-                          hint="What you are focused on right now"
-                          value={skillSet.currently_working_on}
-                          onChange={(v) => setSkillSet((s) => ({ ...s, currently_working_on: v }))}
-                          placeholder="e.g. Migrating the bonus engine to per-day rate history"
+                        <ProjectsField
+                          projects={skillSet.projects}
+                          current={skillSet.current_projects}
+                          onChange={(projects, current_projects) =>
+                            setSkillSet((s) => ({ ...s, projects, current_projects }))
+                          }
                         />
                         <SkillSetField
                           label="Skills"
@@ -1230,14 +1461,29 @@ export default function EmployeeProfile({
                           placeholder="e.g. Calm under pressure, fast feedback loops, customer empathy"
                           rows={3}
                         />
-                        <SkillSetField
-                          label="Member Notes"
-                          hint="Anything else teammates might want to know"
-                          value={skillSet.member_notes}
-                          onChange={(v) => setSkillSet((s) => ({ ...s, member_notes: v }))}
-                          placeholder="e.g. Best reached on Slack between 9am-3pm PHT"
-                          rows={3}
-                        />
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[13px] font-medium text-zinc-700 dark:text-zinc-300">
+                              Member Notes
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                              <Lock className="h-2.5 w-2.5" aria-hidden />
+                              Manager only
+                            </span>
+                          </div>
+                          <p className="text-[11.5px] text-zinc-500 dark:text-zinc-500">
+                            Added by your manager — visible to you and your team.
+                          </p>
+                          {skillSet.member_notes?.trim() ? (
+                            <p className="whitespace-pre-wrap break-words rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[13px] leading-relaxed text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-200">
+                              {skillSet.member_notes}
+                            </p>
+                          ) : (
+                            <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2.5 text-[12.5px] italic text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-600">
+                              No notes from your manager yet.
+                            </p>
+                          )}
+                        </div>
                       </div>
                     )}
                   </Section>

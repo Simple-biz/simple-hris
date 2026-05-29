@@ -1,6 +1,7 @@
 import {
   getProfilePhotoUrlForEmail,
   uploadEmployeeProfilePhotoAndUpdateRow,
+  removeEmployeeProfilePhoto,
 } from "@/lib/supabase/employee-profile-photo";
 import { MAX_PROFILE_PHOTO_BYTES } from "@/lib/images/compress-profile-photo";
 import { NextResponse } from "next/server";
@@ -98,6 +99,32 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ profilePhotoUrl: result.publicUrl });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+/**
+ * DELETE ?email= — clears the uploaded avatar (Storage object + DB column).
+ */
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const email = searchParams.get("email")?.trim();
+    if (!email) {
+      return NextResponse.json({ error: "email query parameter is required" }, { status: 400 });
+    }
+
+    const authz = await authorizeEmailAccess(email);
+    if (!authz.ok) return deniedResponse(authz);
+
+    const result = await removeEmployeeProfilePhoto(authz.effectiveEmail);
+    if ("error" in result) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+
+    return NextResponse.json({ ok: true });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

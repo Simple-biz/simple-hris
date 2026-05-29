@@ -18,6 +18,8 @@ export interface TeamRosterSkillSet {
   skills: string;
   strengths: string;
   member_notes: string;
+  projects: string[];
+  current_projects: string[];
 }
 
 export interface TeamRosterResult {
@@ -41,6 +43,8 @@ const EMPTY_SET: TeamRosterSkillSet = {
   skills: '',
   strengths: '',
   member_notes: '',
+  projects: [],
+  current_projects: [],
 };
 
 export async function getTeamRoster(
@@ -137,6 +141,8 @@ export async function getTeamRoster(
       skills: r.skills ?? '',
       strengths: r.strengths ?? '',
       member_notes: r.member_notes ?? '',
+      projects: r.projects ?? [],
+      current_projects: r.current_projects ?? [],
     };
   }
   for (const e of allWorkEmails) {

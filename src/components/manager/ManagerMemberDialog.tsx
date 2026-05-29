@@ -2,7 +2,20 @@
 
 import { useEffect, useState } from 'react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
-import { Eye, EyeOff, Mail, MapPin, ReceiptText, User as UserIcon } from 'lucide-react';
+import {
+  Briefcase,
+  Eye,
+  EyeOff,
+  IdCard,
+  Loader2,
+  Mail,
+  MapPin,
+  NotebookPen,
+  ReceiptText,
+  Save,
+  CalendarDays,
+} from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,13 +25,123 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import { SkillBlock, TeamAvatar } from '@/components/team/team-ui';
+import { formatCurrentProjects } from '@/lib/skill-set-titles';
 import ManagerMemberHoursMini from './ManagerMemberHoursMini';
 
-type TabId = 'profile' | 'payments';
+type TabId = 'work' | 'notes' | 'payments';
+
+/** Shared-profile fields the manager can view in the dialog (read-only). */
+interface DialogSkillSet {
+  role_title: string;
+  currently_working_on: string;
+  skills: string;
+  strengths: string;
+  member_notes: string;
+  projects: string[];
+  current_projects: string[];
+}
 
 interface ManagerMemberDialogProps {
   member: EmployeeRow | null;
   onClose: () => void;
+  /** Shared-profile (skills / strengths / projects) shown read-only in the dialog. */
+  skillSet?: DialogSkillSet;
+  /** Current manager-authored member notes for this teammate (seed value). */
+  initialMemberNotes?: string;
+  /** Fired after a successful save so the caller can update its roster cache. */
+  onMemberNotesSaved?: (notes: string) => void;
+}
+
+const MEMBER_NOTES_MAX = 4000;
+
+/**
+ * Manager-only editor for a teammate's member notes. Employees see these notes
+ * read-only on their profile / My Team; only managers write them, via
+ * PUT /api/manager/member-notes.
+ */
+function MemberNotesEditor({
+  workEmail,
+  initialNotes,
+  onSaved,
+}: {
+  workEmail: string | null;
+  initialNotes: string;
+  onSaved?: (notes: string) => void;
+}) {
+  const [value, setValue] = useState(initialNotes);
+  const [baseline, setBaseline] = useState(initialNotes);
+  const [saving, setSaving] = useState(false);
+
+  // Reseed when the dialog switches to a different member.
+  useEffect(() => {
+    setValue(initialNotes);
+    setBaseline(initialNotes);
+  }, [initialNotes, workEmail]);
+
+  const dirty = value !== baseline;
+
+  const save = async () => {
+    if (!workEmail) {
+      toast.error('No work email on file — notes cannot be saved for this member.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch('/api/manager/member-notes', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_email: workEmail, member_notes: value }),
+      });
+      const json = (await res.json()) as { member_notes?: string; error?: string };
+      if (!res.ok || json.error) throw new Error(json.error || 'Save failed');
+      const saved = json.member_notes ?? value;
+      setBaseline(saved);
+      setValue(saved);
+      onSaved?.(saved);
+      toast.success('Member notes saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save member notes');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-amber-200/70 bg-amber-50/40 p-3 dark:border-amber-500/20 dark:bg-amber-500/5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+          <NotebookPen className="h-3.5 w-3.5" />
+          Member notes
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          onClick={save}
+          disabled={!dirty || saving || !workEmail}
+          className="h-7 gap-1.5 bg-amber-600 text-xs text-white hover:bg-amber-700 disabled:opacity-50 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
+        >
+          {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+          Save
+        </Button>
+      </div>
+      <p className="mt-1 text-[11px] text-amber-700/80 dark:text-amber-300/70">
+        Manager-only. Visible to the teammate and their team — they cannot edit it.
+      </p>
+      <textarea
+        value={value}
+        onChange={(e) => setValue(e.target.value.slice(0, MEMBER_NOTES_MAX))}
+        rows={4}
+        disabled={!workEmail || saving}
+        placeholder={
+          workEmail
+            ? 'e.g. Strong on async comms; mentoring two juniors this quarter.'
+            : 'No work email on file for this member.'
+        }
+        className="mt-2 w-full resize-y rounded-lg border border-amber-200 bg-white px-3 py-2 text-[13px] leading-relaxed text-zinc-800 placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-500/30 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-amber-500/60 dark:focus:ring-amber-500/20"
+      />
+    </div>
+  );
 }
 
 function formatPhp(v: number | null | undefined): string {
@@ -46,17 +169,6 @@ function formatDate(raw: string | null | undefined): string | null {
     day: 'numeric',
     year: 'numeric',
   });
-}
-
-function memberInitials(name: string | null | undefined, email: string | null | undefined): string {
-  const n = (name ?? '').trim();
-  if (n) {
-    const parts = n.split(/\s+/).filter(Boolean);
-    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-    if (parts[0].length >= 2) return parts[0].slice(0, 2).toUpperCase();
-    return parts[0][0]!.toUpperCase();
-  }
-  return (email ?? '??').slice(0, 2).toUpperCase();
 }
 
 // Lightweight rate masking: opacity + translate only — no `filter: blur`, which is
@@ -113,14 +225,15 @@ function MaskedRate({
 }
 
 function TabBar({ active, onChange }: { active: TabId; onChange: (id: TabId) => void }) {
-  const tabs: { id: TabId; label: string; sub: string; Icon: React.ComponentType<{ className?: string }> }[] = [
-    { id: 'profile', label: 'Profile', sub: 'Identity & rates', Icon: UserIcon },
-    { id: 'payments', label: 'Payment history', sub: 'Hours & pay by month', Icon: ReceiptText },
+  const tabs: { id: TabId; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
+    { id: 'work', label: 'Work', Icon: Briefcase },
+    { id: 'notes', label: 'Notes', Icon: NotebookPen },
+    { id: 'payments', label: 'Payments', Icon: ReceiptText },
   ];
   return (
     <LayoutGroup id="manager-member-tabs">
       <div
-        className="-mx-4 flex gap-1 overflow-x-auto px-4 sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex gap-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         role="tablist"
         aria-label="Member sections"
       >
@@ -135,23 +248,18 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (id: TabId) => 
               aria-selected={isActive}
               onClick={() => onChange(t.id)}
               className={cn(
-                'relative flex shrink-0 items-center gap-2 px-3 py-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#0a0a0a] sm:px-4',
+                'relative flex shrink-0 items-center gap-1.5 px-3.5 py-3 text-[13px] font-medium tracking-[-0.01em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#0a0a0a]',
                 isActive
-                  ? 'text-zinc-900 dark:text-zinc-50'
+                  ? 'text-blue-700 dark:text-blue-300'
                   : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200',
               )}
             >
               <Icon className="h-3.5 w-3.5" />
-              <span className="block">
-                <span className="block text-[13px] font-medium tracking-[-0.01em]">{t.label}</span>
-                <span className="mt-0.5 block whitespace-nowrap text-[10.5px] text-zinc-400 dark:text-zinc-500">
-                  {t.sub}
-                </span>
-              </span>
+              {t.label}
               {isActive && (
                 <motion.span
                   layoutId="manager-member-tab-underline"
-                  className="absolute -bottom-px left-0 right-0 h-[2px] rounded-full bg-gradient-to-r from-blue-500 to-blue-700"
+                  className="absolute -bottom-px left-1 right-1 h-[2px] rounded-full bg-gradient-to-r from-blue-500 to-blue-700"
                   transition={{ type: 'spring', stiffness: 380, damping: 32 }}
                 />
               )}
@@ -163,113 +271,71 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (id: TabId) => 
   );
 }
 
-function ProfileTab({
-  member,
-  ratesHidden,
-}: {
-  member: EmployeeRow;
-  ratesHidden: boolean;
-}) {
-  const fullAddress =
-    member.full_address?.trim() ||
-    [member.street, member.city, member.province, member.postal_code]
-      .filter((v) => !!v?.trim())
-      .join(', ') ||
-    null;
+/** Right-panel "Work" tab — the teammate's shared profile (read-only). */
+function WorkTab({ skillSet }: { skillSet?: DialogSkillSet }) {
+  const currentWork = formatCurrentProjects(
+    skillSet?.current_projects,
+    skillSet?.currently_working_on,
+  );
+  const hasSharedProfile = Boolean(
+    currentWork || skillSet?.skills?.trim() || skillSet?.strengths?.trim(),
+  );
+
+  if (!hasSharedProfile) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-200 bg-white/60 px-4 py-12 text-center dark:border-zinc-800 dark:bg-zinc-950/30">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-400 dark:bg-blue-500/10">
+          <Briefcase className="h-5 w-5" />
+        </div>
+        <p className="text-[13px] font-medium text-zinc-600 dark:text-zinc-300">Nothing shared yet</p>
+        <p className="max-w-xs text-[12px] text-zinc-400 dark:text-zinc-600">
+          This teammate hasn’t added their projects, skills, or strengths to their profile.
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 rounded-xl border border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 p-3 dark:border-blue-950/50 dark:from-zinc-950/80 dark:to-blue-950/20">
-        <div className="flex flex-col gap-0.5">
-          <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-            Hourly
-          </div>
-          <div className="font-mono text-base tabular-nums text-zinc-900 dark:text-zinc-100">
-            <MaskedRate value={memberHourlyRate(member)} hidden={ratesHidden} />
-          </div>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-            Overtime
-          </div>
-          <div className="font-mono text-base tabular-nums text-zinc-900 dark:text-zinc-100">
-            <MaskedRate value={memberOtRate(member)} hidden={ratesHidden} />
-          </div>
-        </div>
-      </div>
-
-      <dl className="divide-y divide-zinc-100 rounded-xl border border-zinc-200/80 bg-white dark:divide-zinc-800/60 dark:border-zinc-800 dark:bg-zinc-950/40">
-        <ProfileRow label="Department" value={member.department} />
-        {member.hsl_role && (
-          <ProfileRow
-            label="Role"
-            valueNode={
-              <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
-                {member.hsl_role}
-              </span>
-            }
-          />
-        )}
-        {member.employee_id && <ProfileRow label="Employee ID" value={member.employee_id} mono />}
-        <ProfileRow
-          label="Start date"
-          value={formatDate(member.start_date) ?? '—'}
-        />
-      </dl>
-
-      <dl className="divide-y divide-zinc-100 rounded-xl border border-zinc-200/80 bg-white dark:divide-zinc-800/60 dark:border-zinc-800 dark:bg-zinc-950/40">
-        <ProfileRow label="Work email" value={member.work_email ?? null} mono icon={Mail} />
-        <ProfileRow label="Personal email" value={member.personal_email ?? null} mono icon={Mail} />
-      </dl>
-
-      {fullAddress && (
-        <div className="rounded-xl border border-zinc-200/80 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-950/40">
-          <div className="flex items-start gap-2.5">
-            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 ring-1 ring-inset ring-blue-100 dark:bg-blue-500/10 dark:ring-blue-500/20">
-              <MapPin className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                Address
-              </div>
-              <p className="mt-0.5 text-[13px] leading-snug text-zinc-900 dark:text-zinc-100">
-                {fullAddress}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+    <div className="space-y-3">
+      {currentWork && <SkillBlock label="Currently Working On" value={currentWork} />}
+      <SkillBlock label="Skills" value={skillSet?.skills ?? ''} chip chipPageSize={60} />
+      <SkillBlock label="Strengths" value={skillSet?.strengths ?? ''} />
     </div>
   );
 }
 
-function ProfileRow({
+/** A labelled identity fact in the left rail. Hidden when empty. */
+function RailRow({
   label,
   value,
-  valueNode,
   mono,
   icon: Icon,
 }: {
   label: string;
   value?: string | null;
-  valueNode?: React.ReactNode;
   mono?: boolean;
   icon?: React.ComponentType<{ className?: string }>;
 }) {
-  if (!valueNode && !value?.toString().trim()) return null;
+  if (!value?.toString().trim()) return null;
   return (
-    <div className="grid grid-cols-[7rem_1fr] items-center gap-3 px-4 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
-        {Icon && <Icon className="h-3 w-3" />}
-        {label}
-      </div>
-      <div
-        className={cn(
-          'min-w-0 truncate text-[13px] text-zinc-900 dark:text-zinc-100',
-          mono && 'font-mono text-[12.5px]',
-        )}
-      >
-        {valueNode ?? value}
+    <div className="flex items-start gap-2.5">
+      {Icon && (
+        <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600 ring-1 ring-inset ring-blue-100 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/20">
+          <Icon className="h-3 w-3" />
+        </div>
+      )}
+      <div className="min-w-0">
+        <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+          {label}
+        </div>
+        <div
+          className={cn(
+            'mt-0.5 break-words text-[12.5px] leading-snug text-zinc-800 dark:text-zinc-100',
+            mono && 'font-mono text-[12px]',
+          )}
+        >
+          {value}
+        </div>
       </div>
     </div>
   );
@@ -278,98 +344,159 @@ function ProfileRow({
 export default function ManagerMemberDialog({
   member,
   onClose,
+  skillSet,
+  initialMemberNotes = '',
+  onMemberNotesSaved,
 }: ManagerMemberDialogProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('profile');
+  const [activeTab, setActiveTab] = useState<TabId>('work');
   const [ratesHidden, setRatesHidden] = useState(true);
 
   useEffect(() => {
-    if (member) setActiveTab('profile');
+    if (member) setActiveTab('work');
   }, [member]);
 
-  const initials = memberInitials(member?.name, member?.work_email ?? member?.personal_email ?? '');
+  const roleTitle = skillSet?.role_title?.trim() || member?.hsl_role?.trim() || null;
+  const avatarEmail = member?.work_email ?? member?.personal_email ?? null;
+  const fullAddress = member
+    ? member.full_address?.trim() ||
+      [member.street, member.city, member.province, member.postal_code]
+        .filter((v) => !!v?.trim())
+        .join(', ') ||
+      null
+    : null;
 
   return (
     <Dialog open={!!member} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        className="grid max-h-[88vh] w-[calc(100%-1.5rem)] grid-rows-[auto_auto_1fr] gap-0 overflow-hidden p-0 sm:max-w-lg"
-      >
+      <DialogContent className="w-[calc(100%-1.5rem)] gap-0 overflow-hidden border-blue-100/70 p-0 dark:border-blue-950/50 sm:max-w-3xl">
         {member && (
-          <>
-            <header className="flex items-center gap-3 border-b border-zinc-200/70 bg-gradient-to-br from-white via-blue-50/40 to-blue-50/60 px-5 py-4 dark:border-zinc-800 dark:from-zinc-950 dark:via-blue-950/20 dark:to-blue-950/30">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-sm font-semibold text-white shadow-md shadow-blue-500/25">
-                {initials}
+          <div className="grid max-h-[86vh] grid-cols-1 sm:grid-cols-[16rem_1fr] md:grid-cols-[18rem_1fr]">
+            {/* ── Identity rail ─────────────────────────────────────────── */}
+            <aside className="flex max-h-[38vh] flex-col gap-4 overflow-y-auto border-b border-zinc-200/70 bg-gradient-to-b from-blue-50 via-blue-50/30 to-white px-5 py-6 dark:border-zinc-800 dark:from-blue-950/30 dark:via-blue-950/10 dark:to-zinc-950 sm:max-h-[86vh] sm:border-b-0 sm:border-r">
+              {/* Identity */}
+              <div className="flex flex-col items-center gap-3 text-center">
+                <div className="rounded-full p-1 ring-1 ring-blue-200/70 dark:ring-blue-500/20">
+                  <TeamAvatar name={member.name ?? '—'} email={avatarEmail} size="xl" />
+                </div>
+                <div className="min-w-0">
+                  <DialogTitle className="text-[17px] font-semibold leading-tight tracking-tight text-zinc-900 dark:text-zinc-50">
+                    {member.name ?? '—'}
+                  </DialogTitle>
+                  {roleTitle && (
+                    <p className="mt-1 text-[12.5px] font-medium text-blue-700 dark:text-blue-300">
+                      {roleTitle}
+                    </p>
+                  )}
+                  <DialogDescription className="mt-1.5 flex flex-wrap items-center justify-center gap-1.5">
+                    {member.department && (
+                      <span className="rounded-md border border-blue-200 bg-white/70 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+                        {member.department}
+                      </span>
+                    )}
+                    {member.mesa_member && (
+                      <span
+                        title="MESA Program — ₱100 deducted per paycheck"
+                        className="rounded-md border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10px] font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300"
+                      >
+                        MESA −₱100
+                      </span>
+                    )}
+                  </DialogDescription>
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                <DialogTitle className="truncate text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-                  {member.name ?? '—'}
-                </DialogTitle>
-                <DialogDescription className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                  {member.department && (
-                    <span className="text-zinc-700 dark:text-zinc-200">{member.department}</span>
-                  )}
-                  {member.department && member.work_email && (
-                    <span className="text-zinc-300 dark:text-zinc-700">·</span>
-                  )}
-                  {member.work_email && (
-                    <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
-                      {member.work_email}
-                    </span>
-                  )}
-                </DialogDescription>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setRatesHidden((v) => !v)}
-                className="h-7 w-7 shrink-0 border-blue-200 p-0 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
-                title={ratesHidden ? 'Show rates' : 'Hide rates'}
-              >
-                <AnimatePresence mode="wait" initial={false}>
-                  <motion.span
-                    key={ratesHidden ? 'eye' : 'eye-off'}
-                    initial={{ rotate: -45, scale: 0.6, opacity: 0 }}
-                    animate={{ rotate: 0, scale: 1, opacity: 1 }}
-                    exit={{ rotate: 45, scale: 0.6, opacity: 0 }}
-                    transition={{ duration: 0.16, ease: 'easeOut' }}
-                    className="inline-flex"
+
+              {/* Pay rates + visibility toggle */}
+              <div className="rounded-xl border border-blue-100/80 bg-white/80 p-3 shadow-sm dark:border-blue-950/50 dark:bg-zinc-950/50">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                    Pay rates
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRatesHidden((v) => !v)}
+                    title={ratesHidden ? 'Show rates' : 'Hide rates'}
+                    aria-label={ratesHidden ? 'Show rates' : 'Hide rates'}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
                   >
-                    {ratesHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                  </motion.span>
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.span
+                        key={ratesHidden ? 'eye' : 'eye-off'}
+                        initial={{ rotate: -45, scale: 0.6, opacity: 0 }}
+                        animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                        exit={{ rotate: 45, scale: 0.6, opacity: 0 }}
+                        transition={{ duration: 0.16, ease: 'easeOut' }}
+                        className="inline-flex"
+                      >
+                        {ratesHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                      </motion.span>
+                    </AnimatePresence>
+                  </button>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                      Hourly
+                    </div>
+                    <div className="font-mono text-[15px] tabular-nums text-zinc-900 dark:text-zinc-100">
+                      <MaskedRate value={memberHourlyRate(member)} hidden={ratesHidden} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                      Overtime
+                    </div>
+                    <div className="font-mono text-[15px] tabular-nums text-zinc-900 dark:text-zinc-100">
+                      <MaskedRate value={memberOtRate(member)} hidden={ratesHidden} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Identity facts */}
+              <div className="space-y-3">
+                <RailRow label="Employee ID" value={member.employee_id ?? null} mono icon={IdCard} />
+                <RailRow label="Start date" value={formatDate(member.start_date)} icon={CalendarDays} />
+                <RailRow label="Work email" value={member.work_email ?? null} mono icon={Mail} />
+                <RailRow label="Personal email" value={member.personal_email ?? null} mono icon={Mail} />
+                <RailRow label="Address" value={fullAddress} icon={MapPin} />
+              </div>
+            </aside>
+
+            {/* ── Tabbed detail panel ───────────────────────────────────── */}
+            <div className="flex min-h-0 min-w-0 flex-col">
+              <div className="border-b border-zinc-200/70 bg-white/70 px-3 dark:border-zinc-800 dark:bg-zinc-950/40 sm:px-4">
+                <TabBar active={activeTab} onChange={setActiveTab} />
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50/50 px-4 py-4 transform-gpu dark:bg-zinc-950/30 sm:px-5">
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={activeTab}
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -3 }}
+                    transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+                    className="transform-gpu"
+                  >
+                    {activeTab === 'work' && <WorkTab skillSet={skillSet} />}
+                    {activeTab === 'notes' && (
+                      <MemberNotesEditor
+                        workEmail={member.work_email ?? null}
+                        initialNotes={initialMemberNotes}
+                        onSaved={onMemberNotesSaved}
+                      />
+                    )}
+                    {activeTab === 'payments' && (
+                      <ManagerMemberHoursMini
+                        workEmail={member.work_email ?? null}
+                        personalEmail={member.personal_email ?? null}
+                        ratesHidden={ratesHidden}
+                      />
+                    )}
+                  </motion.div>
                 </AnimatePresence>
-              </Button>
-            </header>
-
-            <div className="border-b border-zinc-200/70 bg-white/60 px-3 dark:border-zinc-800 dark:bg-zinc-950/40 sm:px-4">
-              <TabBar active={activeTab} onChange={setActiveTab} />
+              </div>
             </div>
-
-            <div className="min-h-0 overflow-y-auto bg-zinc-50/40 px-4 py-4 transform-gpu dark:bg-zinc-950/30 sm:px-5">
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.div
-                  key={activeTab}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -3 }}
-                  transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-                  className="transform-gpu"
-                >
-                  {activeTab === 'profile' ? (
-                    <ProfileTab
-                      member={member}
-                      ratesHidden={ratesHidden}
-                    />
-                  ) : (
-                    <ManagerMemberHoursMini
-                      workEmail={member.work_email ?? null}
-                      personalEmail={member.personal_email ?? null}
-                      ratesHidden={ratesHidden}
-                    />
-                  )}
-                </motion.div>
-              </AnimatePresence>
-            </div>
-          </>
+          </div>
         )}
       </DialogContent>
     </Dialog>

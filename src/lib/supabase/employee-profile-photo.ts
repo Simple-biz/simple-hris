@@ -178,3 +178,60 @@ export async function uploadEmployeeProfilePhotoAndUpdateRow(
 
   return { publicUrl };
 }
+
+/**
+ * Clears the manually-uploaded avatar: removes the Storage object and nulls
+ * "Profile Photo URL" on the master row. The Google SSO photo (google_photo_url)
+ * is left untouched — readers fall back to it, then to initials.
+ */
+export async function removeEmployeeProfilePhoto(
+  employeeEmail: string,
+): Promise<{ ok: true } | { error: string }> {
+  const supabase = getWriteClient();
+  if (!supabase) {
+    return { error: "Supabase client not initialized. Check environment variables." };
+  }
+
+  const n = normEmail(employeeEmail);
+  if (!n) {
+    return { error: "Invalid email" };
+  }
+
+  const row = await fetchMasterEmailsForLookup(supabase, n);
+  if (!row) {
+    return { error: "No employee row found for this email in the master list." };
+  }
+
+  const matchWork = row.work && normEmail(row.work) === n;
+  const matchPersonal = row.personal && normEmail(row.personal) === n;
+  const updateCol: "Work Email" | "Personal Email" = matchWork
+    ? "Work Email"
+    : matchPersonal
+      ? "Personal Email"
+      : row.work
+        ? "Work Email"
+        : "Personal Email";
+  const updateVal = updateCol === "Work Email" ? row.work : row.personal;
+  if (updateVal == null || !String(updateVal).trim()) {
+    return { error: "Could not resolve employee row to update." };
+  }
+
+  // Best-effort delete of the stored object; ignore "not found" so a missing
+  // file doesn't block clearing the DB column.
+  const path = emailToAvatarStoragePath(employeeEmail);
+  await supabase.storage.from(EMPLOYEE_AVATAR_BUCKET).remove([path]);
+
+  const table = masterTable();
+  const { error: dbErr } = await supabase
+    .from(table)
+    .update({ "Profile Photo URL": null })
+    .eq(updateCol, updateVal);
+
+  if (dbErr) {
+    return { error: dbErr.message };
+  }
+
+  invalidateRateProfilesCache();
+
+  return { ok: true };
+}
