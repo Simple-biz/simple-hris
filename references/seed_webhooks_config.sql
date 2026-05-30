@@ -23,7 +23,12 @@
 --   create_workspace_account  -> HR "Save and stage hire"
 --   hubstaff_invite_user      -> HR Pending-Hires "Promote"
 --   onboarding_send           -> HR Onboarding "Send" (invite email)
---   offboarding               -> HR Offboarding "Confirm offboard"
+--   offboarding_deactivate    -> Offboard (non-Lead-Gen): suspend account + email + Hubstaff removal
+--   offboarding_delete        -> Offboard (Lead Gen now / others after 14d): permanently delete account
+--
+-- NOTE: the legacy single 'offboarding' slug is retired. If an existing config
+-- still has it, it becomes dead config (code requests the two slugs above);
+-- remove it from Admin -> Webhooks. This seed no longer defines it.
 
 DO $$
 DECLARE
@@ -62,7 +67,7 @@ BEGIN
     jsonb_build_object(
       'slug', 'create_workspace_account',
       'label', 'Create Workspace Account (n8n)',
-      'url', 'https://simpledotbiz.app.n8n.cloud/webhook/create-workspace-account',
+      'url', 'https://auto.simple.biz/webhook/create-workspace-account',
       'active', false,
       'description', 'Used by HR Onboarding "Save and stage hire" to provision the Hubstaff workspace account.'
     ),
@@ -81,11 +86,18 @@ BEGIN
       'description', 'Sends the onboarding invite email. Used by HR Onboarding "Send" (falls back to the legacy hr.onboarding_webhook_url key).'
     ),
     jsonb_build_object(
-      'slug', 'offboarding',
-      'label', 'Offboarding (n8n)',
-      'url', 'https://simpledotbiz.app.n8n.cloud/webhook/offboarding-endpoint',
+      'slug', 'offboarding_deactivate',
+      'label', 'Offboarding - Deactivate (n8n)',
+      'url', 'https://simpledotbiz.app.n8n.cloud/webhook/offboarding-deactivate',
       'active', false,
-      'description', 'Fired by the HR Offboarding "Confirm offboard" button to deactivate the workspace account and send the termination notice.'
+      'description', 'Fired immediately when a non-Lead-Gen employee is off-boarded: suspends the Workspace account, sends the termination notice, and removes the member from Hubstaff (pay_rate 0).'
+    ),
+    jsonb_build_object(
+      'slug', 'offboarding_delete',
+      'label', 'Offboarding - Delete (n8n)',
+      'url', 'https://simpledotbiz.app.n8n.cloud/webhook/offboarding-delete',
+      'active', false,
+      'description', 'Permanently deletes the Workspace account. Fired immediately for Lead Gen; fired by the scheduled-deletion cron 14 days after deactivation for other departments.'
     )
   );
 

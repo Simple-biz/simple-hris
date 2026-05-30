@@ -8,27 +8,24 @@ import {
   deniedResponse,
   requireElevatedSession,
 } from "@/lib/auth/authorize-email";
-import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
+import {
+  OFFBOARD_DEACTIVATE_SLUG,
+  OFFBOARD_DELETE_SLUG,
+  fireOffboardWebhook,
+  isLeadGenDepartment,
+  scheduledDeletionFrom,
+} from "@/lib/hr/offboard-webhooks";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+// The offboarding webhooks respond "when the last node finishes" (deactivate
+// suspends the Workspace account AND sends the termination email synchronously),
+// which can take well over the old 8s budget. Give the function headroom so
+// Vercel doesn't kill it before n8n replies.
+export const maxDuration = 30;
 
 const MASTER_TABLE =
   process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE?.trim() || "global_master_list";
-
-/**
- * n8n webhook that fans out the rest of the off-board workflow:
- *   • deactivates the @simple.biz Workspace account (Drew's automation)
- *   • sends the termination notice to the personal email on file
- *
- * URL resolution order (see resolveWebhookUrl):
- *   1. Admin -> Webhooks entry with slug `offboarding` (active).
- *   2. N8N_OFFBOARDING_WEBHOOK_URL env var.
- *   3. The hardcoded production default below.
- */
-const OFFBOARD_WEBHOOK_SLUG = "offboarding";
-const OFFBOARD_WEBHOOK_DEFAULT =
-  "https://simpledotbiz.app.n8n.cloud/webhook/offboarding-endpoint";
 
 /** Reasons HR can pick when off-boarding. Free-text notes are stored separately
  *  in `off_boarded_note`. "other" requires a non-empty note. */
@@ -46,55 +43,24 @@ function getClient() {
   return createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
 }
 
-/** Fire-and-forget POST to the n8n offboarding webhook. Errors are logged but
- *  must NEVER fail the off-board itself — the DB write is the source of truth;
- *  the webhook is a side-effect for downstream automation. 8s timeout so a
- *  hanging webhook can't tie up the API request indefinitely. */
-async function triggerOffboardWebhook(
-  url: string,
-  payload: Record<string, unknown>,
-): Promise<{
-  fired: boolean;
-  status: number | null;
-  error: string | null;
-}> {
-  const ac = new AbortController();
-  const timeout = setTimeout(() => ac.abort(), 8000);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: ac.signal,
-    });
-    if (!res.ok) {
-      console.error(
-        `[offboard] webhook ${url} returned ${res.status} ${res.statusText}`,
-      );
-      return { fired: true, status: res.status, error: `HTTP ${res.status}` };
-    }
-    return { fired: true, status: res.status, error: null };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[offboard] webhook ${url} threw: ${msg}`);
-    return { fired: false, status: null, error: msg };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 /**
  * POST /api/hr/offboard
  *
  * Body: { work_email: string; reason: Reason; note?: string }
  *
- * Marks every `global_master_list` row matching `work_email` as off-boarded:
- * sets off_boarded_at = now(), off_boarded_reason, off_boarded_by, off_boarded_note.
- * The `active_employees` view excludes rows with off_boarded_at set, so the
- * person drops from every downstream dashboard immediately.
+ * Marks every `global_master_list` row matching `work_email` as off-boarded
+ * (off_boarded_at = now()), so `active_employees` drops them from every
+ * downstream dashboard immediately. History is retained -- rows are NOT deleted.
  *
- * History is retained — rows are NOT deleted. Use the Add Person flow to
- * re-onboard if needed (creates a fresh row).
+ * Then fires the department-aware account teardown:
+ *   Lead Gen (all of the person's departments are Lead Gen) -> fire
+ *     offboarding_delete now; no deletion timer.
+ *   Other departments -> fire offboarding_deactivate now AND stamp
+ *     scheduled_deletion_at = off_boarded_at + 14d; the daily cron fires
+ *     offboarding_delete once the timer elapses.
+ *
+ * Response keeps a single `webhook` object (the one that fired) so the HR
+ * Offboarding dialog's success/warning toast keeps working unchanged.
  */
 export async function POST(req: Request) {
   const authz = await requireElevatedSession();
@@ -132,11 +98,45 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Supabase not configured" }, { status: 500 });
   }
 
-  // Update every row with that work_email — covers dual-role employees who
-  // have multiple master-list rows (one per department). All get off-boarded
-  // together; they're the same person. Select identity fields back so we can
-  // pass them to the n8n webhook (account deactivation + termination email).
+  // Look at the still-active rows first so we know which departments this person
+  // belongs to before deciding the teardown mode. Matches the update below
+  // (work_email, off_boarded_at IS NULL).
+  const { data: activeRows, error: lookupErr } = await supabase
+    .from(MASTER_TABLE)
+    .select('"Department"')
+    .ilike('"Work Email"', work_email)
+    .is("off_boarded_at", null);
+  if (lookupErr) {
+    return NextResponse.json({ error: lookupErr.message }, { status: 500 });
+  }
+  if (!activeRows || activeRows.length === 0) {
+    return NextResponse.json(
+      {
+        error:
+          "No active master-list row found for that email. They may already be off-boarded, or the email doesn't exist on the roster.",
+      },
+      { status: 404 },
+    );
+  }
+
+  const lookupDepartments = (activeRows as Array<{ Department: string | null }>)
+    .map((r) => r.Department)
+    .filter((d): d is string => !!d);
+
+  // Lead Gen (immediate delete) only when EVERY department this person holds is
+  // Lead Gen. If any role is non-Lead-Gen, defer deletion 14 days (the safer
+  // path -- the Workspace account is still tied to a non-Lead-Gen role).
+  const allLeadGen =
+    lookupDepartments.length > 0 && lookupDepartments.every(isLeadGenDepartment);
+  const deletionMode: "immediate" | "delayed_14d" = allLeadGen
+    ? "immediate"
+    : "delayed_14d";
+
   const offBoardedAt = new Date().toISOString();
+  const scheduledDeletionAt = allLeadGen ? null : scheduledDeletionFrom(offBoardedAt);
+
+  // Stamp off_boarded_* (and the deletion timer for non-Lead-Gen) on every active
+  // row for this work_email. Covers dual-role employees with multiple rows.
   const { data, error } = await supabase
     .from(MASTER_TABLE)
     .update({
@@ -144,6 +144,8 @@ export async function POST(req: Request) {
       off_boarded_reason: reason,
       off_boarded_by: authz.sessionEmail,
       off_boarded_note: note,
+      scheduled_deletion_at: scheduledDeletionAt,
+      deletion_processed_at: null,
     })
     .ilike('"Work Email"', work_email)
     .is("off_boarded_at", null) // don't re-stamp already-offboarded rows
@@ -172,22 +174,21 @@ export async function POST(req: Request) {
     );
   }
 
-  // All rows share the same person — pull identity from the first row.
   const first = rows[0]!;
   const departments = Array.from(
     new Set(rows.map((r) => r.Department).filter((d): d is string => !!d)),
   );
 
-  // Trigger Drew's n8n automation. Awaited (with internal timeout) so we can
-  // surface the webhook status to the UI; failures don't block the off-board
-  // since the DB update has already committed.
-  const offboardWebhookUrl =
-    (await resolveWebhookUrl(OFFBOARD_WEBHOOK_SLUG, {
-      envVars: ["N8N_OFFBOARDING_WEBHOOK_URL"],
-      defaultUrl: OFFBOARD_WEBHOOK_DEFAULT,
-    })) ?? OFFBOARD_WEBHOOK_DEFAULT;
-  const webhook = await triggerOffboardWebhook(offboardWebhookUrl, {
+  // Fire the immediate teardown webhook. Lead Gen -> delete now; others ->
+  // deactivate now (n8n suspends the account, sends the email, and removes the
+  // Hubstaff member at pay_rate 0). Best-effort: the DB write above is the source
+  // of truth, so a webhook failure never blocks the off-board.
+  const slug = allLeadGen ? OFFBOARD_DELETE_SLUG : OFFBOARD_DEACTIVATE_SLUG;
+  const webhook = await fireOffboardWebhook(slug, {
     event: "employee.offboarded",
+    phase: allLeadGen ? "delete" : "deactivate",
+    deletion_mode: deletionMode,
+    hubstaff_pay_rate: 0,
     work_email,
     personal_email: first["Personal Email"],
     name: first.Name,
@@ -196,6 +197,7 @@ export async function POST(req: Request) {
     reason,
     note,
     off_boarded_at: offBoardedAt,
+    scheduled_deletion_at: scheduledDeletionAt,
     off_boarded_by: authz.sessionEmail,
     rows_updated: rows.length,
   });
@@ -211,7 +213,10 @@ export async function POST(req: Request) {
       reason,
       note,
       rows_updated: rows.length,
-      webhook_fired: webhook.fired,
+      deletion_mode: deletionMode,
+      scheduled_deletion_at: scheduledDeletionAt,
+      webhook_slug: slug,
+      webhook_fired: webhook.fired && webhook.error == null,
       webhook_status: webhook.status,
       webhook_error: webhook.error,
     },
@@ -220,6 +225,8 @@ export async function POST(req: Request) {
   return NextResponse.json({
     success: true,
     rows_updated: rows.length,
+    deletion_mode: deletionMode,
+    scheduled_deletion_at: scheduledDeletionAt,
     webhook,
   });
 }

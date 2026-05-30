@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
 import { createClient } from '@supabase/supabase-js';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { getSessionActor } from '@/lib/auth/session-actor';
 
 function errMsg(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -46,16 +46,18 @@ export async function PATCH(
 
     // Best-effort operator capture for the audit trail.
     let decidedBy = 'unknown';
+    let decidedByRole = 'user';
     try {
-      const session = await getServerSession();
-      decidedBy = session?.user?.email ?? 'unknown';
+      const sessionActor = await getSessionActor();
+      decidedBy = sessionActor.user_name !== 'anonymous' ? sessionActor.user_name : 'unknown';
+      decidedByRole = sessionActor.user_role;
     } catch {
       // ignore — audit trail is best-effort
     }
 
     void insertAuditLog({
       user_name: decidedBy,
-      user_role: 'payroll_clerk',
+      user_role: decidedByRole,
       action: 'contractor.decided',
       resource: 'contractor_invoices',
       resource_id: id,

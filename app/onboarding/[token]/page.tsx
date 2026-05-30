@@ -28,6 +28,29 @@ import {
   PrivacyText,
 } from '@/components/onboarding/agreement-texts';
 
+type PriorData = {
+  full_name: string | null;
+  phone: string | null;
+  email: string | null;
+  non_solicitation_signature: string | null;
+  privacy_signature: string | null;
+  w8ben_applicable: boolean | null;
+  w8ben_file_name: string | null;
+  payment_method: string | null;
+  hurupay_email: string | null;
+  bank_full_name: string | null;
+  bank_account_name: string | null;
+  bank_account_number: string | null;
+  bank_swift_code: string | null;
+  bank_street: string | null;
+  bank_city: string | null;
+  bank_province: string | null;
+  bank_postal_code: string | null;
+  bank_full_address: string | null;
+  contract_signature: string | null;
+  contract_date: string | null;
+};
+
 type LinkInfo = {
   id: string;
   status: 'pending' | 'submitted' | 'archived';
@@ -36,10 +59,12 @@ type LinkInfo = {
   invite_department: string | null;
   invite_note: string | null;
   submitted_at: string | null;
+  priorData?: PriorData | null;
 };
 
 type FormState = {
-  full_name: string;
+  first_name: string;
+  last_name: string;
   phone: string;
   email: string;
   non_solicitation_signature: string;
@@ -63,7 +88,8 @@ type FormState = {
 };
 
 const emptyForm: FormState = {
-  full_name: '',
+  first_name: '',
+  last_name: '',
   phone: '',
   email: '',
   non_solicitation_signature: '',
@@ -107,6 +133,7 @@ export default function OnboardingFormPage() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -119,16 +146,47 @@ export default function OnboardingFormPage() {
         if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load');
         if (cancelled) return;
         setLink(json.row ?? null);
-        if (json.row?.invite_name) {
-          setForm((f) => ({ ...f, full_name: json.row!.invite_name ?? '' }));
-        }
-        if (json.row?.invite_personal_email) {
-          setForm((f) => ({
-            ...f,
-            email: json.row!.invite_personal_email ?? '',
-            // Suggest the personal email for Hurupay; the hire can change it on Step 5.
-            hurupay_email: json.row!.invite_personal_email ?? '',
-          }));
+        const prior = json.row?.priorData;
+        if (prior) {
+          // Pre-fill from previous submission so the hire doesn't start from scratch.
+          const nameTokens = (prior.full_name ?? '').trim().split(/\s+/).filter(Boolean);
+          setForm({
+            first_name: nameTokens[0] ?? '',
+            last_name: nameTokens.slice(1).join(' '),
+            phone: prior.phone ?? '',
+            email: prior.email ?? '',
+            non_solicitation_signature: prior.non_solicitation_signature ?? '',
+            privacy_signature: prior.privacy_signature ?? '',
+            w8ben_applicable: prior.w8ben_applicable ?? null,
+            w8ben_file_path: null, // path is server-side; hire can re-upload if needed
+            w8ben_file_name: prior.w8ben_file_name ?? null,
+            payment_method: (prior.payment_method as FormState['payment_method']) ?? null,
+            hurupay_email: prior.hurupay_email ?? '',
+            bank_full_name: prior.bank_full_name ?? '',
+            bank_account_name: prior.bank_account_name ?? '',
+            bank_account_number: prior.bank_account_number ?? '',
+            bank_swift_code: prior.bank_swift_code ?? '',
+            bank_street: prior.bank_street ?? '',
+            bank_city: prior.bank_city ?? '',
+            bank_province: prior.bank_province ?? '',
+            bank_postal_code: prior.bank_postal_code ?? '',
+            bank_full_address: prior.bank_full_address ?? '',
+            contract_signature: prior.contract_signature ?? '',
+            contract_date: prior.contract_date ?? '',
+          });
+        } else {
+          // New submission — seed invite fields as hints.
+          if (json.row?.invite_name) {
+            const tokens = (json.row.invite_name ?? '').trim().split(/\s+/).filter(Boolean);
+            setForm((f) => ({ ...f, first_name: tokens[0] ?? '', last_name: tokens.slice(1).join(' ') }));
+          }
+          if (json.row?.invite_personal_email) {
+            setForm((f) => ({
+              ...f,
+              email: json.row!.invite_personal_email ?? '',
+              hurupay_email: json.row!.invite_personal_email ?? '',
+            }));
+          }
         }
         if (json.row?.status === 'submitted') {
           setSubmitted(true);
@@ -151,7 +209,8 @@ export default function OnboardingFormPage() {
   const validateStep = useCallback((s: number): string | null => {
     switch (s) {
       case 0:
-        if (!form.full_name.trim()) return 'Please enter your full name.';
+        if (!form.first_name.trim()) return 'Please enter your first name.';
+        if (!form.last_name.trim()) return 'Please enter your last name.';
         if (!form.phone.trim()) return 'Please enter your phone number.';
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return 'Please enter a valid email.';
         return null;
@@ -225,7 +284,7 @@ export default function OnboardingFormPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          full_name: form.full_name.trim(),
+          full_name: [form.first_name.trim(), form.last_name.trim()].filter(Boolean).join(' '),
           phone: form.phone.trim(),
           email: form.email.trim(),
           non_solicitation_signature: form.non_solicitation_signature,
@@ -251,7 +310,8 @@ export default function OnboardingFormPage() {
       const json = (await res.json()) as { row?: { id: string }; error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to submit');
       setSubmitted(true);
-      toast.success('Welcome aboard! Your onboarding form has been received.');
+      setReviewing(false);
+      toast.success(reviewing ? 'Your responses have been updated!' : 'Welcome aboard! Your onboarding form has been received.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to submit');
     } finally {
@@ -283,8 +343,14 @@ export default function OnboardingFormPage() {
     );
   }
 
-  if (submitted || link.status === 'submitted') {
-    return <SubmittedScreen submittedAt={link.submitted_at} />;
+  if ((submitted || link.status === 'submitted') && !reviewing) {
+    return (
+      <SubmittedScreen
+        submittedAt={link.submitted_at}
+        hasPriorData={!!link.priorData}
+        onReview={() => { setReviewing(true); setStep(0); }}
+      />
+    );
   }
 
   const progressPct = Math.round(((step + 1) / STEP_TITLES.length) * 100);
@@ -419,27 +485,36 @@ function Step1Welcome({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Please enter your full name" required>
+        <Field label="First name" required>
           <Input
-            value={form.full_name}
-            onChange={(e) => update('full_name', e.target.value)}
-            placeholder="Jane Dela Cruz"
-            autoComplete="name"
+            value={form.first_name ?? ''}
+            onChange={(e) => update('first_name', e.target.value)}
+            placeholder="Jane"
+            autoComplete="given-name"
+            autoFocus
+          />
+        </Field>
+        <Field label="Last name" required>
+          <Input
+            value={form.last_name ?? ''}
+            onChange={(e) => update('last_name', e.target.value)}
+            placeholder="Dela Cruz"
+            autoComplete="family-name"
           />
         </Field>
         <Field label="Phone Number" required>
           <Input
-            value={form.phone}
+            value={form.phone ?? ''}
             onChange={(e) => update('phone', e.target.value)}
             placeholder="+63 9XX XXX XXXX"
             inputMode="tel"
             autoComplete="tel"
           />
         </Field>
-        <Field label="Email" required className="sm:col-span-2">
+        <Field label="Email" required>
           <Input
             type="email"
-            value={form.email}
+            value={form.email ?? ''}
             onChange={(e) => update('email', e.target.value)}
             placeholder="you@example.com"
             autoComplete="email"
@@ -1107,7 +1182,15 @@ function SignaturePad({
 
 // ─── Submitted screen ─────────────────────────────────────────────────────
 
-function SubmittedScreen({ submittedAt }: { submittedAt: string | null }) {
+function SubmittedScreen({
+  submittedAt,
+  hasPriorData,
+  onReview,
+}: {
+  submittedAt: string | null;
+  hasPriorData: boolean;
+  onReview: () => void;
+}) {
   return (
     <main className="flex min-h-dvh items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 px-4 py-10">
       <div className="w-full max-w-md rounded-2xl border border-emerald-100 bg-white p-8 text-center shadow-md">
@@ -1127,6 +1210,18 @@ function SubmittedScreen({ submittedAt }: { submittedAt: string | null }) {
         <p className="mt-6 rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-900">
           Welcome to the Simple.biz family — we look forward to working with you!
         </p>
+        {hasPriorData && (
+          <button
+            type="button"
+            onClick={onReview}
+            className="mt-5 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-600 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            Review / update my responses
+          </button>
+        )}
       </div>
       <Toaster richColors position="top-center" />
     </main>

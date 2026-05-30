@@ -5,6 +5,7 @@ import {
   setPayrollDispatchLock,
 } from "@/lib/supabase/payroll-dispatch-lock";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { getSessionActor } from "@/lib/auth/session-actor";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,9 +27,11 @@ export async function POST(req: NextRequest) {
   }
 
   let actor: string | null = null;
+  let actorRole = 'user';
   try {
-    const session = await getServerSession();
-    actor = session?.user?.email ?? null;
+    const sessionActor = await getSessionActor();
+    actor = sessionActor.user_name !== 'anonymous' ? sessionActor.user_name : null;
+    actorRole = sessionActor.user_role;
   } catch {
     /* ignore */
   }
@@ -40,7 +43,7 @@ export async function POST(req: NextRequest) {
 
   void insertAuditLog({
     user_name: actor ?? "unknown",
-    user_role: "payroll_clerk",
+    user_role: actorRole,
     action: body.locked ? "payroll.dispatch.locked" : "payroll.dispatch.unlocked",
     resource: "app_settings",
     resource_id: "payroll.dispatch_locked",

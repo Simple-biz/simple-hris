@@ -441,6 +441,7 @@ async function createPendingHubstaffUpload(
   supabase: SupabaseClient,
   sourceFile: string | undefined,
   rowCount: number,
+  uploadedBy?: string | null,
 ): Promise<string> {
   const { data, error } = await supabase
     .from(HUBSTAFF_UPLOADS_TABLE)
@@ -448,6 +449,7 @@ async function createPendingHubstaffUpload(
       source_file: sourceFile ?? null,
       row_count: rowCount,
       is_current: false,
+      uploaded_by: uploadedBy ?? null,
     })
     .select("id")
     .single();
@@ -518,6 +520,7 @@ async function promoteHubstaffUploadToCurrent(
 export async function replaceHubstaffHoursFromCsvText(
   csvText: string,
   sourceFile?: string,
+  uploadedBy?: string | null,
 ): Promise<{ rowCount: number; uploadId: string }> {
   const supabase = requireServiceRole();
   const table = getTableName();
@@ -537,7 +540,7 @@ export async function replaceHubstaffHoursFromCsvText(
     );
   }
 
-  const uploadId = await createPendingHubstaffUpload(supabase, sourceFile, dataRows.length);
+  const uploadId = await createPendingHubstaffUpload(supabase, sourceFile, dataRows.length, uploadedBy);
 
   const extras: Record<string, string | null> = { upload_id: uploadId };
   if (sourceFile) extras.source_file = sourceFile;

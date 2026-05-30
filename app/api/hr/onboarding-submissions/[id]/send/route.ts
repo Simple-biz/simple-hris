@@ -80,8 +80,9 @@ export async function POST(
   }
 
   // Mint a fresh token on every send so each outbound email carries a unique
-  // URL — and any prior link for this row becomes a 404. Only rotates while
-  // the row is pending; submitted/archived rows aren't sendable anyway.
+  // URL — and any prior link for this row becomes a 404. Works for both
+  // pending and submitted rows (HR can resend to submitted hires). Archived
+  // rows are blocked at the token-rotation step.
   const { token: rotatedToken, error: rotateErr } = await rotateHrOnboardingToken(id);
   if (rotateErr || !rotatedToken) {
     return NextResponse.json(

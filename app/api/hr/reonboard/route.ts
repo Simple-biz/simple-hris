@@ -55,6 +55,10 @@ export async function POST(req: Request) {
       off_boarded_reason: null,
       off_boarded_by: null,
       off_boarded_note: null,
+      // Clear the pending hard-delete timer so the scheduled-deletion cron
+      // doesn't delete a freshly re-onboarded account inside the 14-day window.
+      scheduled_deletion_at: null,
+      deletion_processed_at: null,
     })
     .ilike('"Work Email"', work_email)
     .not("off_boarded_at", "is", null)

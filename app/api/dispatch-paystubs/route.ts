@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { resolveWebhookUrl } from '@/lib/webhooks/resolve-webhook';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { getSessionActor } from '@/lib/auth/session-actor';
 
 /**
  * Forwards a paystub dispatch to the n8n workflow webhook.
@@ -40,9 +41,11 @@ export async function POST(req: NextRequest) {
 
   // Operator + cycle context (best-effort — never block dispatch on audit prep).
   let operatorEmail = 'unknown';
+  let operatorRole = 'user';
   try {
-    const session = await getServerSession();
-    operatorEmail = session?.user?.email ?? 'unknown';
+    const sessionActor = await getSessionActor();
+    operatorEmail = sessionActor.user_name;
+    operatorRole = sessionActor.user_role;
   } catch {
     // ignore
   }
@@ -56,7 +59,7 @@ export async function POST(req: NextRequest) {
   ): void => {
     void insertAuditLog({
       user_name: operatorEmail,
-      user_role: 'payroll_clerk',
+      user_role: operatorRole,
       action: 'paystubs.dispatched',
       resource: 'dispatch_paystubs',
       resource_id: null,

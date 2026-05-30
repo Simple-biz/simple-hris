@@ -5,6 +5,7 @@ import {
   type GiftPaymentDraft,
 } from '@/lib/supabase/gift-payments';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { getSessionActor } from '@/lib/auth/session-actor';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -40,9 +41,10 @@ export async function PUT(request: Request) {
       return sum + (Number.isFinite(v) ? v : 0);
     }, 0);
 
+    const actor = await getSessionActor();
     void insertAuditLog({
-      user_name: body.created_by ?? 'unknown',
-      user_role: 'payroll_clerk',
+      user_name: body.created_by ?? actor.user_name,
+      user_role: actor.user_role,
       action: 'gift.payment_edited',
       resource: 'gift_payments',
       resource_id: null,

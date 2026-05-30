@@ -597,6 +597,10 @@ export async function replaceGlobalMasterListFromCsvText(
         updatePayload["off_boarded_reason"] = null;
         updatePayload["off_boarded_by"] = null;
         updatePayload["off_boarded_note"] = null;
+        // Also clear the pending hard-delete timer so a re-onboarded person
+        // isn't deleted by the scheduled-deletion cron within the 14-day window.
+        updatePayload["scheduled_deletion_at"] = null;
+        updatePayload["deletion_processed_at"] = null;
       }
       updateOps.push({
         id: (match.kind === "work" ? match.row.id : match.id) as string | number,

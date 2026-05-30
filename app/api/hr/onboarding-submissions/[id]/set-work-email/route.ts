@@ -7,7 +7,10 @@ import {
   getHrOnboardingSubmissionById,
   linkOnboardingToPendingHire,
 } from "@/lib/supabase/hr-onboarding-submissions";
-import { createHrPendingEmployee } from "@/lib/supabase/hr-pending-employees";
+import {
+  createHrPendingEmployee,
+  updateHrPendingEmployee,
+} from "@/lib/supabase/hr-pending-employees";
 import { loadTakenWorkEmails } from "@/lib/hr/work-email-server";
 import { WORK_EMAIL_DOMAIN, splitFullName } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
@@ -69,23 +72,11 @@ export async function POST(
       { status: 400 },
     );
   }
-  if (row.pending_employee_id != null) {
-    return NextResponse.json(
-      {
-        error: "This submission has already been converted to a pending hire.",
-        pending_employee_id: row.pending_employee_id,
-        work_email: row.work_email,
-      },
-      { status: 409 },
-    );
-  }
+  const isUpdate = row.pending_employee_id != null;
 
   const workEmail = (body.work_email ?? "").trim().toLowerCase();
   if (!EMAIL_RE.test(workEmail)) {
-    return NextResponse.json(
-      { error: "Enter a valid work email." },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Enter a valid work email." }, { status: 400 });
   }
   if (!workEmail.endsWith(`@${WORK_EMAIL_DOMAIN}`)) {
     return NextResponse.json(
@@ -95,9 +86,7 @@ export async function POST(
   }
 
   const name = (row.full_name ?? row.invite_name ?? "").trim();
-  const personalEmail = (row.email ?? row.invite_personal_email ?? "")
-    .trim()
-    .toLowerCase();
+  const personalEmail = (row.email ?? row.invite_personal_email ?? "").trim().toLowerCase();
   const department = (body.department ?? row.invite_department ?? "").trim();
 
   if (!name) {
@@ -107,10 +96,7 @@ export async function POST(
     );
   }
   if (!personalEmail) {
-    return NextResponse.json(
-      { error: "This submission has no personal email." },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "This submission has no personal email." }, { status: 400 });
   }
   if (!department) {
     return NextResponse.json(
@@ -119,7 +105,9 @@ export async function POST(
     );
   }
 
-  // Race-safe re-check against the live roster right before we mint.
+  // Race-safe availability check. Allow the hire's current work_email to pass
+  // through unchanged (re-setting the same address is fine).
+  const currentWorkEmail = row.work_email?.trim().toLowerCase() ?? "";
   let taken: Set<string>;
   try {
     taken = await loadTakenWorkEmails();
@@ -129,16 +117,13 @@ export async function POST(
       { status: 500 },
     );
   }
-  if (taken.has(workEmail)) {
+  if (taken.has(workEmail) && workEmail !== currentWorkEmail) {
     return NextResponse.json(
       { error: `${workEmail} is already in use. Pick another address.` },
       { status: 409 },
     );
   }
 
-  // Normalize the rates HR entered. Stored on the staged hire and seeded into
-  // employee_hourly_rates on promote; the regular rate doubles as the Hubstaff
-  // pay_rate when no separate value is supplied.
   const toRateStr = (v: string | number | null | undefined): string | null => {
     if (v == null) return null;
     const s = String(v).trim();
@@ -149,57 +134,90 @@ export async function POST(
   const regularRateStr = toRateStr(body.regular_rate);
   const otRateStr = toRateStr(body.ot_rate);
 
-  // Hubstaff project(s) HR picked — persisted on the hire so the Promote step
-  // can send them to the hubstaff-invite-user webhook (which requires them).
   const projectNames = Array.isArray(body.project_names)
     ? body.project_names.map((p) => String(p).trim()).filter(Boolean)
     : [];
 
-  const { row: pending, error: createErr } = await createHrPendingEmployee({
-    name,
-    personal_email: personalEmail,
-    work_email: workEmail,
-    department,
-    phone: row.phone,
-    regular_rate: regularRateStr,
-    ot_rate: otRateStr,
-    project_names: projectNames,
-    source: "onboarding_form",
-    created_by: authz.sessionEmail,
-    onboarding_submission_id: row.id,
-  });
-  if (createErr || !pending) {
-    return NextResponse.json(
-      { error: createErr ?? "Failed to create pending hire" },
-      { status: 500 },
+  let pending: Awaited<ReturnType<typeof createHrPendingEmployee>>["row"];
+
+  if (isUpdate && row.pending_employee_id) {
+    // Re-submission: update the existing pending hire with the latest details
+    // so payroll rates, project assignments, and the work email stay in sync.
+    const { row: updated, error: updateErr } = await updateHrPendingEmployee(
+      row.pending_employee_id,
+      {
+        name,
+        work_email: workEmail,
+        department,
+        regular_rate: regularRateStr ?? undefined,
+        ot_rate: otRateStr ?? undefined,
+        project_names: projectNames,
+      },
     );
+    if (updateErr || !updated) {
+      return NextResponse.json(
+        { error: updateErr ?? "Failed to update pending hire" },
+        { status: 500 },
+      );
+    }
+    pending = updated;
+  } else {
+    // First time: create a fresh pending hire from the submission.
+    const { row: created, error: createErr } = await createHrPendingEmployee({
+      name,
+      personal_email: personalEmail,
+      work_email: workEmail,
+      department,
+      phone: row.phone,
+      regular_rate: regularRateStr,
+      ot_rate: otRateStr,
+      project_names: projectNames,
+      source: "onboarding_form",
+      created_by: authz.sessionEmail,
+      onboarding_submission_id: row.id,
+    });
+    if (createErr || !created) {
+      return NextResponse.json(
+        { error: createErr ?? "Failed to create pending hire" },
+        { status: 500 },
+      );
+    }
+    pending = created;
   }
 
+  // (Re-)link the submission so it always reflects the latest work_email.
   const { error: linkErr } = await linkOnboardingToPendingHire(row.id, {
     work_email: workEmail,
-    pending_employee_id: pending.id,
+    pending_employee_id: pending!.id,
   });
   if (linkErr) {
-    // The hire exists in Pending Hires; we just couldn't stamp the submission.
     return NextResponse.json(
       {
-        error: `Pending hire created, but linking the submission failed: ${linkErr}`,
-        pending_employee_id: pending.id,
+        error: `Pending hire ${isUpdate ? "updated" : "created"}, but linking the submission failed: ${linkErr}`,
+        pending_employee_id: pending!.id,
         work_email: workEmail,
       },
       { status: 500 },
     );
   }
 
-  // Best-effort: provision the workspace account via the n8n webhook. A failure
-  // here does NOT roll back the staged hire (per product decision) — we report
-  // it so HR can retry or create the account manually.
+  // Best-effort: fire the combined onboarding webhook — creates the Workspace
+  // account, invites to Hubstaff, sends the Roboform + Hubstaff overview emails.
+  // A failure here does NOT roll back the staged hire — report it so HR can
+  // retry or handle manually. pay_rate defaults to 0 (prevents the "USD" bug
+  // in Hubstaff; the real rate is stored on the pending row for payroll).
   const { first, last } = splitFullName(name);
+  const payRate =
+    regularRateStr != null && Number.isFinite(Number(regularRateStr))
+      ? Number(regularRateStr)
+      : 0;
   const workspace = await createWorkspaceAccount({
     firstName: first,
     lastName: last,
     workEmail,
     personalEmail,
+    projectNames,
+    payRate,
   });
 
   void insertAuditLog({

@@ -16,6 +16,7 @@ import {
   Undo2,
   Users,
   XCircle,
+  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,7 +40,7 @@ import type {
   HrPendingStatus,
 } from '@/lib/supabase/hr-pending-employees';
 
-type TabFilter = 'pending' | 'ready' | 'promoted' | 'cancelled' | 'all';
+type TabFilter = 'pending' | 'ready' | 'promoted' | 'cancelled' | 'no_show' | 'all';
 type SubTab = 'pending-hires' | 'onboarding-form';
 
 const STATUS_LABEL: Record<HrPendingStatus, string> = {
@@ -47,6 +48,7 @@ const STATUS_LABEL: Record<HrPendingStatus, string> = {
   ready: 'Ready to promote',
   promoted: 'Promoted',
   cancelled: 'Cancelled',
+  no_show: 'No-show',
 };
 
 const STATUS_BADGE: Record<HrPendingStatus, string> = {
@@ -58,6 +60,8 @@ const STATUS_BADGE: Record<HrPendingStatus, string> = {
     'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100',
   cancelled:
     'border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400',
+  no_show:
+    'border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-100',
 };
 
 function formatDate(iso: string | null): string {
@@ -85,6 +89,10 @@ export default function HrOnboarding() {
   const [confirmCancel, setConfirmCancel] = useState<HrPendingEmployeeRow | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<HrPendingEmployeeRow | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [bulkPromoting, setBulkPromoting] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{
+    promoted: number; failed: number; total: number;
+  } | null>(null);
 
   const fetchPending = useCallback(async () => {
     setPendingLoading(true);
@@ -126,6 +134,7 @@ export default function HrOnboarding() {
         if (tab === 'ready' && r.status !== 'ready') return false;
         if (tab === 'promoted' && r.status !== 'promoted') return false;
         if (tab === 'cancelled' && r.status !== 'cancelled') return false;
+        if (tab === 'no_show' && r.status !== 'no_show') return false;
       }
       if (dept && (r.department ?? '').trim() !== dept) return false;
       if (!q) return true;
@@ -141,12 +150,14 @@ export default function HrOnboarding() {
       ready: 0,
       promoted: 0,
       cancelled: 0,
+      no_show: 0,
     };
     for (const r of pending) {
       if (r.status === 'pending_work_email') c.pending += 1;
       else if (r.status === 'ready') c.ready += 1;
       else if (r.status === 'promoted') c.promoted += 1;
       else if (r.status === 'cancelled') c.cancelled += 1;
+      else if (r.status === 'no_show') c.no_show += 1;
     }
     return c;
   }, [pending]);
@@ -160,22 +171,16 @@ export default function HrOnboarding() {
       const json = (await res.json()) as {
         error?: string;
         sheet?: { appended?: boolean; reason?: string } | null;
-        hubstaff?: { ok?: boolean; error?: string } | null;
       };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to promote');
       const sheet = json.sheet;
-      const hubstaff = json.hubstaff;
       if (sheet && sheet.appended === false && sheet.reason !== 'already present in sheet') {
         toast.warning(`${row.name} added to the master list, but NOT written to the Google Sheet`, {
           description: `${sheet.reason ?? 'Sheet append failed'} — add them to the Sheet manually, or they may drop out on the next sheet sync.`,
         });
-      } else if (hubstaff && hubstaff.ok === false) {
-        toast.warning(`${row.name} added to the master list, but the Hubstaff invite did not fire`, {
-          description: `${hubstaff.error ?? 'Invite webhook failed'} — invite them in Hubstaff manually.`,
-        });
       } else {
         toast.success(`${row.name} added to the master list`, {
-          description: 'Now visible across Payroll, Manager, and Orphanage views. Hubstaff invite sent.',
+          description: 'Now visible across Payroll, Manager, and Orphanage views.',
         });
       }
       await fetchPending();
@@ -183,6 +188,39 @@ export default function HrOnboarding() {
       toast.error(e instanceof Error ? e.message : 'Failed to promote');
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function bulkPromoteLeadGen() {
+    setBulkPromoting(true);
+    setBulkResult(null);
+    try {
+      const res = await fetch('/api/hr/pending-employees/bulk-promote', { method: 'POST' });
+      const json = (await res.json()) as {
+        promoted?: number; failed?: number; total?: number;
+        message?: string; error?: string;
+      };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Bulk promote failed');
+      const promoted = json.promoted ?? 0;
+      const failed = json.failed ?? 0;
+      const total = json.total ?? 0;
+      setBulkResult({ promoted, failed, total });
+      if (total === 0) {
+        toast.info(json.message ?? 'No Lead Gen hires are ready to promote.');
+      } else if (failed === 0) {
+        toast.success(`${promoted} Lead Gen hire${promoted !== 1 ? 's' : ''} promoted`, {
+          description: 'All added to the master list. Hubstaff invites sent.',
+        });
+      } else {
+        toast.warning(`${promoted} promoted, ${failed} failed`, {
+          description: 'Check the console for per-hire details.',
+        });
+      }
+      await fetchPending();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Bulk promote failed');
+    } finally {
+      setBulkPromoting(false);
     }
   }
 
@@ -249,9 +287,22 @@ export default function HrOnboarding() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ work_email: workEmail.trim() || null }),
       });
-      const json = (await res.json()) as { error?: string };
+      const json = (await res.json()) as {
+        error?: string;
+        workspace?: { ok: boolean; error?: string } | null;
+      };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to save');
-      toast.success(`Work email saved for ${row.name}`);
+      if (json.workspace && !json.workspace.ok) {
+        toast.warning(`Work email saved for ${row.name} — workspace setup failed`, {
+          description: json.workspace.error
+            ? `${json.workspace.error}. Create the Workspace account and Hubstaff invite manually.`
+            : 'The onboarding webhook did not fire. Create the Workspace account and Hubstaff invite manually.',
+        });
+      } else {
+        toast.success(`Work email saved for ${row.name}`, {
+          description: json.workspace?.ok ? 'Workspace account + Hubstaff invite requested.' : undefined,
+        });
+      }
       await fetchPending();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to save');
@@ -287,6 +338,21 @@ export default function HrOnboarding() {
               variant="outline"
               size="sm"
               className="border-white/35 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 hover:text-white"
+              onClick={() => void bulkPromoteLeadGen()}
+              disabled={bulkPromoting || pendingLoading}
+              title="Promote all ready Lead Gen hires at once (orientation confirmed + work email required)"
+            >
+              {bulkPromoting ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Zap className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Bulk promote (Lead Gen)
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-white/35 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 hover:text-white"
               onClick={() => void fetchPending()}
               disabled={pendingLoading}
             >
@@ -299,6 +365,12 @@ export default function HrOnboarding() {
               Refresh
             </Button>
           </div>
+          {bulkResult && bulkResult.total > 0 && (
+            <div className="mt-2 text-xs text-emerald-100/80">
+              Last bulk: {bulkResult.promoted} promoted
+              {bulkResult.failed > 0 && `, ${bulkResult.failed} failed`}
+            </div>
+          )}
         </div>
       </header>
 
@@ -384,6 +456,7 @@ export default function HrOnboarding() {
             <TabPill label="Awaiting email" count={counts.pending} active={tab === 'pending'} onClick={() => setTab('pending')} />
             <TabPill label="Ready" count={counts.ready} active={tab === 'ready'} onClick={() => setTab('ready')} />
             <TabPill label="Promoted" count={counts.promoted} active={tab === 'promoted'} onClick={() => setTab('promoted')} />
+            <TabPill label="No-show" count={counts.no_show} active={tab === 'no_show'} onClick={() => setTab('no_show')} />
             <TabPill label="Cancelled" count={counts.cancelled} active={tab === 'cancelled'} onClick={() => setTab('cancelled')} />
             <TabPill label="All" count={pending.length} active={tab === 'all'} onClick={() => setTab('all')} />
           </div>
@@ -787,6 +860,7 @@ const PIPELINE_SLICES = [
   { key: 'pending'   as TabFilter, label: 'Awaiting email', color: '#f59e0b' },
   { key: 'ready'     as TabFilter, label: 'Ready',          color: '#10b981' },
   { key: 'promoted'  as TabFilter, label: 'Promoted',       color: '#0ea5e9' },
+  { key: 'no_show'   as TabFilter, label: 'No-show',        color: '#f43f5e' },
   { key: 'cancelled' as TabFilter, label: 'Cancelled',      color: '#a1a1aa' },
 ];
 
@@ -795,7 +869,7 @@ function PipelinePieChart({
   onSliceClick,
   activeTab,
 }: {
-  counts: { pending: number; ready: number; promoted: number; cancelled: number };
+  counts: { pending: number; ready: number; promoted: number; cancelled: number; no_show: number };
   onSliceClick: (tab: TabFilter) => void;
   activeTab: TabFilter;
 }) {

@@ -1,9 +1,9 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn, signOut, useSession } from 'next-auth/react';
-import { Loader2, LogIn, AlertCircle } from 'lucide-react';
+import { Loader2, LogIn, AlertCircle, Volume2, VolumeX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Toaster } from '@/components/ui/sonner';
@@ -64,10 +64,33 @@ function LoginPageInner() {
   const searchParams = useSearchParams();
   const { data: session, status } = useSession();
   const [resolvingRole, setResolvingRole] = useState(false);
+  // Where to send the user once sign-in resolves. We compute this up front but DON'T navigate
+  // immediately -- the actual hand-off is gated on the transition video so it feels like one motion.
+  const [destination, setDestination] = useState<string | null>(null);
+  const [videoReady, setVideoReady] = useState(false);
+  const [fadeToWhite, setFadeToWhite] = useState(false);
+  const [transitionDone, setTransitionDone] = useState(false);
+  // Audio: we try to play the clip with sound. If the browser blocks sound-on autoplay (no gesture
+  // survives the OAuth redirect), we fall back to muted playback and flag `soundBlocked` so a
+  // prominent "Tap for sound" control appears -- one tap is a gesture, so audio resumes instantly.
+  const [muted, setMuted] = useState(false);
+  const [soundBlocked, setSoundBlocked] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const finishedRef = useRef(false);
 
   const authError = searchParams?.get('error') ?? null;
 
-  // When NextAuth finishes, resolve role and route the user.
+  // Wind down the transition video (fade to white, then allow navigation). Idempotent so the
+  // onEnded / onError / Skip / safety-cap paths can all call it without double-firing.
+  function finishTransition() {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    setFadeToWhite(true);
+    window.setTimeout(() => setTransitionDone(true), 300);
+  }
+
+  // When NextAuth finishes, resolve the user's role + destination and warm that route.
+  // Navigation itself happens later, once the video has played out.
   useEffect(() => {
     if (status !== 'authenticated' || !session?.user?.email) return;
     if (resolvingRole) return;
@@ -86,7 +109,7 @@ function LoginPageInner() {
 
       const views = viewsForRoles(roles);
       // Everyone lands on the employee view by default after sign-in. Users with accounting
-      // or admin roles switch via the in-app view switcher — no more forced /accounting hop.
+      // or admin roles switch via the in-app view switcher -- no more forced /accounting hop.
       const target: typeof views[number] = views.includes('employee') ? 'employee' : defaultViewFor(views);
 
       try {
@@ -97,7 +120,7 @@ function LoginPageInner() {
         /* ignore */
       }
 
-      // Honor `?callbackUrl=…` if the middleware pushed us here from a specific page.
+      // Honor `?callbackUrl=...` if the middleware pushed us here from a specific page.
       // Reject obviously-bad callback URLs (external, or a loop back to /login).
       const rawCallback = searchParams?.get('callbackUrl') ?? null;
       const safeCallback =
@@ -105,15 +128,76 @@ function LoginPageInner() {
           ? rawCallback
           : null;
 
-      if (safeCallback) {
-        router.replace(safeCallback);
-        return;
-      }
-
-      const base = VIEW_ROUTES[target];
-      router.replace(`${base}?email=${encodeURIComponent(email)}`);
+      const url = safeCallback ?? `${VIEW_ROUTES[target]}?email=${encodeURIComponent(email)}`;
+      // Prefetch so the post-video hand-off renders instantly instead of flashing a loader.
+      try { router.prefetch(url); } catch { /* ignore */ }
+      setDestination(url);
     })();
   }, [status, session, router, resolvingRole, searchParams]);
+
+  // Turn sound on in response to a real click (always allowed). Used by the "Tap for sound"
+  // prompt and the unmute toggle.
+  function enableSound() {
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = false;
+    v.volume = 1;
+    setMuted(false);
+    setSoundBlocked(false);
+    void v.play();
+  }
+
+  function toggleSound() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.muted) {
+      enableSound();
+    } else {
+      v.muted = true;
+      setMuted(true);
+    }
+  }
+
+  // Drive the transition video the moment we're authenticated. Try sound-first; if the browser
+  // blocks autoplay-with-audio (the click that started sign-in didn't survive the OAuth redirect),
+  // fall back to muted playback and reveal the "Tap for sound" prompt. A safety cap ensures a
+  // stalled or blocked video can never trap the user on this screen.
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+    const v = videoRef.current;
+    if (v) {
+      v.muted = false;
+      v.volume = 1;
+      v.play()
+        .then(() => setVideoReady(true))
+        .catch(() => {
+          v.muted = true;
+          setMuted(true);
+          setSoundBlocked(true);
+          v.play().then(() => setVideoReady(true)).catch(() => setVideoReady(true));
+        });
+    }
+    const cap = window.setTimeout(finishTransition, 9000);
+    return () => window.clearTimeout(cap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  // The single hand-off point: only navigate once BOTH the destination is known and the
+  // transition has played out. Whichever finishes last triggers the move.
+  useEffect(() => {
+    if (transitionDone && destination) {
+      // Hand a one-shot baton to the destination so it reveals itself from white (matching the
+      // veil we end the video on) instead of popping in. Cleared by the destination on mount.
+      try {
+        if (destination.startsWith('/employee')) {
+          sessionStorage.setItem('hris_post_login', '1');
+        }
+      } catch {
+        /* ignore */
+      }
+      router.replace(destination);
+    }
+  }, [transitionDone, destination, router]);
 
   // Turn NextAuth error query params into a friendly toast exactly once on mount.
   useEffect(() => {
@@ -248,6 +332,61 @@ function LoginPageInner() {
         </div>
       </main>
       <Toaster position="top-right" />
+
+      {/* Seamless sign-in hand-off: once Google returns, a full-screen video bridges the gap
+          while the destination route warms in the background. Fades up from / back to white so
+          it joins cleanly to the (light) app shell with no black flash. */}
+      {status === 'authenticated' && (
+        <div className="fixed inset-0 z-[100] bg-white">
+          <video
+            ref={videoRef}
+            className={`h-full w-full object-cover transition-opacity duration-500 ease-out ${
+              videoReady ? 'opacity-100' : 'opacity-0'
+            }`}
+            src="/login.mp4"
+            autoPlay
+            muted={muted}
+            playsInline
+            preload="auto"
+            onCanPlay={() => setVideoReady(true)}
+            onEnded={finishTransition}
+            onError={finishTransition}
+          />
+
+          {/* Closing fade into the app. If the role lookup is still in flight when the video
+              ends, a quiet spinner holds the white frame until the destination is ready. */}
+          <div
+            className={`pointer-events-none absolute inset-0 flex items-center justify-center bg-white transition-opacity duration-300 ease-out ${
+              fadeToWhite ? 'opacity-100' : 'opacity-0'
+            }`}
+          >
+            {fadeToWhite && !destination && (
+              <Loader2 className="h-6 w-6 animate-spin text-orange-500" />
+            )}
+          </div>
+
+          {/* Sound control. When autoplay-with-audio was blocked, this reads "Tap for sound" and
+              gently pulses to draw the eye; otherwise it's a quiet mute/unmute toggle. */}
+          <button
+            type="button"
+            onClick={muted ? enableSound : toggleSound}
+            className={`absolute bottom-6 left-6 inline-flex items-center gap-2 rounded-full border border-white/40 bg-black/30 px-4 py-1.5 text-xs font-medium text-white/85 backdrop-blur-md transition hover:bg-black/55 hover:text-white ${
+              soundBlocked ? 'animate-pulse' : ''
+            }`}
+          >
+            {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+            {soundBlocked ? 'Tap for sound' : muted ? 'Sound off' : 'Sound on'}
+          </button>
+
+          <button
+            type="button"
+            onClick={finishTransition}
+            className="absolute bottom-6 right-6 rounded-full border border-white/40 bg-black/30 px-4 py-1.5 text-xs font-medium text-white/85 backdrop-blur-md transition hover:bg-black/55 hover:text-white"
+          >
+            Skip
+          </button>
+        </div>
+      )}
     </>
   );
 }

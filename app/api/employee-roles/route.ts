@@ -24,7 +24,7 @@ const VALID_ROLES = [
 ] as const;
 type Role = (typeof VALID_ROLES)[number];
 
-const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' };
+import { getSessionActor } from '@/lib/auth/session-actor';
 
 function getClient() {
   return createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
@@ -83,6 +83,7 @@ export async function POST(request: Request) {
       .limit(1)
       .maybeSingle();
 
+    const actor = await getSessionActor();
     let error: string | null = null;
     if (existing) {
       if (existing.revoked_at === null) {
@@ -90,13 +91,13 @@ export async function POST(request: Request) {
       }
       const { error: upErr } = await supabase
         .from('employee_roles')
-        .update({ revoked_at: null, assigned_by: SYSTEM_USER.name, assigned_at: new Date().toISOString() })
+        .update({ revoked_at: null, assigned_by: actor.user_name, assigned_at: new Date().toISOString() })
         .eq('id', existing.id);
       error = upErr?.message ?? null;
     } else {
       const { error: insErr } = await supabase
         .from('employee_roles')
-        .insert({ work_email: email, role, assigned_by: SYSTEM_USER.name });
+        .insert({ work_email: email, role, assigned_by: actor.user_name });
       error = insErr?.message ?? null;
     }
 
@@ -109,8 +110,8 @@ export async function POST(request: Request) {
     }
 
     void insertAuditLog({
-      user_name: SYSTEM_USER.name,
-      user_role: SYSTEM_USER.role,
+      user_name: actor.user_name,
+      user_role: actor.user_role,
       action: 'rbac.role.granted',
       resource: 'employee_roles',
       resource_id: email,
@@ -147,9 +148,10 @@ export async function DELETE(request: Request) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+    const actor2 = await getSessionActor();
     void insertAuditLog({
-      user_name: SYSTEM_USER.name,
-      user_role: SYSTEM_USER.role,
+      user_name: actor2.user_name,
+      user_role: actor2.user_role,
       action: 'rbac.role.revoked',
       resource: 'employee_roles',
       resource_id: email,

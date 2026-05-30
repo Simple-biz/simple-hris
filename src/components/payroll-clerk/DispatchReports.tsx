@@ -536,7 +536,7 @@ function ReportCard({
             </div>
             <div className="mt-0.5 flex items-center gap-1 text-[11px] text-[#71717a] dark:text-zinc-500">
               <Clock className="h-3 w-3" />
-              <span>Uploaded {formatTimestamp(report.uploadedAt)}</span>
+              <span>Uploaded {formatTimestamp(report.uploadedAt)}{report.uploadedBy ? ` by ${report.uploadedBy}` : ''}</span>
             </div>
             {report.sourceFile && (
               <div className="mt-0.5 flex items-center gap-1 text-[10px] text-zinc-400 dark:text-zinc-500">
@@ -705,7 +705,7 @@ function ReportDetail({
               </span>
               <span className="inline-flex items-center gap-1">
                 <Clock className="h-3 w-3" />
-                Uploaded {formatTimestamp(report.uploadedAt)}
+                Uploaded {formatTimestamp(report.uploadedAt)}{report.uploadedBy ? ` by ${report.uploadedBy}` : ''}
               </span>
               {report.sourceFile && (
                 <span className="inline-flex items-center gap-1">

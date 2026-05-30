@@ -6,6 +6,7 @@ import {
   type InsertPaymentDispatchInput,
 } from "@/lib/supabase/payment-dispatches";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { getSessionActor } from "@/lib/auth/session-actor";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -48,9 +49,11 @@ export async function POST(req: NextRequest) {
 
   // Identify the operator for audit trail.
   let createdBy: string | null = null;
+  let createdByRole = 'user';
   try {
-    const session = await getServerSession();
-    createdBy = session?.user?.email ?? null;
+    const sessionActor = await getSessionActor();
+    createdBy = sessionActor.user_name !== 'anonymous' ? sessionActor.user_name : null;
+    createdByRole = sessionActor.user_role;
   } catch {
     /* ignore — audit trail is best-effort */
   }
@@ -62,7 +65,7 @@ export async function POST(req: NextRequest) {
 
   void insertAuditLog({
     user_name: createdBy ?? "unknown",
-    user_role: "payroll_clerk",
+    user_role: createdByRole,
     action: "payment.dispatched",
     resource: "payment_dispatches",
     resource_id: row.id,

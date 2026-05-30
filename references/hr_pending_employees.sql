@@ -24,6 +24,8 @@
 --   ready               → all fields populated, awaiting HR confirmation
 --   promoted            → copied into global_master_list (read-only after this)
 --   cancelled           → withdrawn before promotion (kept for audit)
+--   no_show             → manager marked "Did not attend orientation"; account
+--                         teardown fired (kept for audit). Terminal: not promotable.
 --
 -- Promotion
 --   On promotion the server route inserts a corresponding row into
@@ -58,8 +60,14 @@ CREATE TABLE IF NOT EXISTS public.hr_pending_employees (
 
   -- Workflow ──────────────────────────────────────────────────────────────
   status            TEXT NOT NULL DEFAULT 'pending_work_email'
-                      CHECK (status IN ('pending_work_email','ready','promoted','cancelled')),
+                      CHECK (status IN ('pending_work_email','ready','promoted','cancelled','no_show')),
   notes             TEXT,
+
+  -- No-show markers (set when a manager marks "Did not attend orientation").
+  -- Added by references/add_no_show_status_to_hr_pending.sql.
+  no_show_at        TIMESTAMPTZ,
+  no_show_by        TEXT,
+  no_show_note      TEXT,
 
   -- Promotion bookkeeping (set when status flips to 'promoted') ───────────
   --   global_master_list.id is UUID in this deployment — match it.

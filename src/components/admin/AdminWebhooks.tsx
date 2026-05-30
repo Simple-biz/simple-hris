@@ -58,10 +58,16 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
       'Sends the onboarding invite email. Used by HR Onboarding "Send" (falls back to the legacy hr.onboarding_webhook_url key).',
   },
   {
-    slug: 'offboarding',
-    label: 'Offboarding (n8n)',
+    slug: 'offboarding_deactivate',
+    label: 'Offboarding - Deactivate (n8n)',
     description:
-      'Fired by the HR Offboarding "Confirm offboard" button to deactivate the workspace account and send the termination notice.',
+      'Fired immediately when a non-Lead-Gen employee is off-boarded: suspends the Workspace account, sends the termination notice, and removes the member from Hubstaff (pay_rate 0).',
+  },
+  {
+    slug: 'offboarding_delete',
+    label: 'Offboarding - Delete (n8n)',
+    description:
+      'Permanently deletes the Workspace account. Fired immediately for Lead Gen; fired by the scheduled-deletion cron 14 days after deactivation for other departments.',
   },
 ];
 

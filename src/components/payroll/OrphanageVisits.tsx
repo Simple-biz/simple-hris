@@ -49,7 +49,6 @@ import {
 } from '@/lib/pab-disputes/fetch-orphanage-overlap';
 
 const PAGE_SIZE = 15;
-const ADMIN_NAME = 'Fran M';
 
 type EmployeeOption = {
   name: string | null;
@@ -58,7 +57,7 @@ type EmployeeOption = {
   department: string | null;
 };
 
-export default function OrphanageVisits() {
+export default function OrphanageVisits({ sessionEmail }: { sessionEmail?: string | null }) {
   const [visits, setVisits] = useState<PabDayDisputeRow[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -212,7 +211,7 @@ export default function OrphanageVisits() {
           work_email: email,
           visit_date: formDate,
           note: formNote.trim() || null,
-          admin_name: ADMIN_NAME,
+          admin_name: sessionEmail ?? 'anonymous',
         }),
       });
       const json = await res.json();
@@ -234,7 +233,7 @@ export default function OrphanageVisits() {
     setDeleting(true);
     try {
       const res = await fetch(
-        `/api/pab-disputes/orphanage-visits/${deleteDialog.id}?admin_name=${encodeURIComponent(ADMIN_NAME)}`,
+        `/api/pab-disputes/orphanage-visits/${deleteDialog.id}?admin_name=${encodeURIComponent(sessionEmail ?? 'anonymous')}`,
         { method: 'DELETE' },
       );
       const json = await res.json();

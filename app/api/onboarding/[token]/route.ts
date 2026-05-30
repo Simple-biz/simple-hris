@@ -27,18 +27,43 @@ export async function GET(
   if (error) return NextResponse.json({ error }, { status: 500 });
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Don't leak the W-8BEN file path or HR-only metadata to the public endpoint.
-  return NextResponse.json({
-    row: {
-      id: row.id,
-      status: row.status,
-      invite_name: row.invite_name,
-      invite_personal_email: row.invite_personal_email,
-      invite_department: row.invite_department,
-      invite_note: row.invite_note,
-      submitted_at: row.submitted_at,
-    },
-  });
+  // For submitted rows include the prior form data so the page can pre-fill.
+  // w8ben_file_path is kept server-side (not sent); w8ben_file_name is
+  // included so the form can show "already uploaded: filename".
+  const base = {
+    id: row.id,
+    status: row.status,
+    invite_name: row.invite_name,
+    invite_personal_email: row.invite_personal_email,
+    invite_department: row.invite_department,
+    invite_note: row.invite_note,
+    submitted_at: row.submitted_at,
+  };
+  const priorData = row.status === "submitted"
+    ? {
+        full_name: row.full_name,
+        phone: row.phone,
+        email: row.email,
+        non_solicitation_signature: row.non_solicitation_signature,
+        privacy_signature: row.privacy_signature,
+        w8ben_applicable: row.w8ben_applicable,
+        w8ben_file_name: row.w8ben_file_name,
+        payment_method: row.payment_method,
+        hurupay_email: row.hurupay_email,
+        bank_full_name: row.bank_full_name,
+        bank_account_name: row.bank_account_name,
+        bank_account_number: row.bank_account_number,
+        bank_swift_code: row.bank_swift_code,
+        bank_street: row.bank_street,
+        bank_city: row.bank_city,
+        bank_province: row.bank_province,
+        bank_postal_code: row.bank_postal_code,
+        bank_full_address: row.bank_full_address,
+        contract_signature: row.contract_signature,
+        contract_date: row.contract_date,
+      }
+    : null;
+  return NextResponse.json({ row: { ...base, priorData } });
 }
 
 /**
@@ -104,7 +129,7 @@ export async function POST(
 
   const { row, error } = await submitHrOnboarding(token, body as SubmitOnboardingInput);
   if (error) {
-    const status = /already been submitted|not found/i.test(error) ? 409 : 500;
+    const status = /not found|no longer active/i.test(error) ? 409 : 500;
     return NextResponse.json({ error }, { status });
   }
   return NextResponse.json({ row: { id: row?.id, status: row?.status } });

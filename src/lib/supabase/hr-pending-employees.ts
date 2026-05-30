@@ -5,6 +5,7 @@ import {
 } from "./server";
 import { getCurrentMasterListUploadId } from "./global-master-list-db";
 import { getHrOnboardingSubmissionById } from "./hr-onboarding-submissions";
+import { normalizeDeptToKey } from "../payroll/normalize-dept-key";
 
 /**
  * Maps an onboarding submission's payment details onto the `employee_ids`
@@ -56,7 +57,8 @@ export type HrPendingStatus =
   | "pending_work_email"
   | "ready"
   | "promoted"
-  | "cancelled";
+  | "cancelled"
+  | "no_show";
 
 export type HrPendingEmployeeRow = {
   id: number;
@@ -83,6 +85,14 @@ export type HrPendingEmployeeRow = {
   orientation_attended_at: string | null;
   orientation_attended_by: string | null;
   orientation_note: string | null;
+  /** Set when a manager marks "Did not attend orientation" (status -> no_show). */
+  no_show_at: string | null;
+  no_show_by: string | null;
+  no_show_note: string | null;
+  /** Non-Lead-Gen no-show hard-delete timer (Lead Gen deletes immediately).
+   *  The scheduled-deletion cron drains these alongside global_master_list. */
+  scheduled_deletion_at: string | null;
+  deletion_processed_at: string | null;
   /** Provenance back-link when this hire was spun up from a submitted
    *  onboarding form (null for "Add person" hires). */
   onboarding_submission_id: string | null;
@@ -299,6 +309,7 @@ export async function deleteHrPendingEmployee(
  */
 export async function promoteHrPendingEmployee(
   id: number,
+  opts: { skipBackfill?: boolean } = {},
 ): Promise<{
   row: HrPendingEmployeeRow | null;
   /** UUID of the new global_master_list row, or null when promotion failed. */
@@ -306,8 +317,6 @@ export async function promoteHrPendingEmployee(
   error: string | null;
   /** Outcome of the best-effort master Google Sheet append (null until reached). */
   sheet?: { appended: boolean; reason?: string } | null;
-  /** Outcome of the best-effort Hubstaff-invite webhook (null until reached). */
-  hubstaff?: { ok: boolean; error?: string } | null;
 }> {
   const sb = client();
 
@@ -329,6 +338,14 @@ export async function promoteHrPendingEmployee(
   }
   if (row.status === "cancelled") {
     return { row, masterId: null, error: "Cannot promote a cancelled hire" };
+  }
+  if (row.status === "no_show") {
+    return {
+      row,
+      masterId: null,
+      error:
+        "Cannot promote a no-show hire. They were marked as not attending orientation and their accounts were torn down; re-onboard them instead.",
+    };
   }
   if (!row.work_email) {
     return {
@@ -421,16 +438,20 @@ export async function promoteHrPendingEmployee(
 
   // Stamp the new hire's employee_id (YYMM-NNNN). Best-effort: a failure here
   // doesn't unwind the promotion — the next master-list upload or the admin
-  // backfill route will pick the row up.
-  try {
-    const { backfillEmployeeIds } = await import("./backfill-employee-ids");
-    await backfillEmployeeIds(sb);
-  } catch (e) {
-    console.warn(
-      `[promoteHrPendingEmployee] employee_id stamp skipped: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
-    );
+  // backfill route will pick the row up. `skipBackfill` is used by the Lead-Gen
+  // bulk promote, which runs backfillEmployeeIds ONCE after its loop instead of
+  // once per hire (the backfill re-scans the whole roster on every call).
+  if (!opts.skipBackfill) {
+    try {
+      const { backfillEmployeeIds } = await import("./backfill-employee-ids");
+      await backfillEmployeeIds(sb);
+    } catch (e) {
+      console.warn(
+        `[promoteHrPendingEmployee] employee_id stamp skipped: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
   }
 
   // Pre-fill the hire's payout details (incl. the Hurupay email they entered on
@@ -575,33 +596,11 @@ export async function promoteHrPendingEmployee(
     console.warn(`[promoteHrPendingEmployee] master-sheet append skipped: ${reason}`);
   }
 
-  // Invite the hire to the Hubstaff workspace via the n8n automation, using the
-  // projects HR picked at staging (persisted on the row) + the hire's rate.
-  // Best-effort: a failure here never unwinds the promotion.
-  let hubstaff: { ok: boolean; error?: string } | null = null;
-  try {
-    const { inviteHubstaffUser } = await import("../hr/hubstaff-invite");
-    const payRate =
-      row.regular_rate != null && Number.isFinite(Number(row.regular_rate))
-        ? Number(row.regular_rate)
-        : null;
-    hubstaff = await inviteHubstaffUser({
-      workEmail: row.work_email,
-      projectNames: Array.isArray(row.project_names) ? row.project_names : [],
-      payRate,
-    });
-    if (!hubstaff.ok) {
-      console.warn(
-        `[promoteHrPendingEmployee] hubstaff invite failed: ${hubstaff.error ?? "unknown"}`,
-      );
-    }
-  } catch (e) {
-    const err = e instanceof Error ? e.message : String(e);
-    hubstaff = { ok: false, error: err };
-    console.warn(`[promoteHrPendingEmployee] hubstaff invite failed: ${err}`);
-  }
+  // NOTE: The Hubstaff invite + Roboform emails are now fired by the combined
+  // create-workspace-account webhook at work-email-set time, NOT at promote
+  // time. Promote is master-list-only. See src/lib/hr/workspace-account.ts.
 
-  return { row: promoted as HrPendingEmployeeRow, masterId, error: null, sheet, hubstaff };
+  return { row: promoted as HrPendingEmployeeRow, masterId, error: null, sheet };
 }
 
 /**
@@ -656,6 +655,78 @@ export async function markPendingHireOrientation(
     .single();
   if (error) return { row: null, error: error.message };
   return { row: data as HrPendingEmployeeRow, error: null };
+}
+
+/**
+ * Manager marks a staged hire as "Did not attend orientation" -> status='no_show'.
+ * Records who/when/note (mirrors the orientation markers). Idempotent. This ONLY
+ * writes the row; the caller (the no-show route) is responsible for firing the
+ * department-aware account teardown. Refuses to no-show an already-promoted hire
+ * (they're in the master list — use the normal Offboard flow for those).
+ */
+export async function markPendingHireNoShow(
+  id: number,
+  args: {
+    markedBy: string;
+    note?: string | null;
+    /** Non-Lead-Gen: now()+14d. Lead Gen: null (deleted immediately). */
+    scheduledDeletionAt?: string | null;
+    /** Lead Gen: stamp now() (delete fired immediately, nothing left to do). */
+    deletionProcessedAt?: string | null;
+  },
+): Promise<{ row: HrPendingEmployeeRow | null; error: string | null }> {
+  const sb = client();
+  const payload: Record<string, unknown> = {
+    status: "no_show",
+    no_show_at: new Date().toISOString(),
+    no_show_by: args.markedBy.trim().toLowerCase(),
+    no_show_note: args.note?.trim() || null,
+  };
+  if (args.scheduledDeletionAt !== undefined)
+    payload["scheduled_deletion_at"] = args.scheduledDeletionAt;
+  if (args.deletionProcessedAt !== undefined)
+    payload["deletion_processed_at"] = args.deletionProcessedAt;
+  const { data, error } = await sb
+    .from(TABLE)
+    .update(payload)
+    .eq("id", id)
+    .neq("status", "promoted")
+    .select("*")
+    .maybeSingle();
+  if (error) return { row: null, error: error.message };
+  if (!data)
+    return {
+      row: null,
+      error:
+        "Hire not found, or already promoted (promoted hires use the Offboard flow, not no-show).",
+    };
+  return { row: data as HrPendingEmployeeRow, error: null };
+}
+
+/**
+ * Lead-Gen-only bulk promote pre-filter: every 'ready' hire in the Lead Gen
+ * department that already satisfies the single-row promote gates (orientation
+ * confirmed + work email present). Pre-filtering here means the bulk loop never
+ * hits the orientation/work-email guards inside promoteHrPendingEmployee.
+ */
+export async function listReadyLeadGenHires(): Promise<{
+  rows: HrPendingEmployeeRow[];
+  error: string | null;
+}> {
+  const sb = client();
+  const { data, error } = await sb
+    .from(TABLE)
+    .select("*")
+    .eq("status", "ready")
+    .not("orientation_attended_at", "is", null)
+    .not("work_email", "is", null)
+    .order("created_at", { ascending: true })
+    .range(0, 999);
+  if (error) return { rows: [], error: error.message };
+  const rows = ((data ?? []) as HrPendingEmployeeRow[]).filter(
+    (r) => normalizeDeptToKey(r.department) === "lead_gen",
+  );
+  return { rows, error: null };
 }
 
 /** Manager unmarks orientation (typo / changed mind). Clears all 3 columns. */

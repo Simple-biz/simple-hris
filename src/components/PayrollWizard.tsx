@@ -622,9 +622,11 @@ const steps = [
 
 export default function PayrollWizard({
   sessionEmail,
+  sessionRole,
   initialData,
 }: {
   sessionEmail?: string | null;
+  sessionRole?: string | null;
   initialData?: import('@/lib/accounting/prefetch').InitialAccountingData | null;
 }) {
   const [currentStep, setCurrentStep] = useState(1);
@@ -1312,7 +1314,7 @@ export default function PayrollWizard({
     wizardOpenedAuditRef.current = true;
     void logAudit({
       user_name: sessionEmail ?? 'anonymous',
-      user_role: 'payroll_clerk',
+      user_role: sessionRole ?? 'user',
       action: 'wizard.opened',
       resource: 'payroll_wizard',
       cycle: auditCycle,
@@ -1332,7 +1334,7 @@ export default function PayrollWizard({
     if (prev === null) return; // first settle — already covered by wizard.opened
     void logAudit({
       user_name: sessionEmail ?? 'anonymous',
-      user_role: 'payroll_clerk',
+      user_role: sessionRole ?? 'user',
       action: 'wizard.cycle_selected',
       resource: 'payroll_wizard',
       cycle: auditCycle,
@@ -2532,7 +2534,7 @@ export default function PayrollWizard({
     if (valuesDiffer(prevValue, enabled)) {
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
-        user_role: 'payroll_clerk',
+        user_role: sessionRole ?? 'user',
         action: 'wizard.bonus_edited',
         resource: 'employee_bonus',
         resource_id: email,
@@ -2554,7 +2556,7 @@ export default function PayrollWizard({
     if (valuesDiffer(prevValue, deptKey)) {
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
-        user_role: 'payroll_clerk',
+        user_role: sessionRole ?? 'user',
         action: 'wizard.addition_edited',
         resource: 'employee_department',
         resource_id: email,
@@ -2580,7 +2582,7 @@ export default function PayrollWizard({
     if (prevValue !== null) {
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
-        user_role: 'payroll_clerk',
+        user_role: sessionRole ?? 'user',
         action: 'wizard.addition_edited',
         resource: 'employee_department',
         resource_id: email,
@@ -2617,7 +2619,7 @@ export default function PayrollWizard({
     if (changedEmails.length > 0) {
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
-        user_role: 'payroll_clerk',
+        user_role: sessionRole ?? 'user',
         action: 'wizard.bonus_edited',
         resource: 'employee_bonus_bulk',
         resource_id: _deptKey,
@@ -2644,7 +2646,7 @@ export default function PayrollWizard({
     if (valuesDiffer(prevValue ?? 0, value)) {
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
-        user_role: 'payroll_clerk',
+        user_role: sessionRole ?? 'user',
         action: 'wizard.addition_edited',
         resource: 'employee_metric',
         resource_id: email,
@@ -2669,7 +2671,7 @@ export default function PayrollWizard({
     if (valuesDiffer(prevValue ?? 0, value)) {
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
-        user_role: 'payroll_clerk',
+        user_role: sessionRole ?? 'user',
         action: 'wizard.addition_edited',
         resource: 'dept_metric',
         resource_id: deptKey,
@@ -2703,7 +2705,7 @@ export default function PayrollWizard({
     if (valuesDiffer(prevValue, value)) {
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
-        user_role: 'payroll_clerk',
+        user_role: sessionRole ?? 'user',
         action: 'wizard.bonus_edited',
         resource: 'bonus_override',
         resource_id: email,
@@ -3850,6 +3852,7 @@ export default function PayrollWizard({
 
       const form = new FormData();
       form.append('file', new Blob([csvText], { type: 'text/csv' }), pendingWeekly.fileName);
+      if (sessionEmail) form.append('uploaded_by', sessionEmail);
 
       const res = await fetch('/api/hubstaff-hours', { method: 'POST', body: form });
       const json = (await res.json()) as { success?: boolean; error?: string; rowCount?: number };
@@ -4029,7 +4032,7 @@ export default function PayrollWizard({
       setConfirmingLockToggle(false);
       void logAudit({
         user_name: sessionEmail ?? 'anonymous',
-        user_role: 'payroll_clerk',
+        user_role: sessionRole ?? 'user',
         action: goingLocked ? 'dispatch.lock_acquired' : 'dispatch.lock_released',
         resource: 'dispatch_lock',
         cycle: auditCycle,
@@ -5135,8 +5138,17 @@ export default function PayrollWizard({
                       if (e.key === 'Enter' && usdToPhpEditing) {
                         const parsed = parseFloat(usdToPhpInput);
                         if (Number.isFinite(parsed) && parsed > 0) {
+                          const prevRate = usdToPhpRate;
                           setUsdToPhpRate(parsed);
                           setUsdToPhpSaving(true);
+                          void logAudit({
+                            user_name: sessionEmail ?? 'anonymous',
+                            user_role: sessionRole ?? 'user',
+                            action: 'wizard.fx_rate_changed',
+                            resource: 'usd_to_php_rate',
+                            cycle: auditCycle,
+                            details: { previous_value: prevRate, new_value: parsed },
+                          });
                           fetch('/api/app-settings', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -5179,8 +5191,17 @@ export default function PayrollWizard({
                         toast.error('Enter a valid positive rate');
                         return;
                       }
+                      const prevRate = usdToPhpRate;
                       setUsdToPhpRate(parsed);
                       setUsdToPhpSaving(true);
+                      void logAudit({
+                        user_name: sessionEmail ?? 'anonymous',
+                        user_role: sessionRole ?? 'user',
+                        action: 'wizard.fx_rate_changed',
+                        resource: 'usd_to_php_rate',
+                        cycle: auditCycle,
+                        details: { previous_value: prevRate, new_value: parsed },
+                      });
                       fetch('/api/app-settings', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -8066,7 +8087,7 @@ export default function PayrollWizard({
               const row = tenureGiftRows.find((r) => r.id === id);
               void logAudit({
                 user_name: sessionEmail ?? 'anonymous',
-                user_role: 'payroll_clerk',
+                user_role: sessionRole ?? 'user',
                 action: 'tenure.gift_decided',
                 resource: 'tenure_gifts',
                 resource_id: id,

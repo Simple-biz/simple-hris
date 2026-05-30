@@ -34,10 +34,6 @@ import {
   type UsHoliday,
 } from '@/lib/us-holidays';
 
-// ─── Current user (hardcoded until RBAC is implemented) ───────────────────────
-
-const CURRENT_USER = { name: 'Fran M', role: 'Senior Admin' };
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -144,8 +140,8 @@ async function postAuditLog(entry: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      user_name: CURRENT_USER.name,
-      user_role: CURRENT_USER.role,
+      user_name: sessionEmail ?? 'anonymous',
+      user_role: 'accounting',
       ...entry,
     }),
   });
@@ -254,7 +250,7 @@ function DeptOtRow({
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-export default function SystemSettings() {
+export default function SystemSettings({ sessionEmail }: { sessionEmail?: string | null }) {
   const [rules, setRules] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(RULES_GENERAL.map((r) => [r.key, r.defaultEnabled])),
   );

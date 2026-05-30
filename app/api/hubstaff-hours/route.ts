@@ -13,9 +13,8 @@ import {
 } from "@/lib/supabase/hubstaff-hours-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { normEmail } from "@/lib/email/norm-email";
+import { getSessionActor } from "@/lib/auth/session-actor";
 import { NextRequest, NextResponse } from "next/server";
-
-const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
 
 // Columns on the hubstaff_hours row that may carry an employee's email.
 // Mirrors `HUBSTAFF_EMAIL_KEYS` + the case-insensitive aliases used client-side
@@ -207,9 +206,10 @@ export async function DELETE(req: NextRequest) {
 
     const { deleted } = await deleteHubstaffRowsBySourceFile(sourceFile);
 
+    const actor = await getSessionActor();
     void insertAuditLog({
-      user_name:   SYSTEM_USER.name,
-      user_role:   SYSTEM_USER.role,
+      user_name:   actor.user_name,
+      user_role:   actor.user_role,
       action:      'csv.delete',
       resource:    'hubstaff_hours',
       resource_id: sourceFile,
@@ -246,13 +246,15 @@ export async function POST(req: NextRequest) {
 
     const text = await (file as Blob).text();
     const fileName = (file as File).name || form.get("fileName")?.toString() || undefined;
+    const uploadedBy = form.get("uploaded_by")?.toString().trim() || null;
     // `mode` is retained in the form payload for back-compat but ignored: every upload
     // is archived and promoted to current. Latest always wins in the Payroll Wizard.
-    const { rowCount, uploadId } = await replaceHubstaffHoursFromCsvText(text, fileName);
+    const { rowCount, uploadId } = await replaceHubstaffHoursFromCsvText(text, fileName, uploadedBy);
 
+    const actor = await getSessionActor();
     void insertAuditLog({
-      user_name:   SYSTEM_USER.name,
-      user_role:   SYSTEM_USER.role,
+      user_name:   uploadedBy ?? actor.user_name,
+      user_role:   actor.user_role,
       action:      'csv.upload',
       resource:    'hubstaff_hours',
       resource_id: fileName ?? null,

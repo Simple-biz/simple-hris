@@ -5,7 +5,7 @@ import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profil
 import { insertRateHistoryRow } from "@/lib/payroll/rate-history";
 import { NextResponse } from "next/server";
 
-const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
+import { getSessionActor } from '@/lib/auth/session-actor';
 const RATES_TABLE = process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() || 'employee_hourly_rates';
 
 function parseDateOnly(v: unknown): Date | null {
@@ -98,12 +98,13 @@ export async function POST(req: Request) {
       }
     }
 
+    const actor = await getSessionActor();
     const { error: histErr } = await insertRateHistoryRow({
       email: recipient,
       regularRate,
       otRate,
       effectiveFrom: effective,
-      createdBy: SYSTEM_USER.name,
+      createdBy: actor.user_name,
     });
     if (histErr) {
       // Surface in logs but don't block — the cache update below is what
@@ -129,8 +130,8 @@ export async function POST(req: Request) {
     }
 
     void insertAuditLog({
-      user_name:   SYSTEM_USER.name,
-      user_role:   SYSTEM_USER.role,
+      user_name:   actor.user_name,
+      user_role:   actor.user_role,
       action:      'employee.rates.update',
       resource:    'employee_hourly_rates',
       resource_id: recipient,

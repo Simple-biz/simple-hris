@@ -1205,14 +1205,14 @@ function SimpleView({
                   No workers match your search.
                 </div>
               ) : (
-                pageRows.map((row) => {
+                pageRows.map((row, _rowIdx) => {
                   const email = row.work_email ?? row.personal_email ?? '';
                   const emailKey = normEmail(email) ?? '';
                   const pay = emailKey ? employeePayByEmail[emailKey] : undefined;
                   const isHubstaff = row.recordSource === 'hubstaff';
                   return (
                     <div
-                      key={`${row.recordSource}-${email}-${row.name ?? ''}`}
+                      key={`${row.recordSource}-${email}-${row.name ?? ''}-${row.department ?? ''}-${_rowIdx}`}
                       className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900/40"
                     >
                       <div className="flex items-center gap-3">
@@ -1361,7 +1361,7 @@ function SimpleView({
                       const isHubstaff = row.recordSource === 'hubstaff';
                       return (
                         <tr
-                          key={`${row.recordSource}-${email}-${row.name ?? ''}`}
+                          key={`${row.recordSource}-${email}-${row.name ?? ''}-${row.department ?? ''}-${_rowIdx}`}
                           className="border-b border-zinc-100 last:border-b-0 hover:bg-[#fafaf8] dark:border-zinc-800/60 dark:hover:bg-zinc-900/60"
                         >
                           <td className="px-4 py-3.5">

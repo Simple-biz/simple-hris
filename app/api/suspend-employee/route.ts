@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const SYSTEM_USER = { name: 'Fran M', role: 'Senior Admin' } as const;
+import { getSessionActor } from '@/lib/auth/session-actor';
 const RATES_TABLE  = process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() || 'employee_hourly_rates';
 
 // POST /api/suspend-employee
@@ -42,9 +42,10 @@ export async function POST(req: Request) {
 
     invalidateRateProfilesCache();
 
+    const actor = await getSessionActor();
     void insertAuditLog({
-      user_name:   SYSTEM_USER.name,
-      user_role:   SYSTEM_USER.role,
+      user_name:   actor.user_name,
+      user_role:   actor.user_role,
       action:      suspended ? 'employee.suspend' : 'employee.unsuspend',
       resource:    'employee_hourly_rates',
       resource_id: workEmail || personalEmail,

@@ -187,9 +187,12 @@ export async function submitHrOnboarding(
     .maybeSingle();
   if (fetchErr) return { row: null, error: fetchErr.message };
   if (!existing) return { row: null, error: "Onboarding link not found" };
-  if ((existing as { status: HrOnboardingStatus }).status !== "pending") {
-    return { row: null, error: "This onboarding form has already been submitted." };
+  const existingStatus = (existing as { status: HrOnboardingStatus }).status;
+  if (existingStatus === "archived") {
+    return { row: null, error: "This onboarding link is no longer active." };
   }
+  // Both 'pending' and 'submitted' are accepted — submitted rows can be updated
+  // when HR resends the link and the hire wants to correct their details.
 
   const update: Record<string, unknown> = {
     status: "submitted" as HrOnboardingStatus,
@@ -230,8 +233,9 @@ export async function submitHrOnboarding(
 /**
  * Mint a fresh token on a row and persist it. Called by the send route so each
  * email carries a unique URL; any link from a previous send for the same row
- * is implicitly invalidated. Only allowed while the row is still `pending` —
- * rotating a submitted row would orphan the recipient's already-completed form.
+ * is implicitly invalidated. Allowed for both `pending` and `submitted` rows —
+ * submitted rows can be resent so the hire gets a fresh link to their
+ * confirmation screen. Archived rows are excluded (they should not be sendable).
  */
 export async function rotateHrOnboardingToken(
   id: string,
@@ -242,14 +246,14 @@ export async function rotateHrOnboardingToken(
     .from(TABLE)
     .update({ token })
     .eq("id", id)
-    .eq("status", "pending")
+    .in("status", ["pending", "submitted"])
     .select("token")
     .maybeSingle();
   if (error) return { token: null, error: error.message };
   if (!data) {
     return {
       token: null,
-      error: "Cannot rotate token — row is not pending (already submitted or archived).",
+      error: "Cannot resend — this submission is archived.",
     };
   }
   return { token: (data as { token: string }).token, error: null };

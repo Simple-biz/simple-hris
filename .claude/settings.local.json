@@ -156,11 +156,29 @@
       "Bash(echo \"EXIT:$?\")",
       "Bash(IMPECCABLE_CRITIQUE_META='{\"target\":\"login page\",\"total_score\":25,\"p0_count\":1,\"p1_count\":2}' node .claude/skills/impeccable/scripts/critique-storage.mjs write src-components-employee-employeelogin-tsx C:/tmp/login-critique-body.md)",
       "Bash(echo \"EXIT_TSC:$?\")",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "mcp__claude_ai_n8n__search_workflows",
+      "mcp__claude_ai_n8n__get_workflow_details",
+      "Read(//c/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/a365e7a7-d216-4a3e-b63f-9151093255e3/tool-results/**)",
+      "Bash(echo \"---exit:$?---\")",
+      "Bash(xargs -I {} sh -c 'echo \"=== {} ===\" && head -1 {}')",
+      "Bash(xargs -I {} sh -c 'echo \"=== {} ===\" && grep -A3 \"CREATE OR REPLACE VIEW.*active_employees\" {}')",
+      "Bash(cd c:/Users/Itachi/Desktop/simple-hris && rg -n \"off_boarded_at|active_employees|scheduled_deletion\" --type ts -l app src 2>nul)",
+      "Bash(Get-ChildItem -Path 'c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app' -Directory -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object -ExpandProperty Name)",
+      "Bash(gh api *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(npm --version)",
+      "Bash(uipro --version)",
+      "Bash(uipro --help)",
+      "Bash(uipro init *)",
+      "Bash(Get-ChildItem \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\.claude\\\\skills\" -Recurse)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
-      "\\tmp"
+      "\\tmp",
+      "c:\\Users\\Itachi\\Desktop\\simple-hris"
     ]
   }
 }

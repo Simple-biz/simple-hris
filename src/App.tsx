@@ -157,7 +157,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
           />
         );
       case 'payroll-wizard':
-        return <PayrollWizard sessionEmail={sessionEmail} initialData={initialData} />;
+        return <PayrollWizard sessionEmail={sessionEmail} sessionRole={roles[0] ?? null} initialData={initialData} />;
       case 'payment-dispatch':
         return <PayrollDispatch />;
       case 'disputes':
@@ -165,7 +165,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       case 'notifications':
         return <NotificationsPanel viewerEmail={sessionEmail} accent="orange" />;
       case 'settings':
-        return <SystemSettings />;
+        return <SystemSettings sessionEmail={sessionEmail} />;
       case 'announcements':
         return (
           <AccountingAnnouncementsTab

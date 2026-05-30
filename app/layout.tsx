@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import NextAuthProvider from "@/components/auth/NextAuthProvider";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth/auth-options";
 import { Toaster } from "sonner";
 import "../src/index.css";
 
@@ -21,15 +23,16 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: ReactNode;
 }>) {
+  const session = await getServerSession(authOptions);
   return (
     <html lang="en" className="light" suppressHydrationWarning>
       <body className="min-h-dvh overflow-x-hidden">
-        <NextAuthProvider>
+        <NextAuthProvider session={session}>
           <ThemeProvider
             attribute="class"
             defaultTheme="light"

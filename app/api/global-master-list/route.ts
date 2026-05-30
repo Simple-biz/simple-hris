@@ -7,7 +7,7 @@ import {
 } from "@/lib/supabase/global-master-list-db";
 import { NextRequest, NextResponse } from "next/server";
 
-const SYSTEM_USER = { name: "Fran M", role: "Senior Admin" } as const;
+import { getSessionActor } from "@/lib/auth/session-actor";
 
 /** CSV layout / mapping problems — 400 so DevTools shows a client error with the message, not a generic 500. */
 function statusForMasterListImportError(message: string): number {
@@ -89,9 +89,10 @@ export async function POST(req: NextRequest) {
       ratesReconcile = null;
     }
 
+    const actor = await getSessionActor();
     void insertAuditLog({
-      user_name: SYSTEM_USER.name,
-      user_role: SYSTEM_USER.role,
+      user_name: actor.user_name,
+      user_role: actor.user_role,
       action: "csv.master.upload",
       resource: "global_master_list",
       resource_id: fileName,

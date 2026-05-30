@@ -4,8 +4,7 @@ import {
   replaceEmployeeHourlyRatesFromCsv,
 } from "@/lib/supabase/rates-upload-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
-
-const SYSTEM_USER = { name: "Fran M", role: "Senior Admin" } as const;
+import { getSessionActor } from "@/lib/auth/session-actor";
 
 function clientIp(req: NextRequest): string | null {
   const fwd = req.headers.get("x-forwarded-for");
@@ -66,9 +65,10 @@ export async function POST(req: NextRequest) {
 
     const result = await replaceEmployeeHourlyRatesFromCsv(text, fileName);
 
+    const actor = await getSessionActor();
     void insertAuditLog({
-      user_name: SYSTEM_USER.name,
-      user_role: SYSTEM_USER.role,
+      user_name: actor.user_name,
+      user_role: actor.user_role,
       action: "csv.rates.upload",
       resource: "employee_hourly_rates",
       resource_id: fileName,

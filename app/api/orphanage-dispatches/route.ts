@@ -7,6 +7,7 @@ import {
   type OrphanageDispatchType,
 } from '@/lib/supabase/orphanage-dispatches';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { getSessionActor } from '@/lib/auth/session-actor';
 
 /** GET /api/orphanage-dispatches
  *  ?pending=1  → pending items queue (budget requests + gift shippings awaiting payment)
@@ -78,9 +79,10 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error }, { status: 500 });
 
   if (row) {
+    const actor = await getSessionActor();
     void insertAuditLog({
-      user_name: row.paid_by || row.created_by || 'unknown',
-      user_role: 'payroll_clerk',
+      user_name: row.paid_by || row.created_by || actor.user_name,
+      user_role: actor.user_role,
       action: 'orphanage.dispatched',
       resource: 'orphanage_dispatches',
       resource_id: row.id,

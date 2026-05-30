@@ -1,16 +1,15 @@
-import { request as httpsRequest } from "https";
 import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
 
 /**
- * Fires the n8n "create workspace account" webhook when HR stages a new hire
- * from an onboarding submission. The webhook provisions the hire's workspace
- * account from their name + emails.
+ * Fires the n8n combined onboarding webhook when HR assigns a work email to a
+ * new hire. The webhook handles everything in one shot:
+ *   1. Provisions the @simple.biz Google Workspace account
+ *   2. Invites the hire to Hubstaff (project_names required)
+ *   3. Sends the Roboform (password manager) instructional email
+ *   4. Sends the Hubstaff Overview instructional email
  *
- * Quirk: the deployed n8n webhook node is configured as a **GET** request but
- * reads its input from the JSON **body** (verified against the live endpoint:
- * POST -> 404 "not registered for POST"; GET with a JSON body -> 200). The
- * fetch() API forbids a body on GET, so we issue the request via Node's https
- * module instead.
+ * This fires at work-email-set time (NOT at promote time). Promote is now
+ * master-list-only and fires no automation.
  *
  * URL resolution order:
  *   1. Admin -> Webhooks entry with slug `create_workspace_account` (active).
@@ -21,7 +20,10 @@ import { resolveWebhookUrl } from "@/lib/webhooks/resolve-webhook";
 export const CREATE_WORKSPACE_WEBHOOK_SLUG = "create_workspace_account";
 
 const DEFAULT_WEBHOOK_URL =
-  "https://simpledotbiz.app.n8n.cloud/webhook/create-workspace-account";
+  "https://auto.simple.biz/webhook/create-workspace-account";
+
+const ORGANIZATION_ID = 724122;
+const DEFAULT_ROLE = "project_user";
 
 function resolveCreateWorkspaceUrl(): Promise<string> {
   return resolveWebhookUrl(CREATE_WORKSPACE_WEBHOOK_SLUG, {
@@ -35,6 +37,14 @@ export type CreateWorkspaceAccountInput = {
   lastName: string;
   workEmail: string;
   personalEmail: string;
+  /** Hubstaff project names the hire will be assigned to. */
+  projectNames?: string[];
+  /** Hubstaff pay rate. Defaults to 0 (prevents the "USD" display bug). */
+  payRate?: number | null;
+  /** Hubstaff role. Defaults to "project_user". */
+  role?: string;
+  /** Whether the hire is trackable in Hubstaff. Defaults to true. */
+  trackable?: boolean;
 };
 
 export type CreateWorkspaceAccountResult = {
@@ -43,47 +53,11 @@ export type CreateWorkspaceAccountResult = {
   error?: string;
 };
 
-/** GET request carrying a JSON body, via Node https (fetch can't do this). */
-function getWithBody(
-  url: string,
-  body: string,
-): Promise<{ status: number; text: string }> {
-  return new Promise((resolve, reject) => {
-    let target: URL;
-    try {
-      target = new URL(url);
-    } catch {
-      reject(new Error(`Invalid webhook URL: ${url}`));
-      return;
-    }
-    const req = httpsRequest(
-      {
-        hostname: target.hostname,
-        port: target.port || 443,
-        path: `${target.pathname}${target.search}`,
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
-        },
-      },
-      (res) => {
-        let text = "";
-        res.on("data", (c) => (text += c));
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
-      },
-    );
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
-}
-
 /**
- * Sends the workspace-account payload to the n8n webhook. Never throws — the
- * caller treats account creation as best-effort so a webhook outage doesn't
- * block staging the hire. Returns whether the call succeeded so HR can be
- * warned and retry manually.
+ * POSTs the combined onboarding payload to the n8n webhook. Never throws —
+ * the caller treats account creation as best-effort so a webhook outage
+ * does not block staging the hire. Returns whether the call succeeded so
+ * HR can be warned and retry manually.
  */
 export async function createWorkspaceAccount(
   input: CreateWorkspaceAccountInput,
@@ -93,12 +67,24 @@ export async function createWorkspaceAccount(
     return { ok: false, error: "Missing work email." };
   }
 
-  const payload = JSON.stringify({
+  const projectNames = (input.projectNames ?? [])
+    .map((p) => String(p).trim())
+    .filter(Boolean);
+
+  const payload: Record<string, unknown> = {
     firstName: input.firstName.trim(),
     lastName: input.lastName.trim(),
     workEmail,
     personalEmail: input.personalEmail.trim().toLowerCase(),
-  });
+    organization_id: ORGANIZATION_ID,
+    project_names: projectNames,
+    role: input.role ?? DEFAULT_ROLE,
+    pay_rate:
+      typeof input.payRate === "number" && Number.isFinite(input.payRate)
+        ? input.payRate
+        : 0,
+    trackable: input.trackable ?? true,
+  };
 
   let url: string;
   try {
@@ -111,15 +97,31 @@ export async function createWorkspaceAccount(
   }
 
   try {
-    const { status, text } = await getWithBody(url, payload);
-    if (status < 200 || status >= 300) {
-      return {
-        ok: false,
-        status,
-        error: `Webhook returned ${status}${text ? `: ${text.slice(0, 200)}` : ""}`,
-      };
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      // Try to extract a human-readable message from the webhook's JSON response
+      // rather than dumping raw JSON into the toast.
+      let friendlyError = `Webhook returned ${res.status}`;
+      try {
+        const json = JSON.parse(text) as Record<string, unknown>;
+        // Common shapes: { message }, { error }, { errors: [{...}] }, n8n status objects
+        const msg =
+          (typeof json.message === "string" && json.message) ||
+          (typeof json.error === "string" && json.error) ||
+          (typeof json.status === "string" && json.status !== "ok" && json.status) ||
+          null;
+        if (msg) friendlyError = msg;
+      } catch {
+        // Not JSON — keep the status code message.
+      }
+      return { ok: false, status: res.status, error: friendlyError };
     }
-    return { ok: true, status };
+    return { ok: true, status: res.status };
   } catch (e) {
     return {
       ok: false,

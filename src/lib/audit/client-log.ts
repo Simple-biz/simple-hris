@@ -20,7 +20,7 @@ export type WizardAuditPayload = {
   cycle?: AuditCycleContext | null;
   /** Operator email/name. Defaults to "anonymous" if not provided. */
   user_name?: string | null;
-  /** Operator role tag. Defaults to "payroll_clerk". */
+  /** Operator role tag — use the session RBAC role, never a hardcoded string. */
   user_role?: string | null;
 };
 
@@ -52,7 +52,7 @@ export async function logAudit(payload: WizardAuditPayload): Promise<{ ok: boole
   try {
     const body: NewAuditLog = {
       user_name: payload.user_name?.trim() || 'anonymous',
-      user_role: payload.user_role?.trim() || 'payroll_clerk',
+      user_role: payload.user_role?.trim() || 'user',
       action: payload.action,
       resource: payload.resource,
       resource_id: payload.resource_id ?? null,
@@ -90,7 +90,7 @@ export function createWizardLogger(opts: {
   ): Promise<{ ok: boolean }> {
     return logAudit({
       user_name: opts.user_name ?? null,
-      user_role: opts.user_role ?? 'payroll_clerk',
+      user_role: opts.user_role ?? 'user',
       cycle: opts.cycle ?? null,
       action,
       resource,

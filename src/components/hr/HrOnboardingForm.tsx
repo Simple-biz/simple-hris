@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
   Archive,
@@ -236,6 +236,29 @@ export default function HrOnboardingForm() {
       else next.add(id);
       return next;
     });
+  }
+
+  async function resendLink(r: SubmissionRow) {
+    const recipient = r.invite_personal_email ?? r.email;
+    if (!recipient) {
+      toast.error('No email address on file — cannot resend.');
+      return;
+    }
+    setBusyId(r.id);
+    try {
+      const res = await fetch(`/api/hr/onboarding-submissions/${r.id}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to resend');
+      toast.success(`Link resent to ${recipient}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to resend');
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function runBulkAction() {
@@ -525,26 +548,40 @@ export default function HrOnboardingForm() {
                           )}
                           {r.status === 'submitted' && (
                             <>
-                              {r.pending_employee_id ? (
+                              {r.pending_employee_id && r.work_email && (
                                 <span
                                   className="inline-flex items-center gap-1 rounded-md border border-sky-300 bg-sky-50 px-2 py-1 font-mono text-[11px] font-medium text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100"
-                                  title="Staged in Pending Hires"
+                                  title="Currently staged in Pending Hires"
                                 >
                                   <UserCheck className="h-3 w-3 shrink-0" />
                                   {r.work_email}
                                 </span>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 gap-1 px-2 text-xs text-emerald-800 hover:bg-emerald-50 dark:text-emerald-200 dark:hover:bg-emerald-950/30"
-                                  onClick={() => setWorkEmailFor(r)}
-                                  title="Mint an @simple.biz address and stage this hire"
-                                >
-                                  <Mail className="h-3 w-3" />
-                                  Set work email
-                                </Button>
                               )}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 gap-1 px-2 text-xs text-emerald-800 hover:bg-emerald-50 dark:text-emerald-200 dark:hover:bg-emerald-950/30"
+                                onClick={() => setWorkEmailFor(r)}
+                                title={r.pending_employee_id ? 'Re-send workspace setup with updated details' : 'Mint an @simple.biz address and stage this hire'}
+                              >
+                                <Mail className="h-3 w-3" />
+                                {r.pending_employee_id ? 'Update setup' : 'Set work email'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 gap-1 px-2 text-xs text-zinc-600 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-800/50"
+                                onClick={() => void resendLink(r)}
+                                disabled={isBusy}
+                                title={`Resend the onboarding link to ${r.invite_personal_email ?? r.email ?? 'this hire'}`}
+                              >
+                                {isBusy ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Send className="h-3 w-3" />
+                                )}
+                                Resend
+                              </Button>
                               <Button
                                 size="sm"
                                 className="h-7 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white hover:opacity-90"
@@ -740,6 +777,28 @@ export default function HrOnboardingForm() {
 
 // ─── Generate link dialog ─────────────────────────────────────────────────
 
+/** Parses a blob of pasted text (Excel rows, comma-lists, etc.) into distinct
+ *  email addresses. Returns { valid, invalid } where invalid are tokens that
+ *  look like they were meant to be emails but failed the plausibility check. */
+function parseBulkEmails(raw: string): { valid: string[]; invalid: string[] } {
+  const tokens = raw
+    .split(/[\n\r\t,;|]+/)
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  for (const t of tokens) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    if (isPlausibleEmail(t)) valid.push(t);
+    else if (t.includes('@') || t.includes('.')) invalid.push(t);
+  }
+  return { valid, invalid };
+}
+
+type BulkResult = { email: string; ok: boolean; error?: string };
+
 function GenerateLinkDialog({
   open,
   onClose,
@@ -749,20 +808,25 @@ function GenerateLinkDialog({
   onClose: () => void;
   onCreated: (row: SubmissionRow) => void;
 }) {
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [dept, setDept] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Lead Gen bulk state
+  const [bulkText, setBulkText] = useState('');
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const [bulkResults, setBulkResults] = useState<BulkResult[] | null>(null);
+
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptsLoading, setDeptsLoading] = useState(false);
 
-  // Pull the department list the moment the modal opens so the dropdown
-  // doesn't sit on "Loading…" while the user is already typing.
-  // Reads from the main DB's active_employees table — no secondary-Supabase
-  // env vars required, so this works on a fresh local checkout too.
+  const isLeadGen = ['lead gen', 'lead generation'].includes(dept.trim().toLowerCase());
+  const { valid: parsedEmails, invalid: invalidTokens } = useMemo(
+    () => (isLeadGen ? parseBulkEmails(bulkText) : { valid: [], invalid: [] }),
+    [isLeadGen, bulkText],
+  );
+
   useEffect(() => {
     if (!open) return;
     if (departments.length > 0 || deptsLoading) return;
@@ -781,25 +845,23 @@ function GenerateLinkDialog({
 
   useEffect(() => {
     if (!open) {
-      setFirstName(''); setLastName(''); setEmail(''); setDept(''); setNote('');
+      setEmail(''); setDept(''); setNote('');
+      setBulkText(''); setBulkProgress(null); setBulkResults(null);
     }
   }, [open]);
 
-  const emailInvalid = email.trim().length > 0 && !isPlausibleEmail(email);
+  const emailInvalid = !isLeadGen && email.trim().length > 0 && !isPlausibleEmail(email);
 
-  async function submit() {
-    if (emailInvalid) {
-      toast.error("Personal email doesn't look right.");
-      return;
-    }
-    const fullName = [firstName.trim(), lastName.trim()].filter(Boolean).join(' ');
+  // ── Single-hire submit ──
+  async function submitSingle() {
+    if (emailInvalid) { toast.error("Personal email doesn't look right."); return; }
     setBusy(true);
     try {
       const res = await fetch('/api/hr/onboarding-submissions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          invite_name: fullName || null,
+          invite_name: null,
           invite_personal_email: email.trim() || null,
           invite_department: dept.trim() || null,
           invite_note: note.trim() || null,
@@ -816,61 +878,133 @@ function GenerateLinkDialog({
     }
   }
 
+  // ── Lead Gen bulk submit: create + send for every parsed email ──
+  async function submitBulk() {
+    if (parsedEmails.length === 0) return;
+    setBusy(true);
+    setBulkProgress({ done: 0, total: parsedEmails.length });
+    setBulkResults(null);
+    const results: BulkResult[] = [];
+
+    for (let i = 0; i < parsedEmails.length; i++) {
+      const e = parsedEmails[i]!;
+      try {
+        // 1. Create submission
+        const createRes = await fetch('/api/hr/onboarding-submissions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            invite_name: null,
+            invite_personal_email: e,
+            invite_department: dept.trim(),
+            invite_note: note.trim() || null,
+          }),
+        });
+        const createJson = (await createRes.json()) as { row?: SubmissionRow; error?: string };
+        if (!createRes.ok || createJson.error || !createJson.row) {
+          throw new Error(createJson.error ?? 'Failed to create');
+        }
+        const rowId = createJson.row.id;
+
+        // 2. Send the onboarding link immediately
+        const sendRes = await fetch(`/api/hr/onboarding-submissions/${rowId}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const sendJson = (await sendRes.json()) as { error?: string };
+        if (!sendRes.ok || sendJson.error) {
+          throw new Error(sendJson.error ?? 'Created but send failed');
+        }
+
+        results.push({ email: e, ok: true });
+      } catch (err) {
+        results.push({ email: e, ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
+      setBulkProgress({ done: i + 1, total: parsedEmails.length });
+    }
+
+    setBulkResults(results);
+    setBusy(false);
+    const sent = results.filter((r) => r.ok).length;
+    const failed = results.length - sent;
+    if (failed === 0) {
+      toast.success(`${sent} onboarding link${sent !== 1 ? 's' : ''} sent`);
+    } else {
+      toast.warning(`${sent} sent, ${failed} failed — see results below`);
+    }
+    // Refresh the submissions list
+    onCreated(results.find((r) => r.ok) ? { id: '' } as unknown as SubmissionRow : { id: '' } as unknown as SubmissionRow);
+  }
+
+  // ── Bulk results view (shown after generation) ──
+  if (bulkResults) {
+    const sent = bulkResults.filter((r) => r.ok).length;
+    const failed = bulkResults.length - sent;
+    return (
+      <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">
+          <div className="-mx-6 -mt-6 mb-4 overflow-hidden rounded-t-lg border-b border-emerald-100/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 px-6 py-5 dark:border-emerald-950/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25">
+                  <Send className="h-4 w-4" />
+                </span>
+                Bulk send complete
+              </DialogTitle>
+              <p className="mt-1 text-[12px] text-zinc-500 dark:text-zinc-400">
+                <span className="font-semibold text-emerald-700 dark:text-emerald-400">{sent} sent</span>
+                {failed > 0 && <>, <span className="font-semibold text-rose-600 dark:text-rose-400">{failed} failed</span></>}
+                {' '}— Lead Gen batch
+              </p>
+            </DialogHeader>
+          </div>
+          <div className="max-h-72 overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+            {bulkResults.map((r) => (
+              <div key={r.email} className={cn(
+                'flex items-start gap-2.5 border-b px-3 py-2 text-xs last:border-b-0 dark:border-zinc-800',
+                r.ok ? 'border-zinc-100' : 'border-rose-100 bg-rose-50/50 dark:border-rose-900/30 dark:bg-rose-950/20',
+              )}>
+                {r.ok
+                  ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                  : <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-500" />}
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-zinc-800 dark:text-zinc-200">{r.email}</p>
+                  {r.error && <p className="text-rose-600 dark:text-rose-400">{r.error}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter className="mt-4 gap-2 sm:gap-0">
+            <Button size="sm" onClick={onClose}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">
-        {/* Decorative header strip — same emerald gradient as the dashboard hero */}
+      <DialogContent className={cn('max-h-[92vh] overflow-y-auto', isLeadGen ? 'sm:max-w-2xl' : 'sm:max-w-md')}>
         <div className="-mx-6 -mt-6 mb-1 overflow-hidden rounded-t-lg border-b border-emerald-100/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 px-6 py-5 dark:border-emerald-950/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25">
                 <Link2 className="h-4 w-4" />
               </span>
-              Generate onboarding link
+              {isLeadGen ? 'Bulk onboarding — Lead Gen' : 'Generate onboarding link'}
             </DialogTitle>
             <p className="mt-1.5 text-[12px] leading-relaxed text-zinc-600 dark:text-zinc-400">
-              We'll mint a one-time, no-SSO link for the new hire. Pre-fill what you know — they
-              see it on the form and the cover email writes itself.
+              {isLeadGen
+                ? 'Paste personal emails from your Excel sheet. Each hire gets their own one-time link sent immediately — they fill in their own name and sign the contracts on the form.'
+                : 'Mint a one-time, no-SSO link. The new hire fills in their name, signs contracts, and submits payment details directly on the form.'}
             </p>
           </DialogHeader>
         </div>
 
-        <DialogSection label="Who is this for?">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <DialogField label="First name" icon={<User className="h-3 w-3" />}>
-              <Input
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                placeholder="Jane"
-                autoFocus
-              />
-            </DialogField>
-            <DialogField label="Last name" icon={<User className="h-3 w-3" />}>
-              <Input
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                placeholder="Dela Cruz"
-              />
-            </DialogField>
-            <DialogField
-              label="Personal email"
-              icon={<Mail className="h-3 w-3" />}
-              error={emailInvalid ? "Doesn't look like an email" : undefined}
-              hint={!emailInvalid && email.trim() === '' ? 'We use this to pre-fill the mailto link.' : undefined}
-            >
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="jane@gmail.com"
-                aria-invalid={emailInvalid || undefined}
-              />
-            </DialogField>
-          </div>
-        </DialogSection>
-
+        {/* Department — always on top */}
         <DialogSection label="Where will they work?">
-          <DialogField label="Department" hint={deptsLoading ? 'Loading from Hubstaff…' : 'Optional — helps HR sort submissions.'}>
+          <DialogField label="Department" hint={deptsLoading ? 'Loading…' : isLeadGen ? 'Bulk mode active — paste emails below.' : 'Optional — helps HR sort submissions.'}>
             <DepartmentSelect
               value={dept}
               onChange={setDept}
@@ -880,35 +1014,145 @@ function GenerateLinkDialog({
           </DialogField>
         </DialogSection>
 
-        <DialogSection label="Cover note" last>
-          <DialogField
-            label="Note for the new hire (optional)"
-            hint="Shown at the top of the form and copied into the welcome email body."
-          >
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Welcome! Please complete this before your first day so payroll can set you up."
-              rows={3}
-              className="w-full rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20 dark:border-input dark:bg-input/30"
-            />
-          </DialogField>
-        </DialogSection>
+        {isLeadGen ? (
+          /* ── Lead Gen bulk mode ── */
+          <>
+            <DialogSection label="Paste emails">
+              <div className="flex flex-col gap-2">
+                <textarea
+                  value={bulkText}
+                  onChange={(e) => setBulkText(e.target.value)}
+                  placeholder={'Paste from Excel — one email per row, or comma/tab separated:\n\njane@gmail.com\njohn@yahoo.com\nrose@gmail.com'}
+                  rows={10}
+                  disabled={busy}
+                  className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-2 font-mono text-xs leading-relaxed outline-none transition-colors placeholder:text-zinc-400 focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900/40 dark:placeholder:text-zinc-600"
+                />
 
-        <DialogFooter className="gap-2 pt-2 sm:gap-0">
-          <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            className="bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:from-emerald-500 hover:to-teal-600"
-            onClick={() => void submit()}
-            disabled={busy || emailInvalid}
-          >
-            {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-1 h-3.5 w-3.5" />}
-            {busy ? 'Generating…' : 'Generate link'}
-          </Button>
-        </DialogFooter>
+                {/* Parsed summary */}
+                {bulkText.trim() && (
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                    {parsedEmails.length > 0 && (
+                      <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                        ✓ {parsedEmails.length} valid email{parsedEmails.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {invalidTokens.length > 0 && (
+                      <span className="text-amber-600 dark:text-amber-400">
+                        ⚠ {invalidTokens.length} skipped (not valid emails)
+                      </span>
+                    )}
+                    {parsedEmails.length === 0 && invalidTokens.length === 0 && (
+                      <span className="text-zinc-400">No emails detected yet</span>
+                    )}
+                  </div>
+                )}
+
+                {/* Scrollable parsed email list */}
+                {parsedEmails.length > 0 && (
+                  <div className="max-h-36 overflow-y-auto rounded-lg border border-emerald-200/80 bg-emerald-50/40 px-3 py-2 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">Will receive a link</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {parsedEmails.map((e) => (
+                        <span key={e} className="inline-flex items-center rounded-full border border-emerald-200 bg-white px-2 py-0.5 font-mono text-[11px] text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                          {e}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {invalidTokens.length > 0 && (
+                  <div className="rounded-lg border border-amber-200/80 bg-amber-50/40 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-amber-600 dark:text-amber-400">Skipped</p>
+                    <p className="font-mono text-[11px] text-amber-800 dark:text-amber-300">{invalidTokens.join(', ')}</p>
+                  </div>
+                )}
+              </div>
+            </DialogSection>
+
+            <DialogSection label="Cover note" last>
+              <DialogField label="Note for all hires (optional)" hint="Shown at the top of each form.">
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Welcome! Please complete this form before your first day."
+                  rows={2}
+                  disabled={busy}
+                  className="w-full rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20 disabled:opacity-50 dark:border-input dark:bg-input/30"
+                />
+              </DialogField>
+            </DialogSection>
+
+            <DialogFooter className="gap-2 pt-2 sm:gap-0">
+              <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+              <Button
+                size="sm"
+                className="bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:from-emerald-500 hover:to-teal-600 disabled:opacity-60"
+                onClick={() => void submitBulk()}
+                disabled={busy || parsedEmails.length === 0}
+              >
+                {busy ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    {bulkProgress ? `Sending ${bulkProgress.done} / ${bulkProgress.total}…` : 'Working…'}
+                  </>
+                ) : (
+                  <>
+                    <Send className="mr-1.5 h-3.5 w-3.5" />
+                    {parsedEmails.length > 0
+                      ? `Generate & send ${parsedEmails.length} link${parsedEmails.length !== 1 ? 's' : ''}`
+                      : 'Paste emails above'}
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          /* ── Single-hire mode ── */
+          <>
+            <DialogSection label="Who is this for?">
+              <DialogField
+                label="Personal email"
+                icon={<Mail className="h-3 w-3" />}
+                error={emailInvalid ? "Doesn't look like an email" : undefined}
+                hint={!emailInvalid ? 'Used to pre-fill the send link. The hire enters their own name on the form.' : undefined}
+              >
+                <Input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="jane@gmail.com"
+                  aria-invalid={emailInvalid || undefined}
+                />
+              </DialogField>
+            </DialogSection>
+
+            <DialogSection label="Cover note" last>
+              <DialogField label="Note for the new hire (optional)" hint="Shown at the top of their form.">
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Welcome! Please complete this before your first day so payroll can set you up."
+                  rows={3}
+                  className="w-full rounded-lg border border-zinc-300 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20 dark:border-input dark:bg-input/30"
+                />
+              </DialogField>
+            </DialogSection>
+
+            <DialogFooter className="gap-2 pt-2 sm:gap-0">
+              <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+              <Button
+                size="sm"
+                className="bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:from-emerald-500 hover:to-teal-600"
+                onClick={() => void submitSingle()}
+                disabled={busy || emailInvalid}
+              >
+                {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-1 h-3.5 w-3.5" />}
+                {busy ? 'Generating…' : 'Generate link'}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -927,6 +1171,7 @@ function SetOnboardingWorkEmailDialog({
 }) {
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptsLoading, setDeptsLoading] = useState(false);
+  const [deptRates, setDeptRates] = useState<Map<string, { regular_rate: string | null; ot_rate: string | null }>>(new Map());
   const [dept, setDept] = useState('');
   const [workEmail, setWorkEmail] = useState('');
   const [suggesting, setSuggesting] = useState(false);
@@ -938,6 +1183,9 @@ function SetOnboardingWorkEmailDialog({
   const [projectNames, setProjectNames] = useState<string[]>([]);
   const [projectOptions, setProjectOptions] = useState<string[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
+  // Track which dept we last prefilled rates for so we only prefill on real
+  // dept changes, not every time deptRates finishes loading.
+  const lastPrefillDept = useRef<string>('');
 
   const fullName = row?.full_name?.trim() || row?.invite_name?.trim() || '';
   const { first, last } = useMemo(() => splitFullName(fullName), [fullName]);
@@ -959,7 +1207,9 @@ function SetOnboardingWorkEmailDialog({
       if (j.error) throw new Error(j.error);
       if (j.suggestion?.email) {
         setWorkEmail(j.suggestion.email);
-        setAvailable(true);
+        // Let the debounced useEffect run the real availability check —
+        // don't blindly set available=true here.
+        setAvailable(null);
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not suggest a work email');
@@ -971,6 +1221,7 @@ function SetOnboardingWorkEmailDialog({
   // Seed the form (and a fresh suggestion) whenever a row opens.
   useEffect(() => {
     if (!row) return;
+    lastPrefillDept.current = ''; // reset so the initial dept always gets prefilled
     setDept(row.invite_department?.trim() ?? '');
     setWorkEmail('');
     setAvailable(null);
@@ -984,22 +1235,48 @@ function SetOnboardingWorkEmailDialog({
     setProjectNames((prev) => prev.filter((p) => p !== name));
   }, []);
 
-  // Department list — same source as the Generate-link dialog.
+  // Department list + department rates — fetched together when the dialog opens.
   useEffect(() => {
     if (!row) return;
     if (departments.length > 0 || deptsLoading) return;
     setDeptsLoading(true);
-    fetch('/api/departments', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { departments?: string[]; error?: string }) => {
-        if (j.error) throw new Error(j.error);
-        setDepartments(j.departments ?? []);
+    Promise.all([
+      fetch('/api/departments', { cache: 'no-store' }).then((r) => r.json()),
+      fetch('/api/hr/department-rates', { cache: 'no-store' }).then((r) => r.json()),
+    ])
+      .then(([dj, rj]: [
+        { departments?: string[]; error?: string },
+        { departments?: Array<{ department: string; regular_rate: string | null; ot_rate: string | null }>; error?: string },
+      ]) => {
+        if (dj.error) throw new Error(dj.error);
+        setDepartments(dj.departments ?? []);
+        const m = new Map<string, { regular_rate: string | null; ot_rate: string | null }>();
+        for (const d of rj.departments ?? []) {
+          m.set(d.department.trim().toLowerCase(), {
+            regular_rate: d.regular_rate,
+            ot_rate: d.ot_rate,
+          });
+        }
+        setDeptRates(m);
       })
       .catch((e) =>
         toast.error(e instanceof Error ? e.message : 'Could not load departments'),
       )
       .finally(() => setDeptsLoading(false));
   }, [row, departments.length, deptsLoading]);
+
+  // Prefill rates when dept changes. Uses a ref to distinguish a real dept
+  // change from deptRates finishing loading (to avoid stomping user edits).
+  useEffect(() => {
+    const key = dept.trim().toLowerCase();
+    if (!key || key === lastPrefillDept.current) return;
+    const rates = deptRates.get(key);
+    if (!rates) return;
+    lastPrefillDept.current = key;
+    if (rates.regular_rate) setRegularRate(rates.regular_rate);
+    if (rates.ot_rate) setOtRate(rates.ot_rate);
+    else setOtRate('');
+  }, [dept, deptRates]);
 
   // Hubstaff project list — from the secondary Supabase `hubstaff_projects` table.
   useEffect(() => {
@@ -1098,16 +1375,20 @@ function SetOnboardingWorkEmailDialog({
       };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to set work email');
       if (json.workspace_account && json.workspace_account.ok === false) {
-        toast.warning(`${emailNorm} staged, but the Hubstaff account could not be created`, {
-          description:
-            json.workspace_account.error
-              ? `${json.workspace_account.error} - create it manually in Hubstaff.`
-              : 'Create it manually in Hubstaff.',
+        toast.warning(`${emailNorm} staged — workspace setup failed`, {
+          description: json.workspace_account.error
+            ? `${json.workspace_account.error}. Create the Workspace account and Hubstaff invite manually.`
+            : 'The onboarding webhook did not fire. Create the Workspace account and Hubstaff invite manually.',
         });
       } else {
-        toast.success(`${emailNorm} assigned`, {
-          description: 'Staged in Pending Hires and Hubstaff account requested.',
-        });
+        toast.success(
+          row.pending_employee_id ? `${emailNorm} updated` : `${emailNorm} assigned`,
+          {
+            description: row.pending_employee_id
+              ? 'Pending hire updated. Workspace account + Hubstaff invite re-sent.'
+              : 'Staged in Pending Hires. Workspace account + Hubstaff invite requested.',
+          },
+        );
       }
       onConverted();
     } catch (e) {
@@ -1119,10 +1400,15 @@ function SetOnboardingWorkEmailDialog({
 
   if (!row) return null;
 
+  const deptKey = dept.trim().toLowerCase();
+  const typicalRegular = deptKey ? deptRates.get(deptKey)?.regular_rate : null;
+  const typicalOt = deptKey ? deptRates.get(deptKey)?.ot_rate : null;
+
   return (
     <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">
-        <div className="-mx-6 -mt-6 mb-1 overflow-hidden rounded-t-lg border-b border-emerald-100/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 px-6 py-5 dark:border-emerald-950/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20">
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
+        {/* Header */}
+        <div className="-mx-6 -mt-6 mb-4 overflow-hidden rounded-t-lg border-b border-emerald-100/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 px-6 py-5 dark:border-emerald-950/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25">
@@ -1130,167 +1416,185 @@ function SetOnboardingWorkEmailDialog({
               </span>
               Set work email
             </DialogTitle>
-            <p className="mt-1.5 text-[12px] leading-relaxed text-zinc-600 dark:text-zinc-400">
-              We suggest an @simple.biz address from the hire's name and check it against the
-              master list (off-boarded addresses are free to reuse). Saving stages them in
-              Pending Hires, ready to promote after orientation.
+            <p className="mt-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+              Suggest an @simple.biz address, pick department and projects, then save to stage in Pending Hires.
             </p>
           </DialogHeader>
         </div>
 
-        <DialogSection label="New hire">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50/60 px-2 py-0.5 text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-200">
-              <User className="h-3 w-3" />
-              {fullName || '(no name on submission)'}
-            </span>
-            {(row.email || row.invite_personal_email) && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-                <Mail className="h-3 w-3" />
-                {row.email ?? row.invite_personal_email}
-              </span>
-            )}
-          </div>
-          {(first || last) && (
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
-              Parsed as first{' '}
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">{first || '-'}</span>, last{' '}
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">{last || '-'}</span>.
-            </p>
-          )}
-        </DialogSection>
+        {/* Two-column body */}
+        <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
 
-        <DialogSection label="Department">
-          <DialogField
-            label="Department"
-            hint={deptsLoading ? 'Loading...' : 'Required - carried into the staged hire.'}
-          >
-            <DepartmentSelect
-              value={dept}
-              onChange={setDept}
-              departments={departments}
-              loading={deptsLoading}
-            />
-          </DialogField>
-        </DialogSection>
+          {/* ── Left column: identity + department + work email ── */}
+          <div className="flex flex-col gap-4">
 
-        <DialogSection label="Work email">
-          <DialogField label="Work email (@simple.biz)" icon={<Mail className="h-3 w-3" />}>
-            <div className="relative">
-              <Input
-                value={workEmail}
-                onChange={(e) => setWorkEmail(e.target.value)}
-                placeholder={suggesting ? 'Suggesting...' : 'namel@simple.biz'}
-                className="pr-9 font-mono"
-                spellCheck={false}
-                autoCapitalize="none"
-              />
-              <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">
-                {suggesting || checking ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
-                ) : available === true ? (
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                ) : available === false ? (
-                  <XCircle className="h-4 w-4 text-rose-500" />
-                ) : null}
-              </span>
-            </div>
-            <div className="mt-1 flex items-center justify-between gap-2">
-              <p
-                className={cn(
-                  'text-[11px]',
-                  available === false
-                    ? 'text-rose-600 dark:text-rose-400'
-                    : available === true
-                      ? 'text-emerald-600 dark:text-emerald-400'
-                      : 'text-zinc-500',
-                )}
-              >
-                {available === false
-                  ? 'Already in use - try another.'
-                  : available === true
-                    ? 'Available.'
-                    : emailNorm && !emailValid
-                      ? 'Must be a valid @simple.biz address.'
-                      : 'Checking availability as you type.'}
-              </p>
-              <button
-                type="button"
-                onClick={() => void reSuggest()}
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:underline disabled:opacity-50 dark:text-emerald-300"
-                disabled={suggesting || !fullName}
-              >
-                <Wand2 className="h-3 w-3" /> Suggest
-              </button>
-            </div>
-          </DialogField>
-        </DialogSection>
-
-        <DialogSection label="Hubstaff workspace account" last>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <DialogField
-              label="Regular rate (USD / hour)"
-              hint="Saved as the hire's rate and sent to Hubstaff."
-            >
-              <Input
-                type="number"
-                inputMode="decimal"
-                min="0"
-                step="0.01"
-                value={regularRate}
-                onChange={(e) => setRegularRate(e.target.value)}
-                placeholder="35.50"
-                aria-invalid={regularRate.trim() !== '' && !regularRateValid ? true : undefined}
-              />
-            </DialogField>
-            <DialogField label="OT rate (USD / hour)" hint="Optional.">
-              <Input
-                type="number"
-                inputMode="decimal"
-                min="0"
-                step="0.01"
-                value={otRate}
-                onChange={(e) => setOtRate(e.target.value)}
-                placeholder="53.25"
-                aria-invalid={otRate.trim() !== '' && !otRateValid ? true : undefined}
-              />
-            </DialogField>
-          </div>
-
-          <DialogField
-            label="Project(s)"
-            hint="Required — the Hubstaff project(s) the hire is invited to on Promote."
-          >
-            <ProjectMultiSelect
-              selected={projectNames}
-              onChange={setProjectNames}
-              options={projectOptions}
-              loading={projectsLoading}
-            />
-            {projectNames.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {projectNames.map((p) => (
-                  <span
-                    key={p}
-                    className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/70 px-2 py-0.5 text-[11px] font-medium text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-200"
-                  >
-                    {p}
-                    <button
-                      type="button"
-                      onClick={() => removeProject(p)}
-                      className="text-emerald-600 hover:text-emerald-800 dark:text-emerald-400"
-                      aria-label={`Remove ${p}`}
-                    >
-                      <XCircle className="h-3.5 w-3.5" />
-                    </button>
+            {/* New hire info */}
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">New hire</p>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50/60 px-2 py-0.5 text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  <User className="h-3 w-3 shrink-0" />
+                  {fullName || '(no name)'}
+                </span>
+                {(row.email || row.invite_personal_email) && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-mono text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                    <Mail className="h-3 w-3 shrink-0" />
+                    {row.email ?? row.invite_personal_email}
                   </span>
-                ))}
+                )}
               </div>
-            )}
-          </DialogField>
-        </DialogSection>
+              {(first || last) && (
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                  First <span className="font-medium text-zinc-600 dark:text-zinc-300">{first || '-'}</span>
+                  {' · '}last <span className="font-medium text-zinc-600 dark:text-zinc-300">{last || '-'}</span>
+                </p>
+              )}
+            </div>
 
-        <DialogFooter className="gap-2 pt-2 sm:gap-0">
+            {/* Department */}
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">Department</p>
+              <DepartmentSelect
+                value={dept}
+                onChange={setDept}
+                departments={departments}
+                loading={deptsLoading}
+              />
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                {deptsLoading ? 'Loading…' : 'Required — carried into the staged hire.'}
+              </p>
+            </div>
+
+            {/* Work email */}
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">Work email</p>
+              <div className="relative">
+                <Input
+                  value={workEmail}
+                  onChange={(e) => setWorkEmail(e.target.value)}
+                  placeholder={suggesting ? 'Suggesting...' : 'namel@simple.biz'}
+                  className="pr-9 font-mono"
+                  spellCheck={false}
+                  autoCapitalize="none"
+                />
+                <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2">
+                  {suggesting || checking ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                  ) : available === true ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                  ) : available === false ? (
+                    <XCircle className="h-4 w-4 text-rose-500" />
+                  ) : null}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <p className={cn(
+                  'text-[11px]',
+                  available === false ? 'text-rose-600 dark:text-rose-400'
+                    : available === true ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-zinc-400',
+                )}>
+                  {available === false
+                    ? 'Already in use — try another.'
+                    : available === true
+                      ? 'Available.'
+                      : emailNorm && !emailValid
+                        ? 'Must be a valid @simple.biz address.'
+                        : 'Checking availability as you type.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void reSuggest()}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:underline disabled:opacity-50 dark:text-emerald-300"
+                  disabled={suggesting || !fullName}
+                >
+                  <Wand2 className="h-3 w-3" /> Suggest
+                </button>
+              </div>
+            </div>
+
+          </div>
+
+          {/* ── Right column: rates + projects ── */}
+          <div className="flex flex-col gap-4">
+
+            {/* Rates */}
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">Compensation</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Regular rate (USD/hr)</label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    value={regularRate}
+                    onChange={(e) => setRegularRate(e.target.value)}
+                    placeholder="35.50"
+                    aria-invalid={regularRate.trim() !== '' && !regularRateValid ? true : undefined}
+                  />
+                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                    {typicalRegular ? `Dept. typical: $${typicalRegular}` : 'Required'}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">OT rate (USD/hr)</label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="0.01"
+                    value={otRate}
+                    onChange={(e) => setOtRate(e.target.value)}
+                    placeholder="53.25"
+                    aria-invalid={otRate.trim() !== '' && !otRateValid ? true : undefined}
+                  />
+                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                    {typicalOt ? `Dept. typical: $${typicalOt}` : 'Optional'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Projects — takes all remaining space so the dropdown opens downward with room */}
+            <div className="flex flex-1 flex-col gap-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">Hubstaff project(s)</p>
+              <ProjectMultiSelect
+                selected={projectNames}
+                onChange={setProjectNames}
+                options={projectOptions}
+                loading={projectsLoading}
+              />
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                Required — the hire is invited to these projects when the workspace account is created.
+              </p>
+              {projectNames.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {projectNames.map((p) => (
+                    <span
+                      key={p}
+                      className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/70 px-2 py-0.5 text-[11px] font-medium text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-200"
+                    >
+                      {p}
+                      <button
+                        type="button"
+                        onClick={() => removeProject(p)}
+                        className="text-emerald-600 hover:text-emerald-800 dark:text-emerald-400"
+                        aria-label={`Remove ${p}`}
+                      >
+                        <XCircle className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+
+        <DialogFooter className="mt-4 gap-2 border-t border-zinc-100 pt-4 sm:gap-0 dark:border-zinc-800">
           <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>
             Cancel
           </Button>

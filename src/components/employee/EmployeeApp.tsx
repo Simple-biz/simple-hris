@@ -63,6 +63,20 @@ export default function EmployeeApp() {
   // the nudge until the first fetch lands so it doesn't flash on load).
   const [payoutComplete, setPayoutComplete] = useState<boolean | null>(null);
   const [skillSetComplete, setSkillSetComplete] = useState<boolean | null>(null);
+  // One-shot login hand-off: when we arrive straight from the sign-in video, reveal the shell
+  // from a white veil (matching the video's closing fade) instead of popping in. The flag is
+  // read once at mount-time (this render only ever happens client-side during the SPA hand-off,
+  // so there's no SSR/hydration mismatch) and cleared in an effect below.
+  const [revealFromLogin] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return sessionStorage.getItem('hris_post_login') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [veilLifted, setVeilLifted] = useState(false);
+  const [veilDone, setVeilDone] = useState(false);
 
   // Google SSO profile photo — falls back through Supabase upload → Gravatar in EmployeeAvatar.
   // Only honored when the NextAuth session email matches the employee being viewed, so
@@ -106,6 +120,26 @@ export default function EmployeeApp() {
     }
     previousLocked.current = current;
   }, [lockState.locked, lockLoading]);
+
+  // Clear the login baton (so reloads don't re-trigger) and, on the next two frames, lift the
+  // white veil. The double rAF guarantees the browser paints the opaque veil first, so the fade
+  // actually animates from fully-white instead of skipping straight to revealed.
+  useEffect(() => {
+    if (!revealFromLogin) return;
+    try {
+      sessionStorage.removeItem('hris_post_login');
+    } catch {
+      /* ignore */
+    }
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setVeilLifted(true));
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [revealFromLogin]);
 
   const emailFromQuery = searchParams?.get('email') ?? null;
 
@@ -342,7 +376,13 @@ export default function EmployeeApp() {
   };
 
   return (
-    <div className="flex h-dvh max-h-dvh overflow-hidden bg-white font-sans text-zinc-900 selection:bg-orange-500/20 selection:text-orange-900 dark:bg-[#0d1117] dark:text-zinc-100 dark:selection:bg-orange-500/30 dark:selection:text-orange-200">
+    <>
+    <motion.div
+      initial={revealFromLogin ? { opacity: 0, scale: 0.985 } : false}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+      className="flex h-dvh max-h-dvh overflow-hidden bg-white font-sans text-zinc-900 selection:bg-orange-500/20 selection:text-orange-900 dark:bg-[#0d1117] dark:text-zinc-100 dark:selection:bg-orange-500/30 dark:selection:text-orange-200"
+    >
       <button
         type="button"
         className={`fixed inset-0 z-40 bg-black/45 backdrop-blur-[2px] transition-opacity duration-300 ease-out md:hidden ${
@@ -403,6 +443,23 @@ export default function EmployeeApp() {
         <AppFooter />
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
-    </div>
+    </motion.div>
+
+      {/* Matched white veil for the sign-in hand-off: starts opaque (continuing the video's
+          closing fade), then lifts to reveal the already-laid-out shell so nothing pops in.
+          Unmounts itself once the fade completes. */}
+      {revealFromLogin && !veilDone && (
+        <motion.div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-[200] bg-white dark:bg-[#0d1117]"
+          initial={{ opacity: 1 }}
+          animate={{ opacity: veilLifted ? 0 : 1 }}
+          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          onAnimationComplete={() => {
+            if (veilLifted) setVeilDone(true);
+          }}
+        />
+      )}
+    </>
   );
 }
