@@ -130,17 +130,20 @@ async function saveSetting(key: string, value: string): Promise<void> {
   if (json.error) throw new Error(json.error);
 }
 
-async function postAuditLog(entry: {
-  action: string;
-  resource: string;
-  resource_id?: string;
-  details?: Record<string, unknown>;
-}): Promise<void> {
+async function postAuditLog(
+  entry: {
+    action: string;
+    resource: string;
+    resource_id?: string;
+    details?: Record<string, unknown>;
+  },
+  actorEmail?: string | null,
+): Promise<void> {
   await fetch('/api/audit-log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      user_name: sessionEmail ?? 'anonymous',
+      user_name: actorEmail ?? 'anonymous',
       user_role: 'accounting',
       ...entry,
     }),
@@ -325,7 +328,7 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
         resource:    'app_settings',
         resource_id: auditEntry.resource_id ?? key,
         details:     auditEntry.details,
-      });
+      }, sessionEmail);
       setSaveStates((p) => ({ ...p, [key]: 'saved' }));
       toast.success(`${label} ${value ? 'enabled' : 'disabled'}`, { description: 'Saved.' });
       setTimeout(() => setSaveStates((p) => ({ ...p, [key]: 'idle' })), 2000);
@@ -356,7 +359,7 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
         resource:    'app_settings',
         resource_id: 'ot_global_suspended',
         details:     { suspended: val },
-      });
+      }, sessionEmail);
       setSaveStates((p) => ({ ...p, ot_global_suspended: 'saved' }));
       toast.success(val ? 'All overtime suspended' : 'Global OT suspension lifted', { description: 'Saved.' });
       setTimeout(() => setSaveStates((p) => ({ ...p, ot_global_suspended: 'idle' })), 2000);
@@ -384,7 +387,7 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
     setSaveStates((p) => ({ ...p, [US_HOLIDAYS_LIST_KEY]: 'saving' }));
     try {
       await saveSetting(US_HOLIDAYS_LIST_KEY, serializeUsHolidaysList(next));
-      void postAuditLog({ action, resource: 'app_settings', resource_id: US_HOLIDAYS_LIST_KEY, details });
+      void postAuditLog({ action, resource: 'app_settings', resource_id: US_HOLIDAYS_LIST_KEY, details }, sessionEmail);
       setSaveStates((p) => ({ ...p, [US_HOLIDAYS_LIST_KEY]: 'saved' }));
       setTimeout(() => setSaveStates((p) => ({ ...p, [US_HOLIDAYS_LIST_KEY]: 'idle' })), 1500);
     } catch (e) {
@@ -404,7 +407,7 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
         resource: 'app_settings',
         resource_id: US_HOLIDAYS_ENABLED_KEY,
         details: { enabled: val },
-      });
+      }, sessionEmail);
       setSaveStates((p) => ({ ...p, [US_HOLIDAYS_ENABLED_KEY]: 'saved' }));
       toast.success(val ? 'US holiday forgiveness enabled' : 'US holiday forgiveness disabled', { description: 'Saved.' });
       setTimeout(() => setSaveStates((p) => ({ ...p, [US_HOLIDAYS_ENABLED_KEY]: 'idle' })), 2000);

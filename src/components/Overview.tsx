@@ -1356,7 +1356,7 @@ function SimpleView({
                       </td>
                     </tr>
                   ) : (
-                    pageRows.map((row) => {
+                    pageRows.map((row, _rowIdx) => {
                       const email = row.work_email ?? row.personal_email ?? '';
                       const isHubstaff = row.recordSource === 'hubstaff';
                       return (
