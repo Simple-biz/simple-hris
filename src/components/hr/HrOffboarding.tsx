@@ -16,15 +16,10 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
 } from '@/components/ui/dialog';
 import {
   Select,
@@ -583,40 +578,109 @@ function OffboardConfirmDialog({
     }
   }
 
+  const initials = target?.name
+    ? target.name.split(/[\s,]+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('')
+    : (target?.work_email?.[0]?.toUpperCase() ?? '?');
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-rose-500 to-rose-700 text-white">
-              <UserMinus className="h-4 w-4" />
-            </span>
-            Offboard employee
-          </DialogTitle>
-          <DialogDescription className="text-xs">
-            <span className="font-medium text-zinc-800 dark:text-zinc-200">
-              {target?.name ?? target?.work_email}
-            </span>{' '}
-            will be marked off-boarded and removed from active rosters. Their
-            record is retained for reporting.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent
+        showCloseButton={false}
+        className="overflow-hidden p-0 sm:max-w-[460px]"
+      >
+        {/* ── Header ── */}
+        <div className="relative overflow-hidden bg-[#1a0a0a] px-5 pb-5 pt-5">
+          {/* subtle grid texture */}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage:
+                'linear-gradient(rgba(220,38,38,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(220,38,38,0.06) 1px, transparent 1px)',
+              backgroundSize: '24px 24px',
+            }}
+          />
+          {/* top accent bar */}
+          <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-rose-700 via-rose-400 to-rose-700" />
 
-        <form onSubmit={handleSubmit} className="space-y-3" noValidate>
+          <div className="relative flex items-start gap-3.5">
+            {/* initials badge */}
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-900/60 text-sm font-bold tracking-wider text-rose-200 ring-1 ring-rose-700/50">
+              {initials}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-500/80">
+                Offboard employee
+              </p>
+              <p className="mt-0.5 truncate text-[15px] font-semibold leading-snug text-zinc-100">
+                {target?.name ?? target?.work_email ?? '—'}
+              </p>
+              {target?.name && target?.work_email && (
+                <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500">
+                  {target.work_email}
+                </p>
+              )}
+              {target?.department && (
+                <span className="mt-1.5 inline-block rounded-full bg-zinc-800/80 px-2 py-0.5 text-[10px] font-medium text-zinc-400 ring-1 ring-zinc-700/50">
+                  {target.department}
+                </span>
+              )}
+            </div>
+
+            {/* close button */}
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="mt-0.5 shrink-0 rounded-md p-1 text-zinc-600 transition-colors hover:bg-zinc-800/60 hover:text-zinc-300 disabled:opacity-40"
+              aria-label="Close"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M3 3l10 10M13 3L3 13" />
+              </svg>
+            </button>
+          </div>
+
+          <p className="relative mt-3.5 text-[11px] leading-relaxed text-zinc-500">
+            This employee will be removed from active rosters. Their record is
+            retained for reporting and auditing purposes.
+          </p>
+        </div>
+
+        {/* ── Form ── */}
+        <form onSubmit={handleSubmit} noValidate className="space-y-3.5 bg-zinc-950/60 p-5">
+          {/* Reason */}
           <div className="space-y-1.5">
-            <Label className="text-xs">
-              Reason <span className="text-rose-500">*</span>
-            </Label>
+            <label className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+              Reason
+              <span className="text-rose-500">*</span>
+            </label>
             <Select
               value={reason}
               onValueChange={(v) => v && setReason(v as OffboardReason)}
             >
-              <SelectTrigger className="w-full data-[size=default]:h-9">
-                <SelectValue placeholder="Pick a reason" />
+              <SelectTrigger
+                className={cn(
+                  'w-full border-zinc-800 bg-zinc-900/80 text-sm text-zinc-200',
+                  'data-placeholder:text-zinc-600',
+                  'hover:border-zinc-700 hover:bg-zinc-900',
+                  'focus-visible:border-rose-700/60 focus-visible:ring-rose-700/20',
+                  'data-[size=default]:h-9',
+                )}
+              >
+                <SelectValue placeholder="Select a reason" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent
+                side="bottom"
+                alignItemWithTrigger={false}
+                className="border-zinc-800 bg-zinc-900 duration-[200ms] ease-[cubic-bezier(0.16,1,0.3,1)]"
+              >
                 {REASON_OPTIONS.map((r) => (
-                  <SelectItem key={r.value} value={r.value}>
+                  <SelectItem
+                    key={r.value}
+                    value={r.value}
+                    className="text-zinc-300 focus:bg-zinc-800 focus:text-zinc-100"
+                  >
                     {r.label}
                   </SelectItem>
                 ))}
@@ -624,49 +688,57 @@ function OffboardConfirmDialog({
             </Select>
           </div>
 
+          {/* Note */}
           <div className="space-y-1.5">
-            <Label className="text-xs">
-              Note {noteRequired && <span className="text-rose-500">*</span>}
-            </Label>
+            <label className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+              Note
+              {noteRequired && <span className="text-rose-500">*</span>}
+            </label>
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={2}
               placeholder={
                 noteRequired
-                  ? 'Required when reason is "Other"'
-                  : 'Optional — anything HR should remember.'
+                  ? 'Required — describe the situation'
+                  : 'Optional — anything HR should remember'
               }
               className={cn(
-                'w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm placeholder:text-muted-foreground',
-                'focus:border-emerald-500 focus:outline-none focus:ring-3 focus:ring-emerald-500/20',
-                'dark:bg-input/30',
+                'w-full resize-none rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2',
+                'text-sm text-zinc-200 placeholder:text-zinc-600',
+                'transition-colors focus:border-zinc-600 focus:bg-zinc-900 focus:outline-none',
               )}
             />
           </div>
 
-          <DialogFooter>
+          {/* Actions */}
+          <div className="flex gap-2 pt-0.5">
             <Button
               type="button"
               variant="outline"
               onClick={onClose}
               disabled={submitting}
+              className="flex-1 border-zinc-800 bg-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200"
             >
               Cancel
             </Button>
             <Button
               type="submit"
               disabled={!isValid || submitting}
-              className="gap-1.5 bg-gradient-to-br from-rose-500 to-rose-700 text-white hover:from-rose-500 hover:to-rose-600 disabled:opacity-50"
+              className={cn(
+                'flex-1 gap-1.5 border-0 bg-rose-700 text-white',
+                'hover:bg-rose-600 disabled:bg-zinc-800 disabled:text-zinc-600',
+                'transition-all',
+              )}
             >
               {submitting ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <UserMinus className="h-3.5 w-3.5" />
               )}
-              {submitting ? 'Off-boarding…' : 'Confirm offboard'}
+              {submitting ? 'Off-boarding...' : 'Confirm offboard'}
             </Button>
-          </DialogFooter>
+          </div>
         </form>
       </DialogContent>
     </Dialog>

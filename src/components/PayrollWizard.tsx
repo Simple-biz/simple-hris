@@ -36,6 +36,9 @@ import {
   HardHat,
   Flag,
   AlertTriangle,
+  Plus,
+  Sparkles,
+  CheckCircle2,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { cn } from '@/lib/utils';
@@ -101,7 +104,9 @@ import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
   parseUsHolidaysList,
+  serializeUsHolidaysList,
   getEnabledHolidayMap,
+  computeFederalHolidays,
   type UsHoliday,
 } from '@/lib/us-holidays';
 import {
@@ -867,6 +872,9 @@ export default function PayrollWizard({
   const [pabSaveState, setPabSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [pabRefreshing, setPabRefreshing] = useState(false);
   const [pabSettingsOpen, setPabSettingsOpen] = useState(false);
+  const [pabHolSaveState, setPabHolSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [pabHolNewDate, setPabHolNewDate] = useState('');
+  const [pabHolNewName, setPabHolNewName] = useState('');
   const [simpleMetricModal, setSimpleMetricModal] = useState<
     | null
     | {
@@ -1228,6 +1236,62 @@ export default function PayrollWizard({
     })();
     return () => { cancelled = true; };
   }, []);
+
+  const saveHolidaysList = React.useCallback(async (list: UsHoliday[], masterEnabled?: boolean) => {
+    setPabHolSaveState('saving');
+    try {
+      await savePabSetting(US_HOLIDAYS_LIST_KEY, serializeUsHolidaysList(list));
+      const enabled = masterEnabled ?? usHolidaysMasterEnabled;
+      setUsHolidaysListFull(list);
+      setUsHolidayDates(getEnabledHolidayMap(list, enabled));
+      setPabHolSaveState('saved');
+      setTimeout(() => setPabHolSaveState('idle'), 2000);
+    } catch {
+      setPabHolSaveState('error');
+      setTimeout(() => setPabHolSaveState('idle'), 3000);
+    }
+  }, [savePabSetting, usHolidaysMasterEnabled]);
+
+  const saveHolidaysEnabled = React.useCallback(async (enabled: boolean) => {
+    setPabHolSaveState('saving');
+    try {
+      await savePabSetting(US_HOLIDAYS_ENABLED_KEY, String(enabled));
+      setUsHolidaysMasterEnabled(enabled);
+      setUsHolidayDates(getEnabledHolidayMap(usHolidaysListFull, enabled));
+      setPabHolSaveState('saved');
+      setTimeout(() => setPabHolSaveState('idle'), 2000);
+    } catch {
+      setPabHolSaveState('error');
+      setTimeout(() => setPabHolSaveState('idle'), 3000);
+    }
+  }, [savePabSetting, usHolidaysListFull]);
+
+  const addPabHoliday = React.useCallback(async () => {
+    if (!pabHolNewDate || !pabHolNewName.trim()) return;
+    const next = [...usHolidaysListFull, { date: pabHolNewDate, name: pabHolNewName.trim(), enabled: true }]
+      .sort((a, b) => a.date.localeCompare(b.date));
+    await saveHolidaysList(next);
+    setPabHolNewDate('');
+    setPabHolNewName('');
+  }, [pabHolNewDate, pabHolNewName, usHolidaysListFull, saveHolidaysList]);
+
+  const removePabHoliday = React.useCallback(async (date: string) => {
+    await saveHolidaysList(usHolidaysListFull.filter(h => h.date !== date));
+  }, [usHolidaysListFull, saveHolidaysList]);
+
+  const togglePabHoliday = React.useCallback(async (date: string, enabled: boolean) => {
+    await saveHolidaysList(usHolidaysListFull.map(h => h.date === date ? { ...h, enabled } : h));
+  }, [usHolidaysListFull, saveHolidaysList]);
+
+  const seedPabFederalHolidays = React.useCallback(async () => {
+    const year = pabPickerYear;
+    const seeds = computeFederalHolidays(year);
+    const existingDates = new Set(usHolidaysListFull.map(h => h.date));
+    const toAdd = seeds.filter(h => !existingDates.has(h.date));
+    if (toAdd.length === 0) return;
+    const next = [...usHolidaysListFull, ...toAdd].sort((a, b) => a.date.localeCompare(b.date));
+    await saveHolidaysList(next);
+  }, [pabPickerYear, usHolidaysListFull, saveHolidaysList]);
 
   const fileInputWeeklyRef = useRef<HTMLInputElement>(null);
   const masterListFileInputRef = useRef<HTMLInputElement>(null);
@@ -5992,6 +6056,141 @@ export default function PayrollWizard({
                       <span className="flex items-center gap-1.5">
                         <span className="h-2 w-2 rounded-full bg-zinc-300 dark:bg-zinc-700" /> No data — not selectable
                       </span>
+                    </div>
+
+                    {/* PAB Calendar — Holidays */}
+                    <div className="mt-5 border-t border-violet-200/60 pt-4 dark:border-violet-900/40">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-violet-50 dark:bg-violet-950/30">
+                            <Flag className="h-3.5 w-3.5 text-violet-500" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">PAB Calendar Holidays</p>
+                            <p className="text-[10px] text-zinc-400 dark:text-zinc-500">Shown in violet on the employee PAB calendar — attendance auto-forgiven on these dates</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {pabHolSaveState === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />}
+                          {pabHolSaveState === 'saved' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+                          {pabHolSaveState === 'error' && <AlertCircle className="h-3.5 w-3.5 text-red-500" />}
+                          <div className={cn(
+                            'flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-all duration-200',
+                            usHolidaysMasterEnabled
+                              ? 'border-violet-300 bg-violet-50 dark:border-violet-700 dark:bg-violet-950/30'
+                              : 'border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800/40',
+                          )}>
+                            <span className={cn('text-[11px] font-semibold', usHolidaysMasterEnabled ? 'text-violet-700 dark:text-violet-300' : 'text-zinc-500 dark:text-zinc-400')}>
+                              {usHolidaysMasterEnabled ? 'Enabled' : 'Disabled'}
+                            </span>
+                            <Switch
+                              checked={usHolidaysMasterEnabled}
+                              onCheckedChange={(v) => void saveHolidaysEnabled(v)}
+                              disabled={pabHolSaveState === 'saving'}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Add-holiday form */}
+                      <div className="mb-3 flex flex-wrap items-end gap-2 rounded-lg border border-dashed border-violet-200 bg-violet-50/40 px-3 py-2.5 dark:border-violet-900/40 dark:bg-violet-950/15">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Date</label>
+                          <Input
+                            type="date"
+                            value={pabHolNewDate}
+                            onChange={(e) => setPabHolNewDate(e.target.value)}
+                            className="h-8 w-[150px] shrink-0 text-xs"
+                          />
+                        </div>
+                        <div className="flex flex-1 flex-col gap-1">
+                          <label className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Name</label>
+                          <Input
+                            type="text"
+                            value={pabHolNewName}
+                            onChange={(e) => setPabHolNewName(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void addPabHoliday(); }}
+                            placeholder="e.g. Memorial Day"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => void addPabHoliday()}
+                            disabled={!pabHolNewDate || !pabHolNewName.trim() || pabHolSaveState === 'saving'}
+                            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md bg-violet-600 px-3 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50 dark:bg-violet-700 dark:hover:bg-violet-600"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void seedPabFederalHolidays()}
+                            disabled={pabHolSaveState === 'saving'}
+                            title={`Seed US federal holidays for ${pabPickerYear}`}
+                            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                          >
+                            <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+                            Seed {pabPickerYear}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Holiday list */}
+                      {usHolidaysListFull.length === 0 ? (
+                        <div className="flex items-center gap-2 rounded-lg border border-dashed border-zinc-200 bg-zinc-50 px-4 py-4 text-xs text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/40">
+                          <CalendarDays className="h-4 w-4 shrink-0" />
+                          No holidays configured. Add one above or click &quot;Seed {pabPickerYear}&quot; to load US federal holidays.
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {usHolidaysListFull.map((h) => {
+                            const hd = new Date(h.date + 'T00:00:00');
+                            const weekday = hd.toLocaleDateString('en-US', { weekday: 'short' });
+                            const friendly = hd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                            return (
+                              <div
+                                key={h.date}
+                                className={cn(
+                                  'flex items-center gap-3 rounded-lg border px-3 py-2 transition-all',
+                                  h.enabled && usHolidaysMasterEnabled
+                                    ? 'border-violet-200 bg-violet-50/40 dark:border-violet-900/40 dark:bg-violet-950/15'
+                                    : 'border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-800/30',
+                                )}
+                              >
+                                <div className="flex w-12 shrink-0 flex-col items-center rounded-md border border-zinc-200 bg-white px-1 py-1 dark:border-zinc-700 dark:bg-zinc-900">
+                                  <span className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400">{weekday}</span>
+                                  <span className="font-mono text-xs font-bold text-zinc-800 dark:text-zinc-100">
+                                    {hd.toLocaleDateString('en-US', { month: 'short' })} {hd.getDate()}
+                                  </span>
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-100">{h.name}</p>
+                                  <p className="text-[10px] text-zinc-400 dark:text-zinc-500">{friendly}</p>
+                                </div>
+                                <Switch
+                                  checked={h.enabled}
+                                  onCheckedChange={(v) => void togglePabHoliday(h.date, v)}
+                                  disabled={pabHolSaveState === 'saving' || !usHolidaysMasterEnabled}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => void removePabHoliday(h.date)}
+                                  disabled={pabHolSaveState === 'saving'}
+                                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-950/30"
+                                  aria-label={`Remove ${h.name}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <p className="mt-2 text-[10px] text-zinc-400 dark:text-zinc-500">
+                        {usHolidaysListFull.filter(h => h.enabled).length} active · {usHolidaysListFull.length} total
+                      </p>
                     </div>
                       </div>
                     </DialogContent>

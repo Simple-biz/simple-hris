@@ -41,6 +41,11 @@ import {
   parseUsHolidaysList,
   getEnabledHolidayMap,
 } from '@/lib/us-holidays';
+import {
+  PAB_PERIOD_OVERRIDES_KEY,
+  parsePabPeriodOverrides,
+  type PabOverridesMap,
+} from '@/lib/pab-period-settings';
 
 type EmployeePabCalendarProps = {
   employeeEmail: string;
@@ -169,13 +174,14 @@ export default function EmployeePabCalendar({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
+  const [pabOverrideMap, setPabOverrideMap] = useState<PabOverridesMap>(new Map());
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const res = await fetch(
-          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY].join(','))}`,
+          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY, PAB_PERIOD_OVERRIDES_KEY].join(','))}`,
           { cache: 'no-store' },
         );
         const json = (await res.json()) as { values?: Record<string, string | null> };
@@ -185,8 +191,12 @@ export default function EmployeePabCalendar({
           ? true
           : values[US_HOLIDAYS_ENABLED_KEY] === 'true';
         setUsHolidayDates(getEnabledHolidayMap(parseUsHolidaysList(values[US_HOLIDAYS_LIST_KEY] ?? null), enabled));
+        setPabOverrideMap(parsePabPeriodOverrides(values[PAB_PERIOD_OVERRIDES_KEY] ?? null));
       } catch {
-        if (!cancelled) setUsHolidayDates(new Map());
+        if (!cancelled) {
+          setUsHolidayDates(new Map());
+          setPabOverrideMap(new Map());
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -383,13 +393,15 @@ export default function EmployeePabCalendar({
       pabMonthOverride
       ?? (cols.length > 0 ? getLatestPabMonthFromColumns(cols) : null)
       ?? getCurrentPabMonth();
-    const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
+    const monthKey = `${pabMonth.year}-${String(pabMonth.month + 1).padStart(2, '0')}`;
+    const override = pabOverrideMap.get(monthKey);
+    const { start, end } = override ?? getPabMonthRange(pabMonth.year, pabMonth.month);
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December',
     ];
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
-  }, [mergedColumns, pabMonthOverride]);
+  }, [mergedColumns, pabMonthOverride, pabOverrideMap]);
 
   // ── Build date → ISO map of disputes for quick lookup ───────────────────
   const disputesByDate = useMemo(() => {
@@ -619,6 +631,8 @@ export default function EmployeePabCalendar({
                     const hours = day.seconds / 3600;
                     const dayIso = `${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, '0')}-${String(day.date.getDate()).padStart(2, '0')}`;
                     const dispute = disputesByDate.get(dayIso);
+                    const holidayName = usHolidayDates.get(dayIso) ?? null;
+                    const isHoliday = !!holidayName;
                     const nowMid = new Date();
                     const todayMid = new Date(nowMid.getFullYear(), nowMid.getMonth(), nowMid.getDate());
                     const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
@@ -669,6 +683,9 @@ export default function EmployeePabCalendar({
                     if (dispute != null && disputeIsAwaitingResolution(dispute)) {
                       cellBorder =
                         'border-amber-300 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-950/40';
+                    } else if (isHoliday) {
+                      cellBorder =
+                        'border-violet-300 bg-violet-50 dark:border-violet-700/70 dark:bg-violet-950/40';
                     } else if (effectivelyPasses) {
                       cellBorder = isCurrentWeek
                         ? 'border-orange-300 bg-orange-50 dark:border-orange-700/60 dark:bg-orange-950/30'
@@ -707,7 +724,7 @@ export default function EmployeePabCalendar({
                       <div
                         key={di}
                         className={`relative flex h-14 flex-col overflow-hidden rounded-md border transition-all duration-200 sm:h-16 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
-                        title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltip}`}
+                        title={`${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${isHoliday ? ` — ${holidayName}` : ''}${dispute ? ` (${dispute.status})` : day.passes ? ' ✓' : isToday ? ' — in progress' : isFutureOrToday ? ' — not yet' : stillProcessing ? ' — processing' : day.hasData ? ' ✗ needs 7h — click to dispute' : ' — no data'}${rateTooltip}`}
                         onClick={
                           cellClickable
                             ? () =>
@@ -722,6 +739,11 @@ export default function EmployeePabCalendar({
                         <span className="pointer-events-none absolute left-1 top-0.5 max-w-[calc(100%-0.5rem)] truncate text-[7px] font-medium leading-none tracking-tight text-zinc-400 dark:text-zinc-500">
                           {day.dateStr}
                         </span>
+                        {isHoliday && (
+                          <span className="pointer-events-none absolute left-1 top-3 max-w-[calc(100%-0.5rem)] truncate text-[6.5px] font-semibold leading-none tracking-tight text-violet-500 dark:text-violet-400">
+                            {holidayName}
+                          </span>
+                        )}
                         {/* Today pulse indicator */}
                         {isToday && (
                           <span className="absolute right-1 top-1 flex h-1.5 w-1.5">
@@ -730,7 +752,7 @@ export default function EmployeePabCalendar({
                           </span>
                         )}
                         <div className="flex flex-1 flex-col items-center justify-center px-0.5 pb-0.5 pt-3.5">
-                          {isToday || stillInProgress ? (
+                          {(isToday || stillInProgress) && !isHoliday ? (
                             <div className="flex flex-col items-center gap-0.5">
                               <Hourglass
                                 className="h-3.5 w-3.5 text-orange-400 dark:text-orange-300 sm:h-4 sm:w-4"
@@ -756,7 +778,9 @@ export default function EmployeePabCalendar({
                               className={`text-center text-lg font-bold tabular-nums leading-none tracking-tight sm:text-xl ${
                                 dispute != null && disputeIsAwaitingResolution(dispute)
                                   ? 'text-amber-700 dark:text-amber-400'
-                                  : effectivelyPasses
+                                  : isHoliday
+                                    ? 'text-violet-700 dark:text-violet-400'
+                                    : effectivelyPasses
                                     ? (isCurrentWeek ? 'text-orange-700 dark:text-orange-400' : 'text-emerald-700 dark:text-emerald-400')
                                     : isToday || isFutureOrToday || stillInProgress
                                       ? 'text-zinc-400 dark:text-zinc-500'
@@ -803,6 +827,9 @@ export default function EmployeePabCalendar({
               </span>
               <span className="flex items-center gap-1">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 ring-1 ring-emerald-400 sm:h-2 sm:w-2" /> Forgiven
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-violet-500 sm:h-2 sm:w-2" /> Holiday
               </span>
               <span className="ml-auto font-medium">
                 {verdict === 'in_progress' ? (

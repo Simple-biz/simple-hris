@@ -91,7 +91,7 @@ export async function getTeamRoster(
     const isManager = (!!w && managerSet.has(w)) || (!!p && managerSet.has(p));
 
     const sameDept = !deptNorm || rowDeptNorm === deptNorm;
-    if (!sameDept && !isManager) continue;
+    if (!sameDept) continue;
 
     profiles.push({
       id: String(r.id),

@@ -62,7 +62,7 @@ function LoginSkeleton() {
 function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { data: session, status } = useSession();
+  const { data: session, status, update } = useSession();
   const [resolvingRole, setResolvingRole] = useState(false);
   // Where to send the user once sign-in resolves. We compute this up front but DON'T navigate
   // immediately -- the actual hand-off is gated on the transition video so it feels like one motion.
@@ -70,11 +70,12 @@ function LoginPageInner() {
   const [videoReady, setVideoReady] = useState(false);
   const [fadeToWhite, setFadeToWhite] = useState(false);
   const [transitionDone, setTransitionDone] = useState(false);
-  // Audio: we try to play the clip with sound. If the browser blocks sound-on autoplay (no gesture
-  // survives the OAuth redirect), we fall back to muted playback and flag `soundBlocked` so a
-  // prominent "Tap for sound" control appears -- one tap is a gesture, so audio resumes instantly.
   const [muted, setMuted] = useState(false);
   const [soundBlocked, setSoundBlocked] = useState(false);
+  // videoActive gates visibility of the full-screen overlay; videoStartedRef prevents the
+  // authenticated-status effect from double-starting the video when popup flow already launched it.
+  const [videoActive, setVideoActive] = useState(false);
+  const videoStartedRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const finishedRef = useRef(false);
 
@@ -158,23 +159,107 @@ function LoginPageInner() {
     }
   }
 
-  // Drive the transition video the moment we're authenticated. Try sound-first; if the browser
-  // blocks autoplay-with-audio (the click that started sign-in didn't survive the OAuth redirect),
-  // fall back to muted playback and reveal the "Tap for sound" prompt. A safety cap ensures a
-  // stalled or blocked video can never trap the user on this screen.
-  useEffect(() => {
-    if (status !== 'authenticated') return;
+  // Open Google OAuth in a popup so the parent page stays alive with an active user gesture.
+  // We call v.play() right after window.open() returns (still within the gesture window) so sound
+  // is allowed without any extra tap. Falls back to a full redirect if the popup is blocked.
+  async function handleGoogleSignIn() {
     const v = videoRef.current;
+
+    let oauthUrl: string | null = null;
+    try {
+      const result = await signIn('google', {
+        redirect: false,
+        callbackUrl: `${window.location.origin}/auth-callback`,
+      }) as { url?: string | null } | undefined;
+      oauthUrl = result?.url ?? null;
+    } catch {
+      /* fall through to redirect */
+    }
+
+    if (!oauthUrl) {
+      void signIn('google', { callbackUrl: '/login' });
+      return;
+    }
+
+    const sw = window.screen.width;
+    const sh = window.screen.height;
+    const pw = 520;
+    const ph = 620;
+    const popup = window.open(
+      oauthUrl,
+      'google-oauth',
+      `width=${pw},height=${ph},left=${Math.round((sw - pw) / 2)},top=${Math.round((sh - ph) / 2)},resizable=yes,scrollbars=yes`,
+    );
+
+    if (!popup) {
+      // Popup blocked — fall back to the regular redirect flow.
+      void signIn('google', { callbackUrl: '/login' });
+      return;
+    }
+
+    // Popup opened. User gesture is still within its ~1s activation window.
+    // Start the video with sound right now.
+    videoStartedRef.current = true;
     if (v) {
       v.muted = false;
       v.volume = 1;
-      v.play()
+      void v.play()
         .then(() => setVideoReady(true))
         .catch(() => {
           v.muted = true;
           setMuted(true);
           setSoundBlocked(true);
-          v.play().then(() => setVideoReady(true)).catch(() => setVideoReady(true));
+          void v.play().then(() => setVideoReady(true)).catch(() => setVideoReady(true));
+        });
+    }
+    setVideoActive(true);
+    window.setTimeout(finishTransition, 9000);
+  }
+
+  // When the browser blocks autoplay-with-audio, add a one-shot document gesture listener so the
+  // first click/tap anywhere on the overlay automatically enables sound.
+  useEffect(() => {
+    if (!soundBlocked) return;
+    const onGesture = () => enableSound();
+    document.addEventListener('click', onGesture, { once: true });
+    document.addEventListener('touchend', onGesture, { once: true });
+    return () => {
+      document.removeEventListener('click', onGesture);
+      document.removeEventListener('touchend', onGesture);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soundBlocked]);
+
+  // When the popup OAuth flow completes, /auth-callback posts this message. Force a session
+  // refresh so useSession() picks up the new cookie without waiting for the next focus poll.
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      if (e.origin !== window.location.origin) return;
+      if ((e.data as { type?: string })?.type !== 'oauth_done') return;
+      void update?.();
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [update]);
+
+  // Drive the transition video once authenticated. Skipped when the popup flow already started
+  // it; used as the fallback path for already-logged-in users and the redirect-fallback case.
+  useEffect(() => {
+    if (status !== 'authenticated') return;
+    if (videoStartedRef.current) return;
+    videoStartedRef.current = true;
+    const v = videoRef.current;
+    setVideoActive(true);
+    if (v) {
+      v.muted = false;
+      v.volume = 1;
+      void v.play()
+        .then(() => setVideoReady(true))
+        .catch(() => {
+          v.muted = true;
+          setMuted(true);
+          setSoundBlocked(true);
+          void v.play().then(() => setVideoReady(true)).catch(() => setVideoReady(true));
         });
     }
     const cap = window.setTimeout(finishTransition, 9000);
@@ -308,7 +393,7 @@ function LoginPageInner() {
                 type="button"
                 size="lg"
                 className="h-14 w-full gap-3 rounded-2xl border border-white/90 bg-white/88 text-zinc-900 shadow-[0_12px_30px_rgba(15,23,42,0.08)] ring-0 backdrop-blur-xl transition hover:bg-white"
-                onClick={() => void signIn('google', { callbackUrl: '/login' })}
+                onClick={() => void handleGoogleSignIn()}
               >
                 <GoogleMark />
                 <span className="font-medium">Continue with Google</span>
@@ -333,21 +418,19 @@ function LoginPageInner() {
       </main>
       <Toaster position="top-right" />
 
-      {/* Seamless sign-in hand-off: once Google returns, a full-screen video bridges the gap
-          while the destination route warms in the background. Fades up from / back to white so
-          it joins cleanly to the (light) app shell with no black flash. */}
-      {status === 'authenticated' && (
-        <div className="fixed inset-0 z-[100] bg-white">
+      {/* Seamless sign-in hand-off: full-screen video bridges the gap while the destination
+          route warms in the background. Always in DOM (hidden) so videoRef is valid at click-time,
+          letting us call play() with an active user gesture before any async work. */}
+      <div className={`fixed inset-0 z-[100] bg-white${videoActive ? '' : ' hidden'}`}>
           <video
             ref={videoRef}
             className={`h-full w-full object-cover transition-opacity duration-500 ease-out ${
               videoReady ? 'opacity-100' : 'opacity-0'
             }`}
             src="/login.mp4"
-            autoPlay
             muted={muted}
             playsInline
-            preload="auto"
+            preload="none"
             onCanPlay={() => setVideoReady(true)}
             onEnded={finishTransition}
             onError={finishTransition}
@@ -365,17 +448,14 @@ function LoginPageInner() {
             )}
           </div>
 
-          {/* Sound control. When autoplay-with-audio was blocked, this reads "Tap for sound" and
-              gently pulses to draw the eye; otherwise it's a quiet mute/unmute toggle. */}
+          {/* Sound control — mute/unmute toggle. */}
           <button
             type="button"
             onClick={muted ? enableSound : toggleSound}
-            className={`absolute bottom-6 left-6 inline-flex items-center gap-2 rounded-full border border-white/40 bg-black/30 px-4 py-1.5 text-xs font-medium text-white/85 backdrop-blur-md transition hover:bg-black/55 hover:text-white ${
-              soundBlocked ? 'animate-pulse' : ''
-            }`}
+            className="absolute bottom-6 left-6 inline-flex items-center gap-2 rounded-full border border-white/40 bg-black/30 px-4 py-1.5 text-xs font-medium text-white/85 backdrop-blur-md transition hover:bg-black/55 hover:text-white"
           >
-            {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-            {soundBlocked ? 'Tap for sound' : muted ? 'Sound off' : 'Sound on'}
+            {muted && !soundBlocked ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+            {muted && !soundBlocked ? 'Sound off' : 'Sound on'}
           </button>
 
           <button
@@ -386,7 +466,6 @@ function LoginPageInner() {
             Skip
           </button>
         </div>
-      )}
     </>
   );
 }

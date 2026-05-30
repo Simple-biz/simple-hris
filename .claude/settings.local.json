@@ -173,7 +173,9 @@
       "Bash(uipro --version)",
       "Bash(uipro --help)",
       "Bash(uipro init *)",
-      "Bash(Get-ChildItem \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\.claude\\\\skills\" -Recurse)"
+      "Bash(Get-ChildItem \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\.claude\\\\skills\" -Recurse)",
+      "Bash(Format-Table FullName)",
+      "Bash(Select-Object -First 10)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

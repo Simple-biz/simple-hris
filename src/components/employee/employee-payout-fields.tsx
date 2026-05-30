@@ -579,6 +579,7 @@ export function PayoutDetailsFields({
               label="Account Number"
               required
               mono
+              masked
               placeholder="1234-5678-9012"
               value={payout.accountNumber}
               onChange={(v) => update('accountNumber', v)}
@@ -588,6 +589,7 @@ export function PayoutDetailsFields({
               label="SWIFT / BIC Code"
               required
               mono
+              masked
               placeholder="BOPIPHMM"
               value={payout.swiftCode}
               onChange={(v) => update('swiftCode', v)}
@@ -624,6 +626,7 @@ export function PayoutDetailsFields({
               disabled={disabled}
               label="Account Number"
               mono
+              masked
               placeholder="Optional backup account number"
               value={payout.altAccountNumber}
               onChange={(v) => update('altAccountNumber', v)}
@@ -632,6 +635,7 @@ export function PayoutDetailsFields({
               disabled={disabled}
               label="SWIFT / BIC Code"
               mono
+              masked
               placeholder="Optional backup SWIFT code"
               value={payout.altSwiftCode}
               onChange={(v) => update('altSwiftCode', v)}
@@ -667,6 +671,7 @@ export function PayoutDetailsFields({
               label="Account Number"
               required
               mono
+              masked
               placeholder="1234-5678-9012"
               value={payout.accountNumber}
               onChange={(v) => update('accountNumber', v)}
@@ -676,6 +681,7 @@ export function PayoutDetailsFields({
               label="SWIFT / BIC Code"
               required
               mono
+              masked
               placeholder="BOPIPHMM"
               value={payout.swiftCode}
               onChange={(v) => update('swiftCode', v)}
@@ -713,6 +719,7 @@ export function PayoutDetailsFields({
               disabled={disabled}
               label="Account Number"
               mono
+              masked
               placeholder="Optional backup account number"
               value={payout.altAccountNumber}
               onChange={(v) => update('altAccountNumber', v)}
@@ -721,6 +728,7 @@ export function PayoutDetailsFields({
               disabled={disabled}
               label="SWIFT / BIC Code"
               mono
+              masked
               placeholder="Optional backup SWIFT code"
               value={payout.altSwiftCode}
               onChange={(v) => update('altSwiftCode', v)}
@@ -743,6 +751,14 @@ interface FormFieldProps {
   fullWidth?: boolean;
   hint?: string;
   disabled?: boolean;
+  masked?: boolean;
+}
+
+function maskSensitive(v: string): string {
+  if (!v) return '';
+  const clean = v.replace(/[-\s]/g, '');
+  if (clean.length <= 4) return '•'.repeat(clean.length);
+  return '•'.repeat(clean.length - 4) + clean.slice(-4);
 }
 
 function FormField({
@@ -756,7 +772,9 @@ function FormField({
   fullWidth,
   hint,
   disabled = false,
+  masked = false,
 }: FormFieldProps) {
+  const displayValue = masked && disabled ? maskSensitive(value) : value;
   return (
     <div className={cn(fullWidth && 'sm:col-span-2')}>
       <label className="mb-1.5 flex items-center gap-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -770,7 +788,7 @@ function FormField({
       <Input
         type={type}
         placeholder={placeholder}
-        value={value}
+        value={displayValue}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
         className={cn(

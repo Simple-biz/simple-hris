@@ -839,7 +839,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         ? (getLatestPabMonthFromColumns(pabCols) ?? inferPabMonthFromColumns(pabCols))
         : (getLatestPabMonthFromColumns(pabCols) ?? getCurrentPabMonth());
       if (pabMonth) {
-        const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
+        const mKey = `${pabMonth.year}-${String(pabMonth.month + 1).padStart(2, '0')}`;
+        const ov = pabPeriodSettings.overrides.get(mKey);
+        const { start, end } = ov ?? getPabMonthRange(pabMonth.year, pabMonth.month);
         groups = filterColumnGroupsByPabRange(groups, pabCols, start, end);
       }
     }
@@ -875,7 +877,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         if (da && db) return da.getTime() - db.getTime();
         return a.order - b.order;
       });
-  }, [pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange]);
+  }, [pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides]);
 
   /** PAB month + date range for display.
    * Default: latest PAB period in merged CSV data (or today if none).
@@ -912,10 +914,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           : (getLatestPabMonthFromColumns(mergedCols) ?? getCurrentPabMonth()))
       : (getLatestPabMonthFromColumns(mergedCols ?? []) ?? getCurrentPabMonth());
     if (!pabMonth) return null;
-    const { start, end } = getPabMonthRange(pabMonth.year, pabMonth.month);
+    const mKey = `${pabMonth.year}-${String(pabMonth.month + 1).padStart(2, '0')}`;
+    const ov = pabPeriodSettings.overrides.get(mKey);
+    const { start, end } = ov ?? getPabMonthRange(pabMonth.year, pabMonth.month);
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
-  }, [pabMergedColumns, columns, row, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange]);
+  }, [pabMergedColumns, columns, row, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides]);
 
   const fetchMyDisputes = useCallback(() => {
     if (!pabMonthRange || !email) return;
@@ -1329,6 +1333,36 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
     const t = salaryDate.getTime();
     return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
+  }, [isTechnologyBonusActive, employeeStartDate, selectedFileWeek]);
+
+  /** True when the tech bonus week is already in the past for the current reference period. */
+  const isTechBonusWeekPast = useMemo(() => {
+    if (isTechnologyBonusActive) return false;
+    if (!employeeStartDate) return false;
+    const eligibleFrom = new Date(
+      employeeStartDate.getFullYear(),
+      employeeStartDate.getMonth(),
+      employeeStartDate.getDate() + 30,
+    );
+    const refMonday = (() => {
+      if (selectedFileWeek) {
+        const s = selectedFileWeek.start;
+        return new Date(s.getFullYear(), s.getMonth(), s.getDate());
+      }
+      const today = new Date();
+      const dow = today.getDay();
+      const daysBackToTue = (dow - 2 + 7) % 7;
+      const lastTuesday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysBackToTue);
+      return new Date(lastTuesday.getFullYear(), lastTuesday.getMonth(), lastTuesday.getDate() - 8);
+    })();
+    if (refMonday.getTime() < eligibleFrom.getTime()) return false;
+    const salaryDate = new Date(refMonday.getFullYear(), refMonday.getMonth(), refMonday.getDate() + 8);
+    const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
+    const dow = first.getDay();
+    const daysForward = (8 - dow) % 7;
+    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
+    const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
+    return salaryDate.getTime() >= fourthWeekMon.getTime();
   }, [isTechnologyBonusActive, employeeStartDate, selectedFileWeek]);
 
   /**
@@ -2208,7 +2242,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                           ? 'text-sky-700 dark:text-sky-300'
                           : isTechBonusNextWeek
                             ? 'text-emerald-700 dark:text-emerald-400'
-                            : 'text-zinc-500 dark:text-zinc-500'
+                            : isTechBonusWeekPast
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-zinc-500 dark:text-zinc-500'
                   }`}
                 >
                   <span
@@ -2221,7 +2257,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                             ? 'bg-sky-500'
                             : isTechBonusNextWeek
                               ? 'bg-emerald-500'
-                              : 'bg-zinc-400'
+                              : isTechBonusWeekPast
+                                ? 'bg-emerald-500'
+                                : 'bg-zinc-400'
                     }`}
                   />
                   {isTechnologyBonusActive
@@ -2232,7 +2270,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                         ? 'Paid this Week'
                         : isTechBonusNextWeek
                           ? 'Unlocked Next Week'
-                          : 'Locked'}
+                          : isTechBonusWeekPast
+                            ? 'Released'
+                            : 'Locked'}
                 </span>
               </div>
               {isMesaMember && (
