@@ -13,10 +13,50 @@
  *
  * The `matcher` below excludes Next.js internal paths (_next, static) and common public file
  * extensions so we don't pay the auth check on every image/font request.
+ *
+ * Rate limiting for public onboarding endpoints:
+ *  - GET  /api/onboarding/*  — 30 req / IP / minute (form loads + prefills)
+ *  - POST /api/onboarding/*  — 5  req / IP / minute (submissions + file uploads)
  */
 
 import { getToken } from 'next-auth/jwt';
 import { NextResponse, type NextRequest } from 'next/server';
+
+// ---------------------------------------------------------------------------
+// In-memory sliding-window rate limiter for public onboarding routes.
+// Keyed by "<method>:<ip>". Runs in the same Edge isolate so the map is shared
+// within a region but reset on cold start — acceptable for abuse prevention.
+// ---------------------------------------------------------------------------
+
+type RateEntry = { count: number; resetAt: number };
+const _rl = new Map<string, RateEntry>();
+
+const ONBOARDING_LIMITS: Record<string, { max: number; windowMs: number }> = {
+  GET:  { max: 30, windowMs: 60_000 },
+  POST: { max: 5,  windowMs: 60_000 },
+};
+
+function onboardingRateLimited(req: NextRequest): boolean {
+  const limit = ONBOARDING_LIMITS[req.method];
+  if (!limit) return false;
+
+  const ip =
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+    req.headers.get('x-real-ip') ??
+    'unknown';
+
+  const key = `${req.method}:${ip}`;
+  const now = Date.now();
+  const entry = _rl.get(key);
+
+  if (!entry || now > entry.resetAt) {
+    _rl.set(key, { count: 1, resetAt: now + limit.windowMs });
+    return false;
+  }
+  if (entry.count >= limit.max) return true;
+  entry.count++;
+  return false;
+}
 
 const PUBLIC_PATHS = new Set<string>([
   '/login',
@@ -24,14 +64,25 @@ const PUBLIC_PATHS = new Set<string>([
 
 const PUBLIC_PREFIXES = [
   '/api/auth/', // NextAuth handler
-  '/onboarding/', // token-gated public onboarding form for new hires
-  '/api/onboarding/', // its corresponding submit + upload endpoints
+  // /onboarding/ and /api/onboarding/ are handled above with rate limiting.
 ];
 
 export async function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
+
+  // Rate-limit the public onboarding API before letting it through.
+  if (pathname.startsWith('/api/onboarding/') || pathname.startsWith('/onboarding/')) {
+    if (pathname.startsWith('/api/onboarding/') && onboardingRateLimited(req)) {
+      return NextResponse.json(
+        { error: 'Too many requests. Please wait a moment and try again.' },
+        { status: 429 },
+      );
+    }
+    return NextResponse.next();
+  }
+
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return NextResponse.next();
 
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });

@@ -120,7 +120,7 @@ See `BUSINESS_LOGIC.md#Technology Bonus` and `#Weekly gating for monthly bonuses
 
 The Dispatch step's "Preview Paystubs" button opens a modal built from the same `dispatchData` rows that will be posted. Two views:
 
-1. **List view**: searchable (filter by name or personal email), one row per employee (name + personal email + "View" action).
+1. **List view**: searchable (filter by name, work email, or personal email), one row per employee (name + personal email + "View" action).
 2. **Detail view**: orange/white/blue diagonal-gradient paystub mirroring the email template (header, recipient, earnings, bonuses, total, logo footer). Fits one viewport without scrolling. "← Back" returns to the list.
 
 State: `previewPaystubsOpen`, `previewSelectedEmail`, `previewSearch`. All reset on modal close.

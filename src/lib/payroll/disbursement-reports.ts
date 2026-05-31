@@ -353,6 +353,7 @@ async function loadProcessorByEmail(): Promise<Map<string, string>> {
 export async function listDisbursementReports(): Promise<{
   reports: DisbursementReportSummary[];
   error: string | null;
+  unseededCount: number;
 }> {
   let records: DisbursementRecordRow[];
   try {
@@ -360,6 +361,7 @@ export async function listDisbursementReports(): Promise<{
   } catch (e) {
     return {
       reports: [],
+      unseededCount: 0,
       error: e instanceof Error ? e.message : "Failed to load disbursement_records",
     };
   }
@@ -477,10 +479,219 @@ export async function listDisbursementReports(): Promise<{
     });
   }
 
+  // Count uploads that have no disbursement_records rows yet (need seeding).
+  const seededSources = new Set(reports.map((r) => r.sourceFile));
+  const unseededCount = uploads.filter(
+    (u) => u.source_file && !seededSources.has(u.source_file),
+  ).length;
+
   // Newest period first.
   reports.sort((a, b) => (b.periodStart ?? "").localeCompare(a.periodStart ?? ""));
 
-  return { reports, error: null };
+  return { reports, error: null, unseededCount };
+}
+
+/**
+ * Bulk-marks all `disbursement_records` rows for a given cycle as paid.
+ * Returns the number of rows updated.
+ */
+export async function markAllDisbursementRecordsPaid(
+  sourceFile: string,
+): Promise<{ updated: number; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { updated: 0, error: "No Supabase client" };
+
+  const { data, error } = await supabase
+    .from("disbursement_records")
+    .update({ status: "paid" })
+    .eq("source_file", sourceFile)
+    .neq("status", "paid")
+    .select("id");
+
+  if (error) return { updated: 0, error: error.message };
+  return { updated: (data ?? []).length, error: null };
+}
+
+function parseWorkedHours(raw: string | null | undefined): number {
+  if (!raw) return 0;
+  const parts = raw.split(":");
+  const h = parseFloat(parts[0] ?? "0") || 0;
+  const m = parseFloat(parts[1] ?? "0") || 0;
+  const s = parseFloat(parts[2] ?? "0") || 0;
+  return h + m / 60 + s / 3600;
+}
+
+/**
+ * Seeds `disbursement_records` for all `hubstaff_uploads` that have no records yet.
+ * Replicates the logic of `references/seed_disbursement_records.sql` in TypeScript.
+ * Returns the total number of rows inserted/updated.
+ */
+export async function seedMissingDisbursementRecords(): Promise<{
+  seeded: number;
+  error: string | null;
+}> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { seeded: 0, error: "No Supabase client" };
+
+  // Which source_files are already in disbursement_records?
+  const { data: existingData, error: existingErr } = await supabase
+    .from("disbursement_records")
+    .select("source_file");
+  if (existingErr) return { seeded: 0, error: existingErr.message };
+  const seededFiles = new Set(
+    (existingData ?? []).map((r: { source_file: string }) => r.source_file),
+  );
+
+  // All uploads — find unseeded ones.
+  const uploads = await safeListHubstaffUploads();
+  const unseeded = uploads.filter(
+    (u) => u.source_file && !seededFiles.has(u.source_file),
+  );
+  if (unseeded.length === 0) return { seeded: 0, error: null };
+
+  // FX rate from app_settings.
+  const { data: fxData } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "usd_to_php_rate")
+    .maybeSingle();
+  const fxRate = parseFloat((fxData as { value?: string } | null)?.value ?? "0") || 0;
+
+  // Employee rates indexed by email (work + personal).
+  const { data: ratesData } = await supabase
+    .from("employee_hourly_rates")
+    .select("*");
+  const ratesByEmail = new Map<string, { regular: number; ot: number }>();
+  for (const r of (ratesData ?? []) as Array<{
+    "Work Email": string | null;
+    "Personal Email": string | null;
+    "Regular Rate": string | number | null;
+    "OT Rate": string | number | null;
+  }>) {
+    const we = r["Work Email"]?.trim().toLowerCase();
+    const pe = r["Personal Email"]?.trim().toLowerCase();
+    const regular = parseFloat(String(r["Regular Rate"] ?? "0")) || 0;
+    const ot = parseFloat(String(r["OT Rate"] ?? "0")) || 0;
+    if (we) ratesByEmail.set(we, { regular, ot });
+    if (pe && !ratesByEmail.has(pe)) ratesByEmail.set(pe, { regular, ot });
+  }
+
+  // Existing dispatches for unseeded source_files.
+  const unseededFiles = unseeded.map((u) => u.source_file as string);
+  const { data: dispatchData } = await supabase
+    .from("payment_dispatches")
+    .select(
+      "id, recipient_email, cycle_source_file, status, amount_usd, sent_date, bank_used, transaction_id",
+    )
+    .in("cycle_source_file", unseededFiles)
+    .order("created_at", { ascending: false });
+  const dispatchMap = new Map<
+    string,
+    {
+      id: string;
+      status: string;
+      amount_usd: number | null;
+      sent_date: string | null;
+      bank_used: string | null;
+      transaction_id: string | null;
+    }
+  >();
+  for (const d of (dispatchData ?? []) as Array<{
+    id: string;
+    recipient_email: string | null;
+    cycle_source_file: string | null;
+    status: string;
+    amount_usd: number | null;
+    sent_date: string | null;
+    bank_used: string | null;
+    transaction_id: string | null;
+  }>) {
+    const key = `${d.cycle_source_file}|${d.recipient_email?.trim().toLowerCase()}`;
+    if (!dispatchMap.has(key)) dispatchMap.set(key, d);
+  }
+
+  let seeded = 0;
+
+  for (const upload of unseeded) {
+    const sourceFile = upload.source_file as string;
+    const period = periodFromFilename(sourceFile);
+    if (!period.start || !period.end) continue;
+
+    // Fetch all hourly rows for this upload using select('*') — column names
+    // in hubstaff_hours match the CSV headers (e.g. "Email", "Member", "Total worked").
+    const PAGE = 1000;
+    const allHours: Record<string, unknown>[] = [];
+    let from = 0;
+    while (true) {
+      const { data: hoursPage, error: hoursErr } = await supabase
+        .from("hubstaff_hours")
+        .select("*")
+        .eq("source_file", sourceFile)
+        .range(from, from + PAGE - 1);
+      if (hoursErr) break;
+      const page = (hoursPage ?? []) as Record<string, unknown>[];
+      allHours.push(...page);
+      if (page.length < PAGE) break;
+      from += PAGE;
+    }
+    if (allHours.length === 0) continue;
+
+    const rows: Record<string, unknown>[] = [];
+    for (const h of allHours) {
+      const email = (h["Email"] as string | null)?.trim().toLowerCase();
+      if (!email) continue;
+      const totalHours =
+        Math.round(parseWorkedHours(h["Total worked"] as string | null) * 100) / 100;
+      const regularHours = Math.round(Math.min(40, totalHours) * 100) / 100;
+      const otHours = Math.round(Math.max(0, totalHours - 40) * 100) / 100;
+      const rates = ratesByEmail.get(email) ?? { regular: 0, ot: 0 };
+      const amountPHP =
+        Math.round((regularHours * rates.regular + otHours * rates.ot) * 100) /
+        100;
+      const amountUSD =
+        fxRate > 0 ? Math.round((amountPHP / fxRate) * 100) / 100 : null;
+
+      const dispKey = `${sourceFile}|${email}`;
+      const dispatch = dispatchMap.get(dispKey);
+
+      rows.push({
+        cycle_period_start: period.start,
+        cycle_period_end: period.end,
+        source_file: sourceFile,
+        upload_id: (h["upload_id"] as string | null) ?? upload.id,
+        recipient_email: email,
+        recipient_name: (h["Member"] as string | null)?.trim() || null,
+        total_hours: totalHours,
+        regular_hours: regularHours,
+        ot_hours: otHours,
+        regular_rate_php: rates.regular,
+        ot_rate_php: rates.ot,
+        amount_php: amountPHP,
+        amount_usd: amountUSD,
+        fx_rate: fxRate || null,
+        status: dispatch?.status ?? "pending",
+        paid_amount_usd: dispatch?.amount_usd ?? null,
+        paid_at: dispatch?.sent_date ?? null,
+        bank_used: dispatch?.bank_used ?? null,
+        transaction_id: dispatch?.transaction_id ?? null,
+        dispatch_id: dispatch?.id ?? null,
+      });
+    }
+
+    if (rows.length === 0) continue;
+
+    const BATCH = 200;
+    for (let i = 0; i < rows.length; i += BATCH) {
+      const { error: upsertErr } = await supabase
+        .from("disbursement_records")
+        .upsert(rows.slice(i, i + BATCH), {
+          onConflict: "source_file,recipient_email",
+        });
+      if (!upsertErr) seeded += Math.min(BATCH, rows.length - i);
+    }
+  }
+
+  return { seeded, error: null };
 }
 
 /**

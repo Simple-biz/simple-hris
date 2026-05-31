@@ -532,19 +532,36 @@ export default function HrOnboardingForm() {
                       <td data-label="Actions" className="px-4 py-3 text-right">
                         <div className="flex justify-end gap-1.5">
                           {r.status === 'pending' && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-xs"
-                              onClick={() => {
-                                void navigator.clipboard.writeText(publicLinkFor(r.token));
-                                toast.success('Link copied');
-                              }}
-                              title="Copy public link"
-                            >
-                              <ClipboardCopy className="mr-1 h-3 w-3" />
-                              Copy link
-                            </Button>
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 gap-1 px-2 text-xs text-emerald-800 hover:bg-emerald-50 dark:text-emerald-200 dark:hover:bg-emerald-950/30"
+                                onClick={() => void resendLink(r)}
+                                disabled={isBusy}
+                                title={`Send onboarding link to ${r.invite_personal_email ?? 'this hire'}`}
+                              >
+                                {isBusy ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Send className="h-3 w-3" />
+                                )}
+                                Send
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs"
+                                onClick={() => {
+                                  void navigator.clipboard.writeText(publicLinkFor(r.token));
+                                  toast.success('Link copied');
+                                }}
+                                title="Copy public link"
+                              >
+                                <ClipboardCopy className="mr-1 h-3 w-3" />
+                                Copy link
+                              </Button>
+                            </>
                           )}
                           {r.status === 'submitted' && (
                             <>

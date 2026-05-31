@@ -52,8 +52,10 @@ export async function GET(
         hurupay_email: row.hurupay_email,
         bank_full_name: row.bank_full_name,
         bank_account_name: row.bank_account_name,
-        bank_account_number: row.bank_account_number,
-        bank_swift_code: row.bank_swift_code,
+        // bank_account_number and bank_swift_code are intentionally omitted:
+        // this endpoint is public (token-only auth) and the token is delivered
+        // via email, so account credentials must not be returned. The hire
+        // re-enters them if they update their payment details.
         bank_street: row.bank_street,
         bank_city: row.bank_city,
         bank_province: row.bank_province,

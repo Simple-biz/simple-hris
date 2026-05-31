@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useMemo, useTransition, useCallback } from 'react';
-import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import {
@@ -27,8 +26,8 @@ import {
   RefreshCw,
   Clock,
   Heart,
-  Gift,
   BarChart3,
+  Building2,
   Download,
   Timer,
   Play,
@@ -39,6 +38,7 @@ import {
   Plus,
   Sparkles,
   CheckCircle2,
+  Search,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { cn } from '@/lib/utils';
@@ -116,6 +116,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { HSL_DEPT_KEYS, HSL_DEPTS } from '@/lib/hsl-bonus/schema';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -618,7 +619,7 @@ const steps = [
   { id: 2, label: 'Initial Calculation', icon: DollarSign, description: 'Hubstaff hours × employee_hourly_rates → Initial Pay' },
   { id: 3, label: 'Additions', icon: Calculator, description: 'Apply bonuses and adjustments' },
   { id: 4, label: 'Orphanage', icon: Heart, description: 'Approved orphanage visits and the hours/wages they cover' },
-  { id: 5, label: 'Tenure Gifts', icon: Gift, description: 'Tenure gifts approved by HR this PAB month' },
+  { id: 5, label: 'HSL', icon: Building2, description: 'Hogan Smith Law — initial pay, KPI bonuses, and accounting overrides' },
   { id: 6, label: 'Contractors', icon: HardHat, description: 'Pending contractor invoices — review and approve before dispatch' },
   { id: 7, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
   { id: 8, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
@@ -642,7 +643,6 @@ export default function PayrollWizard({
     employees: DispatchEmployee[];
     budgetRequests: { id: string; submitter_email: string; submitted_at: string; decided_at: string | null; decided_by: string | null; visit_type: string; final_amount: number | string | null; status: string }[];
     giftPayments: { id: string; period_label: string; batch_label: string; vendor_name: string; total_usd: number; date_sent: string | null; status: string }[];
-    tenureGifts: { id: string; personal_email: string; milestone_index: number; milestone_date: string; decided_at: string; decided_by: string | null; gift_name: string | null; gift_price_php: number | null }[];
     usdToPhpRate: number;
   } | null>(null);
   const [reportsTab, setReportsTab] = useState<'salaries' | 'budget' | 'gifts'>('salaries');
@@ -682,6 +682,9 @@ export default function PayrollWizard({
   const [hubstaffSearch, setHubstaffSearch] = useState('');
   const [initialCalcSearch, setInitialCalcSearch] = useState('');
   const [initialCalcPage, setInitialCalcPage] = useState(1);
+  const [hslSearch, setHslSearch] = useState('');
+  const [hslPage, setHslPage] = useState(1);
+  const HSL_PAGE_SIZE = 50;
   const [approveUploadDialogOpen, setApproveUploadDialogOpen] = useState(false);
   const [previewPaystubsOpen, setPreviewPaystubsOpen] = useState(false);
   const [previewSelectedEmail, setPreviewSelectedEmail] = useState<string | null>(null);
@@ -812,22 +815,19 @@ export default function PayrollWizard({
   const [giftPaymentsLoading, setGiftPaymentsLoading] = useState(false);
   const [giftPaymentsError, setGiftPaymentsError] = useState<string | null>(null);
 
-  // ── Approved tenure gifts (from Gift Tracker shipping submissions) in the active
-  // PAB month. Each approved row carries a gift_name + gift_price_php (PHP) that
-  // flows into the Accounting weekly outflow.
-  const [tenureGiftRows, setTenureGiftRows] = useState<{
-    id: string;
-    personal_email: string;
-    milestone_index: number;
-    milestone_date: string;
-    decided_at: string;
-    decided_by: string | null;
-    gift_name: string;
-    gift_price_php: number;
+  // ── HSL step: per-dept KPI bonus data loaded on demand (step 5) ─────────────
+  const [hslStepBonusByEmail, setHslStepBonusByEmail] = useState<Record<string, number>>({});
+  const [hslStepPeriods, setHslStepPeriods] = useState<{
+    department: string;
+    period_start: string;
+    period_end: string;
+    period_type: string;
+    status: string;
+    total_bonus: number;
+    entries: { employee_email: string; employee_name: string; is_manager: boolean; calculated_bonus: number }[];
   }[]>([]);
-  const [tenureGiftsLoading, setTenureGiftsLoading] = useState(false);
-  const [tenureGiftsError, setTenureGiftsError] = useState<string | null>(null);
-  const [tenureGiftAccountingStatus, setTenureGiftAccountingStatus] = useState<Record<string, 'approved' | 'rejected'>>({});
+  const [hslStepLoading, setHslStepLoading] = useState(false);
+  const [hslStepError, setHslStepError] = useState<string | null>(null);
 
   type OrphanageTab = 'visits' | 'wages' | 'budgets';
   const [orphanageTab, setOrphanageTab] = useState<OrphanageTab>('visits');
@@ -1953,131 +1953,67 @@ export default function PayrollWizard({
     return () => ctrl.abort();
   }, [currentStep, pabMonthRange, previewPaystubsOpen]);
 
-  // ── Tenure gifts (approved shipping submissions, in PAB month by decided_at) ──
-  // We keep rows even when gift_name / gift_price_php are null (legacy approvals
-  // from before the gift-pick dialog) so the user sees them with a warning rather
+  // (placeholder comment removed — tenure gifts removed from wizard)
   // than silently nothing.
-  /**
-   * Refetches and filters approved tenure-gift rows to the active PAB month.
-   * Hoisted via `useCallback` so the Realtime subscription below can call it.
-   */
-  const refetchTenureGifts = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!pabMonthRange) return;
-      const startMid = new Date(
-        pabMonthRange.start.getFullYear(),
-        pabMonthRange.start.getMonth(),
-        pabMonthRange.start.getDate(),
-      ).getTime();
-      const endMid = new Date(
-        pabMonthRange.end.getFullYear(),
-        pabMonthRange.end.getMonth(),
-        pabMonthRange.end.getDate(),
-        23,
-        59,
-        59,
-        999,
-      ).getTime();
+
+  // ── HSL step (5): load all dept KPI bonus entries when accounting enters the step
+  useEffect(() => {
+    if (currentStep !== 5) return;
+    let cancelled = false;
+    setHslStepLoading(true);
+    setHslStepError(null);
+    const hslKeys = new Set<string>(HSL_DEPT_KEYS);
+    (async () => {
       try {
-        const res = await fetch(`/api/employee-gift-shipping`, { cache: 'no-store', signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = (await res.json()) as {
-          rows?: {
-            id: string;
-            personal_email: string;
-            milestone_index: number;
-            milestone_date: string;
-            status: string;
-            decided_at: string | null;
-            decided_by: string | null;
-            gift_name: string | null;
-            gift_price_php: number | null;
-          }[];
+        const statusRes = await fetch('/api/hsl-bonus/period-status', { cache: 'no-store' });
+        if (!statusRes.ok) throw new Error(`Period status fetch failed: HTTP ${statusRes.status}`);
+        const statusJson = (await statusRes.json()) as {
+          rows?: { department: string; period_start: string; period_end: string; period_type: string; status: string }[];
         };
-        const filtered = (json.rows ?? [])
-          .filter((r) => r.status === 'approved' && r.decided_at)
-          .filter((r) => {
-            const t = new Date(r.decided_at!).getTime();
-            return Number.isFinite(t) && t >= startMid && t <= endMid;
-          })
-          .map((r) => ({
-            id: r.id,
-            personal_email: r.personal_email,
-            milestone_index: r.milestone_index,
-            milestone_date: r.milestone_date,
-            decided_at: r.decided_at!,
-            decided_by: r.decided_by,
-            // Render legacy/incomplete rows so the user can spot them rather
-            // than them being silently dropped.
-            gift_name: r.gift_name ?? '(no gift assigned)',
-            gift_price_php:
-              r.gift_price_php != null && Number.isFinite(Number(r.gift_price_php))
-                ? Number(r.gift_price_php)
-                : 0,
-          }));
-        setTenureGiftRows(filtered);
-        setTenureGiftsError(null);
-      } catch (e) {
-        if ((e as { name?: string })?.name === 'AbortError') return;
-        setTenureGiftsError(e instanceof Error ? e.message : 'Failed to load tenure gifts');
-        setTenureGiftRows([]);
-      }
-    },
-    [pabMonthRange],
-  );
-
-  useEffect(() => {
-    if ((currentStep !== 4 && currentStep !== 5 && currentStep !== 7 && currentStep !== 9 && !previewPaystubsOpen) || !pabMonthRange) return;
-    const ctrl = new AbortController();
-    setTenureGiftsLoading(true);
-    void refetchTenureGifts(ctrl.signal).finally(() => setTenureGiftsLoading(false));
-    return () => ctrl.abort();
-  }, [currentStep, pabMonthRange, refetchTenureGifts, previewPaystubsOpen]);
-
-  // ── Realtime: refresh tenure gifts the moment the Orphanage team approves
-  // a submission. Subscribes to `employee_gift_shipping_details` while the
-  // user is on step 4, unsubscribes when they leave. Mirrors the dispatch-lock
-  // pattern (also has a focus-refresh as a safety net).
-  useEffect(() => {
-    if (currentStep !== 4) return;
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase) return;
-
-    const channel = supabase
-      .channel(`tenure-gifts-${pabMonthRange?.year ?? 'na'}-${pabMonthRange?.month ?? 'na'}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'employee_gift_shipping_details',
-        },
-        () => {
-          // Any insert/update/delete on the table may have approved a new row
-          // (or unapproved an existing one). Cheaper to refetch the full list
-          // than reconcile per-event.
-          void refetchTenureGifts();
-        },
-      )
-      .subscribe((status, err) => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          // eslint-disable-next-line no-console
-          console.warn(`[tenure-gifts] Realtime ${status}. Tab-focus refresh stays as fallback.`, err);
+        // Pick latest ready/locked period per HSL dept (locked beats ready on tie)
+        const chosen = new Map<string, { period_start: string; period_end: string; period_type: string; status: string }>();
+        for (const row of statusJson.rows ?? []) {
+          if (!hslKeys.has(row.department)) continue;
+          if (row.status !== 'ready' && row.status !== 'locked') continue;
+          const cur = chosen.get(row.department);
+          if (!cur || row.period_start > cur.period_start || (row.period_start === cur.period_start && row.status === 'locked')) {
+            chosen.set(row.department, { period_start: row.period_start, period_end: row.period_end, period_type: row.period_type, status: row.status });
+          }
         }
-      });
+        if (cancelled) return;
+        type HslEntry = { employee_email: string; employee_name: string; is_manager: boolean; calculated_bonus: number };
+        const periods: typeof hslStepPeriods = [];
+        const bonusMap: Record<string, number> = {};
+        await Promise.all(
+          Array.from(chosen.entries()).map(async ([dept, info]) => {
+            const res = await fetch(`/api/hsl-bonus/entries?dept=${dept}&period_start=${info.period_start}`, { cache: 'no-store' });
+            const json = (await res.json()) as { rows?: HslEntry[] };
+            const entries = (json.rows ?? []).filter(r => r.employee_email && r.employee_email !== '__dept_meta__');
+            let total = 0;
+            for (const e of entries) {
+              const em = (e.employee_email ?? '').toLowerCase();
+              if (!em) continue;
+              const amt = Math.round(e.calculated_bonus ?? 0);
+              bonusMap[em] = (bonusMap[em] ?? 0) + amt;
+              total += amt;
+            }
+            periods.push({ department: dept, ...info, total_bonus: total, entries });
+          }),
+        );
+        if (cancelled) return;
+        periods.sort((a, b) => a.department.localeCompare(b.department));
+        setHslStepPeriods(periods);
+        setHslStepBonusByEmail(bonusMap);
+      } catch (e) {
+        if (!cancelled) setHslStepError(e instanceof Error ? e.message : 'Failed to load HSL bonus data');
+      } finally {
+        if (!cancelled) setHslStepLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentStep]);
 
-    const onFocus = () => void refetchTenureGifts();
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onFocus);
-
-    return () => {
-      void supabase.removeChannel(channel);
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onFocus);
-    };
-  }, [currentStep, pabMonthRange, refetchTenureGifts]);
-
-  // Fetch all contractor invoices when on step 5 (Contractors)
+  // Fetch all contractor invoices when on step 6 (Contractors)
   useEffect(() => {
     if (currentStep !== 6) return;
     let cancelled = false;
@@ -2969,8 +2905,6 @@ export default function PayrollWizard({
    *   2. budget_request — accounting-approved orphanage budget requests
    *                       (one per submitter / mission trip).
    *   3. gift_payment   — sent/paid vendor gift payments (USD → PHP).
-   *   4. tenure_gift    — approved tenure-gift shipping submissions
-   *                       (PHP price snapshot at approval).
    */
   const orphanagePreviewItems = useMemo(() => {
     type VisitWagesData = {
@@ -3008,18 +2942,7 @@ export default function PayrollWizard({
       dateSent: string | null;
       status: string;
     };
-    type TenureGiftData = {
-      kind: 'tenure_gift';
-      id: string;
-      personalEmail: string;
-      milestoneIndex: number;
-      milestoneDate: string;
-      decidedAt: string;
-      decidedBy: string | null;
-      giftName: string;
-      pricePHP: number;
-    };
-    type Item = VisitWagesData | BudgetReqData | GiftPaymentData | TenureGiftData;
+    type Item = VisitWagesData | BudgetReqData | GiftPaymentData;
 
     const items: Item[] = [];
 
@@ -3109,28 +3032,12 @@ export default function PayrollWizard({
       });
     }
 
-    // ── 4. Tenure gifts ──────────────────────────────────────────────────
-    for (const t of tenureGiftRows) {
-      items.push({
-        kind: 'tenure_gift',
-        id: `tenure:${t.id}`,
-        personalEmail: t.personal_email,
-        milestoneIndex: t.milestone_index,
-        milestoneDate: t.milestone_date,
-        decidedAt: t.decided_at,
-        decidedBy: t.decided_by,
-        giftName: t.gift_name,
-        pricePHP: t.gift_price_php,
-      });
-    }
-
     return items;
   }, [
     orphanageRows,
     effectiveCalcResults,
     budgetRequestRows,
     giftPaymentRows,
-    tenureGiftRows,
     usdToPhpRate,
     hiddenVisitIds,
     hiddenWageEmails,
@@ -3166,14 +3073,6 @@ export default function PayrollWizard({
           amount: item.totalPHP,
           amountCurrency: 'PHP' as const,
           typeLabel: 'Gift payment',
-        };
-      case 'tenure_gift':
-        return {
-          title: item.giftName || `Tenure gift #${item.milestoneIndex}`,
-          subtitle: `${item.personalEmail} · milestone ${item.milestoneIndex}`,
-          amount: item.pricePHP,
-          amountCurrency: 'PHP' as const,
-          typeLabel: 'Tenure gift',
         };
     }
   };
@@ -3527,8 +3426,9 @@ export default function PayrollWizard({
 
   const filteredCalcResults = useMemo(() => {
     const needle = initialCalcSearch.toLowerCase().trim();
-    if (!needle) return effectiveCalcResults;
-    return effectiveCalcResults.filter((row) => {
+    const nonHsl = effectiveCalcResults.filter(row => employeeDepts[row.email] !== 'hogan_smith_law');
+    if (!needle) return nonHsl;
+    return nonHsl.filter((row) => {
       const haystack = [
         row.name,
         row.email,
@@ -3545,7 +3445,7 @@ export default function PayrollWizard({
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [effectiveCalcResults, initialCalcSearch]);
+  }, [effectiveCalcResults, initialCalcSearch, employeeDepts]);
 
   const loadHubstaffPreview = React.useCallback(async () => {
     if (sourceFilesLoading) return;
@@ -5146,6 +5046,12 @@ export default function PayrollWizard({
                   <span className="font-mono"> Reg Pay</span> = Reg Rate × Reg Hrs, <span className="font-mono">OT Pay</span> = OT Rate × OT Hrs,{' '}
                   <span className="font-mono">Initial Pay</span> = Reg Pay + OT Pay.
                 </p>
+                <div className="mt-2 flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 dark:border-violet-800/50 dark:bg-violet-950/20">
+                  <Building2 className="h-3 w-3 shrink-0 text-violet-500 dark:text-violet-400" />
+                  <p className="text-[11px] text-violet-700 dark:text-violet-300">
+                    Hogan Smith Law employees are not listed here &mdash; see the <span className="font-semibold">HSL</span> tab (step 5) for their initial pay and KPI bonuses.
+                  </p>
+                </div>
               </div>
               <Button
                 type="button"
@@ -5312,22 +5218,52 @@ export default function PayrollWizard({
               </div>
             )}
 
-            {/* Warning banner for employees missing rates */}
+            {/* Warning banner for employees missing rates — expandable list */}
             {(() => {
               if (initialCalcDataLoading) return null;
-              const missingCount = effectiveCalcResults.filter(r => r.regularRate == null).length;
-              if (missingCount === 0 || effectiveCalcResults.length === 0) return null;
+              const missingRows = effectiveCalcResults.filter(r => r.regularRate == null);
+              if (missingRows.length === 0 || effectiveCalcResults.length === 0) return null;
               return (
-                <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                  <div>
-                    <span className="font-semibold">{missingCount} of {effectiveCalcResults.length} employees</span>{' '}
-                    have no matching rate in <span className="font-mono text-xs">employee_hourly_rates</span>.
-                    Their Hubstaff email was not found as a <span className="font-mono text-xs">Work Email</span> or{' '}
-                    <span className="font-mono text-xs">Personal Email</span> in the rates table.
-                    Add their rates in Supabase to calculate pay.
+                <details className="group rounded-lg border border-amber-400/40 bg-amber-50/70 dark:border-amber-600/30 dark:bg-amber-950/20">
+                  <summary className="flex cursor-pointer select-none list-none items-center gap-2.5 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
+                    <span className="flex-1 text-sm text-amber-900 dark:text-amber-200">
+                      <span className="font-semibold">{missingRows.length} employee{missingRows.length !== 1 ? 's' : ''}</span>
+                      {' '}missing rates &mdash; pay cannot be calculated
+                    </span>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-amber-500 transition-transform group-open:rotate-90" />
+                  </summary>
+                  <div className="border-t border-amber-400/30 px-4 py-3 dark:border-amber-600/20">
+                    <p className="mb-2.5 text-xs text-amber-800/80 dark:text-amber-300/70">
+                      No matching row found in <span className="font-mono">employee_hourly_rates</span> for these Hubstaff emails.
+                      Add their rates in Supabase to fix.
+                    </p>
+                    <div className="overflow-hidden rounded-lg border border-amber-300/50 dark:border-amber-700/30">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-amber-300/40 bg-amber-100/60 dark:border-amber-700/20 dark:bg-amber-900/20">
+                            <th className="px-3 py-2 text-left font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Name</th>
+                            <th className="px-3 py-2 text-left font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Hubstaff Email</th>
+                            <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Hours</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-amber-200/50 dark:divide-amber-800/20">
+                          {missingRows.map(r => (
+                            <tr key={r.email} className="bg-white/60 dark:bg-zinc-950/30">
+                              <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-200">
+                                {r.name || <span className="italic text-zinc-400">Unknown</span>}
+                              </td>
+                              <td className="px-3 py-2 font-mono text-zinc-600 dark:text-zinc-400">{r.email}</td>
+                              <td className="px-3 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
+                                {r.totalHours.toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
+                </details>
               );
             })()}
 
@@ -6223,7 +6159,7 @@ export default function PayrollWizard({
 
             {/* Department Tabs */}
             <div className="flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
-              {DEPARTMENTS.map(dept => {
+              {DEPARTMENTS.filter(dept => dept.key !== 'hogan_smith_law').map(dept => {
                 const count = effectiveCalcResults.filter(r => employeeDepts[r.email] === dept.key).length;
                 return (
                   <button
@@ -7800,12 +7736,6 @@ export default function PayrollWizard({
         );
         const totalGiftsPHP = totalGiftsUSD * usdToPhpRate;
 
-        // Tenure-gift totals (PHP, snapshot at approval time).
-        const totalTenureGiftsPHP = tenureGiftRows.reduce(
-          (s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0),
-          0,
-        );
-
         const monthLabelOrph = pabMonthRange
           ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
           : 'Active PAB month';
@@ -8271,190 +8201,368 @@ export default function PayrollWizard({
         );
       }
       case 5: {
-        // ── Tenure Gifts ───────────────────────────────────────────────────────
-        const totalTenureGiftsPHP = tenureGiftRows.reduce(
-          (s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0),
-          0,
-        );
-        const setTenureStatus = (id: string, status: 'approved' | 'rejected' | 'pending') => {
-          setTenureGiftAccountingStatus((prev) => {
-            const next = { ...prev };
-            const prevValue = prev[id] ?? 'pending';
-            if (status === 'pending') delete next[id];
-            else next[id] = status;
-            if (valuesDiffer(prevValue, status)) {
-              const row = tenureGiftRows.find((r) => r.id === id);
-              void logAudit({
-                user_name: sessionEmail ?? 'anonymous',
-                user_role: sessionRole ?? 'user',
-                action: 'tenure.gift_decided',
-                resource: 'tenure_gifts',
-                resource_id: id,
-                cycle: auditCycle,
-                details: {
-                  field: 'accounting_status',
-                  previous_value: prevValue,
-                  new_value: status,
-                  employee_email: row?.personal_email ?? null,
-                  gift_name: row?.gift_name ?? null,
-                  gift_price_php: row?.gift_price_php ?? null,
-                  milestone_index: row?.milestone_index ?? null,
-                  milestone_date: row?.milestone_date ?? null,
-                },
-              });
-            }
-            return next;
-          });
-        };
-        const approvedCount = tenureGiftRows.filter((r) => tenureGiftAccountingStatus[r.id] === 'approved').length;
-        const pendingCount = tenureGiftRows.filter((r) => !tenureGiftAccountingStatus[r.id]).length;
-        const approvedTotalPHP = tenureGiftRows
-          .filter((r) => tenureGiftAccountingStatus[r.id] === 'approved')
-          .reduce((s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0), 0);
-        const monthLabelTenure = pabMonthRange
+        // ── HSL (Hogan Smith Law) ─────────────────────────────────────────────
+        const hslCalcRows = effectiveCalcResults.filter(
+          r => employeeDepts[r.email] === 'hogan_smith_law',
+        ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+        const totalHslInitialPay = hslCalcRows.reduce((s, r) => s + (r.initialPay ?? 0), 0);
+        const totalHslKpiBonuses = Object.values(hslStepBonusByEmail).reduce((s, v) => s + v, 0);
+
+        const monthLabelHsl = pabMonthRange
           ? `${pabMonthRange.monthName} ${pabMonthRange.year}`
           : 'Active PAB month';
+
+        const fmtPeriod = (p: { period_type: string; period_start: string }) => {
+          if (p.period_type === 'monthly') {
+            const d = new Date(`${p.period_start}T12:00:00`);
+            return d.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
+          }
+          return `Wk of ${p.period_start}`;
+        };
+
         return (
           <div className="flex min-w-0 flex-col gap-5">
+
             {/* Header banner */}
-            <div className="flex flex-col gap-1 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50 via-white to-teal-50/40 p-5 shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-emerald-950/15">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
-                <Gift className="h-3.5 w-3.5" /> Tenure Gifts · {monthLabelTenure}
+            <div className="flex flex-col gap-1 rounded-2xl border border-violet-200/70 bg-gradient-to-br from-violet-50 via-white to-indigo-50/40 p-5 shadow-sm dark:border-violet-900/40 dark:from-violet-950/30 dark:via-zinc-950 dark:to-indigo-950/15">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700 dark:text-violet-300">
+                <Building2 className="h-3.5 w-3.5" /> Hogan Smith Law &middot; {monthLabelHsl}
               </div>
               <h2 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
-                HR-approved tenure gifts queued for this payroll
+                HSL Payroll &mdash; Initial Pay + KPI Bonuses
               </h2>
               <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                Each gift needs an Accounting <span className="font-mono">approve</span> to reach dispatch. Rejected and pending gifts are skipped at validation.
+                HSL runs Mon&ndash;Sun weeks (&ge;5 days at &ge;7 h). KPI bonuses are pulled from the manager KPI Calculator.
+                Use the override column to adjust any employee&apos;s bonus before dispatch.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
-                <span className="rounded-full border border-emerald-300/70 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
-                  {approvedCount} of {tenureGiftRows.length} approved · {formatPHP(approvedTotalPHP)}
+                <span className="rounded-full border border-violet-300/70 bg-violet-50 px-2.5 py-0.5 font-medium text-violet-800 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-200">
+                  {hslCalcRows.length} employees
                 </span>
-                {pendingCount > 0 && (
-                  <span className="rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-0.5 font-medium text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
-                    {pendingCount} pending
+                <span className="rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                  Initial pay: {formatPHP(totalHslInitialPay)}
+                </span>
+                <span className="rounded-full border border-emerald-300/70 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  KPI bonuses: +{formatPHP(totalHslKpiBonuses)}
+                </span>
+                {hslStepPeriods.length > 0 && (
+                  <span className="text-zinc-500 dark:text-zinc-400">
+                    {hslStepPeriods.length} dept period{hslStepPeriods.length !== 1 ? 's' : ''} ready
                   </span>
                 )}
-                <span className="text-zinc-500 dark:text-zinc-400">
-                  Period total: {formatPHP(totalTenureGiftsPHP)}
-                </span>
               </div>
             </div>
 
-            {tenureGiftsLoading ? (
-              <div className="flex items-center justify-center gap-2 py-16 text-zinc-500">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span className="text-sm">Loading tenure gifts…</span>
+            {/* KPI Bonus summary per department */}
+            {hslStepLoading ? (
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-violet-100 bg-violet-50/50 py-8 dark:border-violet-900/30 dark:bg-violet-950/20">
+                <Loader2 className="h-4 w-4 animate-spin text-violet-500" />
+                <span className="text-sm text-violet-700 dark:text-violet-300">Loading KPI bonus data&hellip;</span>
               </div>
-            ) : tenureGiftsError ? (
-              <p className="p-6 text-center text-xs text-rose-600 dark:text-rose-400">
-                {tenureGiftsError}
+            ) : hslStepError ? (
+              <p className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 dark:border-rose-800/50 dark:bg-rose-950/20 dark:text-rose-400">
+                {hslStepError}
               </p>
-            ) : tenureGiftRows.length === 0 ? (
-              <div className="flex flex-col items-center gap-3 py-16 text-center text-zinc-500 dark:text-zinc-400">
-                <Gift className="h-10 w-10 opacity-25" />
-                <p className="text-sm">No tenure gifts approved in this period.</p>
+            ) : hslStepPeriods.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                  KPI Bonus Periods (from manager submissions)
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {hslStepPeriods.map(p => {
+                    const cfg = (HSL_DEPTS as Record<string, { name: string; color?: string }>)[p.department];
+                    const deptColor = cfg?.color ?? '#6d28d9';
+                    return (
+                      <div
+                        key={p.department}
+                        className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-950/60"
+                        style={{ borderLeftColor: deptColor, borderLeftWidth: 3 }}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                            {cfg?.name ?? p.department}
+                          </div>
+                          <div className="mt-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                            {fmtPeriod(p)} &middot; {p.entries.length} employee{p.entries.length !== 1 ? 's' : ''}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <div className="font-mono text-sm font-bold text-emerald-700 dark:text-emerald-400">
+                            {formatPHP(p.total_bonus)}
+                          </div>
+                          <span className={cn(
+                            'inline-block rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide',
+                            p.status === 'locked'
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                              : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+                          )}>
+                            {p.status}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-xl border border-emerald-200/70 ring-1 ring-emerald-500/8 dark:border-emerald-900/50 dark:ring-emerald-400/10">
-                <table className="w-full text-sm">
-                  <thead className="border-b border-emerald-100 bg-emerald-50/80 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 backdrop-blur dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-300">
-                    <tr>
-                      <th className="px-4 py-2.5 text-left">Recipient</th>
-                      <th className="px-3 py-2.5 text-left">Milestone</th>
-                      <th className="px-3 py-2.5 text-left">Gift</th>
-                      <th className="px-3 py-2.5 text-left">Approved by</th>
-                      <th className="px-3 py-2.5 text-left">Issued</th>
-                      <th className="px-3 py-2.5 text-right">Amount</th>
-                      <th className="px-3 py-2.5 text-center">Status</th>
-                      <th className="px-3 py-2.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-emerald-50 bg-white dark:divide-emerald-950/30 dark:bg-zinc-950/40">
-                    {tenureGiftRows.map((r) => {
-                      const status: 'approved' | 'rejected' | 'pending' =
-                        (tenureGiftAccountingStatus[r.id] as 'approved' | 'rejected' | undefined) ?? 'pending';
-                      return (
-                        <tr key={r.id} className="transition-colors hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15">
-                          <td className="px-4 py-3 font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.personal_email}</td>
-                          <td className="px-3 py-3 text-xs text-zinc-600 dark:text-zinc-400">
-                            {r.milestone_index * 6}-month · #{r.milestone_index}
-                          </td>
-                          <td className="px-3 py-3 text-sm text-zinc-800 dark:text-zinc-200">{r.gift_name}</td>
-                          <td className="px-3 py-3 text-xs text-zinc-600 dark:text-zinc-400">{r.decided_by || '—'}</td>
-                          <td className="px-3 py-3 text-xs text-zinc-600 dark:text-zinc-400 tabular-nums">
-                            {new Date(r.decided_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
-                          </td>
-                          <td className="px-3 py-3 text-right font-medium text-zinc-900 dark:text-white">
-                            {formatPHP(r.gift_price_php)}
-                          </td>
-                          <td className="px-3 py-3 text-center">
-                            <span className={cn(
-                              'rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                              status === 'approved'
-                                ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/30 dark:text-emerald-300'
-                                : status === 'rejected'
-                                ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-700/50 dark:bg-red-950/30 dark:text-red-300'
-                                : 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300',
-                            )}>
-                              {status}
-                            </span>
-                          </td>
-                          <td className="px-3 py-3">
-                            <div className="flex items-center justify-end gap-2">
-                              {status !== 'approved' && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 border-emerald-500/40 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
-                                  onClick={() => setTenureStatus(r.id, 'approved')}
-                                >
-                                  Approve
-                                </Button>
-                              )}
-                              {status !== 'rejected' && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 border-red-500/40 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
-                                  onClick={() => setTenureStatus(r.id, 'rejected')}
-                                >
-                                  Reject
-                                </Button>
-                              )}
-                              {status !== 'pending' && (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-7 text-zinc-500"
-                                  onClick={() => setTenureStatus(r.id, 'pending')}
-                                >
-                                  Reset
-                                </Button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot className="border-t-2 border-emerald-200/60 bg-emerald-50/40 dark:border-emerald-800/40 dark:bg-emerald-950/30">
-                    <tr>
-                      <td colSpan={5} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
-                        Approved total ({approvedCount} of {tenureGiftRows.length})
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                        {formatPHP(approvedTotalPHP)}
-                      </td>
-                      <td colSpan={2} className="px-3 py-2.5 text-right text-[11px] text-zinc-500 dark:text-zinc-500 tabular-nums">
-                        Period total: {formatPHP(totalTenureGiftsPHP)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
+              <div className="rounded-xl border border-dashed border-violet-200 bg-violet-50/30 px-4 py-6 text-center text-xs text-violet-600 dark:border-violet-800/40 dark:bg-violet-950/10 dark:text-violet-400">
+                No ready or locked KPI periods found. Managers submit bonuses via the HSL Bonus Calculator.
               </div>
             )}
+
+            {/* Employee table: initial pay + KPI bonus + override */}
+            {hslCalcRows.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 py-16 text-center text-zinc-500 dark:text-zinc-400">
+                <Building2 className="h-10 w-10 opacity-25" />
+                <p className="text-sm">No HSL employees found in this payroll cycle.</p>
+              </div>
+            ) : (() => {
+              const needle = hslSearch.toLowerCase().trim();
+              const filteredHsl = needle
+                ? hslCalcRows.filter(r =>
+                    (r.name ?? '').toLowerCase().includes(needle) ||
+                    (r.email ?? '').toLowerCase().includes(needle),
+                  )
+                : hslCalcRows;
+              const totalHslPages = Math.max(1, Math.ceil(filteredHsl.length / HSL_PAGE_SIZE));
+              const safePage = Math.min(hslPage, totalHslPages);
+              const pagedHsl = filteredHsl.slice((safePage - 1) * HSL_PAGE_SIZE, safePage * HSL_PAGE_SIZE);
+
+              return (
+                <div className="flex flex-col gap-0">
+                  {/* Sticky search bar */}
+                  <div className="sticky top-0 z-10 rounded-t-xl border border-b-0 border-zinc-200 bg-white/95 px-3 py-2.5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
+                      <Input
+                        type="search"
+                        placeholder="Search by name or email..."
+                        value={hslSearch}
+                        onChange={e => { setHslSearch(e.target.value); setHslPage(1); }}
+                        className="h-8 w-full pl-8 text-xs"
+                      />
+                      {hslSearch && (
+                        <button
+                          type="button"
+                          onClick={() => { setHslSearch(''); setHslPage(1); }}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {needle && (
+                      <p className="mt-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+                        {filteredHsl.length} of {hslCalcRows.length} employees
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Table */}
+                  <div className="overflow-hidden rounded-b-xl border border-zinc-200 dark:border-zinc-800">
+                    {filteredHsl.length === 0 ? (
+                      <p className="py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
+                        No employees match &ldquo;{hslSearch}&rdquo;.
+                      </p>
+                    ) : (
+                      <table className="w-full text-sm">
+                        <thead className="border-b border-zinc-200 bg-zinc-50/80 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                          <tr>
+                            <th className="px-4 py-2.5 text-left">Employee</th>
+                            <th className="px-3 py-2.5 text-right">Hours</th>
+                            <th className="px-3 py-2.5 text-right">Initial Pay</th>
+                            <th className="px-3 py-2.5 text-right">KPI Bonus</th>
+                            <th className="px-3 py-2.5 text-right">Override</th>
+                            <th className="px-3 py-2.5 text-right">Total Pay</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800/60 dark:bg-zinc-950/40">
+                          {pagedHsl.map(r => {
+                            const em = (r.email ?? '').toLowerCase();
+                            const kpiBonus = hslStepBonusByEmail[em] ?? 0;
+                            const override = bonusOverrides[r.email] ?? null;
+                            const effectiveBonus = override !== null ? override : kpiBonus;
+                            const totalPay = (r.initialPay ?? 0) + effectiveBonus;
+                            const paEligible = perfectAttendanceEligible.has(em);
+
+                            return (
+                              <tr key={r.email} className="transition-colors hover:bg-violet-50/30 dark:hover:bg-violet-950/10">
+                                <td className="px-4 py-3">
+                                  <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.name}</div>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{r.email}</span>
+                                    {paEligible && (
+                                      <span className="rounded bg-emerald-100 px-1 py-0.5 text-[8px] font-bold uppercase tracking-wider text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                                        PAB
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3 text-right font-mono text-xs text-zinc-600 tabular-nums dark:text-zinc-400">
+                                  {r.totalHours != null ? r.totalHours.toFixed(2) : '—'}
+                                </td>
+                                <td className="px-3 py-3 text-right font-mono text-xs font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {r.initialPay != null ? formatPHP(r.initialPay) : '—'}
+                                </td>
+                                <td className="px-3 py-3 text-right font-mono text-xs tabular-nums">
+                                  {kpiBonus > 0 ? (
+                                    <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                                      +{formatPHP(kpiBonus)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-zinc-400 dark:text-zinc-600">—</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-3">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      value={override !== null ? override : ''}
+                                      placeholder={kpiBonus > 0 ? String(kpiBonus) : '0'}
+                                      onChange={e => {
+                                        const v = parseFloat(e.target.value);
+                                        updateBonusOverride(r.email, Number.isFinite(v) && v >= 0 ? v : null);
+                                      }}
+                                      className="h-7 w-[110px] border-zinc-300 text-right font-mono text-xs dark:border-zinc-700"
+                                    />
+                                    {override === null && kpiBonus > 0 && (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 shrink-0 border-violet-300/80 px-2 text-[10px] font-semibold text-violet-700 hover:bg-violet-50 dark:border-violet-700/50 dark:text-violet-300 dark:hover:bg-violet-950/30"
+                                        onClick={() => updateBonusOverride(r.email, kpiBonus)}
+                                        title="Apply KPI bonus as override"
+                                      >
+                                        Apply
+                                      </Button>
+                                    )}
+                                    {override !== null && (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 shrink-0 px-1.5 text-zinc-400 hover:text-rose-600"
+                                        onClick={() => updateBonusOverride(r.email, null)}
+                                        title="Clear override"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3 text-right">
+                                  <span className="font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                                    {formatPHP(totalPay)}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot className="border-t-2 border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/40">
+                          <tr>
+                            <td colSpan={2} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                              Totals ({hslCalcRows.length} employees)
+                            </td>
+                            <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
+                              {formatPHP(totalHslInitialPay)}
+                            </td>
+                            <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                              +{formatPHP(totalHslKpiBonuses)}
+                            </td>
+                            <td className="px-3 py-2.5" />
+                            <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                              {formatPHP(totalHslInitialPay + hslCalcRows.reduce((s, r) => {
+                                const em = (r.email ?? '').toLowerCase();
+                                const ov = bonusOverrides[r.email] ?? null;
+                                return s + (ov !== null ? ov : (hslStepBonusByEmail[em] ?? 0));
+                              }, 0))}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    )}
+                  </div>
+
+                  {/* Pagination */}
+                  {totalHslPages > 1 && (
+                    <div className="flex items-center justify-between border border-t-0 border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950/60">
+                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        Page {safePage} of {totalHslPages} &middot; {filteredHsl.length} employee{filteredHsl.length !== 1 ? 's' : ''}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs disabled:opacity-40"
+                          disabled={safePage <= 1}
+                          onClick={() => setHslPage(1)}
+                        >
+                          <ChevronLeft className="h-3 w-3" /><ChevronLeft className="h-3 w-3 -ml-1.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs disabled:opacity-40"
+                          disabled={safePage <= 1}
+                          onClick={() => setHslPage(p => Math.max(1, p - 1))}
+                        >
+                          <ChevronLeft className="h-3 w-3" />
+                        </Button>
+                        {Array.from({ length: totalHslPages }, (_, i) => i + 1)
+                          .filter(p => Math.abs(p - safePage) <= 2 || p === 1 || p === totalHslPages)
+                          .reduce<(number | 'gap')[]>((acc, p, i, arr) => {
+                            if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push('gap');
+                            acc.push(p);
+                            return acc;
+                          }, [])
+                          .map((p, i) =>
+                            p === 'gap' ? (
+                              <span key={`gap-${i}`} className="px-1 text-xs text-zinc-400">…</span>
+                            ) : (
+                              <Button
+                                key={p}
+                                type="button"
+                                variant={p === safePage ? 'default' : 'outline'}
+                                size="sm"
+                                className={cn('h-7 min-w-[28px] px-2 text-xs', p === safePage && 'bg-violet-600 hover:bg-violet-700 border-violet-600')}
+                                onClick={() => setHslPage(p as number)}
+                              >
+                                {p}
+                              </Button>
+                            ),
+                          )}
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs disabled:opacity-40"
+                          disabled={safePage >= totalHslPages}
+                          onClick={() => setHslPage(p => Math.min(totalHslPages, p + 1))}
+                        >
+                          <ChevronRight className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2 text-xs disabled:opacity-40"
+                          disabled={safePage >= totalHslPages}
+                          onClick={() => setHslPage(totalHslPages)}
+                        >
+                          <ChevronRight className="h-3 w-3" /><ChevronRight className="h-3 w-3 -ml-1.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         );
       }
@@ -8687,12 +8795,6 @@ export default function PayrollWizard({
             (s, r) => s + (Number.isFinite(r.total_usd) ? r.total_usd : 0),
             0,
           ) * usdToPhpRate;
-        const stepTenureGiftsPHP = tenureGiftRows
-          .filter((r) => tenureGiftAccountingStatus[r.id] === 'approved')
-          .reduce(
-            (s, r) => s + (Number.isFinite(r.gift_price_php) ? r.gift_price_php : 0),
-            0,
-          );
         // Contractor invoices are kept in their own currency — USD invoices are
         // NOT converted into the peso outflow. Only PHP invoices feed the peso
         // total; USD is surfaced separately.
@@ -8706,7 +8808,6 @@ export default function PayrollWizard({
           stepOrphanageWagesPHP +
           stepBudgetRequestsPHP +
           stepGiftsPHP +
-          stepTenureGiftsPHP +
           stepContractorsPHP;
 
         return (
@@ -8785,10 +8886,6 @@ export default function PayrollWizard({
                     <div className="flex items-center justify-between gap-2">
                       <span>Gift payments ({giftPaymentRows.length})</span>
                       <span className="font-mono tabular-nums">{formatPHP(stepGiftsPHP)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span>Tenure gifts ({tenureGiftRows.filter((r) => tenureGiftAccountingStatus[r.id] === 'approved').length} approved)</span>
-                      <span className="font-mono tabular-nums">{formatPHP(stepTenureGiftsPHP)}</span>
                     </div>
                     {stepContractorsPHP > 0 && (
                       <div className="flex items-center justify-between gap-2">
@@ -9319,7 +9416,6 @@ export default function PayrollWizard({
                       employees: dispatchData.rows,
                       budgetRequests: budgetRequestRows.filter(r => r.status === 'approved' && !hiddenBudgetIds.has(r.id)),
                       giftPayments: giftPaymentRows,
-                      tenureGifts: tenureGiftRows.filter((r) => tenureGiftAccountingStatus[r.id] === 'approved'),
                       usdToPhpRate,
                     });
                     setReportsTab('salaries');
@@ -9352,9 +9448,6 @@ export default function PayrollWizard({
             (r) => r.status === 'approved' && !hiddenBudgetIds.has(r.id),
           ),
           giftPayments: giftPaymentRows,
-          tenureGifts: tenureGiftRows.filter(
-            (r) => tenureGiftAccountingStatus[r.id] === 'approved',
-          ),
           usdToPhpRate,
         };
 
@@ -9373,12 +9466,11 @@ export default function PayrollWizard({
         const totalSalaries = snap.employees.reduce((s, e) => s + (e.pay_php.final ?? 0), 0);
         const totalBudget = snap.budgetRequests.reduce((s, r) => s + Number(r.final_amount ?? 0), 0);
         const totalGifts = snap.giftPayments.reduce((s, g) => s + g.total_usd * snap.usdToPhpRate, 0);
-        const totalTenureGifts = snap.tenureGifts.reduce((s, t) => s + (t.gift_price_php ?? 0), 0);
 
         const tabs = [
           { id: 'salaries' as const, label: 'Salaries / Wages', count: snap.employees.length, total: totalSalaries },
           { id: 'budget' as const, label: 'Orphanage Budget Requests', count: snap.budgetRequests.length, total: totalBudget },
-          { id: 'gifts' as const, label: 'Gift Payments', count: snap.giftPayments.length + snap.tenureGifts.length, total: totalGifts + totalTenureGifts },
+          { id: 'gifts' as const, label: 'Gift Payments', count: snap.giftPayments.length, total: totalGifts },
         ] as const;
 
         return (
@@ -9442,7 +9534,7 @@ export default function PayrollWizard({
                 )}
                 <div className={cn("ml-auto flex items-center gap-2 text-xs", isDraft ? "text-amber-700 dark:text-amber-300" : "text-indigo-600 dark:text-indigo-400")}>
                   <span className="font-medium">{isDraft ? 'Projected Outflow' : 'Total Outflow'}</span>
-                  <span className="font-mono font-bold text-sm">{formatPHP(totalSalaries + totalBudget + totalGifts + totalTenureGifts)}</span>
+                  <span className="font-mono font-bold text-sm">{formatPHP(totalSalaries + totalBudget + totalGifts)}</span>
                 </div>
               </CardContent>
             </Card>
@@ -9519,15 +9611,6 @@ export default function PayrollWizard({
                       g.status,
                       g.total_usd,
                       g.total_usd * snap.usdToPhpRate,
-                    ]),
-                    ...snap.tenureGifts.map((t) => [
-                      'tenure',
-                      t.personal_email,
-                      t.gift_name ?? '',
-                      t.decided_at,
-                      t.decided_by ?? '',
-                      null,
-                      t.gift_price_php ?? null,
                     ]),
                   ];
 
@@ -9697,40 +9780,6 @@ export default function PayrollWizard({
                   )}
                 </div>
 
-                {/* Tenure gifts */}
-                <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-                  <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
-                    <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Tenure Gifts</p>
-                    <span className="font-mono text-xs text-zinc-500">{formatPHP(totalTenureGifts)}</span>
-                  </div>
-                  {snap.tenureGifts.length === 0 ? (
-                    <p className="px-4 py-8 text-center text-sm text-zinc-400">No tenure gifts this cycle.</p>
-                  ) : (
-                    <div className="max-h-[360px] overflow-auto">
-                      <table className="w-full border-collapse text-[12.5px]">
-                        <thead className="sticky top-0 z-10">
-                          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
-                            {['Employee', 'Gift', 'Milestone', 'Approved By', 'Approved On', 'Amount'].map(h => (
-                              <th key={h} className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {snap.tenureGifts.map((t, i) => (
-                            <tr key={t.id} className={cn("border-b border-zinc-100 last:border-0 dark:border-zinc-800/60", i % 2 === 1 && "bg-zinc-50/50 dark:bg-zinc-900/20")}>
-                              <td className="px-3 py-2 font-mono text-xs text-zinc-700 dark:text-zinc-300">{t.personal_email}</td>
-                              <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">{t.gift_name ?? <span className="italic text-zinc-400">Unknown</span>}</td>
-                              <td className="px-3 py-2 text-zinc-500">Year {t.milestone_index + 1} · {new Date(t.milestone_date).toLocaleDateString('en-PH')}</td>
-                              <td className="px-3 py-2 text-xs text-zinc-500">{t.decided_by ?? '—'}</td>
-                              <td className="px-3 py-2 font-mono text-xs text-zinc-500">{new Date(t.decided_at).toLocaleDateString('en-PH')}</td>
-                              <td className="px-3 py-2 font-mono font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{t.gift_price_php != null ? formatPHP(t.gift_price_php) : <span className="italic text-zinc-400 text-xs">—</span>}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
               </div>
             )}
 
@@ -9912,7 +9961,6 @@ export default function PayrollWizard({
                   case 'visit_wages':    return `Simple HRIS · Orphanage Visit Receipt · ${monthLabel}`;
                   case 'budget_request': return `Simple HRIS · Orphanage Budget Receipt · ${monthLabel}`;
                   case 'gift_payment':   return `Simple HRIS · Orphanage Gift Payment Receipt · ${monthLabel}`;
-                  case 'tenure_gift':    return `Simple HRIS · Orphanage Tenure Gift Receipt · ${monthLabel}`;
                 }
               })();
               const headerGreeting = (() => {
@@ -9920,7 +9968,6 @@ export default function PayrollWizard({
                   case 'visit_wages':    return `Hi ${o.name},`;
                   case 'budget_request': return `Hi ${o.submitterEmail},`;
                   case 'gift_payment':   return `Hi ${o.vendorName || 'Vendor'},`;
-                  case 'tenure_gift':    return `Hi ${o.personalEmail},`;
                 }
               })();
               const headerSubline = (() => {
@@ -9931,8 +9978,6 @@ export default function PayrollWizard({
                     return <>{o.visitType}{o.missionTrip ? ' · mission trip' : ''}</>;
                   case 'gift_payment':
                     return <>Batch: <strong>{o.batchLabel || '—'}</strong></>;
-                  case 'tenure_gift':
-                    return <>Milestone <strong>#{o.milestoneIndex}</strong> · {fmtLongDate(o.milestoneDate)}</>;
                 }
               })();
               return (
@@ -10163,46 +10208,6 @@ export default function PayrollWizard({
                                   <div className="flex items-center justify-between">
                                     <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-800">Total Paid</span>
                                     <span className="text-[22px] font-extrabold tracking-tight text-slate-900">{fmtPHP(o.totalPHP)} <span className="text-[12px] font-semibold text-slate-600">PHP</span></span>
-                                  </div>
-                                </div>
-                              </div>
-                            </>
-                          )}
-
-                          {o.kind === 'tenure_gift' && (
-                            <>
-                              <div className="px-6 pt-4">
-                                <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-orange-600">Recipient</div>
-                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
-                              </div>
-                              <div className="px-6 pt-2">
-                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
-                                  <table className="w-full border-collapse"><tbody>
-                                    <tr><td className="w-[130px] py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Personal Email</td><td className="py-[3px] text-[13px] font-mono font-semibold text-blue-600">{o.personalEmail}</td></tr>
-                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Milestone</td><td className="py-[3px] text-[13px] font-semibold text-zinc-900">#{o.milestoneIndex}</td></tr>
-                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Milestone Date</td><td className="py-[3px] text-[13px] text-zinc-900">{fmtLongDate(o.milestoneDate)}</td></tr>
-                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>Approved</td><td className="py-[3px] text-[13px] text-zinc-900">{fmtLongDate(o.decidedAt)}{o.decidedBy ? ` · ${o.decidedBy}` : ''}</td></tr>
-                                  </tbody></table>
-                                </div>
-                              </div>
-
-                              <div className="px-6 pt-4">
-                                <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: '#7c3aed' }}>Gift</div>
-                                <div className="mt-1.5 h-[3px] w-[60px] rounded-sm" style={{ background: 'linear-gradient(to top right, #4338ca 0%, #ffffff 50%, #f97316 100%)' }} />
-                              </div>
-                              <div className="px-6 pt-2">
-                                <div className="rounded-lg border px-4 py-3" style={{ background: 'linear-gradient(to top right, #eff6ff 0%, #ffffff 50%, #fffaf3 100%)', borderColor: '#fde4cb' }}>
-                                  <table className="w-full border-collapse"><tbody>
-                                    <tr><td className="py-[3px] text-[12px]" style={{ color: '#9a6b3f' }}>{o.giftName || `Milestone #${o.milestoneIndex} gift`}</td><td className="py-[3px] text-right text-[13px] font-bold" style={{ color: '#2563eb' }}>{fmtPHP(o.pricePHP)}</td></tr>
-                                  </tbody></table>
-                                </div>
-                              </div>
-
-                              <div className="px-6 pt-4 pb-2">
-                                <div className="rounded-[10px] px-5 py-4" style={{ background: 'linear-gradient(to top right, #3730a3 0%, #ffffff 50%, #ea580c 100%)' }}>
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-800">Gift Value</span>
-                                    <span className="text-[22px] font-extrabold tracking-tight text-slate-900">{fmtPHP(o.pricePHP)} <span className="text-[12px] font-semibold text-slate-600">PHP</span></span>
                                   </div>
                                 </div>
                               </div>
@@ -10521,6 +10526,7 @@ export default function PayrollWizard({
               ? dispatchData.rows.filter(
                   (e) =>
                     e.name.toLowerCase().includes(needle) ||
+                    e.email.toLowerCase().includes(needle) ||
                     e.personal_email.toLowerCase().includes(needle),
                 )
               : dispatchData.rows;
@@ -10662,7 +10668,7 @@ export default function PayrollWizard({
                         ))}
                       </div>
                     )
-                  ) : orphanageLoading || budgetRequestsLoading || giftPaymentsLoading || tenureGiftsLoading ? (
+                  ) : orphanageLoading || budgetRequestsLoading || giftPaymentsLoading ? (
                     <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500 dark:text-zinc-400">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Loading orphanage receipts…
@@ -10682,7 +10688,6 @@ export default function PayrollWizard({
                             case 'visit_wages':    return 'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700/50 dark:bg-indigo-950/30 dark:text-indigo-300';
                             case 'budget_request': return 'border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300';
                             case 'gift_payment':   return 'border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-700/50 dark:bg-violet-950/30 dark:text-violet-300';
-                            case 'tenure_gift':    return 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300';
                           }
                         })();
                         return (

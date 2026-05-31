@@ -4,21 +4,48 @@
 -- Purpose
 --   One row per (week, employee). The table is the analytic source
 --   of truth for "how much was paid / pending / sent" per Hubstaff
---   pull. The Reports tab in Payment Dispatch can query it directly
---   instead of re-aggregating across hubstaff_hours + employee_hourly_rates
---   + payment_dispatches every render.
+--   pull. The Reports tab in Payment Dispatch queries it directly
+--   instead of re-aggregating across hubstaff_hours +
+--   employee_hourly_rates + payment_dispatches every render.
+--
+-- Steps
+--   Step 1  Create table + indexes + triggers (idempotent).
+--   Step 2  Seed / backfill from hubstaff_hours (idempotent upsert).
+--   Step 3  Bulk-mark every row as paid (run once after backfill,
+--           safe to re-run).
 --
 -- Sources joined at seed time
 --   • public.hubstaff_hours            (one row per employee per week)
 --   • public.employee_hourly_rates     (regular + OT rate per work email)
 --   • public.payment_dispatches        (paid/threshold/problem outcomes)
 --   • public.app_settings.usd_to_php_rate (FX rate at compute time)
---   • Cycle dates are parsed from `source_file` filenames
+--   • Cycle dates parsed from source_file filenames
 --     (e.g. simple-biz_daily_report_2026-04-12_to_2026-04-18.csv)
 --
+-- Deduplication guards (added 2026-05-31)
+--   • parsed_hours  — GROUP BY (source_file, email) + SUM hours, so
+--     multiple hubstaff_hours rows per employee (re-imports, project
+--     splits) are collapsed before the join.
+--   • rates         — DISTINCT ON (work_email) ORDER BY id DESC, so
+--     only the most-recently-inserted rate row is used per employee
+--     (guards against rate-history duplicates).
+--   • final SELECT  — wrapped in DISTINCT ON (source_file, email) as
+--     a catch-all before the INSERT, preventing the
+--     "ON CONFLICT DO UPDATE command cannot affect row a second time"
+--     error even if an edge-case duplicate slips through upstream.
+--
 -- Re-run safety
---   • Idempotent. The table has UNIQUE(source_file, recipient_email);
---     re-running the INSERT...SELECT updates each row in place.
+--   • Step 2 is idempotent: UNIQUE(source_file, recipient_email) +
+--     ON CONFLICT DO UPDATE means re-running refreshes rates/hours
+--     without duplicating rows.
+--   • Step 3 is idempotent: WHERE status <> 'paid' is a no-op when
+--     all rows are already marked paid.
+--
+-- When to re-run
+--   Re-run Step 2 (then optionally Step 3) whenever new Hubstaff
+--   CSVs are uploaded and the Reports tab shows an "uploads without
+--   payroll records" banner. Steps 1 and 2 must be run together
+--   inside the BEGIN/COMMIT block; Step 3 is a standalone UPDATE.
 --
 -- Run in Supabase SQL Editor.
 -- ============================================================
@@ -120,40 +147,46 @@ fx AS (
 
 -- Parse Hubstaff "Total worked" (HH:MM:SS) into decimal hours.
 -- Handles HH:MM, HH:MM:SS, and blank/null gracefully.
+-- GROUP BY deduplicates (source_file, email) — multiple rows per employee
+-- (e.g. re-imports or multi-project splits) have their hours summed.
 parsed_hours AS (
   SELECT
     hh.source_file,
-    hh.upload_id,
-    LOWER(TRIM(hh."Email"))                                    AS recipient_email,
-    NULLIF(TRIM(hh."Member"), '')                              AS recipient_name,
-    COALESCE(
-      NULLIF(SPLIT_PART(hh."Total worked", ':', 1), '')::NUMERIC,
-      0
-    )
-    + COALESCE(
-        NULLIF(SPLIT_PART(hh."Total worked", ':', 2), '')::NUMERIC / 60.0,
+    MAX(hh.upload_id::text)::uuid                               AS upload_id,
+    LOWER(TRIM(hh."Email"))                                     AS recipient_email,
+    MAX(NULLIF(TRIM(hh."Member"), ''))                          AS recipient_name,
+    SUM(
+      COALESCE(
+        NULLIF(SPLIT_PART(hh."Total worked", ':', 1), '')::NUMERIC,
         0
       )
-    + COALESCE(
-        NULLIF(SPLIT_PART(hh."Total worked", ':', 3), '')::NUMERIC / 3600.0,
-        0
-      ) AS total_hours
+      + COALESCE(
+          NULLIF(SPLIT_PART(hh."Total worked", ':', 2), '')::NUMERIC / 60.0,
+          0
+        )
+      + COALESCE(
+          NULLIF(SPLIT_PART(hh."Total worked", ':', 3), '')::NUMERIC / 3600.0,
+          0
+        )
+    )                                                           AS total_hours
   FROM public.hubstaff_hours hh
   WHERE hh."Email" IS NOT NULL
     AND TRIM(hh."Email") <> ''
     AND hh.source_file IS NOT NULL
+  GROUP BY hh.source_file, LOWER(TRIM(hh."Email"))
 ),
 
 -- Look up each employee's PHP/hr rates.
--- "Regular Rate" / "OT Rate" are NUMERIC in the live schema — pass through as-is.
--- (Earlier seed files used string literals; Postgres auto-casts on insert.)
+-- DISTINCT ON work_email guards against multiple rate rows per employee
+-- (rate history). Takes the row with the highest id (most recently inserted).
 rates AS (
-  SELECT
+  SELECT DISTINCT ON (LOWER(TRIM("Work Email")))
     LOWER(TRIM("Work Email"))     AS work_email,
     LOWER(TRIM("Personal Email")) AS personal_email,
     "Regular Rate"::NUMERIC       AS regular_rate,
     "OT Rate"::NUMERIC            AS ot_rate
   FROM public.employee_hourly_rates
+  ORDER BY LOWER(TRIM("Work Email")), id DESC
 ),
 
 -- Combine + extract cycle dates from filename.
@@ -248,7 +281,11 @@ SELECT
   amount_php, amount_usd, fx_rate,
   status, paid_amount_usd, paid_at,
   bank_used, transaction_id, dispatch_id
-FROM final
+FROM (
+  SELECT DISTINCT ON (source_file, recipient_email) *
+  FROM final
+  ORDER BY source_file, recipient_email
+) deduped
 ON CONFLICT (source_file, recipient_email) DO UPDATE SET
   cycle_period_start = EXCLUDED.cycle_period_start,
   cycle_period_end   = EXCLUDED.cycle_period_end,
@@ -270,6 +307,17 @@ ON CONFLICT (source_file, recipient_email) DO UPDATE SET
   dispatch_id        = EXCLUDED.dispatch_id;
 
 COMMIT;
+
+
+-- ── Step 3 — mark all records as paid ────────────────────────
+-- Run this separately after Step 2 to bulk-mark every seeded row as paid.
+-- Safe to re-run (WHERE status <> 'paid' is a no-op if already done).
+
+UPDATE public.disbursement_records
+SET
+  status      = 'paid',
+  updated_at  = now()
+WHERE status <> 'paid';
 
 
 -- ============================================================

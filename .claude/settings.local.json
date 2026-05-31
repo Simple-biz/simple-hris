@@ -175,7 +175,14 @@
       "Bash(uipro init *)",
       "Bash(Get-ChildItem \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\.claude\\\\skills\" -Recurse)",
       "Bash(Format-Table FullName)",
-      "Bash(Select-Object -First 10)"
+      "Bash(Select-Object -First 10)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -Filter \"*onboard*\" -ErrorAction SilentlyContinue)",
+      "Bash(PowerShell -Command \"Get-ChildItem -Path 'c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\app\\\\api' -Recurse -Filter '*monthly*' | Select-Object -ExpandProperty FullName\")",
+      "Bash(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\app\\\\api\\\\hr\\\\pending-employees\\\\[id]\\\\retry-workspace\")",
+      "Bash(Out-Null)",
+      "Bash(Select-String \"HrApp\")",
+      "Bash(findstr admin *)",
+      "Bash(findstr \"admin\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

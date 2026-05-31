@@ -320,6 +320,8 @@ type TenureCohort = {
   pct: number;
 };
 
+type AttritionDeptRow = { dept: string; separations: number; active: number; ratePct: number };
+
 const TENURE_COHORT_DEFS: { key: TenureCohort['key']; label: string; range: string; max: number }[] = [
   { key: 'new',         label: 'Newcomers',   range: '0–30 days',   max: 30 },
   { key: 'settling',    label: 'Settling',    range: '1–12 months', max: 365 },
@@ -360,6 +362,7 @@ interface OverviewEditorialSectionProps {
   headcountSeries: { points: { label: string; value: number; year: number; month: number }[]; netDelta: number };
   tenureCohorts: TenureCohort[];
   recentHires: { row: EmployeeRow; days: number; t: number }[];
+  attritionByDept: AttritionDeptRow[] | null;
 }
 
 function OverviewEditorialSection({
@@ -369,6 +372,7 @@ function OverviewEditorialSection({
   headcountSeries,
   tenureCohorts,
   recentHires,
+  attritionByDept,
 }: OverviewEditorialSectionProps) {
   const totalActive = roster.length;
   const newcomersThisMonth = useMemo(() => {
@@ -435,6 +439,11 @@ function OverviewEditorialSection({
         <div className="lg:col-span-2">
           <DepartmentBarsCard loading={loading} deptStats={deptStats} totalActive={totalActive} />
         </div>
+      </div>
+
+      {/* Attrition by department — full-width bar chart */}
+      <div className="relative mt-6">
+        <AttritionByDeptCard loading={loading} rows={attritionByDept} />
       </div>
     </section>
   );
@@ -974,6 +983,220 @@ function DepartmentBarsCard({
   );
 }
 
+// ─── Attrition by department ──────────────────────────────────────────────────
+
+const ATTRITION_DEPT_COLORS = [
+  // rose palette for the highest-rate bar, cascading down
+  'rgb(244,63,94)',   // rose-500
+  'rgb(251,113,133)', // rose-400
+  'rgb(249,115,22)',  // orange-500
+  'rgb(251,146,60)',  // orange-400
+  'rgb(234,179,8)',   // yellow-500
+  'rgb(132,204,22)',  // lime-500
+  'rgb(34,197,94)',   // green-500
+  'rgb(16,185,129)',  // emerald-500
+  'rgb(20,184,166)',  // teal-500
+  'rgb(14,165,233)',  // sky-500
+];
+
+function AttritionByDeptCard({
+  loading,
+  rows,
+}: {
+  loading: boolean;
+  rows: AttritionDeptRow[] | null;
+}) {
+  const W = 700;
+  const H = 260;
+  const LABEL_W = 180;
+  const BAR_GAP = 6;
+  const PAD_TOP = 14;
+  const PAD_RIGHT = 56; // room for % label on the right
+
+  const sorted = (rows ?? []).filter((r) => r.separations > 0);
+  const maxRate = Math.max(0.1, ...sorted.map((r) => r.ratePct));
+  const barH = sorted.length > 0
+    ? Math.min(26, Math.floor((H - PAD_TOP - (sorted.length - 1) * BAR_GAP) / sorted.length))
+    : 24;
+  const chartW = W - LABEL_W - PAD_RIGHT;
+
+  // Reference gridlines at 5 %, 10 %, 15 %, 20 %
+  const gridLines = [5, 10, 15, 20].filter((v) => v <= Math.ceil(maxRate * 1.1));
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-zinc-200/70 bg-white dark:border-zinc-800/80 dark:bg-zinc-950">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4 border-b border-zinc-100 px-6 py-4 dark:border-zinc-800">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+            Attrition by department &middot; trailing 12 months
+          </p>
+          <p className="mt-1 text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+            {loading
+              ? 'Loading…'
+              : rows === null
+                ? 'Awaiting offboard data'
+                : sorted.length === 0
+                  ? 'No separations in the last 12 months'
+                  : `${sorted.length} department${sorted.length === 1 ? '' : 's'} had exits`}
+          </p>
+        </div>
+        <span className="mt-0.5 shrink-0 rounded-full border border-rose-200/70 bg-rose-50/70 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+          Exits
+        </span>
+      </div>
+
+      {/* Chart body */}
+      <div className="px-6 py-5">
+        {loading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div className="h-3 w-32 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
+                <div className="h-5 flex-1 animate-pulse rounded-md bg-zinc-100 dark:bg-zinc-900" />
+              </div>
+            ))}
+          </div>
+        ) : sorted.length === 0 ? (
+          <p className="py-6 text-center text-sm text-zinc-400 dark:text-zinc-500">
+            No off-boarding events recorded in the past 12 months.
+          </p>
+        ) : (
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            className="w-full"
+            style={{ height: Math.max(160, PAD_TOP + sorted.length * (barH + BAR_GAP) + 24) }}
+            preserveAspectRatio="xMinYMin meet"
+            role="img"
+            aria-label="Attrition rate by department over the trailing 12 months"
+          >
+            {/* Grid lines */}
+            {gridLines.map((v) => {
+              const x = LABEL_W + (v / maxRate) * chartW;
+              return (
+                <g key={v}>
+                  <line
+                    x1={x} y1={PAD_TOP - 8}
+                    x2={x} y2={PAD_TOP + sorted.length * (barH + BAR_GAP) - BAR_GAP + 4}
+                    stroke="currentColor"
+                    strokeOpacity={0.07}
+                    strokeWidth={1}
+                    className="text-zinc-900 dark:text-zinc-100"
+                  />
+                  <text
+                    x={x}
+                    y={PAD_TOP - 10}
+                    textAnchor="middle"
+                    fontSize={9}
+                    fill="currentColor"
+                    className="font-mono tabular-nums text-zinc-400 dark:text-zinc-600"
+                  >
+                    {v}%
+                  </text>
+                </g>
+              );
+            })}
+
+            {/* Bars */}
+            {sorted.map((row, i) => {
+              const y = PAD_TOP + i * (barH + BAR_GAP);
+              const barW = Math.max(2, (row.ratePct / maxRate) * chartW);
+              const color = ATTRITION_DEPT_COLORS[Math.min(i, ATTRITION_DEPT_COLORS.length - 1)];
+              const isHigh = row.ratePct >= 15;
+              const isMed = row.ratePct >= 5;
+              const labelColor = isHigh ? 'rgb(244,63,94)' : isMed ? 'rgb(234,88,12)' : 'rgb(16,185,129)';
+              return (
+                <g key={row.dept}>
+                  {/* Dept label */}
+                  <text
+                    x={LABEL_W - 10}
+                    y={y + barH / 2 + 4}
+                    textAnchor="end"
+                    fontSize={11}
+                    fill="currentColor"
+                    className="font-medium text-zinc-700 dark:text-zinc-300"
+                  >
+                    {row.dept.length > 20 ? row.dept.slice(0, 18) + '…' : row.dept}
+                  </text>
+
+                  {/* Track */}
+                  <rect
+                    x={LABEL_W}
+                    y={y}
+                    width={chartW}
+                    height={barH}
+                    rx={4}
+                    fill="currentColor"
+                    fillOpacity={0.05}
+                    className="text-zinc-900 dark:text-zinc-100"
+                  />
+
+                  {/* Filled bar */}
+                  <rect
+                    x={LABEL_W}
+                    y={y}
+                    width={barW}
+                    height={barH}
+                    rx={4}
+                    fill={color}
+                    fillOpacity={0.85}
+                    className="transition-all duration-500"
+                  />
+
+                  {/* Rate label */}
+                  <text
+                    x={LABEL_W + chartW + 8}
+                    y={y + barH / 2 + 4}
+                    fontSize={11}
+                    fontWeight={700}
+                    fill={labelColor}
+                    className="tabular-nums"
+                  >
+                    {row.ratePct.toFixed(1)}%
+                  </text>
+
+                  {/* Separations count inside bar (only if bar is wide enough) */}
+                  {barW > 40 && (
+                    <text
+                      x={LABEL_W + 8}
+                      y={y + barH / 2 + 4}
+                      fontSize={10}
+                      fill="white"
+                      fillOpacity={0.9}
+                      className="tabular-nums"
+                    >
+                      {row.separations} left
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        )}
+
+        {/* Legend */}
+        {!loading && sorted.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1.5 border-t border-zinc-100 pt-3 dark:border-zinc-800/60">
+            {[
+              { label: 'High  ≥15%', color: 'bg-rose-500' },
+              { label: 'Medium  5–14%', color: 'bg-amber-500' },
+              { label: 'Low  <5%', color: 'bg-emerald-500' },
+            ].map(({ label, color }) => (
+              <span key={label} className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                <span className={`inline-block h-2 w-2 rounded-sm ${color}`} />
+                {label}
+              </span>
+            ))}
+            <span className="ml-auto text-[11px] text-zinc-400 dark:text-zinc-600">
+              Rate = separations / avg headcount
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 function OverviewBody() {
@@ -988,6 +1211,8 @@ function OverviewBody() {
     avgHeadcount: number;
     ratePct: number;
   } | null>(null);
+  /** Per-department attrition for the same 12-month window. */
+  const [attritionByDept, setAttritionByDept] = useState<AttritionDeptRow[] | null>(null);
   /** MESA member count from employee_hourly_rates.mesa_member. */
   const [mesaCount, setMesaCount] = useState<number | null>(null);
   /** Total FPU enrollment submissions, plus a "this month" slice for sub-line. */
@@ -1014,22 +1239,49 @@ function OverviewBody() {
     (async () => {
       try {
         const res = await fetch('/api/hr/offboard-history', { cache: 'no-store' });
-        const json = (await res.json()) as { rows?: { off_boarded_at: string | null }[] };
+        const json = (await res.json()) as { rows?: { off_boarded_at: string | null; Department?: string | null }[] };
         const cutoff = Date.now() - 365 * 24 * 3600 * 1000;
-        const separations = (json.rows ?? []).reduce((n, r) => {
+        const recentRows = (json.rows ?? []).filter((r) => {
           const t = r.off_boarded_at ? new Date(r.off_boarded_at).getTime() : NaN;
-          return Number.isFinite(t) && t >= cutoff ? n + 1 : n;
-        }, 0);
+          return Number.isFinite(t) && t >= cutoff;
+        });
+        const separations = recentRows.length;
         const active = roster.length;
         const avgHeadcount = active + separations / 2;
         const ratePct = avgHeadcount > 0 ? (separations / avgHeadcount) * 100 : 0;
         if (!cancelled) setAttrition({ separations, avgHeadcount, ratePct });
+
+        // Per-department breakdown using same 12-month window
+        const deptSeps = new Map<string, number>();
+        for (const r of recentRows) {
+          const d = r.Department?.trim();
+          if (!d) continue;
+          deptSeps.set(d, (deptSeps.get(d) ?? 0) + 1);
+        }
+        const deptActive = new Map<string, number>();
+        for (const r of roster) {
+          const d = r.department ?? 'Unknown';
+          deptActive.set(d, (deptActive.get(d) ?? 0) + 1);
+        }
+        const byDept: AttritionDeptRow[] = Array.from(deptSeps.entries())
+          .map(([dept, seps]) => {
+            const act = deptActive.get(dept) ?? 0;
+            const avg = act + seps / 2;
+            return { dept, separations: seps, active: act, ratePct: avg > 0 ? (seps / avg) * 100 : 0 };
+          })
+          // Skip depts with no active headcount — name mismatch in source data produces nonsensical rates
+          .filter((r) => r.active > 0)
+          .sort((a, b) => b.ratePct - a.ratePct);
+        if (!cancelled) setAttritionByDept(byDept);
       } catch {
-        if (!cancelled) setAttrition(null);
+        if (!cancelled) {
+          setAttrition(null);
+          setAttritionByDept(null);
+        }
       }
     })();
     return () => { cancelled = true; };
-  }, [roster.length]);
+  }, [roster]);
 
   // MESA members — count rows where mesa_member is true on the rates table.
   useEffect(() => {
@@ -1241,6 +1493,7 @@ function OverviewBody() {
         headcountSeries={headcountSeries}
         tenureCohorts={tenureCohorts}
         recentHires={recentHires}
+        attritionByDept={attritionByDept}
       />
 
       {/* Roster */}

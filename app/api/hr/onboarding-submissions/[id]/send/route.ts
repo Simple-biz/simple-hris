@@ -127,8 +127,26 @@ Let me know if you hit any issues.
 
   const w8benUrl = W8BEN_URL;
 
-  const subject = overrideSubject ?? "Welcome to Simple.biz — your onboarding form";
-  const plainBody = overrideBody ?? defaultBody;
+  const isResend = row.status === "submitted";
+
+  const defaultSubject = isResend
+    ? "Simple.biz — your onboarding submission (follow-up)"
+    : "Welcome to Simple.biz — your onboarding form";
+
+  const resendBody = `${greeting},
+
+HR has sent you this link so you can review the onboarding form you already submitted.
+
+${link}
+
+You can update any of your details (personal info, payment method, agreements) and re-submit if anything has changed. If everything looks correct, no action is needed.
+
+Let us know if you have any questions.
+
+— The Simple.biz Team`;
+
+  const subject = overrideSubject ?? defaultSubject;
+  const plainBody = overrideBody ?? (isResend ? resendBody : defaultBody);
   const html = renderOnboardingEmailHtml({
     greeting,
     link,
@@ -136,6 +154,7 @@ Let me know if you hit any issues.
     note: row.invite_note,
     department: row.invite_department,
     w8benUrl,
+    isResend,
   });
 
   const payload = {
@@ -262,8 +281,9 @@ function renderOnboardingEmailHtml(args: {
   note: string | null;
   department: string | null;
   w8benUrl: string | null;
+  isResend?: boolean;
 }): string {
-  const { greeting, link, logoUrl, note, department, w8benUrl } = args;
+  const { greeting, link, logoUrl, note, department, w8benUrl, isResend = false } = args;
   const safeLink = escapeHtml(link);
   const safeGreeting = escapeHtml(greeting);
   const safeLogo = escapeHtml(logoUrl);
@@ -297,7 +317,7 @@ function renderOnboardingEmailHtml(args: {
                 ♥ Welcome to the team
               </p>
               <h1 style="margin:8px 0 0 0;font-size:24px;line-height:1.25;font-weight:700;color:#ffffff;">
-                Your onboarding form is ready
+                ${isResend ? "Review your onboarding submission" : "Your onboarding form is ready"}
               </h1>
               ${
                 safeDept
@@ -311,17 +331,24 @@ function renderOnboardingEmailHtml(args: {
           <tr>
             <td style="padding:32px 36px 8px 36px;">
               <p style="margin:0 0 14px 0;font-size:16px;line-height:1.55;color:${COLORS.ink};">${safeGreeting},</p>
-              <p style="margin:0 0 18px 0;font-size:15px;line-height:1.6;color:${COLORS.ink};">
+              ${isResend
+                ? `<p style="margin:0 0 18px 0;font-size:15px;line-height:1.6;color:${COLORS.ink};">
+                HR has sent you this link so you can <strong>review your submitted onboarding form</strong>.
+                If any of your details have changed — personal info, payment method, or agreements — you can
+                update and re-submit. If everything looks correct, no further action is needed.
+              </p>`
+                : `<p style="margin:0 0 18px 0;font-size:15px;line-height:1.6;color:${COLORS.ink};">
                 We're so glad to have you with us. Please take about <strong>10 minutes</strong> to complete the
                 onboarding form below so we can set you up properly in our system.
-              </p>
+              </p>`
+              }
 
               <!-- CTA button (bulletproof table layout — works in Outlook too) -->
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:24px auto 8px auto;">
                 <tr>
                   <td align="center" bgcolor="${COLORS.navy}" style="background-color:${COLORS.navy};background-image:linear-gradient(135deg,${COLORS.navy} 0%,${COLORS.navyDeep} 100%);border-radius:10px;">
                     <a href="${safeLink}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;border:1px solid ${COLORS.navyDeep};">
-                      Open my onboarding form  →
+                      ${isResend ? "Review my submission  →" : "Open my onboarding form  →"}
                     </a>
                   </td>
                 </tr>
@@ -378,12 +405,12 @@ function renderOnboardingEmailHtml(args: {
                   : ""
               }
 
-              <!-- "What to expect" card -->
+              <!-- "What to expect / what's inside" card -->
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:26px 0 0 0;border:1px solid ${COLORS.ruleLight};border-radius:10px;">
                 <tr>
                   <td style="padding:18px 20px;">
                     <p style="margin:0 0 10px 0;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:${COLORS.navy};">
-                      What you'll fill in
+                      ${isResend ? "Your submission covers" : "What you'll fill in"}
                     </p>
                     <p style="margin:0;font-size:13px;line-height:1.7;color:${COLORS.ink};">
                       <span style="color:${COLORS.orange};">●</span>&nbsp;&nbsp;Your contact info<br />
@@ -392,6 +419,11 @@ function renderOnboardingEmailHtml(args: {
                       <span style="color:${COLORS.orange};">●</span>&nbsp;&nbsp;How you'd like to be paid — Hurupay or wire transfer<br />
                       <span style="color:${COLORS.orange};">●</span>&nbsp;&nbsp;Contract worker agreement signature
                     </p>
+                    ${isResend
+                      ? `<p style="margin:10px 0 0 0;font-size:12px;line-height:1.55;color:${COLORS.inkMute};">
+                      You can update any section and re-submit, or simply close the link if nothing has changed.
+                    </p>`
+                      : ""}
                   </td>
                 </tr>
               </table>

@@ -151,6 +151,26 @@ export async function getHrOnboardingSubmissionByToken(
   return { row: (data ?? null) as HrOnboardingSubmissionRow | null, error: null };
 }
 
+/**
+ * Returns the first non-archived submission that was invited to the given
+ * personal email. Used to block duplicate links before creating a new one.
+ */
+export async function findActiveSubmissionByEmail(
+  email: string,
+): Promise<{ row: HrOnboardingSubmissionRow | null; error: string | null }> {
+  const sb = client();
+  const { data, error } = await sb
+    .from(TABLE)
+    .select("id, status, invite_name, invite_department, created_at")
+    .eq("invite_personal_email", email.trim().toLowerCase())
+    .neq("status", "archived")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return { row: null, error: error.message };
+  return { row: (data ?? null) as HrOnboardingSubmissionRow | null, error: null };
+}
+
 export async function createHrOnboardingLink(
   input: CreateOnboardingLinkInput,
 ): Promise<{ row: HrOnboardingSubmissionRow | null; error: string | null }> {
@@ -203,8 +223,11 @@ export async function submitHrOnboarding(
     non_solicitation_signature: input.non_solicitation_signature,
     privacy_signature: input.privacy_signature,
     w8ben_applicable: input.w8ben_applicable,
-    w8ben_file_path: input.w8ben_file_path ?? null,
-    w8ben_file_name: input.w8ben_file_name ?? null,
+    // Only overwrite the stored file when the client explicitly sent a new path.
+    // Omitting these fields (undefined) means "keep whatever is already stored",
+    // which preserves a previously-uploaded W-8BEN when the hire reopens the form.
+    ...(input.w8ben_file_path !== undefined && { w8ben_file_path: input.w8ben_file_path }),
+    ...(input.w8ben_file_name !== undefined && { w8ben_file_name: input.w8ben_file_name }),
     payment_method: input.payment_method,
     hurupay_email: input.hurupay_email?.trim().toLowerCase() || null,
     bank_full_name: input.bank_full_name?.trim() || null,

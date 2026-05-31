@@ -70,6 +70,8 @@ import {
   ShieldAlert,
   Sparkles,
   Tag,
+  UserMinus,
+  UserPlus,
   Users,
   Wrench,
   XCircle,
@@ -98,7 +100,9 @@ export type DiagnosticCategory =
   | 'infra'
   | 'config'
   | 'integration'
-  | 'manager';
+  | 'manager'
+  | 'hr-onboarding'
+  | 'hr-offboarding';
 
 /** A concrete remediation step. `kind` lets the UI hint at the type of action:
  *  config = settings/env tweak, code = source change, db = SQL/migration,
@@ -228,6 +232,8 @@ const CATEGORY_LABEL: Record<DiagnosticCategory, string> = {
   config: 'config',
   integration: 'integration',
   manager: 'manager',
+  'hr-onboarding': 'hr_onboarding',
+  'hr-offboarding': 'hr_offboarding',
 };
 
 /** Category-specific glyph for the node header — gives each card a visual
@@ -247,6 +253,8 @@ const CATEGORY_ICON: Record<DiagnosticCategory, React.ComponentType<{ className?
   config: Settings,
   integration: Plug,
   manager: ImageIcon,
+  'hr-onboarding': UserPlus,
+  'hr-offboarding': UserMinus,
 };
 
 const FIX_KIND_LABEL: Record<NonNullable<DiagnosticFix['kind']>, string> = {
@@ -603,6 +611,42 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
       ],
       lastChecked: iso,
     },
+    {
+      id: 'hr-onboarding',
+      label: 'HR Onboarding Pipeline',
+      category: 'hr-onboarding',
+      status: 'healthy',
+      summary: '0 hire(s) in pipeline; 0 form(s) outstanding.',
+      details: [
+        '0 form(s) sent and awaiting candidate submission.',
+        '0 hire(s) in pending_work_email or ready status.',
+        'No hires stuck awaiting work-email assignment.',
+        'Workspace setup webhook (n8n) fires when HR assigns a work email.',
+      ],
+      suggestedChecks: [
+        'Verify workspace setup webhook fires after work-email assignment.',
+        'Confirm bank/payment details carry over from onboarding form to employee portal.',
+      ],
+      lastChecked: iso,
+    },
+    {
+      id: 'hr-offboarding',
+      label: 'HR Offboarding Pipeline',
+      category: 'hr-offboarding',
+      status: 'healthy',
+      summary: '0 offboard(s) in 30d; webhook pipeline healthy.',
+      details: [
+        '0 employee(s) offboarded total.',
+        '0 offboard event(s) in the last 30 days.',
+        'No manual webhook re-fires on record.',
+        'Deactivate + delete webhooks fire via n8n; re-fireable from HR → Offboarding tab.',
+      ],
+      suggestedChecks: [
+        'Confirm OFFBOARD_DEACTIVATE_SLUG and OFFBOARD_DELETE_SLUG env vars are set.',
+        'Spot-check Google Sheet Master List rows after a delete event.',
+      ],
+      lastChecked: iso,
+    },
   ];
 
   const alerts: DiagnosticAlert[] = [
@@ -661,30 +705,37 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
  */
 
 const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
-  'admin-shell':           { x: 40,   y: 320 },
-  'payroll-wizard':        { x: 380,  y: 60  },
-  rates:                   { x: 380,  y: 600 },
-  'hubstaff-csv':          { x: 740,  y: -40 },
-  'master-list':           { x: 740,  y: 200 },
-  'disbursement-records':  { x: 740,  y: 440 },
-  'supabase-client':       { x: 1100, y: 380 },
-  'supabase-postgres':     { x: 1460, y: 380 },
-  'pg-pool':               { x: 1100, y: 660 },
-  'daily-report':          { x: 740,  y: 660 },
-  'auth-login':            { x: 380,  y: 880 },
-  'audit-log':             { x: 1100, y: 880 },
-  'app-settings':          { x: 1460, y: 60  },
-  'google-sheet-sync':     { x: 40,   y: 60  },
-  'rate-history':          { x: 1100, y: 600 },
-  'manager-wallpapers':    { x: 40,   y: 600 },
+  'hr-onboarding':         { x: 380,  y: -240 },
+  'hr-offboarding':        { x: 40,   y: -240 },
+  'google-sheet-sync':     { x: 40,   y: 60   },
+  'payroll-wizard':        { x: 380,  y: 60   },
+  'admin-shell':           { x: 40,   y: 320  },
+  rates:                   { x: 380,  y: 600  },
+  'hubstaff-csv':          { x: 740,  y: -40  },
+  'master-list':           { x: 740,  y: 200  },
+  'disbursement-records':  { x: 740,  y: 440  },
+  'supabase-client':       { x: 1100, y: 380  },
+  'supabase-postgres':     { x: 1460, y: 380  },
+  'pg-pool':               { x: 1100, y: 660  },
+  'daily-report':          { x: 740,  y: 660  },
+  'auth-login':            { x: 380,  y: 880  },
+  'audit-log':             { x: 1100, y: 880  },
+  'app-settings':          { x: 1460, y: 60   },
+  'rate-history':          { x: 1100, y: 600  },
+  'manager-wallpapers':    { x: 40,   y: 600  },
 };
 
 const EDGES: { source: string; target: string }[] = [
   { source: 'admin-shell', target: 'payroll-wizard' },
   { source: 'admin-shell', target: 'rates' },
+  { source: 'admin-shell', target: 'hr-onboarding' },
+  { source: 'admin-shell', target: 'hr-offboarding' },
   { source: 'payroll-wizard', target: 'hubstaff-csv' },
   { source: 'payroll-wizard', target: 'master-list' },
   { source: 'payroll-wizard', target: 'disbursement-records' },
+  { source: 'hr-onboarding', target: 'master-list' },
+  { source: 'hr-offboarding', target: 'master-list' },
+  { source: 'hr-offboarding', target: 'google-sheet-sync' },
   { source: 'rates', target: 'supabase-client' },
   { source: 'hubstaff-csv', target: 'supabase-client' },
   { source: 'master-list', target: 'supabase-client' },

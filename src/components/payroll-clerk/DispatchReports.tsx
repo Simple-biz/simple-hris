@@ -166,36 +166,60 @@ export default function DispatchReports() {
   const [search, setSearch] = useState('');
   const [orphanageRows, setOrphanageRows] = useState<OrphanageDispatchRow[]>([]);
   const [orphanageLoading, setOrphanageLoading] = useState(true);
+  const [unseededCount, setUnseededCount] = useState(0);
+  const [seeding, setSeeding] = useState(false);
+  const [seedError, setSeedError] = useState<string | null>(null);
+
+  const loadReports = React.useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/payment-dispatches/reports', {
+        cache: 'no-store',
+        signal,
+      });
+      const json = (await res.json()) as { reports?: ReportSummary[]; error?: string; unseededCount?: number };
+      if (signal?.aborted) return;
+      if (json.error) {
+        setError(json.error);
+        setSummaries([]);
+      } else {
+        setSummaries(json.reports ?? []);
+        setUnseededCount(json.unseededCount ?? 0);
+        setPage(0);
+      }
+    } catch (e) {
+      if (signal?.aborted) return;
+      if (e instanceof DOMException && e.name === 'AbortError') return;
+      setError(e instanceof Error ? e.message : 'Could not load reports');
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch('/api/payment-dispatches/reports', {
-          cache: 'no-store',
-          signal: controller.signal,
-        });
-        const json = (await res.json()) as { reports?: ReportSummary[]; error?: string };
-        if (controller.signal.aborted) return;
-        if (json.error) {
-          setError(json.error);
-          setSummaries([]);
-        } else {
-          setSummaries(json.reports ?? []);
-          setPage(0);
-        }
-      } catch (e) {
-        if (controller.signal.aborted) return;
-        if (e instanceof DOMException && e.name === 'AbortError') return;
-        setError(e instanceof Error ? e.message : 'Could not load reports');
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    })();
+    loadReports(controller.signal);
     return () => controller.abort();
-  }, []);
+  }, [loadReports]);
+
+  const handleSeedMissing = async () => {
+    setSeeding(true);
+    setSeedError(null);
+    try {
+      const res = await fetch('/api/payment-dispatches/reports/seed-missing', { method: 'POST' });
+      const json = (await res.json()) as { seeded?: number; error?: string };
+      if (json.error) {
+        setSeedError(json.error);
+      } else {
+        await loadReports();
+      }
+    } catch (e) {
+      setSeedError(e instanceof Error ? e.message : 'Seed failed');
+    } finally {
+      setSeeding(false);
+    }
+  };
 
   // Fetch paid orphanage dispatches for the reports panel
   useEffect(() => {
@@ -309,6 +333,48 @@ export default function DispatchReports() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] px-3 py-3 sm:px-6 sm:py-6 dark:bg-[#0d1117]">
+        {/* Unseeded uploads banner */}
+        {unseededCount > 0 && !seeding && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-500/5">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div>
+                <p className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">
+                  {unseededCount} upload{unseededCount === 1 ? '' : 's'} without payroll records
+                </p>
+                <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">
+                  These Hubstaff uploads have hours data but no disbursement records yet. Seed to generate them from hours &amp; rates.
+                </p>
+                {seedError && (
+                  <p className="mt-1 text-[11px] text-rose-600 dark:text-rose-400">{seedError}</p>
+                )}
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSeedMissing}
+              disabled={seeding}
+              className="h-8 gap-1.5 border-amber-300 bg-white px-3 text-[11px] font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-transparent dark:text-amber-300 dark:hover:bg-amber-500/10"
+            >
+              {seeding ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              Seed missing records
+            </Button>
+          </div>
+        )}
+        {seeding && (
+          <div className="mb-4 flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-500/5">
+            <Loader2 className="h-4 w-4 animate-spin text-amber-600 dark:text-amber-400" />
+            <p className="text-[12px] text-amber-800 dark:text-amber-300">
+              Seeding disbursement records from Hubstaff hours&hellip; this may take a moment.
+            </p>
+          </div>
+        )}
+
         {/* Orphanage payments panel */}
         {(orphanageRows.length > 0 || orphanageLoading) && (
           <OrphanageReportsPanel rows={orphanageRows} loading={orphanageLoading} />
@@ -670,6 +736,36 @@ function ReportDetail({
   const { totals } = report;
   const totalPending =
     totals.notPaidCount + totals.thresholdCount + totals.problemCount;
+  const [markingPaid, setMarkingPaid] = useState(false);
+  const [markPaidConfirm, setMarkPaidConfirm] = useState(false);
+  const [markPaidError, setMarkPaidError] = useState<string | null>(null);
+
+  const handleMarkAllPaid = async () => {
+    if (!markPaidConfirm) {
+      setMarkPaidConfirm(true);
+      return;
+    }
+    setMarkingPaid(true);
+    setMarkPaidError(null);
+    try {
+      const res = await fetch(
+        `/api/payment-dispatches/reports/${encodeURIComponent(report.cycleId)}/mark-all-paid`,
+        { method: 'POST' },
+      );
+      const json = (await res.json()) as { updated?: number; error?: string };
+      if (json.error) {
+        setMarkPaidError(json.error);
+      } else {
+        setMarkPaidConfirm(false);
+        onBack();
+      }
+    } catch (e) {
+      setMarkPaidError(e instanceof Error ? e.message : 'Failed to mark paid');
+    } finally {
+      setMarkingPaid(false);
+    }
+  };
+
   const sortedDispatches = useMemo(
     () =>
       [...report.dispatches].sort((a, b) => {
@@ -720,6 +816,41 @@ function ReportDetail({
               <span className="inline-flex items-center gap-1 rounded-full border border-orange-200 bg-gradient-to-br from-orange-50 to-rose-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:border-orange-900/40 dark:from-orange-950/40 dark:to-rose-950/30 dark:text-orange-300">
                 Current cycle
               </span>
+            )}
+            {(totals.notPaidCount > 0 || totals.thresholdCount > 0 || totals.problemCount > 0 || (report.outstanding && report.outstanding.length > 0)) && (
+              <div className="flex flex-col items-end gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={markingPaid}
+                  onClick={handleMarkAllPaid}
+                  className={cn(
+                    'h-8 gap-1.5 px-3 text-[11px] font-medium',
+                    markPaidConfirm
+                      ? 'border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-500/40 dark:bg-rose-950/30 dark:text-rose-300'
+                      : 'border-emerald-200 bg-white text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50 dark:border-emerald-500/30 dark:bg-zinc-950 dark:text-emerald-300 dark:hover:bg-emerald-500/10',
+                  )}
+                >
+                  {markingPaid ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
+                  {markPaidConfirm ? 'Confirm mark all paid' : 'Mark all as paid'}
+                </Button>
+                {markPaidConfirm && !markingPaid && (
+                  <button
+                    type="button"
+                    onClick={() => setMarkPaidConfirm(false)}
+                    className="text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                  >
+                    Cancel
+                  </button>
+                )}
+                {markPaidError && (
+                  <p className="text-[10px] text-rose-600 dark:text-rose-400">{markPaidError}</p>
+                )}
+              </div>
             )}
             <Button
               variant="outline"

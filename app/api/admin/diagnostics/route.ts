@@ -26,6 +26,8 @@ import {
   probeDailyReport,
   probeDisbursementRecords,
   probeGoogleSheetsSync,
+  probeHrOffboarding,
+  probeHrOnboarding,
   probeHubstaffCsv,
   probeManagerWallpapers,
   probeMasterList,
@@ -54,7 +56,9 @@ type DiagnosticCategory =
   | 'infra'
   | 'config'
   | 'integration'
-  | 'manager';
+  | 'manager'
+  | 'hr-onboarding'
+  | 'hr-offboarding';
 
 type DiagnosticNode = {
   id: string;
@@ -132,6 +136,8 @@ export async function GET() {
     sheetsSyncProbe,
     rateHistoryProbe,
     wallpapersProbe,
+    hrOnboardingProbe,
+    hrOffboardingProbe,
   ] = await Promise.all([
     withProbeTimeout(probeSupabase(), fallback),
     withProbeTimeout(probePgPool(), fallback),
@@ -146,6 +152,8 @@ export async function GET() {
     withProbeTimeout(probeGoogleSheetsSync(), fallback),
     withProbeTimeout(probeRateHistory(), fallback),
     withProbeTimeout(probeManagerWallpapers(), fallback),
+    withProbeTimeout(probeHrOnboarding(), fallback),
+    withProbeTimeout(probeHrOffboarding(), fallback),
   ]);
 
   // Compose nodes — service-map identifiers must match the client's NODE_POSITIONS.
@@ -225,6 +233,8 @@ export async function GET() {
     node('google-sheet-sync', 'Google Sheet Sync', 'integration', sheetsSyncProbe),
     node('rate-history', 'Rate History', 'rates', rateHistoryProbe),
     node('manager-wallpapers', 'Manager Team Wallpapers', 'manager', wallpapersProbe),
+    node('hr-onboarding', 'HR Onboarding Pipeline', 'hr-onboarding', hrOnboardingProbe),
+    node('hr-offboarding', 'HR Offboarding Pipeline', 'hr-offboarding', hrOffboardingProbe),
   ];
 
   // Generate alerts from any non-healthy node.

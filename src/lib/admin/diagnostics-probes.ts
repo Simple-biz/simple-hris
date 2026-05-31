@@ -758,6 +758,165 @@ export async function probeManagerWallpapers(): Promise<ProbeResult> {
   }
 }
 
+/** HR Onboarding pipeline — form submissions + pending employee staging table. */
+export async function probeHrOnboarding(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const [pendingFormsRes, stuckHiresRes, actionableHiresRes] = await Promise.all([
+      supabase
+        .from('hr_onboarding_submissions')
+        .select('*', { head: true, count: 'exact' })
+        .eq('status', 'pending'),
+      supabase
+        .from('hr_pending_employees')
+        .select('*', { head: true, count: 'exact' })
+        .eq('status', 'pending_work_email')
+        .lt('created_at', sevenDaysAgo),
+      supabase
+        .from('hr_pending_employees')
+        .select('*', { head: true, count: 'exact' })
+        .in('status', ['pending_work_email', 'ready']),
+    ]);
+
+    if (pendingFormsRes.error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read hr_onboarding_submissions.',
+        details: [trimError(pendingFormsRes.error)],
+        suggestedChecks: ['Verify table exists and service role has SELECT.'],
+      };
+    }
+    if (actionableHiresRes.error) {
+      return {
+        status: 'warning',
+        summary: 'Could not read hr_pending_employees.',
+        details: [trimError(actionableHiresRes.error)],
+        suggestedChecks: ['Verify table exists and service role has SELECT.'],
+      };
+    }
+
+    const pendingForms = pendingFormsRes.count ?? 0;
+    const stuckHires = stuckHiresRes.count ?? 0;
+    const actionableHires = actionableHiresRes.count ?? 0;
+
+    const details = [
+      `${pendingForms} form(s) sent and awaiting candidate submission.`,
+      `${actionableHires} hire(s) in pending_work_email or ready status.`,
+      stuckHires > 0
+        ? `${stuckHires} hire(s) stuck in pending_work_email for >7 days.`
+        : 'No hires stuck awaiting work-email assignment.',
+      'Workspace setup webhook (n8n) fires when HR assigns a work email.',
+    ];
+
+    if (stuckHires > 0) {
+      return {
+        status: 'warning',
+        summary: `${stuckHires} hire(s) awaiting work email for >7 days.`,
+        details,
+        suggestedChecks: [
+          'Assign work emails in Admin → HR → Pending Employees.',
+          'Use "Retry workspace setup" if the webhook previously failed.',
+        ],
+      };
+    }
+
+    return {
+      status: 'healthy',
+      summary: `${actionableHires} hire(s) in pipeline; ${pendingForms} form(s) outstanding.`,
+      details,
+      suggestedChecks: [
+        'Verify workspace setup webhook fires after work-email assignment.',
+        'Confirm bank/payment details carry over from onboarding form to employee portal.',
+      ],
+    };
+  } catch (e) {
+    return { status: 'unknown', summary: 'HR Onboarding probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}
+
+/** HR Offboarding pipeline — recent offboard events + webhook fire health. */
+export async function probeHrOffboarding(): Promise<ProbeResult> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) {
+    return { status: 'unknown', summary: 'No Supabase client.', details: [], suggestedChecks: [] };
+  }
+  try {
+    const since30d = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const [offboardCountRes, webhookRes, offboardedTotalRes] = await Promise.all([
+      supabase
+        .from('audit_log')
+        .select('*', { head: true, count: 'exact' })
+        .eq('action', 'hr.employee.offboarded')
+        .gte('created_at', since30d),
+      supabase
+        .from('audit_log')
+        .select('created_at, details')
+        .ilike('action', 'hr.employee.webhook_fired.%')
+        .order('created_at', { ascending: false })
+        .limit(20),
+      supabase
+        .from('global_master_list')
+        .select('*', { head: true, count: 'exact' })
+        .not('off_boarded_at', 'is', null),
+    ]);
+
+    if (webhookRes.error) {
+      return {
+        status: 'unknown',
+        summary: 'Offboarding webhook history unreadable.',
+        details: [trimError(webhookRes.error)],
+        suggestedChecks: ['Verify audit_log access.'],
+      };
+    }
+
+    const recentOffboards = offboardCountRes.count ?? 0;
+    const totalOffboarded = offboardedTotalRes.count ?? 0;
+    const recentWebhooks = webhookRes.data ?? [];
+
+    const failedCount = recentWebhooks.filter((r) => {
+      const d = (r as { details: Record<string, unknown> | null }).details;
+      return d && typeof d === 'object' && d['webhook_fired'] === false;
+    }).length;
+
+    const details = [
+      `${totalOffboarded} employee(s) offboarded total.`,
+      `${recentOffboards} offboard event(s) in the last 30 days.`,
+      recentWebhooks.length > 0
+        ? `Last ${recentWebhooks.length} webhook fire(s) checked; ${failedCount} failed.`
+        : 'No manual webhook re-fires on record.',
+      'Deactivate + delete webhooks fire via n8n; re-fireable from HR → Offboarding tab.',
+    ];
+
+    if (failedCount > 0) {
+      return {
+        status: 'warning',
+        summary: `${failedCount} recent offboard webhook failure(s).`,
+        details,
+        suggestedChecks: [
+          'Use HR → Offboarding → "Re-fire webhook" for affected employees.',
+          'Check n8n logs for OFFBOARD_DEACTIVATE_SLUG / OFFBOARD_DELETE_SLUG.',
+        ],
+      };
+    }
+
+    return {
+      status: 'healthy',
+      summary: `${recentOffboards} offboard(s) in 30d; webhook pipeline healthy.`,
+      details,
+      suggestedChecks: [
+        'Confirm OFFBOARD_DEACTIVATE_SLUG and OFFBOARD_DELETE_SLUG env vars are set.',
+        'Spot-check Google Sheet Master List rows after a delete event.',
+      ],
+    };
+  } catch (e) {
+    return { status: 'unknown', summary: 'HR Offboarding probe error.', details: [trimError(e)], suggestedChecks: [] };
+  }
+}
+
 /** employee_hourly_rates row count for the Rates Management node. */
 export async function probeRates(): Promise<ProbeResult> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();

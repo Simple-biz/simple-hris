@@ -15,6 +15,7 @@ import {
   isLeadGenDepartment,
   scheduledDeletionFrom,
 } from "@/lib/hr/offboard-webhooks";
+import { appendOffboardedSheetRow } from "@/lib/google-sheets/append-offboarded-sheet";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -178,6 +179,44 @@ export async function POST(req: Request) {
   const departments = Array.from(
     new Set(rows.map((r) => r.Department).filter((d): d is string => !!d)),
   );
+
+  // Insert into offboarded_sheet immediately so the HR Offboarded tab shows
+  // the person without waiting for the nightly cron. Best-effort — don't block
+  // the offboard response if Supabase or the Sheet write fails.
+  const sheetInput = {
+    personalEmail: first["Personal Email"] ?? "",
+    workEmail: work_email,
+    name: first.Name,
+    department: departments.join(", ") || null,
+    startDate: first["Start Date"],
+    offBoardedAt: offBoardedAt,
+    offBoardedReason: reason,
+    offBoardedNote: note,
+    offBoardedBy: authz.sessionEmail,
+  };
+
+  void (async () => {
+    try {
+      await supabase.from("offboarded_sheet").insert({
+        personal_email: sheetInput.personalEmail,
+        work_email: sheetInput.workEmail,
+        name: sheetInput.name,
+        department: sheetInput.department,
+        start_date: sheetInput.startDate,
+        off_boarded_at: sheetInput.offBoardedAt,
+        off_boarded_reason: sheetInput.offBoardedReason,
+        off_boarded_note: sheetInput.offBoardedNote,
+        off_boarded_by: sheetInput.offBoardedBy,
+      });
+    } catch (e) {
+      console.error("[offboard] offboarded_sheet insert failed:", e);
+    }
+    try {
+      await appendOffboardedSheetRow(sheetInput);
+    } catch (e) {
+      console.error("[offboard] Google Sheet Offboarded append failed:", e);
+    }
+  })();
 
   // Fire the immediate teardown webhook. Lead Gen -> delete now; others ->
   // deactivate now (n8n suspends the account, sends the email, and removes the

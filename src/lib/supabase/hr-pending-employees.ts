@@ -132,6 +132,19 @@ function client() {
 }
 
 /** Newest-first list of every staged hire. UI filters by status client-side. */
+export async function getHrPendingEmployeeById(
+  id: number,
+): Promise<{ row: HrPendingEmployeeRow | null; error: string | null }> {
+  const sb = client();
+  const { data, error } = await sb
+    .from(TABLE)
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { row: null, error: error.message };
+  return { row: (data ?? null) as HrPendingEmployeeRow | null, error: null };
+}
+
 export async function listHrPendingEmployees(): Promise<{
   rows: HrPendingEmployeeRow[];
   error: string | null;

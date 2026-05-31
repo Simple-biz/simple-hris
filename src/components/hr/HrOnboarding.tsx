@@ -11,6 +11,7 @@ import {
   MailQuestion,
   Pencil,
   RefreshCw,
+  RotateCcw,
   Search,
   Trash2,
   Undo2,
@@ -89,6 +90,7 @@ export default function HrOnboarding() {
   const [confirmCancel, setConfirmCancel] = useState<HrPendingEmployeeRow | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<HrPendingEmployeeRow | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyRetryId, setBusyRetryId] = useState<number | null>(null);
   const [bulkPromoting, setBulkPromoting] = useState(false);
   const [bulkResult, setBulkResult] = useState<{
     promoted: number; failed: number; total: number;
@@ -309,6 +311,26 @@ export default function HrOnboarding() {
     } finally {
       setBusyId(null);
       setSetEmailFor(null);
+    }
+  }
+
+  async function retryWorkspace(row: HrPendingEmployeeRow) {
+    setBusyRetryId(row.id);
+    try {
+      const res = await fetch(`/api/hr/pending-employees/${row.id}/retry-workspace`, {
+        method: 'POST',
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Workspace retry failed');
+      toast.success(`Workspace setup re-sent for ${row.name}`, {
+        description: `Hubstaff invite + Roboform emails will be delivered to ${row.work_email}.`,
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Workspace retry failed', {
+        description: 'Check the n8n logs. You may need to create the account manually.',
+      });
+    } finally {
+      setBusyRetryId(null);
     }
   }
 
@@ -593,6 +615,22 @@ export default function HrOnboarding() {
                           </td>
                           <td data-label="Actions" className="px-4 py-3 text-right">
                             <div className="flex justify-end gap-1.5">
+                              {row.work_email && (row.status === 'ready' || row.status === 'promoted') && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs text-sky-700 hover:bg-sky-50 hover:text-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/30"
+                                  onClick={() => void retryWorkspace(row)}
+                                  disabled={busyRetryId === row.id || isBusy}
+                                  title="Retry workspace setup — re-fires the n8n webhook. Note: Hubstaff invite + Roboform emails are sent to the work email inbox, so confirm the Google Workspace account exists first before retrying."
+                                >
+                                  {busyRetryId === row.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="h-3 w-3" />
+                                  )}
+                                </Button>
+                              )}
                               {row.status === 'ready' && (
                                 <Button
                                   size="sm"
@@ -654,16 +692,18 @@ export default function HrOnboarding() {
                                   <XCircle className="h-3 w-3" />
                                 </Button>
                               )}
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                                onClick={() => setConfirmDelete(row)}
-                                disabled={isBusy}
-                                title="Permanently delete this record"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
+                              {(row.status === 'cancelled' || row.status === 'no_show') && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                                  onClick={() => setConfirmDelete(row)}
+                                  disabled={isBusy}
+                                  title="Permanently delete this record"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              )}
                             </div>
                           </td>
                         </motion.tr>

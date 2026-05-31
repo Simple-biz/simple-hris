@@ -7,10 +7,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  FileX,
   Loader2,
   RefreshCw,
   RotateCcw,
   Search,
+  ShieldOff,
+  Trash2,
   UserMinus,
   UserX,
 } from 'lucide-react';
@@ -135,6 +138,12 @@ export default function HrOffboarding() {
   const [historyDept, setHistoryDept] = useState('');
   const [historyPage, setHistoryPage] = useState(0);
   const [restoring, setRestoring] = useState<string | null>(null);
+  const [removingFromSheet, setRemovingFromSheet] = useState<string | null>(null);
+  // firingWebhook tracks which email+action is in-flight: `${email}::deactivate` or `${email}::delete`
+  const [firingWebhook, setFiringWebhook] = useState<string | null>(null);
+  // deleteConfirm tracks which email is in the "click again to confirm" state
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const deleteConfirmTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchRoster = useCallback(async () => {
     setLoading(true);
@@ -189,6 +198,102 @@ export default function HrOffboarding() {
       setRestoring(null);
     }
   }, [fetchRoster, fetchHistory]);
+
+  const handleRemoveFromSheet = useCallback(async (row: HistoryRow) => {
+    const email = row['Work Email'] ?? '';
+    if (!email) return;
+    setRemovingFromSheet(email);
+    try {
+      const res = await fetch('/api/hr/offboard-sheet-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          work_email: email,
+          personal_email: row['Personal Email'] ?? '',
+        }),
+      });
+      const json = (await res.json()) as {
+        success?: boolean;
+        deleted?: number;
+        reason?: string;
+        error?: string;
+      };
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Failed to remove from sheet');
+      if ((json.deleted ?? 0) > 0) {
+        toast.success(`${row.Name ?? email} removed from Master List sheet`, {
+          description: `${json.deleted} row${json.deleted === 1 ? '' : 's'} deleted. They won't be re-added on the next sync.`,
+        });
+      } else {
+        toast.info(`${row.Name ?? email} was not found in the Master List sheet`, {
+          description: json.reason ?? 'They may have already been removed manually.',
+        });
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to remove from sheet');
+    } finally {
+      setRemovingFromSheet(null);
+    }
+  }, []);
+
+  const handleFireWebhook = useCallback(async (
+    employee: { workEmail: string; name?: string | null },
+    action: 'deactivate' | 'delete',
+  ) => {
+    const email = employee.workEmail;
+    if (!email) return;
+
+    // Delete requires a second click to confirm.
+    if (action === 'delete') {
+      if (deleteConfirm !== email) {
+        setDeleteConfirm(email);
+        if (deleteConfirmTimer.current) clearTimeout(deleteConfirmTimer.current);
+        deleteConfirmTimer.current = setTimeout(() => setDeleteConfirm(null), 4000);
+        return;
+      }
+      if (deleteConfirmTimer.current) clearTimeout(deleteConfirmTimer.current);
+      setDeleteConfirm(null);
+    }
+
+    const key = `${email}::${action}`;
+    setFiringWebhook(key);
+    try {
+      const res = await fetch('/api/hr/offboard-fire-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ work_email: email, action }),
+      });
+      const json = (await res.json()) as {
+        success?: boolean;
+        webhook?: { fired: boolean; status: number | null; error: string | null };
+        sheet_delete?: { deleted: number; reason?: string; error?: string } | null;
+        error?: string;
+      };
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Request failed');
+      const wh = json.webhook;
+      const sd = json.sheet_delete;
+      if (wh?.error == null && wh?.fired) {
+        const sheetNote = action === 'delete'
+          ? sd?.error
+            ? ` Sheet removal failed: ${sd.error}`
+            : sd?.deleted
+              ? ` Removed ${sd.deleted} row${sd.deleted === 1 ? '' : 's'} from Master List sheet.`
+              : ' Not found in Master List sheet.'
+          : '';
+        toast.success(`${action === 'deactivate' ? 'Deactivation' : 'Deletion'} webhook fired for ${employee.name ?? email}`, {
+          description: sheetNote || undefined,
+        });
+      } else {
+        toast.warning(`Webhook fired but returned an error`, {
+          description: `HTTP ${wh?.status ?? '?'}: ${wh?.error ?? 'unknown error'}`,
+          duration: 7000,
+        });
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to fire webhook');
+    } finally {
+      setFiringWebhook(null);
+    }
+  }, [deleteConfirm]);
 
   useEffect(() => {
     void fetchRoster();
@@ -405,22 +510,52 @@ export default function HrOffboarding() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-emerald-100/70 bg-white/85 dark:divide-emerald-900/35 dark:bg-zinc-950/40">
-                    {rosterPageRows.map((r, i) => (
+                    {rosterPageRows.map((r, i) => {
+                      const rEmail = r.work_email ?? '';
+                      const isDeactivating = firingWebhook === `${rEmail}::deactivate`;
+                      const isDeleting = firingWebhook === `${rEmail}::delete`;
+                      const awaitingDeleteConfirm = deleteConfirm === rEmail;
+                      const webhookBusy = isDeactivating || isDeleting;
+                      return (
                       <tr key={`${r.employee_id ?? r.work_email ?? r.personal_email ?? 'row'}-${i}`} className="align-middle hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20">
                         <td data-label="Employee ID" className="px-4 py-2.5 font-mono text-xs text-zinc-600 dark:text-zinc-400">{r.employee_id ?? '—'}</td>
                         <td data-label="Name" className="px-4 py-2.5 text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</td>
                         <td data-label="Department" className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
                         <td data-label="Work email" className="break-all px-4 py-2.5 font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.work_email ?? '—'}</td>
                         <td data-label="Start" className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">{r.start_date ?? '—'}</td>
-                        <td data-label="Action" className="px-4 py-2.5 text-right">
-                          <Button size="sm" variant="outline" onClick={() => setTarget(r)} disabled={!r.work_email}
-                            className="h-7 gap-1 border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 disabled:opacity-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                            title={r.work_email ? `Off-board ${r.name ?? r.work_email}` : 'No work email — cannot off-board'}>
-                            <UserMinus className="h-3 w-3" /> Offboard
-                          </Button>
+                        <td data-label="Action" className="px-4 py-2.5">
+                          <div className="flex flex-wrap items-center justify-end gap-1.5">
+                            <Button size="sm" variant="outline" onClick={() => setTarget(r)} disabled={webhookBusy || !r.work_email}
+                              className="h-7 gap-1 border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 disabled:opacity-50 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                              title={r.work_email ? `Off-board ${r.name ?? r.work_email}` : 'No work email — cannot off-board'}>
+                              <UserMinus className="h-3 w-3" /> Offboard
+                            </Button>
+                            <Button size="sm" variant="outline"
+                              onClick={() => void handleFireWebhook({ workEmail: rEmail, name: r.name }, 'deactivate')}
+                              disabled={webhookBusy || !rEmail}
+                              title="Fire the offboarding-deactivate webhook (suspends Workspace account)"
+                              className="h-7 gap-1 border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800 disabled:opacity-50 dark:border-amber-700/50 dark:text-amber-300 dark:hover:bg-amber-950/30">
+                              {isDeactivating ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldOff className="h-3 w-3" />}
+                              Deactivate
+                            </Button>
+                            <Button size="sm" variant="outline"
+                              onClick={() => void handleFireWebhook({ workEmail: rEmail, name: r.name }, 'delete')}
+                              disabled={webhookBusy || !rEmail}
+                              title={awaitingDeleteConfirm ? 'Click again to confirm deletion' : 'Fire the offboarding-delete webhook (removes Workspace account)'}
+                              className={cn(
+                                'h-7 gap-1 disabled:opacity-50',
+                                awaitingDeleteConfirm
+                                  ? 'border-red-500 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-500/70 dark:bg-red-950/40 dark:text-red-300'
+                                  : 'border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-700/50 dark:text-rose-300 dark:hover:bg-rose-950/30',
+                              )}>
+                              {isDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                              {awaitingDeleteConfirm ? 'Confirm?' : 'Delete'}
+                            </Button>
+                          </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
                 <PaginationBar page={safeRosterPage} totalPages={rosterTotalPages} setPage={setRosterPage} total={roster.length} filtered={filtered.length} />
@@ -457,6 +592,8 @@ export default function HrOffboarding() {
                     {historyPageRows.map((r) => {
                       const email = r['Work Email'] ?? '';
                       const isRestoring = restoring === email;
+                      const isRemovingFromSheet = removingFromSheet === email;
+                      const anyBusy = isRestoring || isRemovingFromSheet;
                       return (
                         <tr key={r.id} className="align-middle hover:bg-zinc-50/60 dark:hover:bg-zinc-900/30">
                           <td data-label="Name" className="px-4 py-2.5 font-medium text-zinc-900 dark:text-zinc-100">{r.Name ?? '—'}</td>
@@ -476,12 +613,20 @@ export default function HrOffboarding() {
                             {r.off_boarded_at ? new Date(r.off_boarded_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—'}
                           </td>
                           <td data-label="By" className="px-4 py-2.5 font-mono text-xs text-zinc-500 dark:text-zinc-500">{r.off_boarded_by ?? '—'}</td>
-                          <td data-label="Action" className="px-4 py-2.5 text-right">
-                            <Button size="sm" variant="outline" onClick={() => void handleRestore(r)} disabled={isRestoring || !email}
-                              className="h-7 gap-1 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30">
-                              {isRestoring ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
-                              Restore
-                            </Button>
+                          <td data-label="Action" className="px-4 py-2.5">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button size="sm" variant="outline" onClick={() => void handleRestore(r)} disabled={anyBusy || !email}
+                                className="h-7 gap-1 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30">
+                                {isRestoring ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                                Restore
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => void handleRemoveFromSheet(r)} disabled={anyBusy || !email}
+                                title="Delete from Google Sheet Master List so the next sync won't re-add them"
+                                className="h-7 gap-1 border-orange-300 text-orange-700 hover:bg-orange-50 hover:text-orange-800 disabled:opacity-50 dark:border-orange-700/50 dark:text-orange-300 dark:hover:bg-orange-950/30">
+                                {isRemovingFromSheet ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileX className="h-3 w-3" />}
+                                Remove from Sheet
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       );

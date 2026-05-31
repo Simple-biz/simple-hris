@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Gift, Heart, Lock, Loader2, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { Gift, Heart, Lock, Loader2, CheckCircle2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -25,10 +25,7 @@ import {
   parseStartDate,
   type GiftMilestone,
 } from '@/lib/gift-milestones';
-import type {
-  EmployeeGiftShippingRow,
-  EmployeeGiftShippingStatus,
-} from '@/lib/supabase/employee-gift-shipping';
+import type { EmployeeGiftShippingRow } from '@/lib/supabase/employee-gift-shipping';
 
 export type GiftShippingStatus =
   | 'none' /* no milestone in window */
@@ -79,28 +76,24 @@ const HEARTS_FLOAT = [
   { left: '88%', delay: '1.9s',  dur: '5.1s', size: 12, rotate: 4 },
 ] as const;
 
-function statusBadge(status: EmployeeGiftShippingStatus) {
-  switch (status) {
-    case 'approved':
-      return (
-        <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
-          <CheckCircle2 className="mr-1 h-3 w-3" /> Approved · locked
-        </Badge>
-      );
-    case 'rejected':
-      return (
-        <Badge className="border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300">
-          <AlertCircle className="mr-1 h-3 w-3" /> Needs revision
-        </Badge>
-      );
-    default:
-      return (
-        <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-          Pending review
-        </Badge>
-      );
-  }
+const MILESTONE_MESSAGES: Record<number, string> = {
+  1: 'Six months in, and you have already made Simple.biz a better place. Thank you for your energy, your hard work, and for choosing to grow with us.',
+  2: 'One full year together — and what a year it has been. Your dedication and heart inspire everyone around you. We are so proud to have you on this team.',
+  3: 'A year and a half of showing up and making a real difference. The team truly would not be the same without you. Thank you for everything.',
+  4: 'Two years! You have become a cornerstone of what Simple.biz is all about. Your loyalty and commitment mean more to us than words can say.',
+  5: 'Two and a half years of dedication, growth, and passion. You have helped shape who we are as a company, and we are deeply grateful for every single day you give us.',
+  6: 'Three years — a true milestone. You have grown with Simple.biz, and Simple.biz has grown because of you. Thank you for your unwavering commitment and spirit.',
+  7: 'Three and a half years of excellence, resilience, and care. You are one of the people who make Simple.biz worth showing up for every day.',
+  8: 'Four years! Your journey with us is a testament to your character and your drive. We celebrate you today and every day.',
+};
+
+function getMilestoneMessage(index: number): string {
+  return (
+    MILESTONE_MESSAGES[index] ??
+    'Your continued dedication is one of our greatest blessings. Thank you for every day you bring to Simple.biz and to the people around you.'
+  );
 }
+
 
 function tenureLabel(months: number): string {
   if (months % 12 === 0) {
@@ -227,12 +220,12 @@ export default function GiftShippingCard({
   // Hide the INLINE card when:
   //   - There's no milestone or start date
   //   - The user dismissed it for this session
-  //   - The row was approved (no further action needed)
+  //   - The employee has already submitted shipping details (any status)
   //   - The parent asked us to render the dialog only (`hideInlineCard`)
   // The dialog itself stays reachable via `dialogOpen` so a header bell can
   // open it even when the inline card is hidden.
   const cardSuppressed =
-    !milestone || !startDate || dismissed || row?.status === 'approved' || !!hideInlineCard;
+    !milestone || !startDate || dismissed || !!row || !!hideInlineCard;
 
   // Safe defaults so the inline-card / dialog markup type-checks even when the
   // milestone is null (in which case the card is suppressed AND the dialog is
@@ -427,20 +420,14 @@ export default function GiftShippingCard({
                 <h3 className="text-[15px] font-bold text-zinc-900 dark:text-white">
                   {monthsLabel}-month milestone
                 </h3>
-                {row && statusBadge(row.status)}
-                {isOverdue && !row && (
+                {isOverdue && (
                   <Badge className="border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300">
                     Action needed
                   </Badge>
                 )}
               </div>
               <p className="mt-1 text-xs leading-relaxed text-zinc-700 dark:text-zinc-200">
-                {row?.status === 'rejected' ? (
-                  <>
-                    The Orphanage team asked for revisions
-                    {row.decision_note ? <>: <em>{row.decision_note}</em></> : '.'}
-                  </>
-                ) : isOverdue ? (
+                {isOverdue ? (
                   <>Your milestone was <strong>{Math.abs(daysUntil)} days ago</strong> — please confirm your shipping details so your gift can be sent.</>
                 ) : daysUntil === 0 ? (
                   <><strong>Today is your milestone!</strong> Confirm your shipping details and we&apos;ll get your gift on its way.</>
@@ -448,6 +435,16 @@ export default function GiftShippingCard({
                   <>Your gift ships in <strong>{daysUntil} day{daysUntil === 1 ? '' : 's'}</strong>. Take a moment to confirm where it should land.</>
                 )}
               </p>
+              {milestone && (
+                <blockquote className="mt-2 border-l-2 border-pink-400/60 pl-3 dark:border-pink-500/50">
+                  <p className="text-[11px] italic leading-relaxed text-zinc-500 dark:text-zinc-400">
+                    &ldquo;{getMilestoneMessage(milestone.index)}&rdquo;
+                  </p>
+                  <cite className="mt-0.5 block text-[10px] font-semibold not-italic tracking-wide text-pink-500 dark:text-pink-400">
+                    — Simple.biz
+                  </cite>
+                </blockquote>
+              )}
             </div>
           </div>
 

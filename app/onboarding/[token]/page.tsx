@@ -40,8 +40,8 @@ type PriorData = {
   hurupay_email: string | null;
   bank_full_name: string | null;
   bank_account_name: string | null;
-  bank_account_number: string | null;
-  bank_swift_code: string | null;
+  // bank_account_number and bank_swift_code are NOT returned by the API
+  // (stripped server-side to avoid exposing credentials via the public token URL).
   bank_street: string | null;
   bank_city: string | null;
   bank_province: string | null;
@@ -158,14 +158,17 @@ export default function OnboardingFormPage() {
             non_solicitation_signature: prior.non_solicitation_signature ?? '',
             privacy_signature: prior.privacy_signature ?? '',
             w8ben_applicable: prior.w8ben_applicable ?? null,
-            w8ben_file_path: null, // path is server-side; hire can re-upload if needed
+            // '__existing__' signals that a file was already uploaded server-side.
+            // Validation accepts it, and the submit payload omits both file fields
+            // so the server keeps the stored path instead of overwriting with null.
+            w8ben_file_path: prior.w8ben_file_name ? '__existing__' : null,
             w8ben_file_name: prior.w8ben_file_name ?? null,
             payment_method: (prior.payment_method as FormState['payment_method']) ?? null,
             hurupay_email: prior.hurupay_email ?? '',
             bank_full_name: prior.bank_full_name ?? '',
             bank_account_name: prior.bank_account_name ?? '',
-            bank_account_number: prior.bank_account_number ?? '',
-            bank_swift_code: prior.bank_swift_code ?? '',
+            bank_account_number: '',
+            bank_swift_code: '',
             bank_street: prior.bank_street ?? '',
             bank_city: prior.bank_city ?? '',
             bank_province: prior.bank_province ?? '',
@@ -222,7 +225,7 @@ export default function OnboardingFormPage() {
         return null;
       case 3:
         if (form.w8ben_applicable === null) return 'Please indicate whether you are based outside the US.';
-        if (form.w8ben_applicable && !form.w8ben_file_path) {
+        if (form.w8ben_applicable && !form.w8ben_file_path && !form.w8ben_file_name) {
           return 'Please upload your completed W-8BEN form.';
         }
         return null;
@@ -290,8 +293,13 @@ export default function OnboardingFormPage() {
           non_solicitation_signature: form.non_solicitation_signature,
           privacy_signature: form.privacy_signature,
           w8ben_applicable: form.w8ben_applicable,
-          w8ben_file_path: form.w8ben_file_path,
-          w8ben_file_name: form.w8ben_file_name,
+          // Omit both file fields when the hire kept their previously-uploaded file
+          // (sentinel '__existing__'). The server interprets undefined as "no change"
+          // and keeps the stored path. Only send when a new file was uploaded.
+          ...(form.w8ben_file_path !== '__existing__' && {
+            w8ben_file_path: form.w8ben_file_path,
+            w8ben_file_name: form.w8ben_file_name,
+          }),
           payment_method: form.payment_method,
           hurupay_email: form.hurupay_email.trim() || null,
           bank_full_name: form.bank_full_name.trim() || null,

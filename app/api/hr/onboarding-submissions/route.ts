@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   createHrOnboardingLink,
+  findActiveSubmissionByEmail,
   listHrOnboardingSubmissions,
   type CreateOnboardingLinkInput,
 } from "@/lib/supabase/hr-onboarding-submissions";
@@ -29,6 +30,21 @@ export async function POST(req: Request) {
     body = (await req.json()) as Partial<CreateOnboardingLinkInput>;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const inviteEmail = body.invite_personal_email?.trim().toLowerCase() ?? "";
+  if (inviteEmail) {
+    const { row: existing, error: checkErr } = await findActiveSubmissionByEmail(inviteEmail);
+    if (checkErr) return NextResponse.json({ error: checkErr }, { status: 500 });
+    if (existing) {
+      return NextResponse.json(
+        {
+          error: `An active onboarding link already exists for ${inviteEmail}. Archive it first before creating a new one.`,
+          existing_id: existing.id,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   const { row, error } = await createHrOnboardingLink({
