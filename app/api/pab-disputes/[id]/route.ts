@@ -49,10 +49,19 @@ export async function PATCH(
       }, { status: 400 });
     }
 
-    const decided_by = body.decided_by?.trim();
-    if (!decided_by) {
-      return NextResponse.json({ error: 'decided_by is required' }, { status: 400 });
+    // The decider's identity is taken from the verified session, never the body.
+    // The DB layer (canActOnDisputes / canActOnOrphanageManagerQueue) then checks
+    // THIS email's role -- so an employee can't self-approve or frame an approver
+    // by passing someone else's email as decided_by.
+    const session = await getServerSession(authOptions);
+    const sessionEmail = ((session?.user as { email?: string | null } | undefined)?.email ?? '')
+      .toString()
+      .trim()
+      .toLowerCase();
+    if (!sessionEmail) {
+      return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
     }
+    const decided_by = sessionEmail;
 
     if (body.action === 'revoke') {
       const { row: disputeRow } = await getDisputeById(id);

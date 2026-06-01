@@ -5,6 +5,7 @@ import {
   replaceOffboardedSheetSnapshot,
 } from '@/lib/supabase/global-master-list-db';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { cronSessionElevated } from '@/lib/auth/cron-auth';
 
 const SYSTEM_USER = { name: 'GSheets Sync', role: 'System' } as const;
 
@@ -20,13 +21,13 @@ function clientIp(req: NextRequest): string | null {
  *  otherwise open (manual-trigger button + local dev). */
 function isAuthorized(req: NextRequest): boolean {
   const expected = process.env.CRON_SECRET?.trim();
-  if (!expected) return true;
+  if (!expected) return false;
   const got = req.headers.get('authorization') ?? '';
   return got === `Bearer ${expected}`;
 }
 
 async function runSync(req: NextRequest): Promise<NextResponse> {
-  if (!isAuthorized(req)) {
+  if (!isAuthorized(req) && !(await cronSessionElevated())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {

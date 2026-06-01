@@ -1,0 +1,424 @@
+{
+  "version": "1.0.0",
+  "description": "Field-level generation rules for each entity. Use a Faker library (faker-js, Faker.js, Python Faker) to implement.",
+
+  "global_rules": {
+    "company_domain": "demo.biz",
+    "personal_email_domain": "example.com",
+    "contractor_email_domain": "freelance-demo.com",
+    "currency_php_range": { "min_regular": 200, "max_regular": 600, "ot_multiplier": 1.5 },
+    "fx_rate_usd_to_php": 57.5,
+    "date_range_history_months": 12,
+    "bank_name_pool": ["BDO Unibank", "BPI Family Savings Bank", "Metrobank", "UnionBank", "Security Bank", "Landbank", "RCBC", "EastWest Bank"],
+    "processor_pool": ["hurupay", "wise", "wires", "higlobe", "wepay"],
+    "department_pool": ["Engineering", "Customer Success", "HR", "Finance", "Operations", "Design", "Marketing", "Sales", "Quality Assurance", "IT Support"],
+    "leave_type_pool": ["Sick Leave", "Vacation Leave", "Emergency Leave", "Personal Leave", "Maternity Leave", "Bereavement Leave"],
+    "role_distribution": {
+      "viewer": 35,
+      "manager": 8,
+      "hr_coordinator": 3,
+      "payroll_coordinator": 2,
+      "payroll_manager": 2,
+      "finance": 3,
+      "admin": 2,
+      "orphanage_manager": 2,
+      "ceo": 1
+    },
+    "filipino_first_names": ["Maria", "Jose", "Ana", "Juan", "Rosa", "Pedro", "Clara", "Miguel", "Elena", "Ramon", "Luz", "Carlos", "Teresa", "Luis", "Cynthia", "Andres", "Patricia", "Eduardo", "Margarita", "Felix", "Imelda", "Roberto", "Cristina", "Ernesto", "Dolores", "Rodrigo", "Pilar", "Alfredo", "Concepcion", "Renaldo"],
+    "filipino_surnames": ["Santos", "Reyes", "Cruz", "Bautista", "Ocampo", "Garcia", "Mendoza", "Torres", "Flores", "Ramos", "Lopez", "Aquino", "Dela Cruz", "Gonzales", "Diaz", "Castillo", "Rivera", "Fernandez", "Santiago", "Villanueva", "Espiritu", "Domingo", "Navarro", "Pascual", "Serrano", "Aguilar", "Salazar", "Rojas", "Perez", "Morales"]
+  },
+
+  "tables": {
+    "global_master_list": {
+      "count": 60,
+      "field_rules": {
+        "Name": "FORMAT: '{Surname}, {FirstName} {MiddleInitial}.' using filipino_first_names + filipino_surnames",
+        "Work Email": "FORMAT: '{first_initial}{surname_slug}@demo.biz' (lowercase, no spaces)",
+        "Personal Email": "FORMAT: '{first_name}.{surname}@example.com' (lowercase)",
+        "Department": "PICK from department_pool",
+        "Start Date": "RANDOM date between 2018-01-01 and 2025-06-01 as text (YYYY-MM-DD)",
+        "Profile Photo URL": "SET to null or use https://api.dicebear.com/7.x/initials/svg?seed={encoded_name}",
+        "off_boarded_at": "NULL for 50 rows; random timestamptz within last 2 years for 10 rows",
+        "off_boarded_reason": "IF off_boarded_at set: PICK from ['voluntary resignation', 'contract ended', 'no_show', 'redundancy', 'mutual agreement']",
+        "employee_id": "FORMAT: YYMM-NNNN where YY=start_year_last2, MM=start_month, NNNN=001-999"
+      }
+    },
+
+    "employee_hourly_rates": {
+      "count": 60,
+      "field_rules": {
+        "Work Email": "COPY from global_master_list (same employee set)",
+        "Personal Email": "COPY from global_master_list",
+        "Regular Rate": "RANDOM integer 200–600 as text string",
+        "OT Rate": "Regular Rate * 1.5 as text string",
+        "Preferred Processor": "RANDOM from processor_pool (weighted: hurupay 40%, wise 30%, wires 20%, higlobe 5%, wepay 5%)",
+        "Bank Preferred": "RANDOM from bank_name_pool",
+        "bank_name": "RANDOM from bank_name_pool",
+        "account_holder_name": "Full name from same employee (copy Name)",
+        "account_number": "RANDOM 12-digit numeric string (do NOT use real account formats)",
+        "swift_code": "FORMAT: 'BDOP{4_RANDOM_UPPERCASE}' (fictional, NOT real SWIFT code)",
+        "phone_number": "FORMAT: '+63-9XX-XXXXXXX' with random digits"
+      }
+    },
+
+    "employee_rate_history": {
+      "count": 90,
+      "field_rules": {
+        "employee_email": "COPY from global_master_list work_email (60 employees; some have 2 rows)",
+        "regular_rate": "MATCH employee_hourly_rates for baseline; increment by 20–50 for subsequent rows",
+        "ot_rate": "regular_rate * 1.5",
+        "effective_from": "Row 1: '1970-01-01'. Row 2+: random date within last 12 months",
+        "note": "PICK from ['baseline backfill', 'annual review increase', 'performance adjustment', 'role change', 'market adjustment']",
+        "created_by": "HR manager email from demo employees"
+      }
+    },
+
+    "employee_ids": {
+      "count": 55,
+      "department_distribution": "skew_toward_all",
+      "field_rules": {
+        "work_email": "COPY from global_master_list (55 of 60 active employees)",
+        "preferred_processor": "RANDOM from processor_pool",
+        "account_number": "RANDOM 12-digit string",
+        "account_holder_name": "Employee full name",
+        "bank_name": "RANDOM from bank_name_pool",
+        "swift_code": "FORMAT: 'BDOP{4_RANDOM_UPPERCASE}'",
+        "phone_number": "FORMAT: '+63-9XX-XXXXXXX'",
+        "full_address": "CITY-LEVEL ONLY: '{City}, {Province}, Philippines' — NO street number",
+        "is_mesa_member": "RANDOM true (30%) or false (70%)",
+        "orientation_done": "true for promoted employees, false for others"
+      }
+    },
+
+    "employee_roles": {
+      "count": 75,
+      "field_rules": {
+        "work_email": "FROM global_master_list work_email pool",
+        "role": "DISTRIBUTE per role_distribution map in global_rules",
+        "assigned_by": "admin@demo.biz or kaner@demo.biz",
+        "assigned_at": "RANDOM within last 18 months",
+        "revoked_at": "NULL for active rows; set for ~10% as historical records"
+      }
+    },
+
+    "employee_feature_permissions": {
+      "count": 30,
+      "field_rules": {
+        "work_email": "ONLY employees with elevated roles (not viewer)",
+        "view_key": "PICK from ['accounting', 'manager', 'hr', 'orphanage', 'payroll_clerk', 'admin']",
+        "feature": "PICK matching feature for view_key (e.g. accounting → rates/payroll_wizard/payment_dispatch)",
+        "access": "RANDOM view or edit",
+        "granted_by": "admin@demo.biz",
+        "revoked_at": "NULL for all active rows"
+      }
+    },
+
+    "employee_skill_sets": {
+      "count": 50,
+      "field_rules": {
+        "work_email": "FROM active employees",
+        "role_title": "PICK from ['Virtual Assistant', 'Case Manager', 'Data Analyst', 'Team Lead', 'HR Coordinator', 'Operations Specialist', 'Customer Support Specialist', 'Quality Analyst', 'Administrative Assistant', 'Financial Analyst']",
+        "currently_working_on": "SHORT generic text: 'Client intake processing and follow-ups', 'Weekly report compilation', 'Onboarding documentation review'",
+        "skills": "COMMA-SEPARATED: 'MS Office, Google Workspace, Data Entry', 'CRM, Customer Service, Communication'",
+        "strengths": "SHORT text: 'Strong attention to detail', 'Excellent written communication', 'Process-oriented problem solving'",
+        "member_notes": "SHORT manager note or empty: 'Reliable team player', 'Consistently meets deadlines'"
+      }
+    },
+
+    "employee_notifications": {
+      "count": 40,
+      "field_rules": {
+        "recipient_email": "FROM active employees",
+        "type": "RANDOM rate.change (70%) or promotion (30%)",
+        "tone": "positive for promotion; random for rate.change",
+        "title": "rate.change: 'Rate Update Effective [date]'; promotion: 'Congratulations on Your Promotion!'",
+        "message": "Realistic template message for each type",
+        "read_at": "NULL for 30% (unread); timestamptz within last 7 days for 70%"
+      }
+    },
+
+    "department_managers": {
+      "count": 15,
+      "field_rules": {
+        "manager_email": "FROM employees with manager role",
+        "department": "FROM department_pool (one manager per department typically)",
+        "assigned_by": "admin@demo.biz",
+        "revoked_at": "NULL for current; timestamptz 3+ months ago for 3 historical rows"
+      }
+    },
+
+    "user_presence": {
+      "count": 55,
+      "field_rules": {
+        "email": "COPY from active employees",
+        "name": "COPY matching Name from global_master_list",
+        "last_seen_at": "70% within last 24h; 20% within last week; 10% older"
+      }
+    },
+
+    "hubstaff_uploads": {
+      "count": 8,
+      "field_rules": {
+        "source_file": "FORMAT: 'demo-company_daily_report_{period_start}_to_{period_end}.csv'",
+        "uploaded_at": "Weekly intervals going back 8 weeks from today",
+        "uploaded_by": "payroll@demo.biz",
+        "row_count": "50 (matches employee count per cycle)",
+        "is_current": "true for most recent; false for others"
+      }
+    },
+
+    "hubstaff_hours": {
+      "count": 400,
+      "field_rules": {
+        "email": "FROM active employees (50 employees x 8 weeks)",
+        "name": "Matching Name from global_master_list",
+        "hours": "FORMAT: 'HH:MM' string (e.g. '40:30')",
+        "decimal_hours": "RANDOM 30.0–44.0 (realistic weekly hours)",
+        "department": "Match employee department",
+        "source_file": "Match corresponding hubstaff_uploads source_file"
+      }
+    },
+
+    "payment_dispatches": {
+      "count": 350,
+      "field_rules": {
+        "recipient_email": "FROM active employees",
+        "recipient_name": "Matching Name",
+        "processor": "Match employee preferred_processor from employee_ids",
+        "amount_usd": "COMPUTED: (hours * regular_rate) / fx_rate — rounded to 2dp",
+        "amount_php": "COMPUTED: hours * regular_rate",
+        "transaction_id": "FORMAT: 'TXN-{8_RANDOM_ALPHANUMERIC}'",
+        "bank_used": "RANDOM from ['BDO Unibank PH', 'Metrobank PH', 'BPI PH', 'RCBC PH']",
+        "sent_date": "Match cycle period_end date",
+        "status": "paid (85%), not_paid (5%), threshold (5%), problem (5%)"
+      }
+    },
+
+    "disbursement_records": {
+      "count": 400,
+      "field_rules": {
+        "recipient_email": "FROM hubstaff_hours (same set)",
+        "total_hours": "COPY decimal_hours from hubstaff_hours",
+        "regular_hours": "MIN(total_hours, 40)",
+        "ot_hours": "MAX(0, total_hours - 40)",
+        "regular_rate_php": "FROM employee_hourly_rates",
+        "ot_rate_php": "FROM employee_hourly_rates",
+        "amount_php": "COMPUTED: (regular_hours * regular_rate) + (ot_hours * ot_rate)",
+        "amount_usd": "amount_php / 57.5",
+        "fx_rate": "57.5",
+        "status": "paid (80%), pending (15%), not_paid (5%)"
+      }
+    },
+
+    "hr_pending_employees": {
+      "count": 12,
+      "status_distribution": {
+        "pending_work_email": 3,
+        "ready": 3,
+        "promoted": 4,
+        "cancelled": 1,
+        "no_show": 1
+      },
+      "field_rules": {
+        "name": "Fictional Filipino name (Surname, Firstname format)",
+        "personal_email": "firstname.surname@example.com",
+        "work_email": "NULL for pending_work_email; demo.biz email for others",
+        "department": "FROM department_pool",
+        "regular_rate": "RANDOM 250–450",
+        "ot_rate": "regular_rate * 1.5",
+        "source": "RANDOM from ['Referral', 'Indeed', 'LinkedIn', 'Direct Application']"
+      }
+    },
+
+    "hr_onboarding_submissions": {
+      "count": 8,
+      "status_distribution": { "pending": 3, "submitted": 4, "archived": 1 },
+      "field_rules": {
+        "token": "UUID format random string",
+        "invite_name": "Fictional Filipino name",
+        "invite_personal_email": "fictional @example.com",
+        "bank_account_name": "Full legal name (fictional)",
+        "bank_account_number": "12-digit random (NOT real format)",
+        "bank_swift_code": "BDOP + 4 random uppercase letters",
+        "bank_city": "Philippine city (Quezon City, Makati, Cebu, Davao)",
+        "bank_province": "Matching province"
+      }
+    },
+
+    "offboarded_sheet": {
+      "count": 15,
+      "field_rules": {
+        "personal_email": "firstname.surname@example.com (fictional)",
+        "work_email": "Matching demo.biz email",
+        "name": "Fictional Filipino name",
+        "off_boarded_reason": "PICK from ['voluntary resignation', 'contract ended', 'no_show', 'redundancy']",
+        "off_boarded_by": "hr@demo.biz"
+      }
+    },
+
+    "leave_requests": {
+      "count": 35,
+      "field_rules": {
+        "employee_email": "FROM active employees",
+        "leave_type": "FROM leave_type_pool",
+        "start_date": "RANDOM date within last 6 months",
+        "end_date": "start_date + 1–5 days",
+        "status": "pending(10), approved(18), rejected(4), cancelled(3)",
+        "reason": "Short generic reason per leave type"
+      }
+    },
+
+    "pab_disputes": {
+      "count": 25,
+      "field_rules": {
+        "employee_email": "FROM active employees",
+        "dispute_type": "orphanage_visit (60%), ceo_visitation (25%), other (15%)",
+        "dispute_date": "Monday of a recent payroll week",
+        "status": "approved(12), pending(8), rejected(5)",
+        "filed_by": "employee email or manager email"
+      }
+    },
+
+    "announcements": {
+      "count": 15,
+      "field_rules": {
+        "author_email": "hr@demo.biz or ceo@demo.biz",
+        "scope": "general (10), department (5)",
+        "pinned": "true for 3 most important; false for rest",
+        "title": "EXAMPLES: 'Important: Updated WFH Policy', 'Q2 All-Hands Meeting — Save the Date', 'Welcome New Team Members!'",
+        "body": "3–5 sentence realistic HR announcement text"
+      }
+    },
+
+    "swall_posts": {
+      "count": 30,
+      "field_rules": {
+        "author_email": "FROM active employees (diverse authors)",
+        "body": "Celebratory or work-related text. EXAMPLES: 'Happy work anniversary to our amazing teammate! 🎉', 'Great job team on hitting the Q2 targets!', 'Friendly reminder: timesheets due Friday 5PM'"
+      }
+    },
+
+    "swall_reactions": {
+      "count": 150,
+      "field_rules": {
+        "post_id": "Linked to swall_posts",
+        "user_email": "FROM active employees (different from author)",
+        "emoji": "DISTRIBUTE: 👍(40%), ❤️(25%), 🔥(15%), 😂(10%), 👏(7%), 😮(3%)"
+      }
+    },
+
+    "swall_comments": {
+      "count": 60,
+      "field_rules": {
+        "post_id": "Linked to swall_posts (~60% of posts have comments)",
+        "author_email": "FROM active employees",
+        "body": "SHORT friendly reply. EXAMPLES: 'Congrats! Well deserved!', 'Thank you for the reminder!', 'Happy anniversary! 🥳'"
+      }
+    },
+
+    "employee_gift_shipping_details": {
+      "count": 25,
+      "field_rules": {
+        "personal_email": "FROM global_master_list (employees at 1–5 year marks)",
+        "milestone_index": "1, 2, or 3 (years of tenure)",
+        "milestone_date": "COMPUTE from Start Date + (milestone_index * 365 days)",
+        "preferred_delivery_location": "CITY-LEVEL: 'Quezon City, Metro Manila', 'Cebu City, Cebu', 'Davao City, Davao del Sur' etc.",
+        "active_contact_number": "+63-9XX-XXXXXXX format",
+        "status": "pending(10), approved(12), rejected(3)"
+      }
+    },
+
+    "gift_catalog": {
+      "count": 1,
+      "field_rules": {
+        "items": "JSON array of 10–15 gift items with name, description, estimated_usd fields",
+        "anniversaries": "JSON array: [{year: 1, label: '1-Year Anniversary'}, {year: 3, ...}, {year: 5, ...}, {year: 10, ...}]",
+        "suggestions": "JSON array of 5 gift suggestions",
+        "updated_by": "admin@demo.biz"
+      }
+    },
+
+    "orphanage_budget_requests": {
+      "count": 12,
+      "field_rules": {
+        "submitter_email": "orphanage_manager role employee",
+        "visit_type": "monthly(5), frequent(4), special(3)",
+        "subtotal": "RANDOM 5000–30000 PHP",
+        "final_amount": "subtotal - leftover",
+        "bank_account_name": "FICTIONAL: 'Demo Orphanage Care Fund'",
+        "bank_account_number": "12-digit random",
+        "bank_name": "BDO Unibank",
+        "swift_code": "BDOPPHMM",
+        "status": "approved(7), pending(3), rejected(2)"
+      }
+    },
+
+    "contractor_profiles": {
+      "count": 5,
+      "field_rules": {
+        "contractor_email": "name@freelance-demo.com",
+        "display_name": "Fictional full name",
+        "account_holder_name": "Same as display_name",
+        "account_number": "12-digit random",
+        "swift_code": "FICTIONAL: 'BDOPPHMM' variant",
+        "phone_number": "+63-9XX-XXXXXXX",
+        "full_address": "City-level: 'Makati City, Metro Manila, Philippines'",
+        "from_entity_name": "Fictional company name like 'Sunrise Digital Services'",
+        "from_country": "Philippines"
+      }
+    },
+
+    "hsl_team_members": {
+      "count": 80,
+      "department_distribution": {
+        "case_manager": 20,
+        "filing_specialist": 8,
+        "intake_specialist": 10,
+        "ssd_medical_records": 8,
+        "post_hearing_prep": 8,
+        "collections": 6,
+        "care_team": 5,
+        "case_mgmt_asst_tl": 7,
+        "collections_tl": 3,
+        "healthcare_team_lead": 2,
+        "chelzy_asst": 1,
+        "vicky_asst_tl": 1,
+        "case_mgr_no_kpi": 1
+      },
+      "field_rules": {
+        "email": "firstinitial.surname@demo.biz (same pool as global_master_list)",
+        "full_name": "Fictional Filipino name (Surname, Firstname format)",
+        "hsl_name": "Western-sounding nickname/alias (different from full_name)",
+        "role_raw": "Match to dept_key role titles",
+        "is_manager": "true for team leads; false for individual contributors",
+        "hourly_rate": "305–500 range matching seniority",
+        "ot_rate": "hourly_rate * 1.5"
+      }
+    },
+
+    "app_settings": {
+      "count": 6,
+      "fixed_rows": [
+        { "key": "usd_to_php_rate", "value": 57.5 },
+        { "key": "payroll.dispatch_lock", "value": { "locked": false, "locked_by": null, "locked_at": null } },
+        { "key": "auth.force_logout_map", "value": {} },
+        { "key": "pab_period_active_month", "value": "2026-05" },
+        { "key": "pab_period_overrides", "value": {} },
+        { "key": "feature_flags", "value": { "gift_tracker": true, "orphanage_program": true, "hsl_bonus": true } }
+      ]
+    }
+  },
+
+  "faker_library_recommendations": {
+    "javascript": "npm install @faker-js/faker — use faker.person.firstName(), faker.finance.accountNumber(), faker.internet.email()",
+    "python": "pip install Faker — use fake.name(), fake.bban(), fake.email()",
+    "notes": [
+      "Always use example.com or demo.biz for emails — never generate real-looking domains",
+      "For bank account numbers: use 12-digit random integers, NOT Faker's credit card or real bank formats",
+      "For SWIFT codes: use fictional 8-char codes (e.g. 'BDOPPHMM') — do NOT use real BIC codes",
+      "For Philippine phone: +63-9[0-9]{2}-[0-9]{7} format",
+      "For addresses: city + province + 'Philippines' only — omit street numbers and barangay",
+      "For Filipino names: use the provided name pools in global_rules rather than Faker's Western names"
+    ]
+  }
+}

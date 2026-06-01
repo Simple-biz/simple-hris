@@ -4,6 +4,7 @@ import { fetchMasterSheetAsCsv } from '@/lib/google-sheets/fetch-master-sheet';
 import { replaceGlobalMasterListFromCsvText } from '@/lib/supabase/global-master-list-db';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
+import { cronSessionElevated } from '@/lib/auth/cron-auth';
 
 const SYSTEM_USER = { name: 'GSheets Sync', role: 'System' } as const;
 
@@ -22,13 +23,13 @@ function clientIp(req: NextRequest): string | null {
  */
 function isAuthorized(req: NextRequest): boolean {
   const expected = process.env.CRON_SECRET?.trim();
-  if (!expected) return true;
+  if (!expected) return false;
   const got = req.headers.get('authorization') ?? '';
   return got === `Bearer ${expected}`;
 }
 
 async function runSync(req: NextRequest): Promise<NextResponse> {
-  if (!isAuthorized(req)) {
+  if (!isAuthorized(req) && !(await cronSessionElevated())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
 

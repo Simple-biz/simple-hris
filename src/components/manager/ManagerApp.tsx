@@ -118,7 +118,11 @@ export default function ManagerApp() {
         }
         setAuthChecked(true);
       } catch {
-        if (!cancelled) setAuthChecked(true);
+        // A failed role check must DENY, not grant. Redirect to the safe
+        // employee portal rather than rendering the privileged dashboard.
+        if (!cancelled) {
+          router.replace(viewerEmail ? `/employee?email=${encodeURIComponent(viewerEmail)}` : '/employee');
+        }
       }
     })();
     return () => {

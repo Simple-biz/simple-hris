@@ -3,6 +3,7 @@ import { getPayrollDispatchLock } from "@/lib/supabase/payroll-dispatch-lock";
 import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
+import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
 
 /** Fields blocked while Accounting has payroll dispatch locked (employees may still update personal_email). */
 const BLOCKED_WHILE_PAYROLL_LOCKED = new Set([
@@ -98,6 +99,12 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
+
+    // Self-or-elevated: an employee may only update their own bank/payout row;
+    // elevated (HR/payroll/admin) roles may update anyone. Closes the
+    // unauthenticated salary-redirect hole.
+    const authz = await authorizeEmailAccess((work_email ?? personal_email) as string);
+    if (!authz.ok) return deniedResponse(authz);
 
     const supabase = createSupabaseServiceRoleClient();
     if (!supabase) {

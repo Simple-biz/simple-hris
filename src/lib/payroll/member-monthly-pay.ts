@@ -15,8 +15,14 @@ import {
   createSupabaseServiceRoleClient,
 } from '@/lib/supabase/server';
 import { getEmployeeHourlyRatesRows } from '@/lib/supabase/employee-hourly-rates';
-import { getAppSetting } from '@/lib/supabase/app-settings';
+import { getAppSetting, getAppSettings } from '@/lib/supabase/app-settings';
 import { normEmail } from '@/lib/email/norm-email';
+import {
+  US_HOLIDAYS_ENABLED_KEY,
+  US_HOLIDAYS_LIST_KEY,
+  parseUsHolidaysList,
+  getEnabledHolidayMap,
+} from '@/lib/us-holidays';
 import {
   PAB_PERIOD_OVERRIDES_KEY,
   parsePabPeriodOverrides,
@@ -354,12 +360,20 @@ export async function computeMemberMonthlyPay(args: {
 
   // Step 1: Fetch master + rates + PAB overrides in parallel. We need the master
   // row first to know this employee's alias emails before querying Hubstaff.
-  const [masterMin, rates, pabOverridesValue, rateHistory] = await Promise.all([
+  const [masterMin, rates, pabOverridesValue, rateHistory, holidaySettings] = await Promise.all([
     fetchMasterRowsForEmail(new Set([emailNorm])),
     getEmployeeHourlyRatesRows(),
     getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
     fetchAllRateHistory(),
+    getAppSettings([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY]),
   ]);
+
+  const holidayEnabled =
+    holidaySettings[US_HOLIDAYS_ENABLED_KEY] == null ? true : holidaySettings[US_HOLIDAYS_ENABLED_KEY] === 'true';
+  const holidayMap = getEnabledHolidayMap(
+    parseUsHolidaysList(holidaySettings[US_HOLIDAYS_LIST_KEY] ?? null),
+    holidayEnabled,
+  );
 
   const masterRow = masterMin.row;
   const hslEmails = masterMin.allHsl;
@@ -438,7 +452,13 @@ export async function computeMemberMonthlyPay(args: {
     } else {
       const weeks = buildPabCalendarWeeks(pabRange.start, pabRange.end, hoursByDateKey);
       const flat = weeks.flat();
-      passes = flat.length > 0 && flat.every((d) => d.passes);
+      passes =
+        flat.length > 0 &&
+        flat.every((d) => {
+          if (d.passes) return true;
+          const iso = `${d.date.getFullYear()}-${String(d.date.getMonth() + 1).padStart(2, '0')}-${String(d.date.getDate()).padStart(2, '0')}`;
+          return holidayMap.has(iso);
+        });
     }
     pabEligByMonthKey.set(key, passes);
     return passes;

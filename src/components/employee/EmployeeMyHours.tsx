@@ -42,6 +42,12 @@ import {
   isOrphanageStyleReason,
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
+import {
+  US_HOLIDAYS_ENABLED_KEY,
+  US_HOLIDAYS_LIST_KEY,
+  parseUsHolidaysList,
+  getEnabledHolidayMap,
+} from '@/lib/us-holidays';
 import HiddenValue from './HiddenValue';
 import DisputeDialog from './DisputeDialog';
 
@@ -216,6 +222,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const [orphanageLoading, setOrphanageLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
   const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
@@ -480,6 +487,27 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     void fetchOrphanageVisits();
   }, [fetchOrphanageVisits]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY].join(','))}`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as { values?: Record<string, string | null> };
+        if (cancelled) return;
+        const values = json.values ?? {};
+        const enabled =
+          values[US_HOLIDAYS_ENABLED_KEY] == null ? true : values[US_HOLIDAYS_ENABLED_KEY] === 'true';
+        setUsHolidayDates(getEnabledHolidayMap(parseUsHolidaysList(values[US_HOLIDAYS_LIST_KEY] ?? null), enabled));
+      } catch {
+        if (!cancelled) setUsHolidayDates(new Map());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -701,8 +729,10 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         d.date.getDay() >= 1 &&
         d.date.getDay() <= 5,
     );
-    return wd.length > 0 && wd.every((d) => d.passes);
-  }, [hoursCalendar, viewMonth, viewYear]);
+    const toIso = (date: Date) =>
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    return wd.length > 0 && wd.every((d) => d.passes || usHolidayDates.has(toIso(d.date)));
+  }, [hoursCalendar, viewMonth, viewYear, usHolidayDates]);
 
   /** Hourly rates loaded — gates both PAB and Tech bonus visibility. */
   const hasRates = useMemo(() => {
@@ -952,6 +982,8 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         const weekend = day.date.getDay() === 0 || day.date.getDay() === 6;
                         const hours = day.seconds / 3600;
                         const dayIso = `${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, '0')}-${String(day.date.getDate()).padStart(2, '0')}`;
+                        const holidayName = inMonth ? (usHolidayDates.get(dayIso) ?? null) : null;
+                        const isHoliday = !!holidayName;
                         const dispute = inMonth ? disputesByDate.get(dayIso) : undefined;
                         const nowMid = new Date();
                         const todayMid = new Date(nowMid.getFullYear(), nowMid.getMonth(), nowMid.getDate());
@@ -1001,6 +1033,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         } else if (dispute != null && disputeIsAwaitingResolution(dispute)) {
                           cellBorder =
                             'border-amber-300 bg-amber-50 dark:border-amber-700/70 dark:bg-amber-950/40';
+                        } else if (isHoliday) {
+                          cellBorder =
+                            'border-blue-300 bg-blue-50 dark:border-blue-700/70 dark:bg-blue-950/40';
                         } else if (weekend) {
                           if (dispute != null && disputeIsAwaitingResolution(dispute)) {
                             cellBorder =
@@ -1037,6 +1072,8 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                               : 'text-zinc-300 dark:text-zinc-600';
                         } else if (dispute != null && disputeIsAwaitingResolution(dispute)) {
                           hourText = 'text-amber-700 dark:text-amber-400';
+                        } else if (isHoliday) {
+                          hourText = 'text-blue-600 dark:text-blue-400';
                         } else if (effectivelyPasses && !weekend) {
                           hourText = 'text-emerald-700 dark:text-emerald-400';
                         } else if (weekend && hours > 0) {
@@ -1050,7 +1087,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         }
 
                         const titleScope = inMonth ? '' : ' · other month (still your Hubstaff)';
-                        const titleBody = `${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${titleScope}`;
+                        const titleBody = `${day.dayLabel} ${day.dateStr}: ${secondsToDisplay(day.seconds)}${isHoliday ? ` — ${holidayName}` : ''}${titleScope}`;
                         const titleDispute = dispute
                           ? ` (${dispute.status})`
                           : inMonth && day.passes
@@ -1103,6 +1140,11 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                             <span className="text-[7px] font-medium leading-none tabular-nums text-zinc-400 dark:text-zinc-500 sm:text-[8px]">
                               {day.dateStr}
                             </span>
+                            {isHoliday && (
+                              <span className="pointer-events-none max-w-[calc(100%-2px)] truncate text-[6px] font-semibold leading-none tracking-tight text-blue-500 dark:text-blue-400 sm:text-[7px]">
+                                Holiday
+                              </span>
+                            )}
                             {isToday && !day.hasData ? (
                               <div className="flex flex-col items-center gap-0.5">
                                 <Hourglass
@@ -1164,6 +1206,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                   </span>
                   <span className="flex items-center gap-1">
                     <span className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400 sm:h-2 sm:w-2" /> Sat / Sun
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-400 sm:h-2 sm:w-2" /> Holiday
                   </span>
                   <span className="flex items-center gap-1 max-sm:basis-full">
                     <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-sm border border-dashed border-zinc-400 bg-zinc-100 dark:border-zinc-500 dark:bg-zinc-800 sm:h-2 sm:w-2" /> Adj. month

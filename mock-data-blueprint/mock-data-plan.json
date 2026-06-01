@@ -1,0 +1,455 @@
+{
+  "version": "1.0.0",
+  "generated_for": "Simple HRIS — Portfolio Demo Environment",
+  "description": "Complete mock data plan for replacing real PII with realistic fictional data",
+
+  "entities": [
+    {
+      "table": "global_master_list",
+      "purpose": "Canonical employee directory",
+      "mock_count": 60,
+      "notes": "Mix of departments; ~10 offboarded rows with off_boarded_at set"
+    },
+    {
+      "table": "employee_hourly_rates",
+      "purpose": "Current rate cache per employee",
+      "mock_count": 60,
+      "notes": "One row per active employee; rates in PHP (200–600 regular, 1.5x OT)"
+    },
+    {
+      "table": "employee_rate_history",
+      "purpose": "Rate change history",
+      "mock_count": 90,
+      "notes": "1–3 history rows per employee; baseline at 1970-01-01, recent change within 6 months"
+    },
+    {
+      "table": "employee_ids",
+      "purpose": "Employee self-service payment details",
+      "mock_count": 55,
+      "notes": "Not all employees will have filled this; ~90% coverage; fictional bank details"
+    },
+    {
+      "table": "employee_roles",
+      "purpose": "Role grants per user",
+      "mock_count": 75,
+      "notes": "Multiple roles per employee possible; include all role types; some revoked rows"
+    },
+    {
+      "table": "employee_feature_permissions",
+      "purpose": "Tab-level feature access",
+      "mock_count": 30,
+      "notes": "Only for employees with elevated roles; mix of view/edit"
+    },
+    {
+      "table": "employee_skill_sets",
+      "purpose": "Skills and profile info",
+      "mock_count": 50,
+      "notes": "~80% of employees; realistic tech/admin skill descriptions"
+    },
+    {
+      "table": "employee_notifications",
+      "purpose": "In-app notifications",
+      "mock_count": 40,
+      "notes": "Mix of rate.change and promotion types; some read, some unread"
+    },
+    {
+      "table": "department_managers",
+      "purpose": "Manager-department assignments",
+      "mock_count": 15,
+      "notes": "1–2 managers per department; some with revoked_at for history"
+    },
+    {
+      "table": "user_presence",
+      "purpose": "Last-seen timestamps",
+      "mock_count": 55,
+      "notes": "All active employees; last_seen_at within last 7 days for ~70%"
+    },
+    {
+      "table": "hubstaff_uploads",
+      "purpose": "Upload archive for time data",
+      "mock_count": 8,
+      "notes": "8 weekly cycles; one marked is_current=true"
+    },
+    {
+      "table": "hubstaff_hours",
+      "purpose": "Time tracking records",
+      "mock_count": 400,
+      "notes": "~50 employees x 8 weeks; hours range 30–44/week; realistic decimal hours"
+    },
+    {
+      "table": "payment_dispatches",
+      "purpose": "Payroll dispatch log",
+      "mock_count": 350,
+      "notes": "~50 employees x 7 paid cycles; mix of processors; most status=paid"
+    },
+    {
+      "table": "disbursement_records",
+      "purpose": "Per-(week,employee) payroll analytics",
+      "mock_count": 400,
+      "notes": "Mirrors hubstaff_hours; amounts computed from rates x hours"
+    },
+    {
+      "table": "hr_pending_employees",
+      "purpose": "Hiring pipeline",
+      "mock_count": 12,
+      "notes": "Mix of statuses: pending_work_email(3), ready(3), promoted(4), cancelled(1), no_show(1)"
+    },
+    {
+      "table": "hr_onboarding_submissions",
+      "purpose": "New hire onboarding forms",
+      "mock_count": 8,
+      "notes": "Mix of pending(3), submitted(4), archived(1); submitted ones have full bank details (fictional)"
+    },
+    {
+      "table": "offboarded_sheet",
+      "purpose": "Offboarded employee records",
+      "mock_count": 15,
+      "notes": "Fictional names/emails; various off_boarded_reason values"
+    },
+    {
+      "table": "fpu_enrollments",
+      "purpose": "FPU sign-ups",
+      "mock_count": 20,
+      "notes": "~20 employees enrolled across multiple cohorts"
+    },
+    {
+      "table": "department_transfer_requests",
+      "purpose": "Department transfer workflow",
+      "mock_count": 8,
+      "notes": "Mix of statuses; some decided, some pending"
+    },
+    {
+      "table": "leave_requests",
+      "purpose": "Leave request and approval",
+      "mock_count": 35,
+      "notes": "Multiple leave types; mix of pending/approved/rejected; realistic date ranges"
+    },
+    {
+      "table": "pab_disputes",
+      "purpose": "Payroll accuracy disputes",
+      "mock_count": 25,
+      "notes": "Mix of employee-filed and manager-submitted; orphanage_visit type prominent"
+    },
+    {
+      "table": "announcements",
+      "purpose": "Company announcements",
+      "mock_count": 15,
+      "notes": "Mix of general and department-scoped; 2–3 pinned; realistic HR/company content"
+    },
+    {
+      "table": "swall_posts",
+      "purpose": "Social feed posts",
+      "mock_count": 30,
+      "notes": "Celebratory/work posts; realistic team banter content"
+    },
+    {
+      "table": "swall_reactions",
+      "purpose": "Post emoji reactions",
+      "mock_count": 150,
+      "notes": "Multiple reactions per popular post; all 6 emoji types represented"
+    },
+    {
+      "table": "swall_comments",
+      "purpose": "Post comments",
+      "mock_count": 60,
+      "notes": "2–4 comments per ~50% of posts"
+    },
+    {
+      "table": "employee_gift_shipping_details",
+      "purpose": "Gift shipping per milestone",
+      "mock_count": 25,
+      "notes": "Employees at 1–3 year marks; fictional addresses (city-level only)"
+    },
+    {
+      "table": "gift_catalog",
+      "purpose": "Gift catalog singleton",
+      "mock_count": 1,
+      "notes": "Single row; realistic gift items and milestone anniversaries"
+    },
+    {
+      "table": "gift_payments",
+      "purpose": "Gift vendor batch payments",
+      "mock_count": 8,
+      "notes": "Mix of statuses; realistic vendor names (fictional); USD amounts"
+    },
+    {
+      "table": "gift_tracker_notes",
+      "purpose": "Gift tracker notes per employee",
+      "mock_count": 20,
+      "notes": "Short status notes for employees near milestone"
+    },
+    {
+      "table": "orphanage_budget_requests",
+      "purpose": "Orphanage visit budgets",
+      "mock_count": 12,
+      "notes": "Mix of visit types and statuses; fictional bank account numbers"
+    },
+    {
+      "table": "orphanage_dispatches",
+      "purpose": "Orphanage payment dispatches",
+      "mock_count": 10,
+      "notes": "Linked to approved budget_requests; mix of paid/pending"
+    },
+    {
+      "table": "contractor_profiles",
+      "purpose": "Contractor payment profiles",
+      "mock_count": 5,
+      "notes": "Fictional contractor names; realistic invoice profile structure"
+    },
+    {
+      "table": "contractor_invoices",
+      "purpose": "Contractor invoices",
+      "mock_count": 20,
+      "notes": "4–5 invoices per contractor; mix of pending/paid"
+    },
+    {
+      "table": "hsl_team_members",
+      "purpose": "HSL agent roster",
+      "mock_count": 80,
+      "notes": "All 13 dept_key values represented; mix of managers and agents; fictional HSL names (aliases)"
+    },
+    {
+      "table": "hsl_agent_uploads",
+      "purpose": "HSL sync archive",
+      "mock_count": 3,
+      "notes": "3 upload events; latest is is_current=true"
+    },
+    {
+      "table": "hsl_bonus_period_status",
+      "purpose": "HSL bonus period tracking",
+      "mock_count": 26,
+      "notes": "13 depts x ~2 periods; mix of draft/ready/locked"
+    },
+    {
+      "table": "manager_team_wallpapers",
+      "purpose": "Team banner images",
+      "mock_count": 8,
+      "notes": "One per department that has a manager; image_data_url = placeholder data URL"
+    },
+    {
+      "table": "app_settings",
+      "purpose": "Application key-value settings",
+      "mock_count": 6,
+      "notes": "usd_to_php_rate, dispatch_lock, pab_period settings, force_logout_map (empty)"
+    }
+  ],
+
+  "relationships": [
+    {
+      "from": "global_master_list",
+      "to": "employee_hourly_rates",
+      "via": "Work Email = Work Email",
+      "type": "one-to-one",
+      "constraint": "application-enforced"
+    },
+    {
+      "from": "global_master_list",
+      "to": "employee_ids",
+      "via": "Work Email = work_email",
+      "type": "one-to-one",
+      "constraint": "application-enforced"
+    },
+    {
+      "from": "global_master_list",
+      "to": "employee_roles",
+      "via": "Work Email = work_email",
+      "type": "one-to-many",
+      "constraint": "application-enforced"
+    },
+    {
+      "from": "global_master_list",
+      "to": "employee_gift_shipping_details",
+      "via": "Personal Email = personal_email",
+      "type": "one-to-many",
+      "constraint": "application-enforced"
+    },
+    {
+      "from": "hubstaff_uploads",
+      "to": "hubstaff_hours",
+      "via": "id = upload_id",
+      "type": "one-to-many",
+      "constraint": "application-enforced"
+    },
+    {
+      "from": "hubstaff_uploads",
+      "to": "payment_dispatches",
+      "via": "id = cycle_id",
+      "type": "one-to-many",
+      "constraint": "FK ON DELETE SET NULL"
+    },
+    {
+      "from": "hubstaff_uploads",
+      "to": "disbursement_records",
+      "via": "id = upload_id",
+      "type": "one-to-many",
+      "constraint": "FK ON DELETE SET NULL"
+    },
+    {
+      "from": "payment_dispatches",
+      "to": "disbursement_records",
+      "via": "id = dispatch_id",
+      "type": "one-to-one",
+      "constraint": "FK ON DELETE SET NULL"
+    },
+    {
+      "from": "orphanage_budget_requests",
+      "to": "orphanage_dispatches",
+      "via": "id = budget_request_id",
+      "type": "one-to-one",
+      "constraint": "FK ON DELETE SET NULL"
+    },
+    {
+      "from": "employee_gift_shipping_details",
+      "to": "orphanage_dispatches",
+      "via": "id = gift_shipping_id",
+      "type": "one-to-one",
+      "constraint": "FK ON DELETE SET NULL"
+    },
+    {
+      "from": "hr_pending_employees",
+      "to": "global_master_list",
+      "via": "promoted_to_master_id = id",
+      "type": "one-to-one",
+      "constraint": "FK ON DELETE SET NULL"
+    },
+    {
+      "from": "hsl_agent_uploads",
+      "to": "hsl_team_members",
+      "via": "id = upload_id",
+      "type": "one-to-many",
+      "constraint": "FK ON DELETE SET NULL"
+    },
+    {
+      "from": "swall_posts",
+      "to": "swall_reactions",
+      "via": "id = post_id",
+      "type": "one-to-many",
+      "constraint": "FK ON DELETE CASCADE"
+    },
+    {
+      "from": "swall_posts",
+      "to": "swall_comments",
+      "via": "id = post_id",
+      "type": "one-to-many",
+      "constraint": "FK ON DELETE CASCADE"
+    },
+    {
+      "from": "contractor_profiles",
+      "to": "contractor_invoices",
+      "via": "contractor_email = contractor_email",
+      "type": "one-to-many",
+      "constraint": "application-enforced"
+    }
+  ],
+
+  "required_counts": {
+    "global_master_list": 60,
+    "employee_hourly_rates": 60,
+    "employee_rate_history": 90,
+    "employee_ids": 55,
+    "employee_roles": 75,
+    "employee_feature_permissions": 30,
+    "employee_skill_sets": 50,
+    "employee_notifications": 40,
+    "department_managers": 15,
+    "user_presence": 55,
+    "hubstaff_uploads": 8,
+    "hubstaff_hours": 400,
+    "payment_dispatches": 350,
+    "disbursement_records": 400,
+    "hr_pending_employees": 12,
+    "hr_onboarding_submissions": 8,
+    "offboarded_sheet": 15,
+    "fpu_enrollments": 20,
+    "department_transfer_requests": 8,
+    "leave_requests": 35,
+    "pab_disputes": 25,
+    "announcements": 15,
+    "swall_posts": 30,
+    "swall_reactions": 150,
+    "swall_comments": 60,
+    "employee_gift_shipping_details": 25,
+    "gift_catalog": 1,
+    "gift_payments": 8,
+    "gift_tracker_notes": 20,
+    "orphanage_budget_requests": 12,
+    "orphanage_dispatches": 10,
+    "contractor_profiles": 5,
+    "contractor_invoices": 20,
+    "hsl_team_members": 80,
+    "hsl_agent_uploads": 3,
+    "hsl_bonus_period_status": 26,
+    "manager_team_wallpapers": 8,
+    "app_settings": 6
+  },
+
+  "dependencies": {
+    "employee_hourly_rates": ["global_master_list"],
+    "employee_rate_history": ["global_master_list"],
+    "employee_ids": ["global_master_list"],
+    "employee_roles": ["global_master_list"],
+    "employee_feature_permissions": ["global_master_list", "employee_roles"],
+    "employee_skill_sets": ["global_master_list"],
+    "employee_notifications": ["global_master_list"],
+    "department_managers": ["global_master_list"],
+    "user_presence": ["global_master_list"],
+    "hubstaff_hours": ["hubstaff_uploads"],
+    "payment_dispatches": ["hubstaff_uploads", "global_master_list"],
+    "disbursement_records": ["hubstaff_uploads", "payment_dispatches", "global_master_list"],
+    "hr_onboarding_submissions": ["hr_pending_employees"],
+    "offboarded_sheet": ["global_master_list"],
+    "fpu_enrollments": ["global_master_list"],
+    "department_transfer_requests": ["global_master_list"],
+    "leave_requests": ["global_master_list"],
+    "pab_disputes": ["global_master_list"],
+    "swall_reactions": ["swall_posts"],
+    "swall_comments": ["swall_posts"],
+    "employee_gift_shipping_details": ["global_master_list"],
+    "gift_tracker_notes": ["global_master_list"],
+    "orphanage_dispatches": ["orphanage_budget_requests", "employee_gift_shipping_details"],
+    "contractor_invoices": ["contractor_profiles"],
+    "hsl_team_members": ["hsl_agent_uploads"],
+    "hsl_bonus_period_status": ["hsl_team_members"]
+  },
+
+  "generation_order": [
+    "app_settings",
+    "gift_catalog",
+    "hubstaff_uploads",
+    "hsl_agent_uploads",
+    "global_master_list",
+    "hsl_team_members",
+    "hubstaff_hours",
+    "employee_hourly_rates",
+    "employee_rate_history",
+    "employee_ids",
+    "employee_roles",
+    "employee_feature_permissions",
+    "employee_skill_sets",
+    "employee_notifications",
+    "user_presence",
+    "department_managers",
+    "manager_team_wallpapers",
+    "hr_pending_employees",
+    "hr_onboarding_submissions",
+    "offboarded_sheet",
+    "fpu_enrollments",
+    "department_transfer_requests",
+    "payment_dispatches",
+    "disbursement_records",
+    "announcements",
+    "swall_posts",
+    "swall_reactions",
+    "swall_comments",
+    "leave_requests",
+    "pab_disputes",
+    "employee_gift_shipping_details",
+    "gift_tracker_notes",
+    "gift_payments",
+    "orphanage_budget_requests",
+    "orphanage_dispatches",
+    "contractor_profiles",
+    "contractor_invoices",
+    "hsl_bonus_period_status"
+  ]
+}

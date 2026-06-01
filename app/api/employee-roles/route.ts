@@ -61,6 +61,14 @@ export async function GET(request: Request) {
 // POST /api/employee-roles { work_email, role }  -> grant
 export async function POST(request: Request) {
   try {
+    // Granting roles is admin-only. Without this, any caller could escalate
+    // themselves (or anyone) to admin -- the keystone privilege-escalation hole.
+    const authz = await requireElevatedSession();
+    if (!authz.ok) return deniedResponse(authz);
+    if (!authz.roles?.includes('admin')) {
+      return NextResponse.json({ error: 'Admin role required to grant roles' }, { status: 403 });
+    }
+
     const { work_email, role } = (await request.json()) as { work_email?: string; role?: string };
     if (!work_email || !role) {
       return NextResponse.json({ error: 'Missing work_email or role' }, { status: 400 });
@@ -128,6 +136,13 @@ export async function POST(request: Request) {
 // DELETE /api/employee-roles?email=...&role=...  -> revoke
 export async function DELETE(request: Request) {
   try {
+    // Revoking roles is admin-only, same as granting.
+    const authz = await requireElevatedSession();
+    if (!authz.ok) return deniedResponse(authz);
+    if (!authz.roles?.includes('admin')) {
+      return NextResponse.json({ error: 'Admin role required to revoke roles' }, { status: 403 });
+    }
+
     const { searchParams } = new URL(request.url);
     const work_email = searchParams.get('email');
     const role = searchParams.get('role');

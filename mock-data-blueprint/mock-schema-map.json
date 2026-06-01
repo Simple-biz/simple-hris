@@ -1,0 +1,311 @@
+{
+  "version": "1.0.0",
+  "description": "Maps every real database table to a mock data file. mock_file paths are relative to the mock-data-blueprint/ directory.",
+
+  "tables": [
+    {
+      "source_table": "global_master_list",
+      "mock_file": "mock-data/employees.json",
+      "record_count": 60,
+      "key_fields_to_replace": ["Name", "Personal Email", "Work Email"],
+      "fields_safe_to_keep_as_is": ["Department", "Start Date", "import_batch_id"],
+      "generation_strategy": "faker — Filipino surname + first name combos; work_email = firstname.initial@demo.biz; personal_email = firstname.lastname@example.com"
+    },
+    {
+      "source_table": "employee_hourly_rates",
+      "mock_file": "mock-data/employee-hourly-rates.json",
+      "record_count": 60,
+      "key_fields_to_replace": ["Work Email", "Personal Email", "account_number", "alt_account_number", "swift_code", "phone_number", "full_address"],
+      "fields_safe_to_keep_as_is": ["Regular Rate", "OT Rate", "Preferred Processor"],
+      "generation_strategy": "Rates: random integer 200–600 PHP for regular; OT = regular * 1.5. Bank details: fictional format only."
+    },
+    {
+      "source_table": "employee_rate_history",
+      "mock_file": "mock-data/employee-rate-history.json",
+      "record_count": 90,
+      "key_fields_to_replace": ["employee_email"],
+      "fields_safe_to_keep_as_is": ["regular_rate", "ot_rate", "effective_from", "note"],
+      "generation_strategy": "Link to mock employees. Baseline row at 1970-01-01 + 1–2 subsequent changes."
+    },
+    {
+      "source_table": "employee_ids",
+      "mock_file": "mock-data/employee-ids.json",
+      "record_count": 55,
+      "key_fields_to_replace": ["work_email", "personal_email", "account_number", "alt_account_number", "swift_code", "phone_number", "full_address", "account_holder_name", "alt_account_holder_name"],
+      "fields_safe_to_keep_as_is": ["preferred_processor", "preferred_bank_slot", "bank_name"],
+      "generation_strategy": "Fictional bank details only. Phone: +63-XXX-XXXXXXX format. Account numbers: 12-digit random."
+    },
+    {
+      "source_table": "employee_roles",
+      "mock_file": "mock-data/employee-roles.json",
+      "record_count": 75,
+      "key_fields_to_replace": ["work_email", "assigned_by"],
+      "fields_safe_to_keep_as_is": ["role", "assigned_at", "revoked_at"],
+      "generation_strategy": "Assign realistic role distribution: most are viewer; ~5 have manager role; 2 admin; 2 HR; 2 payroll_manager; 1 ceo; 1 orphanage_manager."
+    },
+    {
+      "source_table": "employee_feature_permissions",
+      "mock_file": "mock-data/feature-permissions.json",
+      "record_count": 30,
+      "key_fields_to_replace": ["work_email", "granted_by"],
+      "fields_safe_to_keep_as_is": ["view_key", "feature", "access"],
+      "generation_strategy": "Only for employees with elevated roles. view/edit mix per realistic access patterns."
+    },
+    {
+      "source_table": "employee_skill_sets",
+      "mock_file": "mock-data/employee-skill-sets.json",
+      "record_count": 50,
+      "key_fields_to_replace": ["work_email"],
+      "fields_safe_to_keep_as_is": ["role_title", "skills", "strengths"],
+      "generation_strategy": "Fictional but realistic job titles; generic tech/admin skill descriptions. member_notes: short generic note."
+    },
+    {
+      "source_table": "employee_notifications",
+      "mock_file": "mock-data/employee-notifications.json",
+      "record_count": 40,
+      "key_fields_to_replace": ["recipient_email"],
+      "fields_safe_to_keep_as_is": ["type", "tone", "title", "message", "details"],
+      "generation_strategy": "Rate change messages: 'Your rate has been updated to PHP XXX/hr effective [date].' Some unread (read_at NULL)."
+    },
+    {
+      "source_table": "department_managers",
+      "mock_file": "mock-data/department-managers.json",
+      "record_count": 15,
+      "key_fields_to_replace": ["manager_email", "assigned_by"],
+      "fields_safe_to_keep_as_is": ["department", "assigned_at", "revoked_at"],
+      "generation_strategy": "Pick employees with manager role; assign to 8–10 departments."
+    },
+    {
+      "source_table": "user_presence",
+      "mock_file": "mock-data/user-presence.json",
+      "record_count": 55,
+      "key_fields_to_replace": ["email", "name"],
+      "fields_safe_to_keep_as_is": ["last_seen_at"],
+      "generation_strategy": "Mirror active employees. 70% have last_seen_at within last 24h; rest within 7 days."
+    },
+    {
+      "source_table": "hubstaff_uploads",
+      "mock_file": "mock-data/hubstaff-uploads.json",
+      "record_count": 8,
+      "key_fields_to_replace": ["uploaded_by"],
+      "fields_safe_to_keep_as_is": ["source_file", "uploaded_at", "row_count", "is_current"],
+      "generation_strategy": "8 weekly cycles covering last 8 weeks. Filename pattern: demo-company_daily_report_YYYY-MM-DD_to_YYYY-MM-DD.csv"
+    },
+    {
+      "source_table": "hubstaff_hours",
+      "mock_file": "mock-data/hubstaff-hours.json",
+      "record_count": 400,
+      "key_fields_to_replace": ["email", "name"],
+      "fields_safe_to_keep_as_is": ["hours", "decimal_hours", "department", "source_file", "upload_id"],
+      "generation_strategy": "50 employees x 8 weeks. Hours: 30–44 decimal per week. source_file matches hubstaff_uploads."
+    },
+    {
+      "source_table": "payment_dispatches",
+      "mock_file": "mock-data/payment-dispatches.json",
+      "record_count": 350,
+      "key_fields_to_replace": ["recipient_email", "recipient_name", "recipient_account_number", "recipient_account_holder", "recipient_swift_code", "created_by"],
+      "fields_safe_to_keep_as_is": ["processor", "amount_usd", "amount_php", "status", "sent_date", "bank_used"],
+      "generation_strategy": "50 employees x 7 paid cycles. transaction_id: TXN-XXXXXXXX format. bank_used: fictional bank names."
+    },
+    {
+      "source_table": "disbursement_records",
+      "mock_file": "mock-data/disbursement-records.json",
+      "record_count": 400,
+      "key_fields_to_replace": ["recipient_email", "recipient_name"],
+      "fields_safe_to_keep_as_is": ["cycle_period_start", "cycle_period_end", "source_file", "total_hours", "regular_rate_php", "amount_php", "amount_usd", "fx_rate", "status"],
+      "generation_strategy": "Derived from hubstaff_hours + employee_hourly_rates. fx_rate: ~56–58 PHP per USD."
+    },
+    {
+      "source_table": "hr_pending_employees",
+      "mock_file": "mock-data/hr-pending-employees.json",
+      "record_count": 12,
+      "key_fields_to_replace": ["name", "personal_email", "work_email", "created_by", "no_show_by"],
+      "fields_safe_to_keep_as_is": ["department", "start_date", "status", "source", "regular_rate", "ot_rate"],
+      "generation_strategy": "Fictional names. Status mix: 3 pending_work_email, 3 ready, 4 promoted, 1 cancelled, 1 no_show."
+    },
+    {
+      "source_table": "hr_onboarding_submissions",
+      "mock_file": "mock-data/onboarding-submissions.json",
+      "record_count": 8,
+      "key_fields_to_replace": ["invite_name", "invite_personal_email", "full_name", "phone", "email", "bank_account_name", "bank_account_number", "bank_swift_code", "bank_street", "bank_city", "bank_province", "bank_postal_code", "bank_full_address", "created_by"],
+      "fields_safe_to_keep_as_is": ["status", "payment_method", "invite_department", "w8ben_applicable"],
+      "generation_strategy": "Fictional personal details. Bank numbers: 12-digit format. SWIFT: XXXXPHMMXXX pattern."
+    },
+    {
+      "source_table": "offboarded_sheet",
+      "mock_file": "mock-data/offboarded-sheet.json",
+      "record_count": 15,
+      "key_fields_to_replace": ["personal_email", "work_email", "name", "off_boarded_by"],
+      "fields_safe_to_keep_as_is": ["department", "start_date", "off_boarded_at", "off_boarded_reason"],
+      "generation_strategy": "Fictional names. Reasons: 'voluntary resignation', 'contract ended', 'no_show', 'redundancy'."
+    },
+    {
+      "source_table": "fpu_enrollments",
+      "mock_file": "mock-data/fpu-enrollments.json",
+      "record_count": 20,
+      "key_fields_to_replace": ["email", "full_name"],
+      "fields_safe_to_keep_as_is": ["department", "shift_schedule_est", "created_at"],
+      "generation_strategy": "Subset of employees. Shift options: '8AM-5PM EST', '9AM-6PM EST', '10AM-7PM EST'."
+    },
+    {
+      "source_table": "department_transfer_requests",
+      "mock_file": "mock-data/transfer-requests.json",
+      "record_count": 8,
+      "key_fields_to_replace": ["employee_email", "employee_name", "employee_work_email", "employee_personal_email", "requested_by", "approver_email"],
+      "fields_safe_to_keep_as_is": ["from_department", "to_department", "reason", "status", "decided_at"],
+      "generation_strategy": "Realistic department transfer reasons. Mix of pending/approved/rejected."
+    },
+    {
+      "source_table": "leave_requests",
+      "mock_file": "mock-data/leave-requests.json",
+      "record_count": 35,
+      "key_fields_to_replace": ["employee_email", "employee_name", "manager_email", "approver_email"],
+      "fields_safe_to_keep_as_is": ["leave_type", "start_date", "end_date", "status", "reason"],
+      "generation_strategy": "Leave types: Sick Leave, Vacation, Emergency, Personal. Realistic date ranges within last 6 months."
+    },
+    {
+      "source_table": "pab_disputes",
+      "mock_file": "mock-data/pab-disputes.json",
+      "record_count": 25,
+      "key_fields_to_replace": ["employee_email", "employee_name", "filed_by", "approver_email", "second_approver_email"],
+      "fields_safe_to_keep_as_is": ["dispute_type", "dispute_date", "reason", "status", "period_week"],
+      "generation_strategy": "Dispute types: orphanage_visit (most common), ceo_visitation. Mix of pending/approved/rejected."
+    },
+    {
+      "source_table": "announcements",
+      "mock_file": "mock-data/announcements.json",
+      "record_count": 15,
+      "key_fields_to_replace": ["author_email", "author_name"],
+      "fields_safe_to_keep_as_is": ["scope", "department", "title", "body", "pinned"],
+      "generation_strategy": "Realistic HR announcements: policy updates, holiday notices, team events. 3 pinned."
+    },
+    {
+      "source_table": "swall_posts",
+      "mock_file": "mock-data/swall-posts.json",
+      "record_count": 30,
+      "key_fields_to_replace": ["author_email", "author_name"],
+      "fields_safe_to_keep_as_is": ["body", "created_at"],
+      "generation_strategy": "Celebratory posts: work anniversaries, team wins, greetings. Generic friendly content."
+    },
+    {
+      "source_table": "swall_reactions",
+      "mock_file": "mock-data/swall-reactions.json",
+      "record_count": 150,
+      "key_fields_to_replace": ["user_email"],
+      "fields_safe_to_keep_as_is": ["post_id", "emoji"],
+      "generation_strategy": "Linked to swall_posts. 3–8 reactions per post. All 6 emoji types represented."
+    },
+    {
+      "source_table": "swall_comments",
+      "mock_file": "mock-data/swall-comments.json",
+      "record_count": 60,
+      "key_fields_to_replace": ["author_email", "author_name"],
+      "fields_safe_to_keep_as_is": ["post_id", "body", "created_at"],
+      "generation_strategy": "Short friendly replies. 1–3 comments per ~60% of posts."
+    },
+    {
+      "source_table": "employee_gift_shipping_details",
+      "mock_file": "mock-data/gift-shipping.json",
+      "record_count": 25,
+      "key_fields_to_replace": ["personal_email", "active_contact_number", "preferred_delivery_location"],
+      "fields_safe_to_keep_as_is": ["milestone_index", "milestone_date", "status"],
+      "generation_strategy": "fictional city-level addresses only (no street). Phone: +63-XXX-XXXXXXX."
+    },
+    {
+      "source_table": "gift_catalog",
+      "mock_file": "mock-data/gift-catalog.json",
+      "record_count": 1,
+      "key_fields_to_replace": ["updated_by"],
+      "fields_safe_to_keep_as_is": ["items", "anniversaries", "suggestions"],
+      "generation_strategy": "Realistic gift items (drinkware, gadgets, wellness items). Anniversary milestones: 1, 3, 5, 10 years."
+    },
+    {
+      "source_table": "gift_payments",
+      "mock_file": "mock-data/gift-payments.json",
+      "record_count": 8,
+      "key_fields_to_replace": ["created_by_email"],
+      "fields_safe_to_keep_as_is": ["period_label", "batch_label", "total_usd", "status", "date_sent"],
+      "generation_strategy": "Fictional vendor names (e.g. 'Manila Gift Co.', 'Island Crafts PH'). Realistic USD amounts."
+    },
+    {
+      "source_table": "gift_tracker_notes",
+      "mock_file": "mock-data/gift-tracker-notes.json",
+      "record_count": 20,
+      "key_fields_to_replace": ["personal_email", "updated_by"],
+      "fields_safe_to_keep_as_is": ["note"],
+      "generation_strategy": "Short status notes: 'waiting for address confirmation', 'shipped via LBC', 'received'."
+    },
+    {
+      "source_table": "orphanage_budget_requests",
+      "mock_file": "mock-data/orphanage-budget-requests.json",
+      "record_count": 12,
+      "key_fields_to_replace": ["submitter_email", "bank_account_name", "bank_account_number", "swift_code", "decided_by"],
+      "fields_safe_to_keep_as_is": ["visit_type", "mission_trip", "subtotal", "final_amount", "status"],
+      "generation_strategy": "Fictional bank details. Amounts in PHP: 5000–30000 range. Visit types distributed across monthly/frequent/special."
+    },
+    {
+      "source_table": "orphanage_dispatches",
+      "mock_file": "mock-data/orphanage-dispatches.json",
+      "record_count": 10,
+      "key_fields_to_replace": ["submitter_email", "bank_account_name", "bank_account_number", "swift_code", "created_by", "paid_by"],
+      "fields_safe_to_keep_as_is": ["dispatch_type", "label", "amount_php", "status", "sent_date"],
+      "generation_strategy": "Linked to approved orphanage_budget_requests. Fictional transaction IDs."
+    },
+    {
+      "source_table": "contractor_profiles",
+      "mock_file": "mock-data/contractor-profiles.json",
+      "record_count": 5,
+      "key_fields_to_replace": ["contractor_email", "display_name", "account_number", "swift_code", "phone_number", "full_address", "account_holder_name"],
+      "fields_safe_to_keep_as_is": ["preferred_processor", "from_country"],
+      "generation_strategy": "Fictional contractor personas. Emails: name@freelance-demo.com. Fictional company names."
+    },
+    {
+      "source_table": "contractor_invoices",
+      "mock_file": "mock-data/contractor-invoices.json",
+      "record_count": 20,
+      "key_fields_to_replace": ["contractor_email"],
+      "fields_safe_to_keep_as_is": ["invoice_number", "invoice_date", "due_date", "subtotal", "total", "status", "line_items"],
+      "generation_strategy": "4 invoices per contractor. Realistic line items: 'Development Services', 'Design Services'. Amounts: $500–$3000."
+    },
+    {
+      "source_table": "hsl_team_members",
+      "mock_file": "mock-data/hsl-team-members.json",
+      "record_count": 80,
+      "key_fields_to_replace": ["email", "full_name"],
+      "fields_safe_to_keep_as_is": ["hsl_name", "role_raw", "dept_key", "is_manager", "hourly_rate", "ot_rate"],
+      "generation_strategy": "Replace real names/emails with fictional ones. Keep hsl_name aliases as fictional nicknames. All 13 dept_keys populated."
+    },
+    {
+      "source_table": "hsl_agent_uploads",
+      "mock_file": "mock-data/hsl-agent-uploads.json",
+      "record_count": 3,
+      "key_fields_to_replace": ["uploaded_by"],
+      "fields_safe_to_keep_as_is": ["source_file", "uploaded_at", "row_count", "is_current"],
+      "generation_strategy": "3 sync events. Latest is_current=true with row_count=80."
+    },
+    {
+      "source_table": "hsl_bonus_period_status",
+      "mock_file": "mock-data/hsl-bonus-periods.json",
+      "record_count": 26,
+      "key_fields_to_replace": [],
+      "fields_safe_to_keep_as_is": ["dept_key", "period_type", "period_label", "status"],
+      "generation_strategy": "13 depts x 2 periods. Mix of draft(5), ready(10), locked(11). kpi_meta: null or basic JSON."
+    },
+    {
+      "source_table": "manager_team_wallpapers",
+      "mock_file": "mock-data/team-wallpapers.json",
+      "record_count": 8,
+      "key_fields_to_replace": ["updated_by"],
+      "fields_safe_to_keep_as_is": ["department", "background_position"],
+      "generation_strategy": "image_data_url: a small placeholder gradient data URL (not a real photo). Safe for portfolio."
+    },
+    {
+      "source_table": "app_settings",
+      "mock_file": "mock-data/app-settings.json",
+      "record_count": 6,
+      "key_fields_to_replace": [],
+      "fields_safe_to_keep_as_is": ["key", "value"],
+      "generation_strategy": "usd_to_php_rate: 57.50. dispatch_lock: false. force_logout_map: {}. pab settings: realistic dates."
+    }
+  ]
+}

@@ -72,6 +72,17 @@ export async function middleware(req: NextRequest) {
 
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
+  // Vercel-scheduled (or external) cron callers carry no NextAuth cookie. Let
+  // them past the SSO gate only when they present the shared CRON_SECRET; the
+  // route handler re-verifies it. No secret set -> no bypass, so a tokenless
+  // cron request still gets redirected to /login (fail-closed).
+  if (pathname.startsWith('/api/cron/')) {
+    const cronSecret = process.env.CRON_SECRET?.trim();
+    if (cronSecret && (req.headers.get('authorization') ?? '') === `Bearer ${cronSecret}`) {
+      return NextResponse.next();
+    }
+  }
+
   // Rate-limit the public onboarding API before letting it through.
   if (pathname.startsWith('/api/onboarding/') || pathname.startsWith('/onboarding/')) {
     if (pathname.startsWith('/api/onboarding/') && onboardingRateLimited(req)) {

@@ -182,7 +182,17 @@
       "Bash(Out-Null)",
       "Bash(Select-String \"HrApp\")",
       "Bash(findstr admin *)",
-      "Bash(findstr \"admin\")"
+      "Bash(findstr \"admin\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -Depth 2)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(mkdir -p \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\mock-data-blueprint\")",
+      "PowerShell(Get-ChildItem -Recurse \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\pages\\\\api\" | Where-Object { -not $_.PSIsContainer } | Select-Object FullName | Sort-Object FullName)",
+      "Bash(npm list *)",
+      "Bash(npm audit *)",
+      "Bash(dir \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\mock-data-blueprint\" /b)",
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(git --no-pager diff --stat)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

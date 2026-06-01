@@ -5,6 +5,7 @@ import {
   OFFBOARD_DELETE_SLUG,
   fireOffboardWebhook,
 } from "@/lib/hr/offboard-webhooks";
+import { cronSessionElevated } from "@/lib/auth/cron-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,7 +24,7 @@ function clientIp(req: NextRequest): string | null {
  *  otherwise open (so it also works from a manual admin trigger / local dev). */
 function isAuthorized(req: NextRequest): boolean {
   const expected = process.env.CRON_SECRET?.trim();
-  if (!expected) return true;
+  if (!expected) return false;
   return (req.headers.get("authorization") ?? "") === `Bearer ${expected}`;
 }
 
@@ -40,7 +41,7 @@ function isAuthorized(req: NextRequest): boolean {
  * keep deletion_processed_at NULL and are retried next run.
  */
 async function run(req: NextRequest): Promise<NextResponse> {
-  if (!isAuthorized(req)) {
+  if (!isAuthorized(req) && !(await cronSessionElevated())) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
   const supabase = createSupabaseServiceRoleClient();
