@@ -1373,7 +1373,17 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
   }, [isTechnologyBonusActive, employeeStartDate, selectedFileWeek]);
 
-  /** True when the tech bonus week is already in the past for the current reference period. */
+  /**
+   * True when the PAB month's tech bonus week is already past relative to the
+   * current reference point (selected file week start, or today for all-time).
+   *
+   * Old approach: checked if the current file's salary date (fileStart+8) was past
+   * week 4 of its own month. Bug: the May 25–31 file has salary date June 2 which
+   * is NOT past June's week 4 yet → showed "Locked" even though May's tech bonus
+   * was already paid. Fix: compare the reference Monday directly against the PAB
+   * month's week3Mon — once we're in a week that starts after week3Mon, the bonus
+   * has already been dispatched.
+   */
   const isTechBonusWeekPast = useMemo(() => {
     if (isTechnologyBonusActive) return false;
     if (!employeeStartDate) return false;
@@ -1382,26 +1392,27 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       employeeStartDate.getMonth(),
       employeeStartDate.getDate() + 30,
     );
+    // Reference Monday: file week start, or this week's Monday for all-time view.
     const refMonday = (() => {
       if (selectedFileWeek) {
         const s = selectedFileWeek.start;
         return new Date(s.getFullYear(), s.getMonth(), s.getDate());
       }
       const today = new Date();
-      const dow = today.getDay();
-      const daysBackToTue = (dow - 2 + 7) % 7;
-      const lastTuesday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysBackToTue);
-      return new Date(lastTuesday.getFullYear(), lastTuesday.getMonth(), lastTuesday.getDate() - 8);
+      const daysBackToMon = (today.getDay() + 6) % 7;
+      return new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysBackToMon);
     })();
     if (refMonday.getTime() < eligibleFrom.getTime()) return false;
-    const salaryDate = new Date(refMonday.getFullYear(), refMonday.getMonth(), refMonday.getDate() + 8);
-    const first = new Date(salaryDate.getFullYear(), salaryDate.getMonth(), 1);
-    const dow = first.getDay();
-    const daysForward = (8 - dow) % 7;
-    const firstMon = new Date(first.getFullYear(), first.getMonth(), first.getDate() + daysForward);
-    const fourthWeekMon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 21);
-    return salaryDate.getTime() >= fourthWeekMon.getTime();
-  }, [isTechnologyBonusActive, employeeStartDate, selectedFileWeek]);
+    // Compute week3Mon for the PAB month (fall back to refMonday's month when no range yet).
+    const yr = pabMonthRange ? pabMonthRange.start.getFullYear() : refMonday.getFullYear();
+    const mo = pabMonthRange ? pabMonthRange.start.getMonth() : refMonday.getMonth();
+    const first = new Date(yr, mo, 1);
+    const daysForward = (8 - first.getDay()) % 7;
+    const firstMon = new Date(yr, mo, 1 + daysForward);
+    const week3Mon = new Date(firstMon.getFullYear(), firstMon.getMonth(), firstMon.getDate() + 14);
+    // "Past" once the current file week starts strictly after the tech bonus week's Monday.
+    return refMonday.getTime() > week3Mon.getTime();
+  }, [isTechnologyBonusActive, employeeStartDate, selectedFileWeek, pabMonthRange]);
 
   /**
    * Calendar-anchored "tech bonus pays this week" — independent of the
@@ -2260,83 +2271,105 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                 <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-indigo-600 dark:text-indigo-400">
                   PAB
                 </span>
-                <span
-                  className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
-                    perfectAttendanceBonusStatus === 'eligible'
-                      ? 'text-emerald-700 dark:text-emerald-400'
-                      : perfectAttendanceBonusStatus === 'pending'
-                        ? 'text-indigo-700 dark:text-indigo-300'
-                        : perfectAttendanceBonusStatus === 'not_eligible'
-                          ? 'text-amber-700 dark:text-amber-400'
-                          : 'text-zinc-500 dark:text-zinc-500'
-                  }`}
-                >
+                {pabMergeLoading ? (
+                  <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+                    Loading
+                    <span className="inline-flex items-end gap-px leading-none">
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '0ms' }} />
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '150ms' }} />
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '300ms' }} />
+                    </span>
+                  </span>
+                ) : (
                   <span
-                    className={`inline-block h-1.5 w-1.5 rounded-full ${
+                    className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
                       perfectAttendanceBonusStatus === 'eligible'
-                        ? 'bg-emerald-500'
+                        ? 'text-emerald-700 dark:text-emerald-400'
                         : perfectAttendanceBonusStatus === 'pending'
-                          ? 'bg-indigo-500 animate-pulse'
+                          ? 'text-indigo-700 dark:text-indigo-300'
                           : perfectAttendanceBonusStatus === 'not_eligible'
-                            ? 'bg-amber-500'
-                            : 'bg-zinc-400'
+                            ? 'text-amber-700 dark:text-amber-400'
+                            : 'text-zinc-500 dark:text-zinc-500'
                     }`}
-                  />
-                  {perfectAttendanceBonusStatus === 'eligible'
-                    ? 'Eligible'
-                    : perfectAttendanceBonusStatus === 'pending'
-                      ? 'In progress'
-                      : perfectAttendanceBonusStatus === 'not_eligible'
-                        ? (isPabPeriodInProgressByCalendar ? 'Still in Progress' : 'Not met')
-                        : 'Unknown'}
-                </span>
+                  >
+                    <span
+                      className={`inline-block h-1.5 w-1.5 rounded-full ${
+                        perfectAttendanceBonusStatus === 'eligible'
+                          ? 'bg-emerald-500'
+                          : perfectAttendanceBonusStatus === 'pending'
+                            ? 'bg-indigo-500 animate-pulse'
+                            : perfectAttendanceBonusStatus === 'not_eligible'
+                              ? 'bg-amber-500'
+                              : 'bg-zinc-400'
+                      }`}
+                    />
+                    {perfectAttendanceBonusStatus === 'eligible'
+                      ? 'Eligible'
+                      : perfectAttendanceBonusStatus === 'pending'
+                        ? 'In progress'
+                        : perfectAttendanceBonusStatus === 'not_eligible'
+                          ? (isPabPeriodInProgressByCalendar ? 'Still in Progress' : 'Not met')
+                          : 'Unknown'}
+                  </span>
+                )}
               </div>
               <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
                 <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-sky-600 dark:text-sky-400">
                   Tech
                 </span>
-                <span
-                  className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
-                    isTechnologyBonusActive
-                      ? 'text-sky-700 dark:text-sky-300'
-                      : techServiceStatus.state === 'pending'
-                        ? 'text-amber-700 dark:text-amber-400'
-                        : techBonusSalaryThisWeek
-                          ? 'text-sky-700 dark:text-sky-300'
-                          : isTechBonusNextWeek
-                            ? 'text-emerald-700 dark:text-emerald-400'
-                            : isTechBonusWeekPast
-                              ? 'text-emerald-600 dark:text-emerald-400'
-                              : 'text-zinc-500 dark:text-zinc-500'
-                  }`}
-                >
+                {loading || pabMergeLoading ? (
+                  <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+                    Loading
+                    <span className="inline-flex items-end gap-px leading-none">
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '0ms' }} />
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '150ms' }} />
+                      <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-zinc-400 dark:bg-zinc-500" style={{ animationDelay: '300ms' }} />
+                    </span>
+                  </span>
+                ) : (
                   <span
-                    className={`inline-block h-1.5 w-1.5 rounded-full ${
+                    className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
                       isTechnologyBonusActive
-                        ? 'bg-sky-500'
+                        ? 'text-sky-700 dark:text-sky-300'
                         : techServiceStatus.state === 'pending'
-                          ? 'bg-amber-500'
+                          ? 'text-amber-700 dark:text-amber-400'
                           : techBonusSalaryThisWeek
-                            ? 'bg-sky-500'
+                            ? 'text-sky-700 dark:text-sky-300'
                             : isTechBonusNextWeek
-                              ? 'bg-emerald-500'
+                              ? 'text-emerald-700 dark:text-emerald-400'
                               : isTechBonusWeekPast
-                                ? 'bg-emerald-500'
-                                : 'bg-zinc-400'
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-zinc-500 dark:text-zinc-500'
                     }`}
-                  />
-                  {isTechnologyBonusActive
-                    ? 'Unlocked'
-                    : techServiceStatus.state === 'pending'
-                      ? `${techServiceStatus.daysRemaining}d to go`
-                      : techBonusSalaryThisWeek
-                        ? 'Paid this Week'
-                        : isTechBonusNextWeek
-                          ? 'Unlocked Next Week'
-                          : isTechBonusWeekPast
-                            ? 'Released'
-                            : 'Locked'}
-                </span>
+                  >
+                    <span
+                      className={`inline-block h-1.5 w-1.5 rounded-full ${
+                        isTechnologyBonusActive
+                          ? 'bg-sky-500'
+                          : techServiceStatus.state === 'pending'
+                            ? 'bg-amber-500'
+                            : techBonusSalaryThisWeek
+                              ? 'bg-sky-500'
+                              : isTechBonusNextWeek
+                                ? 'bg-emerald-500'
+                                : isTechBonusWeekPast
+                                  ? 'bg-emerald-500'
+                                  : 'bg-zinc-400'
+                      }`}
+                    />
+                    {isTechnologyBonusActive
+                      ? 'Unlocked'
+                      : techServiceStatus.state === 'pending'
+                        ? `${techServiceStatus.daysRemaining}d to go`
+                        : techBonusSalaryThisWeek
+                          ? 'Paid this Week'
+                          : isTechBonusNextWeek
+                            ? 'Unlocked Next Week'
+                            : isTechBonusWeekPast
+                              ? 'Paid'
+                              : 'Locked'}
+                  </span>
+                )}
               </div>
               {isMesaMember && (
                 <div className="flex items-center justify-between gap-3 bg-teal-50/40 px-3.5 py-2 dark:bg-teal-950/20">

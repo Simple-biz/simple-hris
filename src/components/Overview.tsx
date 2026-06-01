@@ -55,6 +55,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { phpHourlyPayFromSeconds, splitRegularOvertimeSeconds } from '@/lib/payroll/money-php';
 import {
   getCurrentPabMonth,
+  getLatestPabMonthFromColumns,
   getPabMonthRange,
   resolveCanonicalColumnsToIso,
   columnsAreAllCanonical,
@@ -471,7 +472,17 @@ function SimpleView({
     ? 'Welcome'
     : nowHour < 12 ? 'Good morning' : nowHour < 18 ? 'Good afternoon' : 'Good evening';
 
-  const usdEquivalent = totalPayout != null ? totalPayout / PHP_USD_FX : null;
+  // PAB is finalized once today is strictly past the period end date.
+  const pabFinalizedForPayout = (() => {
+    if (pabMetrics.loading || !pabMetrics.periodEnd) return false;
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const e = new Date(pabMetrics.periodEnd); e.setHours(0, 0, 0, 0);
+    return t.getTime() > e.getTime();
+  })();
+  const pabBonusTotal = pabFinalizedForPayout ? pabMetrics.eligible * 5000 : 0;
+  const displayTotalPayout = totalPayout != null ? totalPayout + pabBonusTotal : null;
+
+  const usdEquivalent = displayTotalPayout != null ? displayTotalPayout / PHP_USD_FX : null;
 
   // ⌘K / Ctrl+K focuses the search input.
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -730,8 +741,8 @@ function SimpleView({
                   <span className="inline-block h-[1em] w-[220px] animate-pulse rounded-md bg-zinc-200/80 align-bottom text-4xl lg:w-[280px] lg:text-5xl xl:w-[360px] xl:text-6xl 2xl:w-[420px] 2xl:text-7xl dark:bg-zinc-800" />
                 ) : (
                   <span className="font-mono text-4xl font-bold tracking-tight text-zinc-900 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-white">
-                    {totalPayout != null
-                      ? totalPayout.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    {displayTotalPayout != null
+                      ? displayTotalPayout.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                       : '—'}
                   </span>
                 )}
@@ -758,7 +769,7 @@ function SimpleView({
                   </>
                 )}
                 <span className="text-zinc-300 dark:text-zinc-700">·</span>
-                <span>Initial pay · bonuses applied at payroll</span>
+                <span>{pabFinalizedForPayout ? 'Initial pay + PAB · other bonuses applied at payroll' : 'Initial pay · bonuses applied at payroll'}</span>
               </p>
             </motion.div>
 
@@ -2528,7 +2539,8 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
           // Anchor priority:
           //   1. monthFilter (explicit "Month" dropdown pick)
           //   2. older specific CSV (not the newest)
-          //   3. current calendar month (default — keeps "In Progress" view fresh)
+          //   3. latest date found in uploaded column headers (e.g. May data → May PAB)
+          //   4. current calendar month (fallback when no uploads present)
           if (monthFilter) {
             const m = /^(\d{4})-(\d{2})$/.exec(monthFilter);
             if (m) pabMonth = { year: +m[1], month: +m[2] - 1 };
@@ -2544,7 +2556,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
               if (m) pabMonth = { year: +m[1], month: +m[2] - 1 };
             }
           }
-          if (!pabMonth) pabMonth = getCurrentPabMonth();
+          if (!pabMonth) pabMonth = getLatestPabMonthFromColumns(cols) ?? getCurrentPabMonth();
           const r = getPabMonthRange(pabMonth.year, pabMonth.month);
           start = r.start;
           end = r.end;
@@ -2832,13 +2844,23 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     };
   }, [employees, payrollEmailsNorm]);
 
+  const pabFinalizedForPayoutExpanded = (() => {
+    if (pabMetrics.loading || !pabMetrics.periodEnd) return false;
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const e = new Date(pabMetrics.periodEnd); e.setHours(0, 0, 0, 0);
+    return t.getTime() > e.getTime();
+  })();
+  const totalPayoutWithPab = totalPayout != null && pabFinalizedForPayoutExpanded
+    ? totalPayout + pabMetrics.eligible * 5000
+    : totalPayout;
+
   const stats = [
     {
       label: 'Total Payout',
       value: payoutLoading
         ? '…'
-        : totalPayout != null
-          ? '₱' + totalPayout.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : totalPayoutWithPab != null
+          ? '₱' + totalPayoutWithPab.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
           : '—',
       icon: DollarSign,
     },
@@ -3127,8 +3149,8 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
           value={
             payoutLoading
               ? '…'
-              : totalPayout != null
-                ? '₱' + totalPayout.toLocaleString('en-PH', { maximumFractionDigits: 0 })
+              : totalPayoutWithPab != null
+                ? '₱' + totalPayoutWithPab.toLocaleString('en-PH', { maximumFractionDigits: 0 })
                 : '—'
           }
           sub={activeSourceFile ? 'latest file' : selectedSourceFile === '__all__' ? 'all uploads' : 'pending'}
