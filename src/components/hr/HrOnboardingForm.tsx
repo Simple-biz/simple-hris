@@ -529,8 +529,8 @@ export default function HrOnboardingForm() {
                       <td data-label="Submitted" className="px-4 py-3 text-xs text-zinc-500">
                         {fmtDateTime(r.submitted_at)}
                       </td>
-                      <td data-label="Actions" className="px-4 py-3 text-right">
-                        <div className="flex justify-end gap-1.5">
+                      <td data-label="Actions" className="px-4 py-3 text-right max-sm:flex-col max-sm:items-stretch max-sm:text-left">
+                        <div className="flex flex-wrap justify-end gap-1.5 max-sm:justify-start">
                           {r.status === 'pending' && (
                             <>
                               <Button
@@ -567,7 +567,7 @@ export default function HrOnboardingForm() {
                             <>
                               {r.pending_employee_id && r.work_email && (
                                 <span
-                                  className="inline-flex items-center gap-1 rounded-md border border-sky-300 bg-sky-50 px-2 py-1 font-mono text-[11px] font-medium text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100"
+                                  className="inline-flex min-w-0 max-w-full items-center gap-1 break-all rounded-md border border-sky-300 bg-sky-50 px-2 py-1 font-mono text-[11px] font-medium text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100 max-sm:w-full"
                                   title="Currently staged in Pending Hires"
                                 >
                                   <UserCheck className="h-3 w-3 shrink-0" />

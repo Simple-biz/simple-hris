@@ -1094,12 +1094,15 @@ function CalendarBody({
             const holidayName = inMonth ? (usHolidayDates.get(dayIso) ?? null) : null;
             const isHoliday = !!holidayName;
 
-            // For HSL: if today has hours but < 7h, check if combining with the
-            // next calendar day's hours (overnight shift tail) reaches ≥ 7h.
+            // For HSL: if today has hours but < 7h, check forward (today + tomorrow)
+            // and backward (yesterday + today) to catch overnight shift splits.
             const hslOvernightQualifies = isHsl && inMonth && day.hasData &&
               day.seconds > 0 && day.seconds < 7 * 3600 && (() => {
                 const nextDay = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate() + 1);
-                return day.seconds + (hoursByDateKey.get(pabDateKey(nextDay)) ?? 0) >= 7 * 3600;
+                if (day.seconds + (hoursByDateKey.get(pabDateKey(nextDay)) ?? 0) >= 7 * 3600) return true;
+                const prevDay = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate() - 1);
+                const prevSec = hoursByDateKey.get(pabDateKey(prevDay)) ?? 0;
+                return prevSec > 0 && prevSec < 7 * 3600 && prevSec + day.seconds >= 7 * 3600;
               })();
 
             let cellBorder: string;

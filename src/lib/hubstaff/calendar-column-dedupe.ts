@@ -419,14 +419,26 @@ export function pabDateKey(d: Date): string {
 /**
  * HSL-specific PAB eligibility check.
  *
- * Rules (HSL dept only, all other depts use the standard Mon–Fri / every-day-passes logic):
- *  - PAB week runs Monday → Sunday (7 days).
- *  - Within each Mon–Sun week in [pabStart, pabEnd], ≥ 5 of those 7 days must reach
- *    ≥ 7 h. Any day of the week counts — Sat and Sun each contribute independently.
- *  - Overnight shifts: if a day has > 0 h but < 7 h, the next calendar day's hours
- *    are added (the overnight tail recorded under D+1 counts toward D's quota check).
- *  - Partial weeks at the period boundary use the same ≥ 5-day threshold.
- *  - Returns true if every week in the period passes, false otherwise.
+ * Rules (HSL dept only — all other depts use the strict Mon–Fri every-day-passes logic):
+ *
+ *  1. PAB week runs Monday → Sunday (7 days, not the standard Mon–Fri window).
+ *
+ *  2. Within each Mon–Sun week in [pabStart, pabEnd], at least 5 of those 7 days
+ *     must reach ≥ 7 h effective. Sat and Sun are full participants — each adds 1
+ *     to the count independently when it hits ≥ 7 h.
+ *
+ *  3. Overnight shifts — when Hubstaff splits a continuous shift across midnight:
+ *       • Forward check (D is the overnight start): D_hours + D₊₁_hours ≥ 7 h → D passes.
+ *       • Backward check (D is the overnight tail): D₋₁_hours + D_hours ≥ 7 h → D passes.
+ *     Both D and D₊₁ (or D₋₁ and D) can independently qualify from the same overnight
+ *     pair — so a worker clocking in at 11 PM on Monday and out at 6 AM Tuesday earns
+ *     a passing day credit for BOTH Monday and Tuesday.
+ *     The backward check is skipped when the previous day was already at ≥ 7 h on its
+ *     own (i.e. it was forgiven/holiday) to avoid inflating counts.
+ *
+ *  4. Partial weeks at the period boundary use the same ≥ 5-day threshold.
+ *
+ *  5. Returns true only if every Mon–Sun week in the period passes; false otherwise.
  */
 export function checkHslPabEligibility(
   pabStart: Date,
@@ -450,11 +462,20 @@ export function checkHslPabEligibility(
       if (cur.getTime() > endTime) break;
       const todaySec = hoursByDateKey.get(pabDateKey(cur)) ?? 0;
       let effectiveSec = todaySec;
-      // Overnight shift: if the employee has some hours but less than 7h, add
-      // the next calendar day's hours (the portion of the shift recorded under D+1).
       if (todaySec > 0 && todaySec < 7 * 3600) {
+        // Forward: today's shift extends into tomorrow (today is the overnight start)
         const nextDay = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1);
-        effectiveSec += hoursByDateKey.get(pabDateKey(nextDay)) ?? 0;
+        const nextDaySec = hoursByDateKey.get(pabDateKey(nextDay)) ?? 0;
+        if (todaySec + nextDaySec >= 7 * 3600) {
+          effectiveSec = todaySec + nextDaySec;
+        } else {
+          // Backward: today is the tail of yesterday's overnight shift
+          const prevDay = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() - 1);
+          const prevDaySec = hoursByDateKey.get(pabDateKey(prevDay)) ?? 0;
+          if (prevDaySec > 0 && prevDaySec < 7 * 3600 && prevDaySec + todaySec >= 7 * 3600) {
+            effectiveSec = prevDaySec + todaySec;
+          }
+        }
       }
       if (effectiveSec >= 7 * 3600) qualifyingDays++;
       cur.setDate(cur.getDate() + 1);

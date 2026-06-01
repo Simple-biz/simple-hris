@@ -1726,6 +1726,134 @@ Refuses self-targeted force-logouts (returns `{ success: true, skipped: 'self' }
 
 ---
 
+## 12.11 MESA Requests *(added 2026-06-01)*
+
+Employee-submitted MESA (Medical Emergency Savings Account) requests. Backed by `public.mesa_requests` — run `references/add_mesa_requests.sql` before using these endpoints.
+
+### `GET /api/mesa-requests`
+
+List requests. Behaviour depends on query params:
+
+- `?email=<work_email>` — returns that employee's own submissions. Auth: `authorizeEmailAccess` (self or elevated).
+- *(no email)* — returns all submissions. Auth: `requireElevatedSession` (Accounting / admin only).
+
+**Additional query params** (all optional):
+- `status` — filter to `pending`, `approved`, or `denied`
+- `request_type` — filter to `opt_in`, `opt_out`, `disbursement`, or `return`
+- `limit` — integer, default 200
+
+**Response** `200`:
+```json
+{
+  "rows": [
+    {
+      "id": "uuid",
+      "work_email": "jane@simple.biz",
+      "full_name": "Jane Doe",
+      "department": "Lead Gen",
+      "request_type": "disbursement",
+      "fpu_date": null,
+      "disbursement_reason": "Medical Emergency",
+      "explanation": "Unexpected hospital visit for my child.",
+      "amount_needed": 5000.00,
+      "status": "pending",
+      "review_notes": null,
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "created_at": "2026-06-01T09:30:00Z"
+    }
+  ]
+}
+```
+
+**Tables**: `mesa_requests`
+**Service Role**: Required
+
+---
+
+### `POST /api/mesa-requests`
+
+Employee submits a new MESA request. Auth: `authorizeEmailAccess(work_email)` — employees can only submit for themselves; elevated users may submit on behalf of another.
+
+**Request Body** `application/json`:
+```json
+{
+  "work_email": "jane@simple.biz",
+  "full_name": "Jane Doe",
+  "department": "Lead Gen",
+  "request_type": "disbursement",
+  "fpu_date": null,
+  "disbursement_reason": "Medical Emergency",
+  "explanation": "Unexpected hospital visit for my child.",
+  "amount_needed": 5000.00
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `work_email` | string | Yes | Must match session (unless elevated) |
+| `full_name` | string | Yes | |
+| `department` | string | Yes | |
+| `request_type` | string | Yes | One of `opt_in`, `opt_out`, `disbursement`, `return` |
+| `fpu_date` | string | No | Opt-in only — date FPU was completed |
+| `disbursement_reason` | string | No | Disbursement only — reason category |
+| `explanation` | string | No | Disbursement / return notes (max 250 chars enforced by UI) |
+| `amount_needed` | number | No | Disbursement only — amount in PHP |
+
+**Response** `200`:
+```json
+{ "success": true, "id": "uuid" }
+```
+
+**Error Response**:
+- `400` — missing required fields or invalid `request_type`
+- `401` — not signed in
+- `403` — attempting to submit for another employee without elevated role
+- `500` — DB error
+
+Audit log: `mesa.request.<request_type>`.
+
+**Tables**: `mesa_requests`, `audit_log`
+**Service Role**: Required
+
+---
+
+### `PATCH /api/mesa-requests/[id]`
+
+Accounting approves or denies a pending MESA request. Auth: `requireElevatedSession`.
+
+**Request Body** `application/json`:
+```json
+{
+  "status": "approved",
+  "review_notes": "Verified with accounting — disbursement queued for this Friday."
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `status` | string | Yes | `approved` or `denied` |
+| `review_notes` | string | No | Optional note surfaced back to the employee |
+
+**Response** `200`:
+```json
+{ "success": true }
+```
+
+Side effects: stamps `reviewed_by` (session email), `reviewed_at` (server timestamp), and `review_notes` on the row. Note: approving an `opt_in` request does **not** automatically flip `employee_hourly_rates.mesa_member`; accounting must do that separately via `POST /api/toggle-mesa-member`. This is intentional — the request is a signal, not an automated toggle.
+
+**Error Response**:
+- `400` — `status` not `approved` or `denied`, or missing `id`
+- `401` / `403` — auth
+- `500` — DB error
+
+Audit log: `mesa.request.approved` or `mesa.request.denied`.
+
+**Tables**: `mesa_requests`, `audit_log`
+**Service Role**: Required
+
+---
+
 ## 13. Planned Endpoints (Payroll Automation)
 
 These endpoints do not exist yet. They are required for automating Step 5 (Dispatch) and webhook-based paystub delivery.

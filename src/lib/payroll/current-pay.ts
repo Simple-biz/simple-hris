@@ -21,7 +21,7 @@ import {
 } from "@/lib/supabase/hubstaff-hours-db";
 import { getEmployeeHourlyRatesRows } from "@/lib/supabase/employee-hourly-rates";
 import { mapHubstaffHoursRow } from "@/lib/supabase/hubstaff-hours";
-import { getAppSetting } from "@/lib/supabase/app-settings";
+import { getAppSettings } from "@/lib/supabase/app-settings";
 import {
   createSupabaseServerClient,
   createSupabaseServiceRoleClient,
@@ -50,6 +50,12 @@ import {
   pabMonthFromWeekStart,
 } from "@/lib/payroll/dispatch-bonuses";
 import { fetchAllRateHistory, resolveRateAsOfDate, type RateHistoryByEmail } from "@/lib/payroll/rate-history";
+import {
+  US_HOLIDAYS_ENABLED_KEY,
+  US_HOLIDAYS_LIST_KEY,
+  parseUsHolidaysList,
+  getEnabledHolidayMap,
+} from "@/lib/us-holidays";
 
 export interface PayrollPeriod {
   /** UUID of the active hubstaff_uploads row — null if no upload exists yet. */
@@ -109,9 +115,11 @@ function parseRateText(v: string | null | undefined): number | null {
 }
 
 /**
- * Fetch every Hubstaff row across all uploads (not just the current week).
- * Required for PAB eligibility — the rule needs full-month coverage so the
- * standard variant can check every Mon–Fri ≥ 7h.
+ * Fetch every Hubstaff row across all uploads. Required for PAB eligibility
+ * — the rule needs the full PAB month so the standard variant can check every
+ * Mon-Fri >= 7 h. We cannot safely filter by upload_id here because rows
+ * imported before the upload_id FK migration have upload_id = NULL and would
+ * be silently excluded, causing early-month days to show 0 h and breaking PAB.
  */
 async function fetchAllHubstaffRowsForBonusMonth(
   supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
@@ -128,10 +136,7 @@ async function fetchAllHubstaffRowsForBonusMonth(
       .select("*")
       .range(from, from + PAGE - 1);
     if (error) {
-      console.warn(
-        "[current-pay] fetchAllHubstaffRowsForBonusMonth failed:",
-        error.message,
-      );
+      console.warn("[current-pay] fetchAllHubstaffRowsForBonusMonth failed:", error.message);
       return [];
     }
     const page = (data ?? []) as Record<string, unknown>[];
@@ -140,6 +145,33 @@ async function fetchAllHubstaffRowsForBonusMonth(
     from += PAGE;
   }
   return out;
+}
+
+/**
+ * Fetches ALL approved PAB disputes (status 'approved' or 'accounting_approved').
+ * No date filter — the total volume is small (typically <100 rows) so fetching
+ * everything upfront lets this run in the initial parallel batch without a
+ * sequential dependency on knowing the PAB period date range.
+ */
+async function fetchAllApprovedDisputes(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+): Promise<Map<string, Map<string, number | null>>> {
+  const { data, error } = await supabase
+    .from("pab_day_disputes")
+    .select("work_email, dispute_date, override_hours")
+    .in("status", ["approved", "accounting_approved"]);
+  if (error || !data) {
+    console.warn("[current-pay] fetchAllApprovedDisputes failed:", error?.message);
+    return new Map();
+  }
+  const map = new Map<string, Map<string, number | null>>();
+  for (const row of data as Array<{ work_email: string; dispute_date: string; override_hours: number | null }>) {
+    const email = normEmail(row.work_email) ?? (row.work_email ?? "").toLowerCase();
+    if (!email) continue;
+    if (!map.has(email)) map.set(email, new Map());
+    map.get(email)!.set(row.dispute_date, row.override_hours);
+  }
+  return map;
 }
 
 interface MasterEmployeeMin {
@@ -275,28 +307,40 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
   const [
     hubstaff,
     rates,
-    fxValue,
+    appSettings,
     cycleId,
     allHubstaffRows,
     masterRows,
-    pabOverridesValue,
     rateHistory,
     budgetRequestsResult,
     giftPaymentsResult,
+    approvedDisputeDates,
   ] = await Promise.all([
     fetchHubstaffRowsOrdered(),
     getEmployeeHourlyRatesRows(),
-    getAppSetting("usd_to_php_rate"),
+    getAppSettings([
+      "usd_to_php_rate",
+      PAB_PERIOD_OVERRIDES_KEY,
+      US_HOLIDAYS_ENABLED_KEY,
+      US_HOLIDAYS_LIST_KEY,
+    ]),
     cycleIdPromise,
     supabase
       ? fetchAllHubstaffRowsForBonusMonth(supabase)
       : Promise.resolve<Record<string, unknown>[]>([]),
     supabase ? fetchMasterMin(supabase) : Promise.resolve<MasterEmployeeMin[]>([]),
-    getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
     fetchAllRateHistory(),
     listOrphanageBudgetRequests({ status: "approved" }),
     listGiftPayments({}),
+    supabase
+      ? fetchAllApprovedDisputes(supabase)
+      : Promise.resolve(new Map<string, Map<string, number | null>>()),
   ]);
+
+  const fxValue = appSettings["usd_to_php_rate"];
+  const pabOverridesValue = appSettings[PAB_PERIOD_OVERRIDES_KEY];
+  const usHolidaysEnabledValue = appSettings[US_HOLIDAYS_ENABLED_KEY];
+  const usHolidaysListValue = appSettings[US_HOLIDAYS_LIST_KEY];
 
   const fxRate = effectiveUsdToPhpRateFromStored(fxValue);
 
@@ -394,15 +438,27 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     }
   }
 
+  // Build the US-holiday set for PAB forgiveness (same source the wizard uses).
+  const usHolidayMap = getEnabledHolidayMap(
+    parseUsHolidaysList(usHolidaysListValue),
+    usHolidaysEnabledValue === "true",
+  );
+  const usHolidayDates = new Set(usHolidayMap.keys());
+
   // 3. Compute PAB eligibility from all Hubstaff rows merged by email
   //    across the PAB month.
   //
   // CRITICAL: rows from `hubstaff_hours` use canonical weekday columns
-  // (`monday`, `tuesday`, …) — the actual calendar date is encoded in the
+  // (`monday`, `tuesday`, ...) -- the actual calendar date is encoded in the
   // row's `source_file` filename (e.g. `..._2026-04-26_to_2026-05-02.csv`).
   // Each row must be passed through `resolveCanonicalColumnsToIso` so the
   // PAB eligibility check (which looks for ISO-date columns) actually sees
   // the daily hours.
+  //
+  // Approved PAB dispute overrides and US holiday forgiveness are fetched from
+  // the DB and passed to `computePabEligibleEmails` so employees whose
+  // PAB-failing days were forgiven by an approved dispute (or fell on a
+  // US holiday) are correctly counted as eligible -- matching the wizard.
   const pabEligible = new Set<string>();
   if (pabRange && hslAdjustedEnd && weekIsFinalPab && allHubstaffRows.length > 0) {
     const merged = new Map<string, Record<string, unknown>>();
@@ -422,7 +478,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       if (!existing) {
         merged.set(em, { ...resolved });
       } else {
-        // Combine — later (newer) uploads win on collision, but only when their
+        // Combine -- later (newer) uploads win on collision, but only when their
         // value is non-empty so an empty cell in this week doesn't clobber a
         // populated cell from another week.
         for (const [k, v] of Object.entries(resolved)) {
@@ -435,6 +491,8 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       pabRange,
       hslAdjustedEnd,
       hslEmails,
+      approvedDisputeDates,
+      usHolidayDates,
     });
     for (const e of passes) pabEligible.add(e);
   }

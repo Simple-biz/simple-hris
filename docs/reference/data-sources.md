@@ -320,7 +320,45 @@ Single `app_settings` key (`auth.force_logout_map`) holding a JSON map of `{ "em
 - `POST /api/auth/force-logout` returns `{ skipped: 'self' }` instead of bumping when the target equals the caller's email.
 - `POST /api/employee-feature-permissions` skips the bump in the same scenario.
 
-### 10. Extra Profile Tables (optional, configurable)
+### 10. `mesa_requests` *(added 2026-06-01)*
+
+Employee-submitted MESA program requests. Run `references/add_mesa_requests.sql` to create this table.
+
+**Columns:**
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | `gen_random_uuid()` |
+| `work_email` | text NOT NULL | Submitter's Simple.biz email |
+| `full_name` | text NOT NULL | Employee's full name at time of submission |
+| `department` | text NOT NULL | Department at time of submission |
+| `request_type` | text NOT NULL | `opt_in` \| `opt_out` \| `disbursement` \| `return` |
+| `fpu_date` | text | Opt-in only — free-text date FPU was completed |
+| `disbursement_reason` | text | Disbursement only — Medical Emergency / Natural Disaster / Computer Repair / Other |
+| `explanation` | text | Disbursement explanation or return notes (max 250 chars enforced by UI) |
+| `amount_needed` | numeric(12,2) | Disbursement only — PHP amount requested |
+| `status` | text NOT NULL | `pending` (default) \| `approved` \| `denied` |
+| `review_notes` | text | Accounting reviewer's note to the employee |
+| `reviewed_by` | text | Session email of the reviewer |
+| `reviewed_at` | timestamptz | When the review was completed |
+| `created_at` | timestamptz | Submission time |
+
+**Indexes**: `work_email`, `status`, `created_at DESC`.
+
+**Who reads it:**
+- `GET /api/mesa-requests` — employee (own rows) or Accounting (all)
+- `src/components/employee/EmployeeMesa.tsx` — Request sub-tab history list
+- `src/components/payroll/AccountingMesa.tsx` — review queue
+
+**Who writes it:**
+- `POST /api/mesa-requests` — employee submission
+- `PATCH /api/mesa-requests/[id]` — Accounting approve/deny (stamps `reviewed_by`, `reviewed_at`, `review_notes`)
+
+**Note:** Approving an `opt_in` request does **not** automatically flip `employee_hourly_rates.mesa_member`. Accounting must separately call `POST /api/toggle-mesa-member` after approving. This is intentional — the request is a signal, not an automated toggle.
+
+---
+
+### 11. Extra Profile Tables (optional, configurable)
 
 Any number of additional tables can be merged into the employee profile view by listing them in `SUPABASE_PROFILE_TABLES` (comma-separated). The `import-daily-report` route creates tables in a separate `hubstaff_hours` schema, which may also be merged.
 

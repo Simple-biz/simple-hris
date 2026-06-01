@@ -448,6 +448,7 @@ function SimpleView({
   // Bumped every time we trigger a hover-ping; used as a key so the ripple replays.
   const [pingNonce, setPingNonce] = useState(0);
   const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
+  const [pabCalIsHsl, setPabCalIsHsl] = useState(false);
 
   const reconcileGaps =
     inPayrollNotMaster != null && inMasterNotPayroll != null
@@ -1460,7 +1461,7 @@ function SimpleView({
                               return (
                                 <button
                                   type="button"
-                                  onClick={() => email && setPabCalEmail(email)}
+                                  onClick={() => { if (email) { setPabCalEmail(email); setPabCalIsHsl((row.department ?? '').trim().toLowerCase() === 'hsl'); } }}
                                   disabled={!email}
                                   title="Open PAB calendar"
                                   className={cn(
@@ -1606,6 +1607,7 @@ function SimpleView({
                   employeeEmail={pabCalEmail}
                   trimToElapsedWeeks={false}
                   pabMonthOverride={pabMetrics.pabMonth}
+                  isHsl={pabCalIsHsl}
                 />
               </div>
             </motion.div>
@@ -1989,6 +1991,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     initialData?.hourlyRates ?? null,
   );
   const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
+  const [pabCalIsHsl, setPabCalIsHsl] = useState(false);
   const [employees, setEmployees] = useState<EmployeeRow[]>(initialData?.employees ?? []);
   const [employeesError, setEmployeesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!initialData?.employees?.length);
@@ -3610,7 +3613,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
                                 return (
                                   <button
                                     type="button"
-                                    onClick={() => rowEmail && setPabCalEmail(rowEmail)}
+                                    onClick={() => { if (rowEmail) { setPabCalEmail(rowEmail); setPabCalIsHsl((row.department ?? '').trim().toLowerCase() === 'hsl'); } }}
                                     disabled={!rowEmail}
                                     title="Open PAB calendar"
                                     className={cn(
@@ -3946,6 +3949,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
                   employeeEmail={pabCalEmail}
                   trimToElapsedWeeks={false}
                   pabMonthOverride={pabMetrics.pabMonth}
+                  isHsl={pabCalIsHsl}
                 />
               </div>
             </motion.div>

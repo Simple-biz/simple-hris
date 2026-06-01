@@ -12018,8 +12018,10 @@ export default function PayrollWizard({
             ? (hslAdjustedPabEnd ?? pabMonthRange.end)
             : pabMonthRange?.end;
 
-          // For HSL: precompute per Mon–Sun week reconciliation data so cells can be coloured correctly.
-          type HslWeekData = { goodWeekdays: number; satOk: boolean; sunOk: boolean; weekPasses: boolean };
+          // For HSL: precompute per Mon–Sun week data so cells can be coloured correctly.
+          // Each of the 7 days counts independently; overnight shifts (< 7h today but
+          // combined with next-day hours it reaches ≥ 7h) are captured in overnightIsos.
+          type HslWeekData = { qualifyingDays: number; weekPasses: boolean; overnightIsos: Set<string> };
           const hslWeekInfo = new Map<string, HslWeekData>();
           if (isHsl && pabMonthRange && effectivePabEnd) {
             const endT = effectivePabEnd.getTime();
@@ -12029,29 +12031,51 @@ export default function PayrollWizard({
             wCur.setDate(wCur.getDate() + wToMon);
             while (wCur.getTime() <= endT) {
               const weekIso = `${wCur.getFullYear()}-${String(wCur.getMonth() + 1).padStart(2, '0')}-${String(wCur.getDate()).padStart(2, '0')}`;
-              let goodWeekdays = 0, satSec = 0, sunSec = 0;
+              let qualifyingDays = 0;
+              const overnightIsos = new Set<string>();
               const tempCur = new Date(wCur);
               for (let d = 0; d < 7; d++) {
                 if (tempCur.getTime() > endT) break;
-                const dayDow = tempCur.getDay();
                 const dayIso = `${tempCur.getFullYear()}-${String(tempCur.getMonth() + 1).padStart(2, '0')}-${String(tempCur.getDate()).padStart(2, '0')}`;
                 const dayEntry = byIso.get(dayIso);
                 // Forgiven days (dispute or US holiday) count as passing (treat as ≥ 7h)
                 const sec = dayEntry ? ((dayEntry.forgivenByDispute || dayEntry.forgivenByHoliday) ? 7 * 3600 : dayEntry.seconds) : 0;
-                if (dayDow === 6) satSec = sec;
-                else if (dayDow === 0) sunSec = sec;
-                else if (sec >= 7 * 3600) goodWeekdays++;
+                let effectiveSec = sec;
+                if (sec > 0 && sec < 7 * 3600) {
+                  // Forward: today is the overnight start, add tomorrow's hours
+                  const nextDay = new Date(tempCur.getFullYear(), tempCur.getMonth(), tempCur.getDate() + 1);
+                  const nextIso = `${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`;
+                  const nextEntry = byIso.get(nextIso);
+                  if (nextEntry) {
+                    const nextSec = (nextEntry.forgivenByDispute || nextEntry.forgivenByHoliday) ? 7 * 3600 : nextEntry.seconds;
+                    if (sec + nextSec >= 7 * 3600) effectiveSec = sec + nextSec;
+                  }
+                  // Backward: today is the overnight tail, add yesterday's hours
+                  if (effectiveSec < 7 * 3600) {
+                    const prevDay = new Date(tempCur.getFullYear(), tempCur.getMonth(), tempCur.getDate() - 1);
+                    const prevIso = `${prevDay.getFullYear()}-${String(prevDay.getMonth() + 1).padStart(2, '0')}-${String(prevDay.getDate()).padStart(2, '0')}`;
+                    const prevEntry = byIso.get(prevIso);
+                    if (prevEntry && !prevEntry.forgivenByDispute && !prevEntry.forgivenByHoliday) {
+                      const prevSec = prevEntry.seconds;
+                      if (prevSec > 0 && prevSec < 7 * 3600 && prevSec + sec >= 7 * 3600) effectiveSec = prevSec + sec;
+                    }
+                  }
+                }
+                if (effectiveSec >= 7 * 3600) {
+                  qualifyingDays++;
+                  if (sec < 7 * 3600) overnightIsos.add(dayIso);
+                }
                 tempCur.setDate(tempCur.getDate() + 1);
                 wCur.setDate(wCur.getDate() + 1);
               }
-              const satOk = satSec >= 7 * 3600;
-              const sunOk = sunSec >= 7 * 3600;
-              hslWeekInfo.set(weekIso, {
-                goodWeekdays,
-                satOk,
-                sunOk,
-                weekPasses: goodWeekdays + (satOk && sunOk ? 2 : 0) >= 5,
-              });
+              hslWeekInfo.set(weekIso, { qualifyingDays, weekPasses: qualifyingDays >= 5, overnightIsos });
+            }
+          }
+          // Flat set of all overnight-qualifying ISOs for quick lookup in filters below.
+          const hslOvernightIsoSet = new Set<string>();
+          if (isHsl) {
+            for (const wd of hslWeekInfo.values()) {
+              for (const iso of wd.overnightIsos) hslOvernightIsoSet.add(iso);
             }
           }
 
@@ -12094,17 +12118,28 @@ export default function PayrollWizard({
           }
 
           const totalDays = breakdown.length;
-          const passedDays = breakdown.filter((b) => b.passes && !b.forgivenByDispute && !b.forgivenByHoliday).length;
+          const passedDays = breakdown.filter((b) => {
+            if (b.passes && !b.forgivenByDispute && !b.forgivenByHoliday) return true;
+            if (isHsl) {
+              const d = parseColDate(b.col);
+              if (!d) return false;
+              const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+              if (hslOvernightIsoSet.has(iso)) return true; // overnight-qualifying counts as passed
+            }
+            return false;
+          }).length;
           const forgivenDays = breakdown.filter((b) => b.forgivenByDispute).length;
           const holidayDays = breakdown.filter((b) => b.forgivenByHoliday).length;
-          // For HSL: Sat/Sun are not "failed" and reconciled weekdays are not "failed"
+          // For HSL: Sat/Sun are not "failed"; overnight-qualifying and reconciled weekdays are not "failed"
           const failedDays = breakdown.filter((b) => {
             if (b.passes) return false;
             if (isHsl) {
               const d = parseColDate(b.col);
               if (!d) return false;
               const dow = d.getDay();
-              if (dow === 0 || dow === 6) return false; // Sat/Sun never count as failed
+              if (dow === 0 || dow === 6) return false; // Sat/Sun never count as failed in the tally
+              const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+              if (hslOvernightIsoSet.has(iso)) return false; // overnight-qualifying
               const weekData = hslWeekInfo.get(getWeekMondayIso(d));
               if (weekData?.weekPasses) return false; // reconciled
             }
@@ -12124,6 +12159,8 @@ export default function PayrollWizard({
                 if (!d) return false;
                 const dow = d.getDay();
                 if (dow === 0 || dow === 6) return false;
+                const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                if (hslOvernightIsoSet.has(iso)) return false; // overnight-qualifying
                 const weekData = hslWeekInfo.get(getWeekMondayIso(d));
                 if (weekData?.weekPasses) return false;
               }
@@ -12309,7 +12346,7 @@ export default function PayrollWizard({
                           const weekend = !cell.isWeekday;
                           const data = cell.data;
                           // Determine cell state with HSL-specific rules.
-                          let state: 'idle' | 'passed' | 'forgiven' | 'holiday' | 'reconciled' | 'failed' | 'missing';
+                          let state: 'idle' | 'passed' | 'overnight' | 'forgiven' | 'holiday' | 'reconciled' | 'failed' | 'missing';
                           // US holiday takes priority over everything except passing data —
                           // even if there are no Hubstaff hours, the day is forgiven.
                           if (!cell.inRange) {
@@ -12318,20 +12355,30 @@ export default function PayrollWizard({
                             state = 'holiday';
                           } else if (data?.forgivenByDispute) {
                             state = 'forgiven';
-                          } else if (weekend) {
-                            if (isHsl) {
-                              // HSL Sat/Sun: green if >= 7h, neutral gray if not — NEVER red
-                              state = data && data.seconds >= 7 * 3600 ? 'passed' : 'idle';
+                          } else if (weekend && !isHsl) {
+                            state = 'idle';
+                          } else if (weekend && isHsl) {
+                            // HSL Sat/Sun: green if ≥ 7h standalone, teal if overnight-qualifying,
+                            // orange reconciled if week passes despite this day, idle otherwise — NEVER red
+                            if (data && data.seconds >= 7 * 3600) {
+                              state = 'passed';
+                            } else if (hslOvernightIsoSet.has(cell.iso)) {
+                              state = 'overnight';
                             } else {
-                              state = 'idle';
+                              const weekData = hslWeekInfo.get(getWeekMondayIso(cell.date));
+                              state = weekData?.weekPasses ? 'reconciled' : 'idle';
                             }
                           } else if (data?.passes) {
                             state = 'passed';
                           } else if (data) {
                             if (isHsl) {
-                              // Weekday < 7h: amber "reconciled" if the week passes via Sat+Sun, else red
-                              const weekData = hslWeekInfo.get(getWeekMondayIso(cell.date));
-                              state = weekData?.weekPasses ? 'reconciled' : 'failed';
+                              // Weekday < 7h standalone: teal overnight, orange reconciled, or red failed
+                              if (hslOvernightIsoSet.has(cell.iso)) {
+                                state = 'overnight';
+                              } else {
+                                const weekData = hslWeekInfo.get(getWeekMondayIso(cell.date));
+                                state = weekData?.weekPasses ? 'reconciled' : 'failed';
+                              }
                             } else {
                               state = 'failed';
                             }
@@ -12341,6 +12388,7 @@ export default function PayrollWizard({
                           const stateClasses: Record<typeof state, string> = {
                             idle: 'bg-zinc-100/70 text-zinc-400 ring-1 ring-zinc-200/70 dark:bg-zinc-900/50 dark:text-zinc-600 dark:ring-zinc-800/60',
                             passed: 'bg-emerald-200 text-emerald-900 ring-1 ring-emerald-500/70 shadow-[0_1px_2px_rgba(16,185,129,0.15)] dark:bg-emerald-600/40 dark:text-emerald-50 dark:ring-emerald-400/50',
+                            overnight: 'bg-teal-200 text-teal-900 ring-1 ring-teal-500/70 shadow-[0_1px_2px_rgba(20,184,166,0.15)] dark:bg-teal-600/40 dark:text-teal-50 dark:ring-teal-400/50',
                             forgiven: 'bg-amber-200 text-amber-900 ring-1 ring-amber-500/70 shadow-[0_1px_2px_rgba(245,158,11,0.18)] dark:bg-amber-600/40 dark:text-amber-50 dark:ring-amber-400/50',
                             holiday: 'bg-sky-200 text-sky-900 ring-1 ring-sky-500/70 shadow-[0_1px_2px_rgba(14,165,233,0.18)] dark:bg-sky-600/40 dark:text-sky-50 dark:ring-sky-400/50',
                             reconciled: 'bg-orange-100 text-orange-900 ring-1 ring-orange-400/60 shadow-[0_1px_2px_rgba(234,88,12,0.10)] dark:bg-orange-700/30 dark:text-orange-50 dark:ring-orange-400/40',
@@ -12368,11 +12416,13 @@ export default function PayrollWizard({
                                               ? ` · ${cell.holidayName} (US holiday)`
                                               : data.forgivenByDispute
                                                 ? ' · ★ forgiven by dispute'
-                                                : state === 'reconciled'
-                                                  ? ' · ~ reconciled via Sat+Sun'
-                                                  : data.passes
-                                                    ? ' · ✓ passes 7h threshold'
-                                                    : ` · short by ${formatShortfall(shortfall)}`
+                                                : state === 'overnight'
+                                                  ? ' · → overnight shift (combined with next day)'
+                                                  : state === 'reconciled'
+                                                    ? ' · ~ reconciled (week has ≥5 qualifying days)'
+                                                    : data.passes
+                                                      ? ' · ✓ passes 7h threshold'
+                                                      : ` · short by ${formatShortfall(shortfall)}`
                                           }`
                                         : `${cell.date.toDateString()} — no Hubstaff data`
                               }
@@ -12391,6 +12441,9 @@ export default function PayrollWizard({
                               )}
                               {state === 'passed' && (
                                 <span className="mt-0.5 text-[8px] leading-none opacity-80">✓</span>
+                              )}
+                              {state === 'overnight' && (
+                                <span className="mt-0.5 text-[8px] leading-none opacity-80">→</span>
                               )}
                               {state === 'forgiven' && (
                                 <span className="mt-0.5 text-[8px] leading-none opacity-80">★</span>
@@ -12425,8 +12478,13 @@ export default function PayrollWizard({
                         className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-md border border-zinc-200 bg-zinc-50/60 px-2 py-1.5 text-[10px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400"
                       >
                         <span className="flex items-center gap-1">
-                          <span className="h-2.5 w-2.5 rounded-sm bg-emerald-200 ring-1 ring-emerald-500/70 dark:bg-emerald-600/40 dark:ring-emerald-400/50" /> ≥ 7h
+                          <span className="h-2.5 w-2.5 rounded-sm bg-emerald-200 ring-1 ring-emerald-500/70 dark:bg-emerald-600/40 dark:ring-emerald-400/50" /> ≥ 7h ✓
                         </span>
+                        {isHsl && (
+                          <span className="flex items-center gap-1">
+                            <span className="h-2.5 w-2.5 rounded-sm bg-teal-200 ring-1 ring-teal-500/70 dark:bg-teal-600/40 dark:ring-teal-400/50" /> Overnight →
+                          </span>
+                        )}
                         <span className="flex items-center gap-1">
                           <span className="h-2.5 w-2.5 rounded-sm bg-amber-200 ring-1 ring-amber-500/70 dark:bg-amber-600/40 dark:ring-amber-400/50" /> Forgiven ★
                         </span>
@@ -12446,7 +12504,7 @@ export default function PayrollWizard({
                         </span>
                         <span className="flex items-center gap-1">
                           <span className="h-2.5 w-2.5 rounded-sm bg-zinc-100/70 ring-1 ring-zinc-200/70 dark:bg-zinc-900/50 dark:ring-zinc-800/60" />
-                          {isHsl ? 'Sat/Sun < 7h / out-of-range' : 'Weekend / out-of-range'}
+                          {isHsl ? '< 7h (not needed) / out-of-range' : 'Weekend / out-of-range'}
                         </span>
                       </motion.div>
 
@@ -12510,9 +12568,9 @@ export default function PayrollWizard({
                             >
                               {isHsl
                                 ? paStatus === 'eligible'
-                                  ? `Logged ≥ 7h on at least 5 of 7 days per week across the PAB period${forgivenDays > 0 ? ` (${forgivenDays} day${forgivenDays === 1 ? '' : 's'} forgiven)` : ''}. Short weekdays are covered when both Sat and Sun reach ≥ 7h.`
+                                  ? `Logged ≥ 7h on at least 5 of the 7 Mon–Sun days per week${forgivenDays > 0 ? ` (${forgivenDays} day${forgivenDays === 1 ? '' : 's'} forgiven)` : ''}. Sat and Sun each count independently. Overnight shifts spanning midnight are combined with the following day.`
                                   : paStatus === 'ineligible'
-                                    ? 'HSL rule: every Mon–Sun week needs ≥ 5 days at ≥ 7h. A short weekday can be covered only if BOTH Saturday AND Sunday also reach ≥ 7h.'
+                                    ? 'HSL rule: every Mon–Sun week needs ≥ 5 of 7 days at ≥ 7h. Sat and Sun each count independently toward the quota. Overnight shifts (hours split across midnight) are combined for the threshold check.'
                                     : 'No week has failed the 5-of-7 rule yet — verdict locks when the period ends.'
                                 : paStatus === 'eligible'
                                   ? `Logged ≥ 7h on every Mon–Fri in the PAB period${forgivenDays > 0 ? ` (${forgivenDays} day${forgivenDays === 1 ? '' : 's'} forgiven by dispute)` : ''}.`

@@ -71,11 +71,14 @@ export async function createWorkspaceAccount(
     .map((p) => String(p).trim())
     .filter(Boolean);
 
+  // n8n's bulk-capable Workspace provisioning workflow reads snake_case
+  // identity fields (first_name / last_name / work_email / personal_email).
+  // The internal TS input stays camelCase; only the wire payload is snake_case.
   const payload: Record<string, unknown> = {
-    firstName: input.firstName.trim(),
-    lastName: input.lastName.trim(),
-    workEmail,
-    personalEmail: input.personalEmail.trim().toLowerCase(),
+    first_name: input.firstName.trim(),
+    last_name: input.lastName.trim(),
+    work_email: workEmail,
+    personal_email: input.personalEmail.trim().toLowerCase(),
     organization_id: ORGANIZATION_ID,
     project_names: projectNames,
     role: input.role ?? DEFAULT_ROLE,

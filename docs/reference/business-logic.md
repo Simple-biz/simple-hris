@@ -412,9 +412,18 @@ Toggle-based (no metric input):
 
 ### Hogan Smith Law
 
-Toggle-based:
+**Step 3 — Additions tab** (toggle-based, applies to all HSL employees):
 - Case Resolution Bonus: ₱3,000
 - Compliance & Accuracy Bonus: ₱2,500
+
+**Step 5 — HSL Payroll** (dedicated wizard step, separate calculation path):
+
+HSL employees have their own payroll step that shows Initial Pay + KPI Bonus (from manager submissions via the HSL Bonus Calculator) + **PAB** + **Tech Bonus**, with an override column and a Total Pay column.
+
+PAB and Tech Bonus rules for HSL:
+- **PAB (₱5,000)**: HSL uses Mon–Sun weeks. Eligibility requires ≥5 of 7 days at ≥7 h (`checkHslPabEligibility()`). Displayed as a tri-state pill (✓ Eligible / ✗ Ineligible / ⏳ In Progress); clicking opens the PAB Calendar modal with week-based rows. Added to Total Pay when `eligible`.
+- **Tech Bonus (₱1,850)**: Same gate as regular employees — salary date in the 3rd full Mon–Sun week of its month, PHP rates present, ≥30 days of service from `start_date`. Drawn from the shared `techBonusEligible` set (which iterates all employees including HSL).
+- Both are included in the row-level **Total Pay** and the footer grand total.
 
 ### Lead Gen
 
@@ -426,9 +435,29 @@ Toggle UI is present but no specific bonus formulas are defined. These departmen
 
 ---
 
+## Payroll Wizard — Additional Rules *(updated 2026-06-01)*
+
+### Additions and Deductions — separate fields
+
+Step 3 (Additions) maintains **separate, editable fields for Additions and Deductions**. An employee can simultaneously carry a standard bonus, an additional amount, and a deduction in the same week. Keeping them in distinct columns simplifies accounting reconciliation and produces clearer line items in exported reports.
+
+### Excel Export — Employee ID included
+
+The XLSX export of the weekly payroll report includes the **Employee ID** column (`YYMM-NNNN` format) so exported files can be cross-referenced against other records by ID rather than by name or email alone.
+
+### Tenure Gifts — removed, replaced by HSL Payroll step
+
+The **Tenure Gifts** section has been **removed** from the Payroll Wizard (redundant with the Orphanage / HR tenure-gift module). Its former position in the wizard is now occupied by **Step 5 — HSL Payroll**, the dedicated Hogan Smith Law calculation path described under the Hogan Cycle section.
+
+### Audit Log attribution
+
+The Payroll Wizard writes an audit entry for every dispatched payroll run attributed to the **currently logged-in user**. A bug that caused edits made by one user (e.g. Carla T) to be logged under a different user (e.g. Kane R) has been corrected. When no session user can be resolved the entry is attributed to the `Payroll Wizard` system actor.
+
+---
+
 ## Payroll Dispatch
 
-Step 5 is currently a **placeholder**. The "Confirm & Dispatch" button fires a success toast and resets the wizard to Step 1. No payment is initiated, no audit log is created, and no external system is notified. This step is reserved for future integration with a payment provider.
+The Dispatch step is the final step in the Payroll Wizard (Upload → Initial Calc → Additions → Validation → HSL Payroll → Contractors → Dispatch). Actual payment routing is handled through the **Payment Dispatch** view (Accounting → Payment Dispatch) and the Payroll Clerk app — documented in `docs/features/payment-dispatch.md`. Bonus computation used by the dispatch view is mirrored server-side in `src/lib/payroll/dispatch-bonuses.ts`; see "Payment Dispatch — bonus mirror" under the PAB section above.
 
 ---
 
@@ -541,7 +570,34 @@ Implementation: `src/components/PayrollWizard.tsx` `dispatchData` useMemo comput
 
 ## Hogan Cycle
 
-Toggled in Step 1. Marks the upload as the Mon–Sun cycle used by the Hogan Smith Law client, as opposed to the standard Tue–Mon cycle. Currently a **flag only** — no separate filtering or date-range logic is applied downstream. Future implementation should filter Hubstaff rows to the correct date range based on this flag.
+Toggled in Step 1. Marks the upload as the Mon–Sun cycle used by the Hogan Smith Law (HSL) department, as opposed to the standard Tue–Mon cycle. The dedicated **Step 5 — HSL Payroll** handles all HSL-specific pay computation including PAB and Tech Bonus.
+
+### HSL PAB Eligibility Rule
+
+HSL employees use a different Perfect Attendance rule from all other departments:
+
+| Dimension | Standard (non-HSL) | HSL |
+|---|---|---|
+| Evaluation window | Mon–Fri only | Mon–Sun (all 7 days) |
+| Pass threshold | Every weekday ≥ 7 h | ≥ 5 of the 7 days ≥ 7 h effective |
+| Weekend handling | Ignored | Sat and Sun each count independently |
+| Period end | Last Friday of PAB month | Extended to Sunday that closes the last Mon–Sun week (`hslAdjustedPabEnd`) |
+
+**Overnight shift handling.** Hubstaff can split a continuous shift across midnight (e.g. 1 h recorded on Monday, 6 h on Tuesday for a single 7 h overnight). The eligibility check combines adjacent calendar days in two directions so neither day is unfairly penalised:
+
+- **Forward** — if D has `0 < hours < 7 h`, add D₊₁'s hours. If D + D₊₁ ≥ 7 h → **D qualifies**.
+- **Backward** — if D has `0 < hours < 7 h` and D₋₁ also has `0 < hours < 7 h`, add D₋₁'s hours. If D₋₁ + D ≥ 7 h → **D qualifies**.
+
+Both the start day (D) and the tail day (D₊₁) earn independent passing-day credits from the same overnight pair. A worker clocking in at 11 PM Monday and out at 6 AM Tuesday earns a qualifying credit for **both** Monday and Tuesday.
+
+**Approved disputes.** A forgiven dispute with ≥ 4 h effective hours forces the day to 7 h in the eligibility map so it counts toward the 5-day quota without needing the overnight combination.
+
+**Implementation.** `checkHslPabEligibility()` in `src/lib/hubstaff/calendar-column-dedupe.ts` is the single authoritative source. Called by:
+- `computePabEligibleEmails()` in `dispatch-bonuses.ts` — payroll dispatch
+- `computeMemberMonthlyPay()` in `member-monthly-pay.ts` — manager My Team Payments modal
+- `PayrollWizard.tsx` Step 5 — PAB calendar modal + per-row eligibility badge
+- `EmployeePabCalendar.tsx` — employee portal PAB calendar (requires `isHsl` prop)
+- `EmployeeMyHours.tsx` — employee My Hours calendar (derives `isHsl` from `memberPay.department`)
 
 ---
 
@@ -839,3 +895,67 @@ The People panel in `AdminRoles` now has a two-tab strip:
 The sidebar badge on the **Roles & permissions** nav item used to count total role grants (e.g. 66). It now counts unique emails with at least one role (e.g. 14), matching the "With roles" stat. Wired in `app/admin/page.tsx`.
 
 Avatars in the People list and the selected-employee summary now render through `EmployeeAvatar`, so they pick up the manually-uploaded Supabase photo first, Google SSO photo as fallback, then initials.
+
+---
+
+## Onboarding Process *(updated 2026-06-01)*
+
+### Invite workflow
+
+All onboarding invites — Hubstaff account creation and Workspace account creation — are sent **simultaneously in a single weekly batch**. The previous staggered creation flow has been replaced; there is no delay between invite types.
+
+**Email content.** Each batch includes two instructional emails:
+- **Hubstaff Overview** — time-tracking tool instructions.
+- **Roboform** (password manager) — instructions formatted as buttons linking to Google Drive video and text (not attachments). The Hubstaff email should match the same button-link theme.
+
+Both emails are delivered via a **single combined n8n webhook call** (one point of failure, not two separate triggers).
+
+**Post-orientation handling.** If a new hire reschedules orientation, the team manually offboards and re-onboards them.
+
+**RoboForm full automation:** not yet achievable. Follow-up with Thomas after vacation to explore future automation.
+
+### Bulk onboarding — Lead Gen
+
+To support the Lead Gen department's typical weekly batch of ~50 new hires, the HRIS connects to the Lead Gen Google Sheet (same pattern as the Master List and New Payroll Dashboard connections).
+
+| Feature | Detail |
+|---|---|
+| **Refresh button** | Pulls all pending hires from the connected Lead Gen sheet on demand. |
+| **Bulk link generation** | "Generate Link" sends invite links to all personal emails in the batch simultaneously. Assumes all belong to the same department. |
+| **Email-only input** | Only a batch of personal emails is required — first name and last name are no longer collected at the invite stage (captured later via new hire paperwork). |
+
+> **Pending:** Confirmation needed from Drew that the Lead Gen Google Sheet is cleaned up weekly to prevent links from being resent to previous hires.
+
+---
+
+## Offboarding Process *(updated 2026-06-01)*
+
+### Department-based account deletion timeline
+
+Deletion timing after offboarding differs by department:
+
+| Department | On Offboard |
+|---|---|
+| **Lead Gen** | Email and all accounts deleted **immediately**. |
+| **All other departments** (e.g. AI API Team) | Gmail account **deactivated** and held for a **two-week delay**, then deleted. |
+
+The HRIS applies this department gate to prevent the immediate-deletion automation from firing for non-Lead Gen employees. Kentshin W coordinates with Sir Vinci (offboarding automation owner) to ensure the logic is consistent.
+
+### Attendance trigger — orientation no-show
+
+When **Manager Jackie** marks a new hire as **"No Attend"** in orientation:
+
+- **Lead Gen** → employee is automatically offboarded **immediately**.
+- **Other departments** → the standard two-week deactivation-then-delete timeline applies.
+
+### Hubstaff member removal
+
+When a worker is offboarded, the **"remove member"** call to Hubstaff runs **immediately** as part of the offboarding automation. The old pattern — disable tracking only, then remove a week later — is no longer used. Deleted Hubstaff members still appear in historical reports, so the delay served no purpose.
+
+### Hubstaff pay rate reset
+
+The pay rate payload sent to Hubstaff on offboard is explicitly set to **zero** to prevent the rate from displaying incorrectly (e.g., "USD" appearing as the pay rate value after removal).
+
+### Known bug — offboarding UI duplicate entries
+
+The offboarding UI can show duplicate entries for a single person (e.g., two "Carla T" rows). Offboarding either entry currently deletes both. Root cause: `global_master_list` keys on `(personal_email, department)`, so employees with a dual-department record can appear twice. This must be corrected so each offboard action targets only the intended row.

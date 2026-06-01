@@ -75,10 +75,16 @@ export default function AccountingMesa() {
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
-      const res = await fetch('/api/mesa-requests', { cache: 'no-store' });
+      // Accounting only handles money-related requests.
+      // Opt-in requests are routed to HR.
+      const params = new URLSearchParams();
+      ['opt_out', 'disbursement', 'return'].forEach((t) => params.append('request_type', t));
+      const res = await fetch(`/api/mesa-requests?${params}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as { rows?: MesaRequest[] };
-      const data = json.rows ?? [];
+      const data = (json.rows ?? []).filter(
+        (r) => r.request_type === 'opt_out' || r.request_type === 'disbursement' || r.request_type === 'return',
+      );
       cachedRequests = data;
       setRows(data);
     } catch (e) {
@@ -173,10 +179,10 @@ export default function AccountingMesa() {
               Medical Emergency Savings Account
             </p>
             <h2 className="mt-0.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">
-              MESA Requests
+              MESA — Disbursements &amp; Changes
             </h2>
             <p className="mt-1 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              Review employee opt-in, opt-out, disbursement, and return requests submitted through the portal.
+              Opt-out, disbursement, and return requests submitted by members. Opt-in requests are handled by HR.
             </p>
           </div>
         </div>
@@ -218,7 +224,6 @@ export default function AccountingMesa() {
               className="h-9 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300"
             >
               <option value="">All types</option>
-              <option value="opt_in">Opt-in</option>
               <option value="opt_out">Opt-out</option>
               <option value="disbursement">Disbursement</option>
               <option value="return">Return</option>

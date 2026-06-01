@@ -9,8 +9,12 @@
  *  1. **PAB ₱5,000** — fires only on the *final week* of the PAB month.
  *     Per-employee gate: `perfectAttendanceEligible` set, computed from
  *     a full-month Hubstaff merge using either the standard rule
- *     (every Mon–Fri ≥ 7h) or the HSL exception (Mon–Sun weeks, ≥ 5
- *     qualifying days, weekend reconciliation).
+ *     (every Mon–Fri ≥ 7h) or the HSL exception:
+ *       • Mon–Sun weeks, ≥ 5 of 7 days at ≥ 7 h.
+ *       • Sat and Sun count independently toward the quota.
+ *       • Overnight shifts split across midnight combine via forward
+ *         (D + D₊₁ ≥ 7h) AND backward (D₋₁ + D ≥ 7h) checks —
+ *         both days in a qualifying pair earn a passing-day credit.
  *
  *  2. **Tech ₱1,850** — fires on the week whose salary date (Tuesday after
  *     the period's Sunday, i.e. period-Monday + 8 days) falls in the 3rd
@@ -104,18 +108,80 @@ function rowSelfReportsHsl(row: RawRow): boolean {
 }
 
 /**
+ * Applies approved dispute overrides and US-holiday auto-passes to a
+ * per-date seconds map before the PAB eligibility check runs.
+ *
+ * Dispute SET semantics (mirrors PayrollWizard.tsx):
+ *   override_hours != null  ->  effective = override_hours * 3600
+ *   override_hours == null  ->  effective = raw Hubstaff seconds
+ *   If effective < 7 h AND a dispute exists AND effective >= 4 h -> forgiven (pass)
+ *
+ * US holidays set the day to 7 h so the >= 7 h gate auto-passes without
+ * requiring Hubstaff data (same as the wizard's `continue` on holiday dates).
+ * Holidays are applied last so they are never overridden by a dispute entry.
+ */
+function applyPabAdjustments(
+  hoursByDateKey: Map<string, number>,
+  forgivenDates: Map<string, number | null> | undefined,
+  usHolidayDates: Set<string> | undefined,
+): Map<string, number> {
+  if (!forgivenDates?.size && !usHolidayDates?.size) return hoursByDateKey;
+  const effective = new Map(hoursByDateKey);
+
+  if (forgivenDates) {
+    for (const [dateStr, overrideHours] of forgivenDates.entries()) {
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) continue;
+      const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      if (Number.isNaN(d.getTime())) continue;
+      const key = pabDateKey(d);
+      const rawSec = hoursByDateKey.get(key) ?? 0;
+      const effectiveSec = overrideHours != null ? overrideHours * 3600 : rawSec;
+      // Forgiven when dispute exists and effective hours >= 4 h
+      effective.set(key, effectiveSec >= 4 * 3600 ? 7 * 3600 : effectiveSec);
+    }
+  }
+
+  if (usHolidayDates) {
+    for (const dateStr of usHolidayDates) {
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) continue;
+      const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      if (Number.isNaN(d.getTime())) continue;
+      effective.set(pabDateKey(d), 7 * 3600);
+    }
+  }
+
+  return effective;
+}
+
+/**
  * Given a set of (possibly merged across many Hubstaff uploads) rows,
  * return the set of normalized emails that pass the PAB rule for the
  * given period. HSL employees use the weekly-quota variant; everyone
- * else uses the strict every-Mon–Fri-≥-7h variant.
+ * else uses the strict every-Mon-Fri->=7h variant.
+ *
+ * Approved dispute overrides and US holiday forgiveness are applied to
+ * the per-day hours before the eligibility check, mirroring the wizard.
  */
 export function computePabEligibleEmails(args: {
   rows: RawRow[];
   pabRange: { start: Date; end: Date };
-  /** HSL extends the period end to the closing Sunday of the last Mon–Sun week. */
+  /** HSL extends the period end to the closing Sunday of the last Mon-Sun week. */
   hslAdjustedEnd: Date;
   /** Lowercased emails for HSL employees, derived from master list. */
   hslEmails: Set<string>;
+  /**
+   * Approved PAB disputes for the period, keyed by lowercased work email then
+   * by ISO dispute_date. Value is override_hours (null = no explicit override;
+   * effective hours fall back to the raw Hubstaff value for that day).
+   */
+  approvedDisputeDates?: Map<string, Map<string, number | null>>;
+  /**
+   * ISO date strings for enabled US holidays in the PAB period.
+   * Matching days auto-pass the >= 7 h gate regardless of Hubstaff hours.
+   */
+  usHolidayDates?: Set<string>;
 }): Set<string> {
   const { rows, pabRange, hslAdjustedEnd, hslEmails } = args;
   const eligible = new Set<string>();
@@ -129,7 +195,10 @@ export function computePabEligibleEmails(args: {
     if (!email) continue;
 
     const cols = Object.keys(row).length > 0 ? Object.keys(row) : sampleCols;
-    const hoursByDateKey = dateSecondsFromRow(row, cols);
+    const rawHours = dateSecondsFromRow(row, cols);
+
+    const forgivenDates = args.approvedDisputeDates?.get(email);
+    const hoursByDateKey = applyPabAdjustments(rawHours, forgivenDates, args.usHolidayDates);
 
     const isHsl = hslEmails.has(email) || rowSelfReportsHsl(row);
 

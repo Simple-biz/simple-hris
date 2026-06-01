@@ -1,45 +1,277 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+
 <head>
-<meta charset="utf-8" />
-<title>Paystub Template</title>
-<style>
-  .paystub-body { position: relative; }
-  .paystub-body::before {
-    content: "";
-    position: absolute;
-    top: 110px; left: 0; right: 0; bottom: 70px;
-    overflow: hidden;
-    background-image:
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png'),
-      url('https://host.simple.biz/email/simplelogo.png');
-    background-repeat: no-repeat;
-    background-size:
-      120px, 120px, 120px, 120px,
-      70px, 70px, 70px, 70px,
-      40px, 40px, 40px, 40px;
-    background-position:
-      10% 8%, 75% 22%, 25% 55%, 85% 78%,
-      50% 12%, 12% 38%, 65% 48%, 38% 85%,
-      90% 10%, 5% 72%, 55% 30%, 92% 55%;
-    transform: rotate(-28deg);
-    opacity: 0.08;
-    pointer-events: none;
-    z-index: 2;
-  }
-</style>
+  <meta charset="utf-8" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Paystub Template</title>
+  <style>
+    /* Watermark pattern */
+    .paystub-body {
+      position: relative;
+    }
+
+    .paystub-body::before {
+      content: "";
+      position: absolute;
+      top: 110px;
+      left: 0;
+      right: 0;
+      bottom: 70px;
+      overflow: hidden;
+      background-image:
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png'),
+        url('https://host.simple.biz/email/simplelogo.png');
+      background-repeat: no-repeat;
+      background-size:
+        120px, 120px, 120px, 120px,
+        70px,  70px,  70px,  70px,
+        40px,  40px,  40px,  40px;
+      background-position:
+        10% 8%,  75% 22%, 25% 55%, 85% 78%,
+        50% 12%, 12% 38%, 65% 48%, 38% 85%,
+        90% 10%,  5% 72%, 55% 30%, 92% 55%;
+      transform: rotate(-28deg);
+      opacity: 0.07;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    /* Dark mode overrides for supporting email clients and browsers */
+    @media (prefers-color-scheme: dark) {
+      .wrap-outer    { background: linear-gradient(to top right, #1a1740 0%, #0f172a 55%, #1c0d00 100%) !important; }
+      .card-main     { background: #1a2235 !important; box-shadow: 0 8px 32px rgba(0,0,0,0.55) !important; }
+      .hdr           { background: linear-gradient(135deg, #2d2a72 0%, #1e2535 45%, #7c2d12 100%) !important; }
+      .hdr-eyebrow   { color: #c7d2fe !important; }
+      .hdr-name      { color: #f8fafc !important; }
+      .hdr-pill      { background: rgba(255,255,255,0.1) !important; color: #e0e7ff !important; }
+      .sec-lbl-o     { color: #fb923c !important; }
+      .sec-rule-o    { background: #7c3d12 !important; }
+      .sec-lbl-v     { color: #a78bfa !important; }
+      .sec-rule-v    { background: #4c1d95 !important; }
+      .data-card     { background: #1e2d45 !important; border-color: #2d3f5c !important; }
+      .row-sep       { background: #263650 !important; }
+      .lbl           { color: #64748b !important; }
+      .val-dk        { color: #e2e8f0 !important; }
+      .val-blue      { color: #60a5fa !important; }
+      .val-violet    { color: #a78bfa !important; }
+      .total-card    { background: linear-gradient(135deg, #2d2a72 0%, #312e81 40%, #7c2d12 100%) !important; }
+      .total-lbl     { color: #c7d2fe !important; }
+      .total-php     { color: #ffffff !important; }
+      .total-cur     { color: #818cf8 !important; }
+      .total-usdlbl  { color: #818cf8 !important; }
+      .total-usd     { color: #e0e7ff !important; }
+      .footer-wrap   { background: #111827 !important; border-top-color: #1f2d3d !important; }
+      .footer-title  { color: #e2e8f0 !important; }
+      .footer-sub    { color: #475569 !important; }
+    }
+  </style>
 </head>
-<body>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:linear-gradient(to top right,#c7d2fe 0%,#ffffff 50%,#ffedd5 100%);padding:24px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2937;"><tr><td align="center"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="480" class="paystub-body" style="max-width:480px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(59,130,246,0.15);position:relative;"><tr><td style="background:linear-gradient(to top right,#4338ca 0%,#ffffff 50%,#f97316 100%);padding:24px 28px;text-align:center;"><div style="color:#1e293b;font-size:11px;letter-spacing:0.15em;font-weight:700;text-transform:uppercase;">Simple HRIS · Paystub · {{ $('pay_vars').item.json.week_human }}</div><div style="margin-top:8px;color:#0f172a;font-size:20px;font-weight:700;letter-spacing:-0.01em;">Hi {{ $('pay_vars').item.json.name }},</div><div style="margin-top:4px;color:#334155;font-size:12px;">Pay period: <strong>{{ $('pay_vars').item.json.week_human }}</strong></div></td></tr><tr><td style="padding:16px 24px 4px 24px;"><div style="font-size:11px;letter-spacing:0.12em;font-weight:700;color:#ea580c;text-transform:uppercase;">Recipient</div><div style="height:3px;background:linear-gradient(to top right,#4338ca 0%,#ffffff 50%,#f97316 100%);border-radius:2px;margin-top:6px;width:60px;"></div></td></tr><tr><td style="padding:8px 24px 0 24px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:linear-gradient(to top right,#eff6ff 0%,#ffffff 50%,#fffaf3 100%);border:1px solid #fde4cb;border-radius:8px;"><tr><td style="padding:12px 16px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="font-size:12px;color:#9a6b3f;padding:3px 0;width:110px;">Name</td><td style="font-size:13px;color:#111827;font-weight:600;padding:3px 0;">{{ $('pay_vars').item.json.name }}</td></tr><tr><td style="font-size:12px;color:#9a6b3f;padding:3px 0;">Department</td><td style="font-size:13px;color:#111827;font-weight:600;padding:3px 0;">{{ $('pay_vars').item.json.department }}</td></tr></table></td></tr></table></td></tr><tr><td style="padding:16px 24px 4px 24px;"><div style="font-size:11px;letter-spacing:0.12em;font-weight:700;color:#ea580c;text-transform:uppercase;">Earnings</div><div style="height:3px;background:linear-gradient(to top right,#4338ca 0%,#ffffff 50%,#f97316 100%);border-radius:2px;margin-top:6px;width:60px;"></div></td></tr><tr><td style="padding:8px 24px 0 24px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:linear-gradient(to top right,#eff6ff 0%,#ffffff 50%,#fffaf3 100%);border:1px solid #fde4cb;border-radius:8px;"><tr><td style="padding:12px 16px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="font-size:12px;color:#9a6b3f;padding:3px 0;">Regular ({{ $('pay_vars').item.json.mf_hours }}h × ₱{{ $('pay_vars').item.json.mf_rate }})</td><td align="right" style="font-size:13px;color:#2563eb;font-weight:700;padding:3px 0;">₱{{ $('pay_vars').item.json.mf_pay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td></tr><tr><td style="font-size:12px;color:#9a6b3f;padding:3px 0;">OT ({{ $('pay_vars').item.json.mf_ot_hours }}h × ₱{{ $('pay_vars').item.json.ot_rate }})</td><td align="right" style="font-size:13px;color:#2563eb;font-weight:700;padding:3px 0;">₱{{ $('pay_vars').item.json.ot_pay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td></tr></table></td></tr></table></td></tr><tr><td style="padding:16px 24px 4px 24px;"><div style="font-size:11px;letter-spacing:0.12em;font-weight:700;color:#7c3aed;text-transform:uppercase;">Bonuses</div><div style="height:3px;background:linear-gradient(to top right,#4338ca 0%,#ffffff 50%,#f97316 100%);border-radius:2px;margin-top:6px;width:60px;"></div></td></tr><tr><td style="padding:8px 24px 0 24px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:linear-gradient(to top right,#eff6ff 0%,#ffffff 50%,#fffaf3 100%);border:1px solid #fde4cb;border-radius:8px;"><tr><td style="padding:12px 16px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="font-size:12px;color:#9a6b3f;padding:3px 0;width:150px;">Tech Bonus</td><td align="right" style="font-size:13px;color:#7c3aed;font-weight:700;padding:3px 0;">₱{{ $('pay_vars').item.json.tech_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td></tr><tr><td style="font-size:12px;color:#9a6b3f;padding:3px 0;">Attendance Bonus</td><td align="right" style="font-size:13px;color:#7c3aed;font-weight:700;padding:3px 0;">₱{{ $('pay_vars').item.json.attendance_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td></tr><tr><td style="font-size:12px;color:#9a6b3f;padding:3px 0;">Performance Bonus</td><td align="right" style="font-size:13px;color:#7c3aed;font-weight:700;padding:3px 0;">₱{{ $('pay_vars').item.json.performance_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td></tr></table></td></tr></table></td></tr><tr><td style="padding:16px 24px 8px 24px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:linear-gradient(to top right,#3730a3 0%,#ffffff 50%,#ea580c 100%);border-radius:10px;"><tr><td style="padding:16px 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="color:#1e293b;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;">Total Pay</td><td align="right" style="color:#0f172a;font-size:22px;font-weight:800;letter-spacing:-0.01em;">₱{{ $('pay_vars').item.json.total_pay_php.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }} <span style="font-size:12px;font-weight:600;color:#475569;">PHP</span></td></tr><tr><td style="color:#64748b;font-size:11px;font-weight:400;padding-top:4px;">Total USD Pay:</td><td align="right" style="color:#0f172a;font-size:11px;font-weight:600;padding-top:4px;">${{ $('pay_vars').item.json.total_pay_usd }} USD</td></tr></table></td></tr></table></td></tr><tr><td style="background:linear-gradient(to top right,#eff6ff 0%,#ffffff 50%,#fffaf3 100%);padding:14px 24px;margin-top:8px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="vertical-align:middle;width:50px;"><img src="https://host.simple.biz/email/simplelogo.png" alt="Simple" width="42" style="display:block;height:auto;width:42px;border:0;" /></td><td style="vertical-align:middle;padding-left:12px;text-align:right;"><div style="font-size:12px;color:#1e293b;font-weight:700;">Simple · Confidential</div><div style="font-size:10px;color:#94a3b8;">Automated dispatch from Simple HRIS</div></td></tr></table></td></tr></table></td></tr></table>
+
+<body style="margin:0;padding:0;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+    class="wrap-outer"
+    style="background:linear-gradient(to top right,#dde4fb 0%,#f8f9ff 55%,#fff0e6 100%);padding:28px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2937;">
+    <tr>
+      <td align="center">
+
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="480"
+          class="paystub-body card-main"
+          style="max-width:480px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 28px rgba(67,56,202,0.13);position:relative;">
+
+          <!-- HEADER -->
+          <tr>
+            <td class="hdr"
+              style="background:linear-gradient(135deg,#3730a3 0%,#4f46e5 38%,#f97316 100%);padding:26px 32px 22px;text-align:center;">
+              <div class="hdr-eyebrow"
+                style="color:#c7d2fe;font-size:10px;letter-spacing:0.18em;font-weight:700;text-transform:uppercase;">
+                Simple HRIS &nbsp;&middot;&nbsp; Pay Statement</div>
+              <div class="hdr-name"
+                style="margin-top:10px;color:#ffffff;font-size:21px;font-weight:700;letter-spacing:-0.02em;">
+                Hi {{ $('pay_vars').item.json.name }},</div>
+              <div style="margin-top:8px;">
+                <span class="hdr-pill"
+                  style="display:inline-block;background:rgba(255,255,255,0.16);border-radius:20px;padding:4px 14px;font-size:11px;color:#ede9fe;font-weight:500;">
+                  Pay period: <strong>{{ $('pay_vars').item.json.week_human }}</strong></span>
+              </div>
+            </td>
+          </tr>
+
+          <!-- RECIPIENT -->
+          <tr>
+            <td style="padding:20px 24px 0;">
+              <div class="sec-lbl-o"
+                style="font-size:10px;letter-spacing:0.15em;font-weight:700;color:#ea580c;text-transform:uppercase;margin-bottom:7px;">
+                Recipient</div>
+              <div class="sec-rule-o"
+                style="height:1px;background:#fed7aa;margin-bottom:10px;"></div>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                class="data-card"
+                style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+                <tr>
+                  <td style="padding:13px 16px;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                      <tr>
+                        <td class="lbl" style="font-size:11px;color:#9ca3af;padding:4px 0;width:100px;font-weight:500;">Name</td>
+                        <td class="val-dk" style="font-size:13px;color:#111827;font-weight:600;padding:4px 0;">{{ $('pay_vars').item.json.name }}</td>
+                      </tr>
+                      <tr>
+                        <td colspan="2" style="padding:2px 0 0;"><div class="row-sep" style="height:1px;background:#f3f4f6;"></div></td>
+                      </tr>
+                      <tr>
+                        <td class="lbl" style="font-size:11px;color:#9ca3af;padding:4px 0;font-weight:500;">Department</td>
+                        <td class="val-dk" style="font-size:13px;color:#111827;font-weight:600;padding:4px 0;">{{ $('pay_vars').item.json.department }}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- EARNINGS -->
+          <tr>
+            <td style="padding:16px 24px 0;">
+              <div class="sec-lbl-o"
+                style="font-size:10px;letter-spacing:0.15em;font-weight:700;color:#ea580c;text-transform:uppercase;margin-bottom:7px;">
+                Earnings</div>
+              <div class="sec-rule-o"
+                style="height:1px;background:#fed7aa;margin-bottom:10px;"></div>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                class="data-card"
+                style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+                <tr>
+                  <td style="padding:13px 16px;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                      <tr>
+                        <td class="lbl" style="font-size:11px;color:#9ca3af;padding:4px 0;font-weight:500;">
+                          Regular ({{ $('pay_vars').item.json.mf_hours }}h &times; &#8369;{{ $('pay_vars').item.json.mf_rate }})</td>
+                        <td align="right" class="val-blue" style="font-size:13px;color:#2563eb;font-weight:700;padding:4px 0;">
+                          &#8369;{{ $('pay_vars').item.json.mf_pay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+                      </tr>
+                      <tr>
+                        <td colspan="2" style="padding:2px 0 0;"><div class="row-sep" style="height:1px;background:#f3f4f6;"></div></td>
+                      </tr>
+                      <tr>
+                        <td class="lbl" style="font-size:11px;color:#9ca3af;padding:4px 0;font-weight:500;">
+                          OT ({{ $('pay_vars').item.json.mf_ot_hours }}h &times; &#8369;{{ $('pay_vars').item.json.ot_rate }})</td>
+                        <td align="right" class="val-blue" style="font-size:13px;color:#2563eb;font-weight:700;padding:4px 0;">
+                          &#8369;{{ $('pay_vars').item.json.ot_pay.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- BONUSES -->
+          <tr>
+            <td style="padding:16px 24px 0;">
+              <div class="sec-lbl-v"
+                style="font-size:10px;letter-spacing:0.15em;font-weight:700;color:#7c3aed;text-transform:uppercase;margin-bottom:7px;">
+                Bonuses</div>
+              <div class="sec-rule-v"
+                style="height:1px;background:#ddd6fe;margin-bottom:10px;"></div>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                class="data-card"
+                style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;">
+                <tr>
+                  <td style="padding:13px 16px;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                      <tr>
+                        <td class="lbl" style="font-size:11px;color:#9ca3af;padding:4px 0;width:150px;font-weight:500;">Tech Bonus</td>
+                        <td align="right" class="val-violet" style="font-size:13px;color:#7c3aed;font-weight:700;padding:4px 0;">
+                          &#8369;{{ $('pay_vars').item.json.tech_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+                      </tr>
+                      <tr>
+                        <td colspan="2" style="padding:2px 0 0;"><div class="row-sep" style="height:1px;background:#f3f4f6;"></div></td>
+                      </tr>
+                      <tr>
+                        <td class="lbl" style="font-size:11px;color:#9ca3af;padding:4px 0;font-weight:500;">Attendance Bonus</td>
+                        <td align="right" class="val-violet" style="font-size:13px;color:#7c3aed;font-weight:700;padding:4px 0;">
+                          &#8369;{{ $('pay_vars').item.json.attendance_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+                      </tr>
+                      <tr>
+                        <td colspan="2" style="padding:2px 0 0;"><div class="row-sep" style="height:1px;background:#f3f4f6;"></div></td>
+                      </tr>
+                      <tr>
+                        <td class="lbl" style="font-size:11px;color:#9ca3af;padding:4px 0;font-weight:500;">Performance Bonus</td>
+                        <td align="right" class="val-violet" style="font-size:13px;color:#7c3aed;font-weight:700;padding:4px 0;">
+                          &#8369;{{ $('pay_vars').item.json.performance_bonus.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- TOTAL PAY -->
+          <tr>
+            <td style="padding:20px 24px 8px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                class="total-card"
+                style="background:linear-gradient(135deg,#312e81 0%,#4338ca 42%,#c2410c 100%);border-radius:12px;">
+                <tr>
+                  <td style="padding:20px 22px;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                      <tr>
+                        <td class="total-lbl"
+                          style="color:#c7d2fe;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;font-weight:700;vertical-align:bottom;padding-bottom:3px;">
+                          Total Pay</td>
+                        <td align="right" class="total-php"
+                          style="color:#ffffff;font-size:23px;font-weight:800;letter-spacing:-0.02em;vertical-align:bottom;">
+                          &#8369;{{ $('pay_vars').item.json.total_pay_php.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) }}
+                          <span class="total-cur" style="font-size:11px;font-weight:600;color:#a5b4fc;letter-spacing:0.04em;">PHP</span></td>
+                      </tr>
+                      <tr>
+                        <td class="total-usdlbl"
+                          style="color:#a5b4fc;font-size:11px;font-weight:400;padding-top:5px;">
+                          Total USD Pay:</td>
+                        <td align="right" class="total-usd"
+                          style="color:#e0e7ff;font-size:12px;font-weight:600;padding-top:5px;">
+                          ${{ $('pay_vars').item.json.total_pay_usd }} USD</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- FOOTER -->
+          <tr>
+            <td class="footer-wrap"
+              style="background:#f8fafc;border-top:1px solid #f1f5f9;padding:13px 22px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td style="vertical-align:middle;width:34px;">
+                    <img src="https://host.simple.biz/email/simplelogo.png" alt="Simple" width="34"
+                      style="display:block;height:auto;width:34px;border:0;" /></td>
+                  <td style="vertical-align:middle;padding-left:10px;text-align:right;">
+                    <div class="footer-title" style="font-size:11px;color:#111827;font-weight:700;">Simple &nbsp;&middot;&nbsp; Confidential</div>
+                    <div class="footer-sub" style="font-size:10px;color:#9ca3af;margin-top:2px;">Automated dispatch from Simple HRIS</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
+
 </html>

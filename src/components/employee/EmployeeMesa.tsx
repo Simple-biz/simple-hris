@@ -13,7 +13,6 @@ import {
   Users,
   CheckCircle2,
   Sparkles,
-  GraduationCap,
   ArrowRight,
   History as HistoryIcon,
   Lock,
@@ -30,7 +29,6 @@ import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
-import EmployeeFpu from './EmployeeFpu';
 
 interface Props {
   employeeEmail: string;
@@ -39,7 +37,7 @@ interface Props {
   startDate?: string | null;
 }
 
-type SubTab = 'about' | 'fpu' | 'request' | 'history';
+type SubTab = 'about' | 'request' | 'history';
 
 // Weekly contribution shape — employee ₱100, company (Simple.biz) ₱400.
 // The "matched four times over" copy in About is the source of truth here:
@@ -87,7 +85,7 @@ export default function EmployeeMesa({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-gradient-to-br from-white via-teal-50/40 to-emerald-50/20 p-4 sm:p-6 dark:bg-none dark:bg-[#0d1117]">
       <div className="mx-auto w-full max-w-4xl space-y-6">
-        {/* Sub-tab switcher (About MESA · FPU Enrollment) */}
+        {/* Sub-tab switcher */}
         <div
           role="tablist"
           aria-label="MESA sections"
@@ -99,13 +97,6 @@ export default function EmployeeMesa({
             icon={HeartHandshake}
             label="About MESA"
             tabKey="about"
-          />
-          <SubTabButton
-            active={subTab === 'fpu'}
-            onClick={() => setSubTab('fpu')}
-            icon={GraduationCap}
-            label="FPU Enrollment"
-            tabKey="fpu"
           />
           <SubTabButton
             active={subTab === 'request'}
@@ -131,15 +122,7 @@ export default function EmployeeMesa({
             exit={{ opacity: 0, y: -6, filter: 'blur(2px)' }}
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
           >
-            {subTab === 'fpu' ? (
-              <EmployeeFpu
-                employeeEmail={employeeEmail}
-                employeeName={employeeName ?? null}
-                department={department ?? null}
-                startDate={startDate ?? null}
-                embedded
-              />
-            ) : subTab === 'request' ? (
+            {subTab === 'request' ? (
               <MesaRequestForm
                 employeeEmail={employeeEmail}
                 employeeName={employeeName ?? null}
@@ -150,12 +133,12 @@ export default function EmployeeMesa({
               <MesaHistory
                 isMember={isMember}
                 startDate={startDate ?? null}
-                onGoToFpu={() => setSubTab('fpu')}
+                onGoToRequest={() => setSubTab('request')}
               />
             ) : (
               <AboutMesa
                 isMember={isMember}
-                onGoToFpu={() => setSubTab('fpu')}
+                onGoToRequest={() => setSubTab('request')}
               />
             )}
           </motion.div>
@@ -210,10 +193,10 @@ function SubTabButton({
 
 function AboutMesa({
   isMember,
-  onGoToFpu,
+  onGoToRequest,
 }: {
   isMember: boolean | null;
-  onGoToFpu: () => void;
+  onGoToRequest: () => void;
 }) {
   return (
     <div className="space-y-6">
@@ -380,39 +363,39 @@ function AboutMesa({
           </p>
         </Section>
 
-        {/* How to join — FPU is the only path in */}
+        {/* How to join */}
         <section className="space-y-3">
           <div className="flex items-center gap-3 px-1">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-orange-50 to-amber-100/70 text-orange-600 ring-1 ring-orange-100 dark:from-orange-950/60 dark:to-amber-950/40 dark:text-orange-300 dark:ring-orange-900/60">
-              <GraduationCap className="h-4 w-4" />
+              <ClipboardList className="h-4 w-4" />
             </div>
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300">
                 How to join MESA
               </p>
               <h3 className="text-base font-semibold text-zinc-900 dark:text-white">
-                Complete Financial Peace University first
+                Complete FPU, then submit an Opt-in request
               </h3>
             </div>
           </div>
           <Card className="overflow-hidden border-orange-100/80 shadow-sm dark:border-orange-900/40">
             <CardContent className="p-5 sm:p-6">
               <p className="text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
-                The <strong>only way to join MESA</strong> is to complete an upcoming
-                Financial Peace University (FPU) class. New MESA enrollment opens three times
-                per year, each time following an FPU cohort.
+                The <strong>only way to join MESA</strong> is to complete a Financial Peace
+                University (FPU) class. Once you finish, submit an <strong>Opt-in request</strong>{' '}
+                using the Request tab — HR will review and enroll you.
               </p>
               <div className="mt-4 flex flex-wrap items-center gap-3">
                 <Button
                   type="button"
-                  onClick={onGoToFpu}
+                  onClick={onGoToRequest}
                   className="bg-orange-500 text-white shadow-sm hover:bg-orange-600 focus-visible:ring-orange-500/40 dark:bg-orange-500 dark:hover:bg-orange-400"
                 >
-                  Sign up for FPU
+                  Apply for MESA
                   <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Button>
                 <span className="text-xs text-zinc-500 dark:text-zinc-500">
-                  Switches to the FPU Enrollment tab so you can review class details and submit your form.
+                  Opens the Request tab to submit your opt-in.
                 </span>
               </div>
             </CardContent>
@@ -1117,11 +1100,11 @@ function RequestStatusBadge({ status }: { status: string }) {
 function MesaHistory({
   isMember,
   startDate,
-  onGoToFpu,
+  onGoToRequest,
 }: {
   isMember: boolean | null;
   startDate: string | null;
-  onGoToFpu: () => void;
+  onGoToRequest: () => void;
 }) {
   if (isMember === null) {
     return (
@@ -1153,10 +1136,10 @@ function MesaHistory({
               <div className="mt-4">
                 <Button
                   type="button"
-                  onClick={onGoToFpu}
+                  onClick={onGoToRequest}
                   className="bg-orange-500 text-white shadow-sm hover:bg-orange-600 focus-visible:ring-orange-500/40 dark:bg-orange-500 dark:hover:bg-orange-400"
                 >
-                  Sign up for FPU
+                  Apply for MESA
                   <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Button>
               </div>

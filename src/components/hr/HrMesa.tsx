@@ -12,6 +12,10 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
+  Clock,
+  XCircle,
+  X,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -24,7 +28,7 @@ import HrFpuEnrollments from './HrFpuEnrollments';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 
-type MesaTab = 'eligible' | 'fpu';
+type MesaTab = 'eligible' | 'requests' | 'fpu';
 
 type EligibleRow = {
   key: string;
@@ -83,6 +87,13 @@ export default function HrMesa() {
             tabKey="eligible"
           />
           <SubTabButton
+            active={tab === 'requests'}
+            onClick={() => setTab('requests')}
+            icon={ClipboardList}
+            label="Opt-in Requests"
+            tabKey="requests"
+          />
+          <SubTabButton
             active={tab === 'fpu'}
             onClick={() => setTab('fpu')}
             icon={GraduationCap}
@@ -99,7 +110,13 @@ export default function HrMesa() {
             exit={{ opacity: 0, y: -6, filter: 'blur(2px)' }}
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
           >
-            {tab === 'eligible' ? <MesaEligibleList /> : <FpuEmbed />}
+            {tab === 'eligible' ? (
+            <MesaEligibleList />
+          ) : tab === 'requests' ? (
+            <MesaOptInQueue />
+          ) : (
+            <FpuEmbed />
+          )}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -506,6 +523,338 @@ function SkeletonRows({ count }: { count: number }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ── Opt-in Request Queue ───────────────────────────────────────────────────
+
+interface OptInRequest {
+  id: string;
+  work_email: string;
+  full_name: string;
+  department: string;
+  fpu_date: string | null;
+  status: string;
+  review_notes: string | null;
+  reviewed_by: string | null;
+  created_at: string;
+}
+
+let cachedOptInRequests: OptInRequest[] | null = null;
+
+function MesaOptInQueue() {
+  const [rows, setRows] = useState<OptInRequest[]>(() => cachedOptInRequests ?? []);
+  const [loading, setLoading] = useState(cachedOptInRequests === null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [query, setQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [reviewTarget, setReviewTarget] = useState<OptInRequest | null>(null);
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [reviewing, setReviewing] = useState(false);
+
+  const load = async (showSpinner = true) => {
+    if (showSpinner) setLoading(true); else setRefreshing(true);
+    try {
+      const res = await fetch('/api/mesa-requests?request_type=opt_in', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { rows?: OptInRequest[] };
+      const data = json.rows ?? [];
+      cachedOptInRequests = data;
+      setRows(data);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load opt-in requests');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (cachedOptInRequests !== null) return;
+    void load(true);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (filterStatus && r.status !== filterStatus) return false;
+      if (!q) return true;
+      return (
+        r.work_email.toLowerCase().includes(q) ||
+        r.full_name.toLowerCase().includes(q) ||
+        r.department.toLowerCase().includes(q)
+      );
+    });
+  }, [rows, query, filterStatus]);
+
+  const stats = useMemo(() => ({
+    total: rows.length,
+    pending: rows.filter((r) => r.status === 'pending').length,
+    approved: rows.filter((r) => r.status === 'approved').length,
+  }), [rows]);
+
+  const openReview = (r: OptInRequest) => {
+    setReviewTarget(r);
+    setReviewNotes('');
+  };
+
+  const submitReview = async (status: 'approved' | 'denied') => {
+    if (!reviewTarget) return;
+    setReviewing(true);
+    try {
+      const res = await fetch(`/api/mesa-requests/${reviewTarget.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, review_notes: reviewNotes.trim() || null }),
+      });
+      if (!res.ok) {
+        const j = (await res.json()) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+      // On approval, flip the mesa_member flag automatically
+      if (status === 'approved') {
+        try {
+          await fetch('/api/toggle-mesa-member', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              workEmail: reviewTarget.work_email,
+              mesaMember: true,
+              name: reviewTarget.full_name,
+            }),
+          });
+        } catch {
+          toast.error('Approved, but could not auto-enroll in MESA — please toggle manually in Rates.');
+        }
+      }
+      toast.success(`Opt-in request ${status}`);
+      setReviewTarget(null);
+      cachedOptInRequests = null;
+      await load(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Review failed');
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Stats */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatCard label="Total opt-in requests" value={stats.total} tone="teal" />
+        <StatCard label="Pending review" value={stats.pending} tone="zinc" />
+        <StatCard label="Approved" value={stats.approved} tone="teal" />
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, email, department..."
+            className="h-9 border-zinc-200 bg-white pl-9 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60"
+          />
+        </div>
+        <select
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+          className="h-9 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300"
+        >
+          <option value="">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="denied">Denied</option>
+        </select>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => { cachedOptInRequests = null; void load(false); toast.success('Refreshed'); }}
+          disabled={refreshing || loading}
+          className="gap-1.5"
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Table */}
+      <Card className="overflow-hidden border-teal-100/80 shadow-sm dark:border-teal-900/40">
+        <CardHeader className="border-b border-teal-100/80 bg-teal-50/30 px-5 py-3 dark:border-teal-900/40 dark:bg-teal-950/20">
+          <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
+            {loading ? 'Loading...' : `${filtered.length} opt-in request${filtered.length === 1 ? '' : 's'}`}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="divide-y divide-teal-100/60 dark:divide-teal-900/40">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-4 px-4 py-3">
+                  <div className="h-4 w-32 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+                  <div className="h-3 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+                  <div className="ml-auto h-7 w-16 animate-pulse rounded bg-teal-100/60 dark:bg-teal-900/30" />
+                </div>
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 px-5 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+              <Inbox className="h-6 w-6 text-zinc-400" />
+              {rows.length === 0 ? 'No opt-in requests yet.' : 'No results match your search.'}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-teal-100/80 bg-teal-50/40 text-[11px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-900/40 dark:bg-teal-950/30 dark:text-teal-300">
+                  <tr>
+                    <th className="px-4 py-2.5">Employee</th>
+                    <th className="px-4 py-2.5">Department</th>
+                    <th className="px-4 py-2.5">FPU Completed</th>
+                    <th className="px-4 py-2.5 text-right">Status</th>
+                    <th className="px-4 py-2.5 text-right">Submitted</th>
+                    <th className="px-4 py-2.5 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-teal-100/60 dark:divide-teal-900/40">
+                  {filtered.map((r) => (
+                    <tr key={r.id} className="transition-colors hover:bg-teal-50/40 dark:hover:bg-teal-950/20">
+                      <td className="px-4 py-3" data-label="Employee">
+                        <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.full_name}</div>
+                        <div className="mt-0.5 font-mono text-[11px] text-zinc-500">{r.work_email}</div>
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Department">
+                        {r.department}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="FPU Completed">
+                        {r.fpu_date ?? <span className="text-zinc-400">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right" data-label="Status">
+                        {r.status === 'approved' ? (
+                          <Badge variant="outline" className="border-teal-200 bg-teal-50 text-[10.5px] font-semibold uppercase tracking-wide text-teal-700 dark:border-teal-500/40 dark:bg-teal-500/15 dark:text-teal-200">
+                            <CheckCircle2 className="mr-1 h-3 w-3" />Approved
+                          </Badge>
+                        ) : r.status === 'denied' ? (
+                          <Badge variant="outline" className="border-rose-200 bg-rose-50 text-[10.5px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/15 dark:text-rose-200">
+                            <XCircle className="mr-1 h-3 w-3" />Denied
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[10.5px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200">
+                            <Clock className="mr-1 h-3 w-3" />Pending
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-500" data-label="Submitted">
+                        {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </td>
+                      <td className="px-4 py-3 text-right" data-label="Action">
+                        {r.status === 'pending' ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openReview(r)}
+                            className="h-7 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300"
+                          >
+                            Review
+                          </Button>
+                        ) : (
+                          <span className="text-[11px] text-zinc-400">
+                            {r.reviewed_by ? `by ${r.reviewed_by.split('@')[0]}` : '—'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Review modal */}
+      {reviewTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-teal-600 dark:text-teal-400">
+                  MESA Opt-in Request
+                </p>
+                <h3 className="mt-0.5 text-base font-bold text-zinc-900 dark:text-white">
+                  {reviewTarget.full_name}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReviewTarget(null)}
+                className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              <InfoRow label="Email" value={reviewTarget.work_email} />
+              <InfoRow label="Department" value={reviewTarget.department} />
+              {reviewTarget.fpu_date && <InfoRow label="FPU Completed" value={reviewTarget.fpu_date} />}
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                  Review Notes (optional)
+                </p>
+                <textarea
+                  value={reviewNotes}
+                  onChange={(e) => setReviewNotes(e.target.value)}
+                  rows={3}
+                  placeholder="Add a note for the employee..."
+                  className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                />
+              </div>
+              <div className="rounded-md border border-teal-100 bg-teal-50/60 p-3 text-xs leading-relaxed text-teal-800 dark:border-teal-900/40 dark:bg-teal-950/20 dark:text-teal-200">
+                Approving will automatically set this employee as a MESA member in the system.
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <Button type="button" variant="outline" size="sm" onClick={() => setReviewTarget(null)} disabled={reviewing}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={reviewing}
+                onClick={() => submitReview('denied')}
+                className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300"
+              >
+                <XCircle className="mr-1.5 h-3.5 w-3.5" />
+                Deny
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={reviewing}
+                onClick={() => submitReview('approved')}
+                className="bg-teal-600 text-white hover:bg-teal-700"
+              >
+                <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                Approve &amp; Enroll
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</p>
+      <p className="mt-0.5 text-sm text-zinc-800 dark:text-zinc-200">{value}</p>
     </div>
   );
 }

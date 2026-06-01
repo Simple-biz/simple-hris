@@ -76,9 +76,9 @@ function BonusChip({ row }: { row: QueueRow }) {
   return (
     <span
       className="inline-flex items-center gap-1 rounded-full bg-emerald-100/80 px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-      title={`Bonus added on top of regular + OT pay: ${parts.join(' · ')}`}
+      title={`Bonus already included in the total above (${parts.join(' + ')})`}
     >
-      + ₱{row.bonusTotalPHP.toLocaleString('en-PH')}
+      {`incl. ₱${row.bonusTotalPHP.toLocaleString('en-PH')}`}
       <span className="text-[8px] uppercase tracking-[0.14em] opacity-80">bonus</span>
     </span>
   );

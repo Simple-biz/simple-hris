@@ -612,6 +612,27 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     return hoursByDateKey;
   }, [mergedRow, mergedColumns, disputes]);
 
+  const isHsl = (memberPay?.department ?? '').trim().toLowerCase() === 'hsl';
+
+  /** For HSL: ISO dates where overnight combination (today + tomorrow OR yesterday + today) reaches ≥ 7h. */
+  const hslOvernightIsos = useMemo(() => {
+    const set = new Set<string>();
+    if (!isHsl) return set;
+    for (const [key, sec] of mergedHoursByDateKey) {
+      if (sec <= 0 || sec >= 7 * 3600) continue;
+      const [y, m, d] = key.split('-').map(Number);
+      // Forward
+      const nextDay = new Date(y, m - 1, d + 1);
+      const nextSec = mergedHoursByDateKey.get(pabDateKey(nextDay)) ?? 0;
+      if (sec + nextSec >= 7 * 3600) { set.add(key); continue; }
+      // Backward
+      const prevDay = new Date(y, m - 1, d - 1);
+      const prevSec = mergedHoursByDateKey.get(pabDateKey(prevDay)) ?? 0;
+      if (prevSec > 0 && prevSec < 7 * 3600 && prevSec + sec >= 7 * 3600) set.add(key);
+    }
+    return set;
+  }, [isHsl, mergedHoursByDateKey]);
+
   const hoursCalendar = useMemo<PabCalendarDay[][] | null>(() => {
     const weeks = buildCalendarMonthWeeksIncludingWeekends(monthStart, monthEnd, mergedHoursByDateKey);
     return weeks.length > 0 ? weeks : null;
@@ -1016,7 +1037,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           disputeGrantsPabForgiveness(dispute) &&
                           !day.passes &&
                           (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
-                        const effectivelyPasses = day.passes || forgiven;
+                        // For HSL: overnight-qualifying days (today + tomorrow OR yesterday + today ≥ 7h) show green
+                        const hslOvernight = isHsl && inMonth && hslOvernightIsos.has(dayIso);
+                        const effectivelyPasses = day.passes || forgiven || hslOvernight;
 
                         let cellBorder: string;
                         if (!inMonth) {
@@ -1036,6 +1059,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         } else if (isHoliday) {
                           cellBorder =
                             'border-blue-300 bg-blue-50 dark:border-blue-700/70 dark:bg-blue-950/40';
+                        } else if (weekend && isHsl && effectivelyPasses) {
+                          cellBorder =
+                            'border-emerald-300 bg-emerald-50 dark:border-emerald-700/70 dark:bg-emerald-950/40';
                         } else if (weekend) {
                           if (dispute != null && disputeIsAwaitingResolution(dispute)) {
                             cellBorder =
@@ -1075,6 +1101,8 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         } else if (isHoliday) {
                           hourText = 'text-blue-600 dark:text-blue-400';
                         } else if (effectivelyPasses && !weekend) {
+                          hourText = 'text-emerald-700 dark:text-emerald-400';
+                        } else if (weekend && isHsl && effectivelyPasses) {
                           hourText = 'text-emerald-700 dark:text-emerald-400';
                         } else if (weekend && hours > 0) {
                           hourText = 'text-zinc-700 dark:text-zinc-200';

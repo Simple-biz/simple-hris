@@ -33,8 +33,9 @@ Read the documents in this folder **before** making changes to the codebase. The
 - **PAB canonical column resolution**: Supabase stores `monday`/`tuesday` columns; the merge logic resolves them to ISO dates using source filenames (`resolveCanonicalColumnsToIso()`).
 - **Employee Dashboard "All Time"**: Aggregates pay across all source files with per-file regular/OT split (each file split at 40h, then summed). PAB shows eligible months × ₱5,000.
 - **PA detection requires daily data**: If daily columns are null in Supabase (column-name mismatch from old upload), a warning banner in Step 3 tells the user to re-upload.
-- **Step 5 (Dispatch)**: Currently a placeholder — no payment API is called
-- **Hogan Cycle toggle**: Flag only — no filtering logic implemented yet
+- **Step 5 (HSL Payroll)**: Dedicated HSL step — Initial Pay + KPI Bonus (from HSL Bonus Calculator) + PAB (₱5,000 if eligible, Mon–Sun week logic) + Tech Bonus (₱1,850 if eligible); both PAB and Tech Bonus are included in Total Pay per row and footer total
+- **Step 6 (Dispatch)**: Currently a placeholder — no payment API is called
+- **Hogan Cycle toggle**: Flag used by HSL PAB period logic (`hslAdjustedPabEnd`); full date-range filtering still pending
 - **Lead Gen department**: No bonuses, explicitly excluded by policy
 - **Auth + RBAC** *(implemented)*: NextAuth Google SSO restricted to the `simple.biz` Workspace; JWT stamped with roles from `employee_roles`. `middleware.ts` gates every page route + enforces `?email=` ownership. Two authz layers: role grants (which dashboards/tabs) + a Hidden/View/Edit per-feature overlay (`employee_feature_permissions`, wired on Accounting today; `admin` bypasses). Role revoke triggers a force-logout map that invalidates stale JWTs.
 - **Eight role dashboards**: Accounting (`/`), Admin (`/admin`), Employee (`/employee`), Manager (`/manager`), HR (`/hr`), CEO (`/ceo`), Orphanage (`/orphanage`), Contractor (`/contractor`); Payroll Clerk dispatch is at `/payroll-clerk` and also the Accounting Payment Dispatch tab. Users land on their highest-priority view and hop between entitled views via the sidebar ViewSwitcher (`src/lib/rbac/views.ts`).
@@ -50,7 +51,7 @@ Read the documents in this folder **before** making changes to the codebase. The
 | Path | Purpose |
 |---|---|
 | `src/App.tsx` | Root SPA shell, `activeTab` state |
-| `src/components/PayrollWizard.tsx` | Core feature, 5-step wizard with PAB detection |
+| `src/components/PayrollWizard.tsx` | Core feature, multi-step wizard (Upload → Calc → Additions → Validation → HSL Payroll → Contractors → Dispatch) with PAB detection and HSL-specific pay step |
 | `src/components/Rates.tsx` | Profile viewer + CRUD |
 | `src/components/Overview.tsx` | Admin dashboard |
 | `src/components/employee/EmployeeApp.tsx` | Employee portal shell, tab routing |

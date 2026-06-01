@@ -260,7 +260,7 @@ Implemented in **`src/lib/payroll/dispatch-bonuses.ts`** as a server-side mirror
 
 | Bonus | Amount | Per-week gate | Per-employee gate |
 |---|---|---|---|
-| **Perfect Attendance Bonus (PAB)** | ₱5,000 | `weekEnd ≥ pabPeriodEnd` (final paycheck of the PAB month) | Standard rule: every Mon–Fri in the PAB period ≥ 7h. HSL exception: ≥ 5 qualifying days per Mon–Sun week with weekend reconciliation. Approved disputes can forgive a day at ≥ 4h effective hours. |
+| **Perfect Attendance Bonus (PAB)** | ₱5,000 | `weekEnd ≥ pabPeriodEnd` (final paycheck of the PAB month) | **Standard rule:** every Mon–Fri in the PAB period ≥ 7 h. **HSL rule:** ≥ 5 of the 7 Mon–Sun days ≥ 7 h effective per week; Sat and Sun count independently; overnight shifts split across midnight combine via **forward** (D + D₊₁ ≥ 7 h → D qualifies) and **backward** (D₋₁ + D ≥ 7 h → D qualifies) checks — both days in a qualifying overnight pair earn a passing-day credit. Approved disputes forgive a day at ≥ 4 h effective hours. |
 | **Tech Bonus** | ₱1,850 | `salaryDate ∈ [3rd-week-Monday, 4th-week-Monday)` of its month, where `salaryDate = periodStart + 8d`. Strict 3rd week only — equality, not ≥. Week 1 = the Mon–Sun week containing the 1st of the month, even if partial. | `weekStart ≥ master.start_date + 30d`. Subtle: checked against the period's start date, **not** the salary Tuesday — the wizard's docstring flags this. |
 | **No-rates suppression** | — | — | When neither `regular_rate` nor `ot_rate` is set, every PHP-side bonus is forced to 0. Bonuses on no-rate paystubs would produce misleading totals. |
 
@@ -882,7 +882,7 @@ The lock toggle should also be permission-gated server-side (currently any authe
 ## 10. Open follow-ups
 
 - **Cycle-specific lock** — currently the lock is global. If you ever want cycle A locked while cycle B is open, this needs revisiting (probably move the flag onto `hubstaff_uploads` or a sibling table).
-- **Bonuses in the calculator** — `current-pay.ts` is initial-pay only. Eventually it should match what PayrollWizard outputs (bonuses, OT toggles, manual overrides) so Lenny sees the *final* number, not just the base.
+- **Department-specific bonuses** — Collections tiers, lead-gen, and other per-dept formula bonuses depend on per-employee toggle state that lives only in the wizard's React session and are not mirrored in `current-pay.ts`. The dispatch view will undercount those until the wizard persists a snapshot to the DB.
 - **Wepay tab** — empty in the source CSV (no Wepay employees yet). Tab still exists for when adoption ramps.
 - **Unlocked-only Mark paid** — currently Mark paid works regardless of the lock. Consider gating it on `lockState.locked === true` so dispatches can only be logged during a "live" run.
 - **Webhook out of `payroll.dispatch.locked`** — for slack-style notifications to managers when payroll starts.

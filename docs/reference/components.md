@@ -10,7 +10,7 @@ The app is no longer a single-operator tool. It is **eight role dashboards** tha
 
 | Dashboard | Route | Top component | Primary roles | What it does |
 |---|---|---|---|---|
-| Accounting | `/` -> `/accounting` | `src/App.tsx` | `payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `viewer` | The "Friday Path": Rates, Payroll Wizard, Payment Dispatch, Disputes, Settings |
+| Accounting | `/` -> `/accounting` | `src/App.tsx` | `payroll_coordinator`, `payroll_manager`, `finance`, `hr_coordinator`, `viewer` | The "Friday Path": Rates, Payroll Wizard, Payment Dispatch, Disputes, **MESA**, Settings |
 | Admin | `/admin` | `app/admin/page.tsx` | `admin` | RBAC + feature permissions, employee directory, webhooks, CSV imports, diagnostics, audit |
 | Employee | `/employee` | `EmployeeApp` | everyone except pure contractors | Self-service: hours, pay, PAB, disputes, leaves, profile, MESA/FPU, gifts, team |
 | Manager | `/manager` | `ManagerApp` | `manager` | Department roster, leave approvals, KPI/HSL bonus calculators, medals, transfers |
@@ -53,7 +53,7 @@ Server-side **per-tab access overlay** layered on top of role grants. Today enfo
 
 ### `src/lib/rbac/accounting-tabs.ts`
 
-Computes which Accounting tabs a user may see, combining role grants with the feature-permission overlay; consumed by `src/App.tsx`. Exports `ACCOUNTING_TAB_IDS`, type `AccountingTabId`; `allowedAccountingTabsForRoles`, `allowedAccountingTabsForUser`, `canAccessAccountingTab*`, `accountingTabToFeatureKey`. `payroll_manager` without a privileged accounting role is restricted to `['overview','payment-dispatch','disputes']`; otherwise the role layer returns all tabs. `allowedAccountingTabsForUser` then filters by the overlay -- a tab survives only if its `employee_feature_permissions` access is `view`/`edit` -- except `admin` (in `BYPASS_PERMS_ROLES`). `TAB_TO_FEATURE` maps UI ids (e.g. `payroll-wizard`) to stored feature keys (`payroll_wizard`).
+Computes which Accounting tabs a user may see, combining role grants with the feature-permission overlay; consumed by `src/App.tsx`. Exports `ACCOUNTING_TAB_IDS`, type `AccountingTabId`; `allowedAccountingTabsForRoles`, `allowedAccountingTabsForUser`, `canAccessAccountingTab*`, `accountingTabToFeatureKey`. `payroll_manager` without a privileged accounting role is restricted to `['overview','payment-dispatch','disputes']`; otherwise the role layer returns all tabs. `allowedAccountingTabsForUser` then filters by the overlay -- a tab survives only if its `employee_feature_permissions` access is `view`/`edit` -- except `admin` (in `BYPASS_PERMS_ROLES`). `TAB_TO_FEATURE` maps UI ids (e.g. `payroll-wizard`) to stored feature keys (`payroll_wizard`). **MESA tab** (`'mesa'` -> feature key `'mesa'`) was added 2026-06-01; it falls in the full-access tab set and is gated by the feature-permission overlay like all other tabs.
 
 ### `src/lib/auth/auth-options.ts`
 
@@ -81,7 +81,7 @@ See [RESPONSIVE-DESIGN.md](../design/responsive-design.md) for breakpoints, safe
 
 **RBAC tab gating** (no longer single-operator). On mount `App` fetches the viewer's roles (`GET /api/employee-roles`) and feature permissions (`GET /api/employee-feature-permissions`) in parallel, then computes `allowedAccountingTabsForUser(roles, featurePerms)`. `navigate()` and a settling effect bounce the user off any tab they cannot access (onto `allowedTabs[0]` or `payment-dispatch`), but only after `permsLoaded` flips so the initial render does not kick a non-admin off `overview`. `initialData` (from the server prefetch in `app/accounting/page.tsx`) lets Overview + PayrollWizard skip mount-time fetches.
 
-The `activeTab` cases are: `overview` -> `Overview`, `rates` -> `Rates`, `payroll-wizard` -> `PayrollWizard`, `payment-dispatch` -> `PayrollDispatch` (the same component the Payroll Clerk shell uses), `disputes` -> `PabDisputeQueue`, `notifications` -> `NotificationsPanel`, `settings` -> `SystemSettings`, `announcements` -> a general announcement composer + wall, `s-wall` -> `SWall`. `canPostGeneral`/`isElevated` derive from roles to gate posting.
+The `activeTab` cases are: `overview` -> `Overview`, `rates` -> `Rates`, `payroll-wizard` -> `PayrollWizard`, `payment-dispatch` -> `PayrollDispatch` (the same component the Payroll Clerk shell uses), `disputes` -> `PabDisputeQueue`, `mesa` -> `AccountingMesa`, `notifications` -> `NotificationsPanel`, `settings` -> `SystemSettings`, `announcements` -> a general announcement composer + wall, `s-wall` -> `SWall`. `canPostGeneral`/`isElevated` derive from roles to gate posting.
 
 ---
 
@@ -101,6 +101,27 @@ The `activeTab` cases are: `overview` -> `Overview`, `rates` -> `Rates`, `payrol
 All reason-specific gating uses `isOrphanageStyleReason(reason)` rather than the literal `reason === 'orphanage_visit'` check — so `ceo_visitation` follows the same hour-override / two-stage approval / day-after-removed semantics as orphanage_visit.
 
 See [BUSINESS_LOGIC.md](./business-logic.md#pab-day-dispute-system) and [API_REFERENCE.md](./api-reference.md#patch-apipab-disputesid).
+
+---
+
+---
+
+## `src/components/payroll/AccountingMesa.tsx` *(added 2026-06-01)*
+
+**Accounting -> MESA.** Review queue for employee-submitted MESA requests (opt-in, opt-out, disbursement, return). Replaces the meeting ask for "a MESA tab in Accounting sidebar for mid-week disbursements."
+
+**Layout**: header with stats strip (Total / Pending / Approved / Denied counters), toolbar (free-text search + status filter dropdown + type filter dropdown + Refresh), and a paginated table.
+
+**Table columns**: Employee (name + email), Department, Type (badge), Details (FPU date, disbursement reason + explanation excerpt, return notes), Amount (PHP), Status badge, Submitted date, Action.
+
+**Review modal**: clicking **Review** on a `pending` row opens a modal with all submission fields expanded — email, department, FPU date, disbursement reason + explanation, amount — plus a **Review Notes** textarea (optional), and **Approve** / **Deny** buttons. Approve/Deny calls `PATCH /api/mesa-requests/[id]` with `{ status, review_notes }`. On success the cache is cleared and the table refreshes.
+
+**Module-level cache** (`cachedRequests`) avoids re-fetching when navigating away and back within the session; the Refresh button clears it.
+
+| Endpoint | Use |
+|---|---|
+| `GET /api/mesa-requests` | list all requests (elevated) |
+| `PATCH /api/mesa-requests/[id]` | approve or deny a pending request |
 
 ---
 
@@ -180,7 +201,7 @@ Shared leave-request queue mounted by both **Accounting** (`/`) and **Manager** 
 
 **Layout**: Fixed-width (`w-64`), full height (`h-dvh`), flex column. Below `md`, the sidebar is `fixed` with a slide-in transform; `mobileOpen` (from `App`) controls visibility. From `md` up it is `static` in the flex row. Background uses the orange-to-white gradient (light) or navy gradient (dark) from CSS variables.
 
-**Nav items** (top section, RBAC-filtered): the full set is Overview, Rates, Payroll Wizard, Payment Dispatch, Disputes, Announcements, Notifications, System Settings, and a separately-styled (violet) S-Wall button. The list is filtered to `allowedAccountingTabsForRoles(roles)` so each user sees only their permitted tabs. The **Notifications** item shows an animated unread-count badge (`useEmployeeNotificationsUnread`) or, when unread is 0 but payroll processing is active, a pulsing red dot (`useDispatchLock`).
+**Nav items** (top section, RBAC-filtered): the full set is Overview, Rates, Payroll Wizard, Payment Dispatch, Disputes, **MESA**, Announcements, Notifications, System Settings, and a separately-styled (violet) S-Wall button. The list is filtered to `allowedAccountingTabsForRoles(roles)` so each user sees only their permitted tabs. The **Notifications** item shows an animated unread-count badge (`useEmployeeNotificationsUnread`) or, when unread is 0 but payroll processing is active, a pulsing red dot (`useDispatchLock`).
 - Active item: orange gradient background, right-aligned chevron icon, bold text
 - Inactive item: ghost hover state, muted text
 - Icons from `lucide-react`; logo has a periodic "heartbeat" pulse
@@ -300,9 +321,9 @@ Triggered by trash icon. Shows the employee name + email. On confirm: calls `DEL
 
 ## `src/components/PayrollWizard.tsx`
 
-The core feature. A 5-step wizard for the weekly payroll cycle, called the **"Friday Path"**.
+The core feature. A multi-step wizard for the weekly payroll cycle, called the **"Friday Path"**. Steps: Upload & Preview → Initial Calculation → Additions → Validation → HSL Payroll → Contractors → Dispatch.
 
-**Step navigation**: Left sidebar shows 5 numbered steps with a `layoutId="active-indicator"` animated pill (Framer Motion) that slides between steps. Forward/back buttons in each step. Steps are rendered as `<motion.div>` wrappers inside `<AnimatePresence>` — entering steps slide in from the right (+x), exiting steps slide out to the left (-x), and the direction reverses when going back.
+**Step navigation**: Left sidebar shows numbered steps with a `layoutId="active-indicator"` animated pill (Framer Motion) that slides between steps. Forward/back buttons in each step. Steps are rendered as `<motion.div>` wrappers inside `<AnimatePresence>` — entering steps slide in from the right (+x), exiting steps slide out to the left (-x), and the direction reverses when going back.
 
 ---
 
@@ -458,8 +479,10 @@ Storage keys: `pab_period_overrides` (JSON map), `pab_period_active_month` (`"YY
 #### Right Column Table
 
 For each department tab, shows a table of that department's employees:
-- Name, Hours (from calc), Metric input (number field for formula depts), Bonus toggles, Per-employee bonus total, Final Pay (initial + bonuses)
+- Name, Hours (from calc), Metric input (number field for formula depts), Bonus toggles, **Additions** (separate editable field), **Deductions** (separate editable field), Per-employee bonus total, Final Pay (initial + bonuses)
 - Footer row: department totals
+
+Additions and Deductions are kept in **separate columns** (not a combined net-adjustment field) so accounting can clearly report each component. An employee may carry a bonus, an addition, and a deduction in the same week.
 
 ---
 
@@ -490,7 +513,36 @@ For each department tab, shows a table of that department's employees:
 
 ---
 
-### Step 5 — Dispatch
+### Step 5 — HSL Payroll
+
+**Purpose**: Review and finalize pay for Hogan Smith Law employees — a separate calculation path from the main Additions tab.
+
+**Header banner**: Shows department name, active PAB month, employee count, total initial pay, total KPI bonuses, and count of ready/locked KPI periods.
+
+**KPI Bonus Periods summary**: Cards per HSL sub-department (Blue, Green, Yellow, etc.) showing the period type (weekly/monthly), employee count, total bonus amount, and status badge (ready / locked). Data comes from manager submissions via the HSL Bonus Calculator.
+
+**Employee table**: Paginated (50 rows), searchable by name or email. Columns:
+
+| Column | Details |
+|---|---|
+| Employee | Name + email |
+| Hours | `totalHours` from Hubstaff |
+| Initial Pay | Computed from HSL hourly rate |
+| KPI Bonus | Pulled from manager-submitted HSL bonus periods |
+| **PAB** | Tri-state pill: ✓ Eligible / ✗ Ineligible / ⏳ In Progress — clickable, opens the PAB Calendar modal. HSL uses Mon–Sun weeks (≥5 days at ≥7 h). ₱5,000 added to Total Pay when eligible. |
+| **Tech Bonus** | Read-only pill: `+₱1,850` when the salary date falls in the 3rd full Mon–Sun week AND PHP rates exist AND ≥30 days tenure. `—` otherwise. |
+| Override | Manual bonus override input (replaces KPI Bonus when set). Apply / Clear buttons. |
+| Total Pay | `initialPay + effectiveBonus + pabAmt + techAmt` |
+
+**Footer totals row**: sums Initial Pay, effective KPI/Override, PAB total, Tech Bonus total, and Grand Total across all HSL employees (not just the current page).
+
+**PAB logic for HSL**: uses `checkHslPabEligibility()` — Mon–Sun weeks, ≥5-of-7 days at ≥7 h (vs the Mon–Fri every-day rule for regular staff). Eligibility is drawn from the same `pabStatusByEmail` / `perfectAttendanceEligible` memos used elsewhere; clicking the PAB pill opens the shared PAB Calendar modal which auto-detects the HSL employee and renders week-based rows.
+
+**Tech Bonus logic for HSL**: same `techBonusEligible` set as regular employees — iterates `effectiveCalcResults` (which includes HSL employees) and applies the standard 3rd-week + 30-day + PHP-rates gates.
+
+---
+
+### Step 6 — Dispatch
 
 **Purpose**: Confirm and send payroll.
 
@@ -499,6 +551,10 @@ For each department tab, shows a table of that department's employees:
 **Buttons**:
 - "Preview Paystubs" → `toast.info("Coming soon")` (placeholder)
 - "Confirm & Dispatch" → `toast.success("Payroll dispatched")` + resets wizard to Step 1 (placeholder — no actual payment API call)
+
+**Excel (XLSX) export.** The payroll report export includes the **Employee ID** (`YYMM-NNNN`) column so exported files can be cross-referenced with other records by ID. Columns: Employee, Email, Department, Hours, Regular, OT, Bonuses, MESA, Net Pay, **Employee ID**.
+
+**Audit log attribution.** Every dispatched payroll run writes an audit entry attributed to the **currently logged-in user**. A bug that caused edits by one user (e.g. Carla T) to appear under a different user (e.g. Kane R) has been fixed. When no session user is resolvable the actor falls back to `Payroll Wizard`.
 
 **Design note**: The large centered circle animation signals "this is a significant action." The indigo accent (distinct from the global orange/blue) is used throughout the wizard as a visual cue that you are inside a specific workflow, not the general app.
 
@@ -829,6 +885,15 @@ The **Onboarding Form** sub-tab -- the self-serve, no-SSO onboarding-link manage
 - `SetOnboardingWorkEmailDialog` (richest) -- suggests an `@simple.biz` address (`POST /api/hr/work-email/suggest`), debounced availability check, department select, regular/OT rate inputs, and a Hubstaff project multi-select. Save stages the pending hire and best-effort provisions the Hubstaff workspace via the `create_workspace_account` webhook.
 - `SubmissionDetailDialog` -- folder-style tabs (Summary / Non-Solicitation / Privacy / Contract); Summary shows personal info, W-8BEN (signed-URL View + Download), payment method, signature previews; agreement tabs render the canonical legal copy from `agreement-texts.tsx` + signed/not-signed badge.
 
+**Invite workflow (2026-06-01).** All onboarding invites — Hubstaff and Workspace — are sent simultaneously in a single weekly batch via a combined webhook call (one point of failure). The former staggered creation flow has been replaced. Each batch delivers two emails to the hire: **Hubstaff Overview** and **Roboform** (password manager, buttons link to Google Drive).
+
+**Bulk onboarding for Lead Gen (required change).** The HRIS connects to the Lead Gen Google Sheet (same pattern as Master List / New Payroll Dashboard). Required additions:
+- **Refresh button** — pulls all pending hires from the connected Lead Gen sheet.
+- **Bulk link generation** — "Generate Link" sends invites to all personal emails in the batch simultaneously (same-department assumption).
+- **Email-only input** — only a batch of personal emails is required; first name and last name are no longer collected at this stage (captured later via new hire paperwork).
+
+> **Pending:** Confirm with Drew that the Lead Gen sheet is cleaned up weekly so stale entries do not receive duplicate links.
+
 | Action | Endpoint / webhook |
 |---|---|
 | List / create | `GET/POST /api/hr/onboarding-submissions` |
@@ -851,6 +916,18 @@ The **Offboarding** tab. Two tabs: **Active employees** (offboard) and **Offboar
 | Restore / re-onboard | `POST /api/hr/reonboard` |
 
 The DB update commits independently of the n8n `offboarding` webhook (deactivates the Workspace account + termination email); a webhook hiccup is a warning toast, not a hard failure.
+
+**Department-based deletion timeline (2026-06-01).** The offboarding automation applies different deletion timelines per department:
+- **Lead Gen** — email and all accounts deleted **immediately**.
+- **All other departments** — Gmail deactivated and held for a **two-week delay**, then deleted.
+
+The n8n offboarding webhook reads the employee's department from the payload to branch accordingly. Kentshin W coordinates with Sir Vinci (automation owner) to keep this logic consistent.
+
+**Attendance trigger.** When Manager Jackie marks a new hire as **"No Attend"** in orientation, the system automatically offboards them. Lead Gen → immediate; all other departments → two-week delay.
+
+**Hubstaff member removal.** On offboard the "remove member" call to Hubstaff runs **immediately** (not after a one-week delay). The pay rate payload is set to **zero** on removal to prevent display artefacts.
+
+**Known bug — duplicate UI entries.** The offboarding Active list can show two rows for the same person when `global_master_list` has duplicate `(personal_email, department)` keys. Offboarding either row currently removes both. Must be fixed so each action targets only the intended row.
 
 ### `src/components/hr/HrTransfers.tsx`
 
@@ -1140,7 +1217,25 @@ FPU (Financial Peace University) enrollment sign-up form. Standalone tab OR embe
 
 ### `src/components/employee/EmployeeMesa.tsx`
 
-"MESA" tab (Medical Emergency Savings Account). Three sub-tabs: About MESA, FPU Enrollment (renders `EmployeeFpu embedded`), History. MESA = employee 100/week + company 400/week match = 500/week. **Enrollment check:** reads the employee's own hourly-rate row `mesa_member` flag. **History ledger** (`buildWeeklyLedger`): Monday-anchored weeks from `start_date` -> today; the in-progress week is flagged and **excluded from cumulative totals**. Display-only projection (no per-week rows persisted yet). Data: `GET /api/employee-hourly-rates?email=` (filtered self-lookup endpoint), reads `rows[0].mesa_member`. No writes.
+"MESA" tab (Medical Emergency Savings Account). **Four sub-tabs** *(Request added 2026-06-01)*:
+
+| Sub-tab | Content |
+|---|---|
+| About MESA | Program overview: why it exists, what it covers, contribution breakdown (PHP 100 employee + PHP 400 company = PHP 500/week), program rules, FPU-only enrollment path |
+| FPU Enrollment | Embeds `EmployeeFpu embedded` — FPU sign-up |
+| **Request** *(new)* | Self-service form to submit a MESA request; past submissions shown below the form |
+| History | Projected weekly contribution ledger (`buildWeeklyLedger`) |
+
+**Request sub-tab — `MesaRequestForm`:** A single dropdown selects the request type (Opt-in, Opt-out, Disbursement Request, Return). The relevant panel animates in via a `motion.div` with `key={requestType}` (no exit animation — old panel unmounts instantly, new one fades in once from slightly above, no cycling). Changing the option resets all sub-form state.
+
+- **Opt-in**: enrollment confirmation checkbox + 5 agreement checkboxes + FPU completion date input.
+- **Opt-out**: single removal confirmation checkbox.
+- **Disbursement**: confirmation checkbox + reason dropdown (Medical Emergency / Natural Disaster / Computer Repair / Other) + explanation textarea (250-char) + PHP amount input + policy note.
+- **Return**: optional notes field.
+
+All types share pre-filled Simple.biz email (read-only), Full Name, and Department (seeded from session props). Submit -> `POST /api/mesa-requests`. Past submissions fetched on tab enter via `GET /api/mesa-requests?email=` and shown in a history table with type / reason / amount / status badge / date.
+
+**Enrollment check:** reads `mesa_member` flag from `GET /api/employee-hourly-rates?email=` (self-lookup). **History ledger** (`buildWeeklyLedger`): Monday-anchored weeks from `start_date` → today; the in-progress week is excluded from totals. Display-only projection — no per-week rows persisted yet.
 
 ### `src/components/employee/EmployeeLeaves.tsx`
 

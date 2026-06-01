@@ -66,6 +66,8 @@ type EmployeePabCalendarProps = {
    * stay in sync with an external CSV / period picker.
    */
   pabMonthOverride?: { year: number; month: number } | null;
+  /** HSL employees use 5-of-7 Mon–Sun rule; overnight shifts (today + tomorrow ≥ 7h) show green. */
+  isHsl?: boolean;
 };
 
 const NON_DATE_COLS = new Set([
@@ -161,6 +163,7 @@ export default function EmployeePabCalendar({
   className,
   trimToElapsedWeeks = true,
   pabMonthOverride = null,
+  isHsl = false,
 }: EmployeePabCalendarProps) {
   const [aliasEmails, setAliasEmails] = useState<string[]>([]);
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
@@ -411,12 +414,13 @@ export default function EmployeePabCalendar({
   }, [disputes]);
 
   // ── Build calendar weeks from merged row + month range ──────────────────
-  const pabCalendar = useMemo<PabCalendarDay[][] | null>(() => {
-    if (!pabMonthRange) return null;
+  const { pabCalendar, overnightIsos } = useMemo<{ pabCalendar: PabCalendarDay[][] | null; overnightIsos: Set<string> }>(() => {
+    const empty = { pabCalendar: null as PabCalendarDay[][] | null, overnightIsos: new Set<string>() };
+    if (!pabMonthRange) return empty;
     const cols = mergedColumns;
     if (!mergedRow || !cols.length) {
-      const empty = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, new Map());
-      return empty.length > 0 ? empty.slice(0, 1) : null;
+      const weeks = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, new Map());
+      return { pabCalendar: weeks.length > 0 ? weeks.slice(0, 1) : null, overnightIsos: new Set() };
     }
     const hoursByDateKey = new Map<string, number>();
     const dateCols = cols.filter(isDateCol);
@@ -455,9 +459,25 @@ export default function EmployeePabCalendar({
       const existing = hoursByDateKey.get(key) ?? 0;
       if (existing < 7 * 3600) hoursByDateKey.set(key, 7 * 3600);
     }
+
+    // For HSL: compute overnight-qualifying dates (forward + backward)
+    const overnightSet = new Set<string>();
+    if (isHsl) {
+      for (const [key, sec] of hoursByDateKey) {
+        if (sec <= 0 || sec >= 7 * 3600) continue;
+        const [ky, km, kd] = key.split('-').map(Number);
+        const nextDay = new Date(ky, km - 1, kd + 1);
+        const nextSec = hoursByDateKey.get(pabDateKey(nextDay)) ?? 0;
+        if (sec + nextSec >= 7 * 3600) { overnightSet.add(key); continue; }
+        const prevDay = new Date(ky, km - 1, kd - 1);
+        const prevSec = hoursByDateKey.get(pabDateKey(prevDay)) ?? 0;
+        if (prevSec > 0 && prevSec < 7 * 3600 && prevSec + sec >= 7 * 3600) overnightSet.add(key);
+      }
+    }
+
     const weeks = buildPabCalendarWeeks(pabMonthRange.start, pabMonthRange.end, hoursByDateKey);
 
-    if (!trimToElapsedWeeks) return weeks;
+    if (!trimToElapsedWeeks) return { pabCalendar: weeks, overnightIsos: overnightSet };
 
     // Trim to elapsed weeks (employee-facing view)
     let latest: Date | null = null;
@@ -477,8 +497,11 @@ export default function EmployeePabCalendar({
       const weekStart = new Date(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate());
       return weekStart.getTime() <= cutoff.getTime();
     });
-    return trimmed.length > 0 ? trimmed : weeks.slice(0, 1);
-  }, [mergedRow, mergedColumns, pabMonthRange, disputes, trimToElapsedWeeks, usHolidayDates]);
+    return {
+      pabCalendar: trimmed.length > 0 ? trimmed : weeks.slice(0, 1),
+      overnightIsos: overnightSet,
+    };
+  }, [mergedRow, mergedColumns, pabMonthRange, disputes, trimToElapsedWeeks, usHolidayDates, isHsl]);
 
   const allPabDays = pabCalendar?.flat() ?? [];
   const isPAEligible = allPabDays.length > 0 && allPabDays.every((d) => d.passes);
@@ -669,7 +692,9 @@ export default function EmployeePabCalendar({
                     const stillInProgress = isCurrentWeek && noMeaningfulData && !isFutureOrToday;
                     const stillProcessing = isPreviousWeek && noMeaningfulData && !dispute;
 
-                    const canDispute = day.hasData && !day.passes && !dispute && !isFutureOrToday && !isCurrentWeek;
+                    // For HSL: overnight-qualifying days (this day + next OR prev + this ≥ 7h combined)
+                    const hslOvernight = isHsl && overnightIsos.has(dayIso);
+                    const canDispute = day.hasData && !day.passes && !hslOvernight && !dispute && !isFutureOrToday && !isCurrentWeek;
                     const cellClickable = canDispute || !!dispute;
 
                     const forgiven =
@@ -677,7 +702,7 @@ export default function EmployeePabCalendar({
                       disputeGrantsPabForgiveness(dispute) &&
                       !day.passes &&
                       (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
-                    const effectivelyPasses = day.passes || forgiven;
+                    const effectivelyPasses = day.passes || forgiven || hslOvernight;
 
                     let cellBorder: string;
                     if (dispute != null && disputeIsAwaitingResolution(dispute)) {

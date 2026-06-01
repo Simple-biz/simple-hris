@@ -38,11 +38,19 @@ Authoritative detail lives in [Documentation/BUSINESS_LOGIC.md](../reference/bus
 | Item | Rule |
 |------|------|
 | Amount | **₱5,000** per eligible month (when actually paid on a paystub — see gating). |
-| Threshold | **≥ 7 hours** (25,200 seconds) per **Monday–Friday** in the PAB period. |
-| PAB period | Full “work month” bounded by **complete Mon–Sun weeks** whose **Monday** falls in the calendar month. **Start:** first Monday on or after the 1st. **End:** Friday of the last week whose Monday is still in that calendar month (Friday may spill into the next calendar month). |
+| Threshold (standard) | **≥ 7 hours** per **Monday–Friday** in the PAB period — every weekday must pass. |
+| Threshold (HSL dept) | **≥ 5 of the 7 Mon–Sun days** ≥ 7 h effective per week. Sat and Sun count independently. See HSL overnight rule below. |
+| PAB period | Full “work month” bounded by **complete Mon–Sun weeks** whose **Monday** falls in the calendar month. **Start:** first Monday on or after the 1st. **End (standard):** Friday of the last in-month week. **End (HSL):** Sunday that closes the last Mon–Sun week (`hslAdjustedPabEnd`). |
 | Data | Merged Hubstaff daily columns across **all** uploaded source files for the month; canonical columns (`monday` …) resolved to real dates using each file’s date range (filename). |
 
 **Weekly paystub gating:** PAB is a **monthly** bonus but paystubs are **weekly**. It is only attached to the **final** weekly run whose pay period **ends on or after** the PAB period end date (`week.end ≥ pabMonthRange.end`). Earlier weeks in that month get **₱0** PAB even if the toggle would suggest otherwise at dispatch recomposition.
+
+**HSL overnight shift rule.** Hubstaff records split hours when a shift crosses midnight (e.g. 1 h on Monday, 6 h on Tuesday for a single 7 h overnight). Both adjacent days are checked:
+
+- **Forward (D is the overnight start):** D + D₊₁ ≥ 7 h → D qualifies.
+- **Backward (D is the overnight tail):** D₋₁ + D ≥ 7 h → D qualifies (only when D₋₁ < 7 h on its own).
+
+Both the start day and the tail day earn independent passing-day credits. Example: clocking in at 11 PM Monday and out at 6 AM Tuesday → **both Monday and Tuesday** count toward the 5-of-7 quota.
 
 ### Technology Bonus
 
@@ -62,6 +70,7 @@ Authoritative detail lives in [Documentation/BUSINESS_LOGIC.md](../reference/bus
 |---------|----------|
 | PAB month range, Mon–Fri counts, column dedupe | [src/lib/hubstaff/calendar-column-dedupe.ts](src/lib/hubstaff/calendar-column-dedupe.ts) — e.g. `getPabMonthRange`, `filterColumnGroupsByPabRange`, `groupDateColumnsByCalendarDay` |
 | Merged month data for PAB, eligibility set, auto-toggle | [src/components/PayrollWizard.tsx](src/components/PayrollWizard.tsx) — `pabAllRows`, `perfectAttendanceEligible`, `weekdayColumnGroups`, `pabMonthColumnCoverageComplete` |
+| **Step 5 — HSL Payroll: per-row PAB + Tech Bonus display and total** | `PayrollWizard.tsx` case 5 — `pabStatusByEmail.get(em)` (tri-state pill, ₱5,000 when eligible), `techBonusEligible.has(r.email)` (₱1,850); both included in row-level `totalPay` and footer grand total. PAB pill is clickable → PAB Calendar modal. |
 | Dispatch: PAB final week, Tech week + 30 days, payload | `PayrollWizard.tsx` — `dispatchData` / `isFinalPabWeek`, `isTechBonusWeek`, `hasThirtyDaysByWeek`, `pay_php.perfect_attendance_bonus`, `pay_php.tech_bonus` |
 | Employee-facing calendar / pending state | [src/components/employee/EmployeeDashboard.tsx](src/components/employee/EmployeeDashboard.tsx) |
 | Aggregated metrics | [src/components/Overview.tsx](src/components/Overview.tsx) |
@@ -76,7 +85,8 @@ What is **already** integrated:
 
 - **Step 1 — Upload:** Hubstaff CSVs feed merged rows/columns used for PAB.
 - **Step 3 — Additions:** Common bonuses include **Perfect Attendance** and **Technology**; PAB eligibility is computed from merged data and reflected in toggles and per-day UI.
-- **Step 5 — Dispatch:** Bonuses are **recomposed** so weekly paystubs get **gated** PAB/Tech amounts; payload includes `pab_evaluation` range and pay lines.
+- **Step 5 — HSL Payroll:** PAB (tri-state pill, ₱5,000 when eligible) and Tech Bonus (₱1,850) are shown per HSL employee and **included in Total Pay**. Same eligibility sets (`pabStatusByEmail`, `techBonusEligible`) as regular employees; PAB uses Mon–Sun week logic for HSL.
+- **Step 6 — Dispatch:** Bonuses are **recomposed** so weekly paystubs get **gated** PAB/Tech amounts; payload includes `pab_evaluation` range and pay lines.
 
 Recommended **next steps** (if you want parity with a spreadsheet or clearer ops):
 
