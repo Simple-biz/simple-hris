@@ -320,12 +320,17 @@ async function fetchActiveEmployees(
         .or(orClause)
         .is("off_boarded_at", null);
       if (!usErr && usMasters) {
-        const seen = new Set(
-          raw.map((r) => (r as { id?: unknown }).id).filter((v) => v != null),
-        );
+        const seenEmails = new Set<string>();
+        for (const r of raw) {
+          const we = (r as { "Work Email"?: string })["Work Email"]?.trim().toLowerCase();
+          const pe = (r as { "Personal Email"?: string })["Personal Email"]?.trim().toLowerCase();
+          if (we) seenEmails.add(we);
+          if (pe) seenEmails.add(pe);
+        }
         for (const r of usMasters as unknown as RawRow[]) {
-          const id = (r as { id?: unknown }).id;
-          if (id != null && seen.has(id)) continue;
+          const we = (r as { "Work Email"?: string })["Work Email"]?.trim().toLowerCase();
+          const pe = (r as { "Personal Email"?: string })["Personal Email"]?.trim().toLowerCase();
+          if ((we && seenEmails.has(we)) || (pe && seenEmails.has(pe))) continue;
           raw.push(r);
         }
       }

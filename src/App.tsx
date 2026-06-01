@@ -24,6 +24,7 @@ import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForUser, canAccessAccountingTa
 import type { FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
+import AccountingMesa from '@/components/payroll/AccountingMesa';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -162,6 +163,8 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
         return <PayrollDispatch />;
       case 'disputes':
         return <PabDisputeQueue />;
+      case 'mesa':
+        return <AccountingMesa />;
       case 'notifications':
         return <NotificationsPanel viewerEmail={sessionEmail} accent="orange" />;
       case 'settings':

@@ -17,6 +17,12 @@ import {
 import { phpHourlyPayFromSeconds } from '@/lib/payroll/money-php';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import { cn } from '@/lib/utils';
+import {
+  getEnabledHolidayMap,
+  parseUsHolidaysList,
+  US_HOLIDAYS_ENABLED_KEY,
+  US_HOLIDAYS_LIST_KEY,
+} from '@/lib/us-holidays';
 
 const MONTH_NAMES = [
   'January',
@@ -149,6 +155,7 @@ const LABEL_TRANSITION = { duration: 0.14, ease: 'easeOut' as const };
 type MemberMonthlyPaySummary = {
   hasRate: boolean;
   startDate: string | null;
+  department: string | null;
   totals: {
     regularSec: number;
     otSec: number;
@@ -207,6 +214,7 @@ export default function ManagerMemberHoursMini({
     regularRate: number | null;
     otRate: number | null;
   }>>([]);
+  const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Authoritative server-side pay summary including PAB + Tech bonus gates.
@@ -352,6 +360,32 @@ export default function ManagerMemberHoursMini({
       .catch(() => { if (!cancelled) setRateHistory([]); });
     return () => { cancelled = true; };
   }, [workEmail, personalEmail]);
+
+  // Fetch holiday settings once — drives the violet holiday cells on the calendar.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY].join(','))}`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as { values?: Record<string, string | null> };
+        if (cancelled) return;
+        const values = json.values ?? {};
+        const enabled =
+          values[US_HOLIDAYS_ENABLED_KEY] == null
+            ? true
+            : values[US_HOLIDAYS_ENABLED_KEY] === 'true';
+        setUsHolidayDates(
+          getEnabledHolidayMap(parseUsHolidaysList(values[US_HOLIDAYS_LIST_KEY] ?? null), enabled),
+        );
+      } catch {
+        if (!cancelled) setUsHolidayDates(new Map());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Fetch the authoritative server-side pay summary (regular + OT + PAB +
   // Tech bonus + 40h overtime cap, all gated against dispatch logic). Re-runs
@@ -637,6 +671,9 @@ export default function ManagerMemberHoursMini({
                 viewMonth={viewMonth}
                 rateHistory={rateHistory}
                 ratesHidden={ratesHidden}
+                usHolidayDates={usHolidayDates}
+                isHsl={(serverPay?.department ?? '').trim().toLowerCase() === 'hsl'}
+                hoursByDateKey={hoursByDateKey}
               />
             )}
           </motion.div>
@@ -694,6 +731,7 @@ export default function ManagerMemberHoursMini({
                 // attendance failed" vs "this month has no final PAB week").
                 const pabWeek = sp?.weeks.find((w) => w.isFinalPabWeek);
                 const techWeek = sp?.weeks.find((w) => w.isTechBonusWeek);
+                const isHsl = (sp?.department ?? '').trim().toLowerCase() === 'hsl';
 
                 return (
                   <div className="space-y-2">
@@ -751,7 +789,9 @@ export default function ManagerMemberHoursMini({
                               : !pabWeek.pabMonthComplete
                                 ? 'Month in progress — PAB finalizes at month end'
                                 : !pabWeek.isPabEligible
-                                  ? 'Not eligible — perfect-attendance check failed'
+                                  ? isHsl
+                                    ? 'Not eligible — needs 5 days ≥7h in the Mon–Sun window'
+                                    : 'Not eligible — perfect-attendance check failed'
                                   : null
                           }
                         />
@@ -977,12 +1017,18 @@ function CalendarBody({
   viewMonth,
   rateHistory,
   ratesHidden,
+  usHolidayDates,
+  isHsl,
+  hoursByDateKey,
 }: {
   weeks: PabCalendarDay[][];
   viewYear: number;
   viewMonth: number;
   rateHistory: Array<{ effectiveFrom: Date; regularRate: number | null; otRate: number | null }>;
   ratesHidden: boolean;
+  usHolidayDates: Map<string, string>;
+  isHsl: boolean;
+  hoursByDateKey: Map<string, number>;
 }) {
   // Cache today midnight once — reading Date inside every cell is wasteful.
   const todayMid = useMemo(() => {
@@ -1044,16 +1090,33 @@ function CalendarBody({
             ).getTime();
             const isFutureOrToday = cellMid >= todayMid;
 
+            const dayIso = `${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, '0')}-${String(day.date.getDate()).padStart(2, '0')}`;
+            const holidayName = inMonth ? (usHolidayDates.get(dayIso) ?? null) : null;
+            const isHoliday = !!holidayName;
+
+            // For HSL: if today has hours but < 7h, check if combining with the
+            // next calendar day's hours (overnight shift tail) reaches ≥ 7h.
+            const hslOvernightQualifies = isHsl && inMonth && day.hasData &&
+              day.seconds > 0 && day.seconds < 7 * 3600 && (() => {
+                const nextDay = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate() + 1);
+                return day.seconds + (hoursByDateKey.get(pabDateKey(nextDay)) ?? 0) >= 7 * 3600;
+              })();
+
             let cellBorder: string;
             if (!inMonth) {
               cellBorder =
                 'border border-dashed border-zinc-200/80 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-900/20';
-            } else if (weekend) {
+            } else if (isHoliday) {
               cellBorder =
-                hours > 0
+                'border-violet-300 bg-violet-50 dark:border-violet-700/70 dark:bg-violet-950/40';
+            } else if (weekend) {
+              const hslQualifies = isHsl && (hours >= 7 || hslOvernightQualifies);
+              cellBorder = hslQualifies
+                ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-700/70 dark:bg-emerald-950/40'
+                : hours > 0
                   ? 'border-zinc-300 bg-gradient-to-b from-zinc-50 to-orange-50/40 dark:border-zinc-600 dark:from-zinc-900/50 dark:to-orange-950/15'
                   : 'border-zinc-200/80 bg-zinc-50/40 dark:border-zinc-800 dark:bg-zinc-900/20';
-            } else if (day.passes) {
+            } else if (day.passes || hslOvernightQualifies) {
               cellBorder =
                 'border-emerald-300 bg-emerald-50 dark:border-emerald-700/70 dark:bg-emerald-950/40';
             } else if (isFutureOrToday && !day.hasData) {
@@ -1073,10 +1136,14 @@ function CalendarBody({
                 hours > 0
                   ? 'text-zinc-600 dark:text-zinc-300'
                   : 'text-zinc-300 dark:text-zinc-600';
-            } else if (day.passes && !weekend) {
+            } else if (isHoliday) {
+              hourText = 'text-violet-700 dark:text-violet-400';
+            } else if ((day.passes || hslOvernightQualifies) && !weekend) {
               hourText = 'text-emerald-700 dark:text-emerald-400';
             } else if (weekend && hours > 0) {
-              hourText = 'text-zinc-700 dark:text-zinc-200';
+              hourText = isHsl && (hours >= 7 || hslOvernightQualifies)
+                ? 'text-emerald-700 dark:text-emerald-400'
+                : 'text-zinc-700 dark:text-zinc-200';
             } else if (isFutureOrToday && !day.hasData) {
               hourText = 'text-zinc-400 dark:text-zinc-500';
             } else if (weekend) {
@@ -1104,10 +1171,15 @@ function CalendarBody({
                   'relative flex h-9 flex-col items-center justify-center gap-px rounded-md border',
                   cellBorder,
                 )}
-                title={`${day.dayLabel} ${day.dateStr}: ${(day.seconds / 3600).toFixed(2)}h${
+                title={`${day.dayLabel} ${day.dateStr}: ${(day.seconds / 3600).toFixed(2)}h${hslOvernightQualifies ? ' · overnight (combined with next day)' : ''}${isHoliday ? ` — ${holidayName}` : ''}${
                   inMonth ? '' : ' · adj. month'
                 }${rateTooltip}`}
               >
+                {isHoliday && (
+                  <span className="pointer-events-none absolute left-1 top-1 max-w-[calc(100%-0.25rem)] truncate text-[6px] font-semibold leading-none tracking-tight text-violet-500 dark:text-violet-400">
+                    {holidayName}
+                  </span>
+                )}
                 <span className="text-[7px] leading-none text-zinc-400 dark:text-zinc-500">
                   {day.dateStr}
                 </span>

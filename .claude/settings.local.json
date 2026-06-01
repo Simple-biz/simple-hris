@@ -192,7 +192,8 @@
       "Bash(npm audit *)",
       "Bash(dir \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\mock-data-blueprint\" /b)",
       "Bash(echo \"=== exit: $? ===\")",
-      "Bash(git --no-pager diff --stat)"
+      "Bash(git --no-pager diff --stat)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\" -Recurse -Directory)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

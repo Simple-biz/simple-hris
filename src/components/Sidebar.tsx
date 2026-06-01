@@ -20,6 +20,7 @@ import {
   LogOut,
   Moon,
   Sun,
+  HeartHandshake,
 } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
 import { cn } from '@/lib/utils';
@@ -51,6 +52,7 @@ const navItems = [
   { id: 'payroll-wizard', label: 'Payroll Wizard', icon: Wand2 },
   { id: 'payment-dispatch', label: 'Payment Dispatch', icon: Send },
   { id: 'disputes', label: 'Disputes', icon: AlertCircle },
+  { id: 'mesa', label: 'MESA', icon: HeartHandshake },
   { id: 'announcements', label: 'Announcements', icon: Megaphone },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'settings', label: 'System Settings', icon: Settings },

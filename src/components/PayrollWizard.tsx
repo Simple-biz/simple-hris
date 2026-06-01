@@ -8234,6 +8234,7 @@ export default function PayrollWizard({
               </h2>
               <p className="text-xs text-zinc-600 dark:text-zinc-400">
                 HSL runs Mon&ndash;Sun weeks (&ge;5 days at &ge;7 h). KPI bonuses are pulled from the manager KPI Calculator.
+                PAB (&thinsp;&#8369;5,000) and Tech Bonus (&thinsp;&#8369;1,850) are shown per-row and included in Total Pay.
                 Use the override column to adjust any employee&apos;s bonus before dispatch.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
@@ -8373,6 +8374,8 @@ export default function PayrollWizard({
                             <th className="px-3 py-2.5 text-right">Hours</th>
                             <th className="px-3 py-2.5 text-right">Initial Pay</th>
                             <th className="px-3 py-2.5 text-right">KPI Bonus</th>
+                            <th className="px-3 py-2.5 text-center">PAB</th>
+                            <th className="px-3 py-2.5 text-center">Tech Bonus</th>
                             <th className="px-3 py-2.5 text-right">Override</th>
                             <th className="px-3 py-2.5 text-right">Total Pay</th>
                           </tr>
@@ -8383,8 +8386,11 @@ export default function PayrollWizard({
                             const kpiBonus = hslStepBonusByEmail[em] ?? 0;
                             const override = bonusOverrides[r.email] ?? null;
                             const effectiveBonus = override !== null ? override : kpiBonus;
-                            const totalPay = (r.initialPay ?? 0) + effectiveBonus;
-                            const paEligible = perfectAttendanceEligible.has(em);
+                            const paStatus = pabStatusByEmail.get(em) ?? 'in_progress';
+                            const pabAmt = paStatus === 'eligible' ? 5000 : 0;
+                            const techOn = techBonusEligible.has(r.email);
+                            const techAmt = techOn ? 1850 : 0;
+                            const totalPay = (r.initialPay ?? 0) + effectiveBonus + pabAmt + techAmt;
 
                             return (
                               <tr key={r.email} className="transition-colors hover:bg-violet-50/30 dark:hover:bg-violet-950/10">
@@ -8392,11 +8398,6 @@ export default function PayrollWizard({
                                   <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.name}</div>
                                   <div className="flex items-center gap-2 mt-0.5">
                                     <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{r.email}</span>
-                                    {paEligible && (
-                                      <span className="rounded bg-emerald-100 px-1 py-0.5 text-[8px] font-bold uppercase tracking-wider text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                                        PAB
-                                      </span>
-                                    )}
                                   </div>
                                 </td>
                                 <td className="px-3 py-3 text-right font-mono text-xs text-zinc-600 tabular-nums dark:text-zinc-400">
@@ -8413,6 +8414,43 @@ export default function PayrollWizard({
                                   ) : (
                                     <span className="text-zinc-400 dark:text-zinc-600">—</span>
                                   )}
+                                </td>
+                                {/* PAB — tri-state pill, click opens calendar modal */}
+                                <td className="px-3 py-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPabCalendarModalEmail(r.email)}
+                                    title={
+                                      paStatus === 'eligible' ? 'Passed all Mon–Sun weeks in the PAB period — click to see the calendar.'
+                                      : paStatus === 'ineligible' ? 'Already failed at least one week — locked for this period. Click to see which day.'
+                                      : 'PAB period is still running. Click to see the calendar.'
+                                    }
+                                    className={cn(
+                                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none transition-all duration-200',
+                                      'hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-1 dark:focus:ring-offset-zinc-900',
+                                      paStatus === 'eligible'
+                                        ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-400/40 hover:bg-emerald-200 focus:ring-emerald-400 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-500/30 dark:hover:bg-emerald-900/60'
+                                        : paStatus === 'ineligible'
+                                          ? 'bg-red-100 text-red-600 ring-1 ring-red-400/40 hover:bg-red-200 focus:ring-red-400 dark:bg-red-900/30 dark:text-red-300 dark:ring-red-500/30 dark:hover:bg-red-900/50'
+                                          : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
+                                    )}
+                                  >
+                                    {paStatus === 'eligible' ? '✓ Eligible' : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
+                                  </button>
+                                </td>
+                                {/* Tech Bonus — auto-detected, read-only */}
+                                <td className="px-3 py-3 text-center">
+                                  <span
+                                    title={techOn ? `Auto-applied: salary date lands in the 3rd full Mon–Sun week.` : 'Not the Tech Bonus week or tenure/rate requirements not met.'}
+                                    className={cn(
+                                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none',
+                                      techOn
+                                        ? 'bg-sky-100 text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30'
+                                        : 'bg-zinc-100 text-zinc-400 ring-1 ring-zinc-300/40 dark:bg-zinc-800/60 dark:text-zinc-500 dark:ring-zinc-700/40',
+                                    )}
+                                  >
+                                    {techOn ? `+${formatPHP(1850)}` : '—'}
+                                  </span>
                                 </td>
                                 <td className="px-3 py-3">
                                   <div className="flex items-center justify-end gap-1">
@@ -8463,25 +8501,41 @@ export default function PayrollWizard({
                           })}
                         </tbody>
                         <tfoot className="border-t-2 border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/40">
-                          <tr>
-                            <td colSpan={2} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                              Totals ({hslCalcRows.length} employees)
-                            </td>
-                            <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
-                              {formatPHP(totalHslInitialPay)}
-                            </td>
-                            <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                              +{formatPHP(totalHslKpiBonuses)}
-                            </td>
-                            <td className="px-3 py-2.5" />
-                            <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-                              {formatPHP(totalHslInitialPay + hslCalcRows.reduce((s, r) => {
-                                const em = (r.email ?? '').toLowerCase();
-                                const ov = bonusOverrides[r.email] ?? null;
-                                return s + (ov !== null ? ov : (hslStepBonusByEmail[em] ?? 0));
-                              }, 0))}
-                            </td>
-                          </tr>
+                          {(() => {
+                            let totalPab = 0, totalTech = 0, totalEffective = 0;
+                            for (const r of hslCalcRows) {
+                              const em = (r.email ?? '').toLowerCase();
+                              const ov = bonusOverrides[r.email] ?? null;
+                              const kpi = hslStepBonusByEmail[em] ?? 0;
+                              totalEffective += ov !== null ? ov : kpi;
+                              const st = pabStatusByEmail.get(em) ?? 'in_progress';
+                              if (st === 'eligible') totalPab += 5000;
+                              if (techBonusEligible.has(r.email)) totalTech += 1850;
+                            }
+                            return (
+                              <tr>
+                                <td colSpan={2} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                  Totals ({hslCalcRows.length} employees)
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
+                                  {formatPHP(totalHslInitialPay)}
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                  +{formatPHP(totalEffective)}
+                                </td>
+                                <td className="px-3 py-2.5 text-center font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                  {totalPab > 0 ? `+${formatPHP(totalPab)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                                </td>
+                                <td className="px-3 py-2.5 text-center font-mono text-sm font-bold tabular-nums text-sky-700 dark:text-sky-400">
+                                  {totalTech > 0 ? `+${formatPHP(totalTech)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                                </td>
+                                <td className="px-3 py-2.5" />
+                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                                  {formatPHP(totalHslInitialPay + totalEffective + totalPab + totalTech)}
+                                </td>
+                              </tr>
+                            );
+                          })()}
                         </tfoot>
                       </table>
                     )}

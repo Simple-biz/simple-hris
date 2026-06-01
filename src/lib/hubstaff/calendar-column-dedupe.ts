@@ -421,10 +421,11 @@ export function pabDateKey(d: Date): string {
  *
  * Rules (HSL dept only, all other depts use the standard Mon–Fri / every-day-passes logic):
  *  - PAB week runs Monday → Sunday (7 days).
- *  - Within each Mon–Sun week that falls inside [pabStart, pabEnd], the employee must
- *    have ≥ 5 days with ≥ 7 h worked.
- *  - Partial weeks at the period boundary are evaluated with the same ≥ 5-day threshold
- *    (so if the last chunk has only 6 days, they still need 5 qualifying days).
+ *  - Within each Mon–Sun week in [pabStart, pabEnd], ≥ 5 of those 7 days must reach
+ *    ≥ 7 h. Any day of the week counts — Sat and Sun each contribute independently.
+ *  - Overnight shifts: if a day has > 0 h but < 7 h, the next calendar day's hours
+ *    are added (the overnight tail recorded under D+1 counts toward D's quota check).
+ *  - Partial weeks at the period boundary use the same ≥ 5-day threshold.
  *  - Returns true if every week in the period passes, false otherwise.
  */
 export function checkHslPabEligibility(
@@ -443,26 +444,22 @@ export function checkHslPabEligibility(
   if (cur.getTime() > endTime) return true; // nothing to evaluate
 
   while (cur.getTime() <= endTime) {
-    let goodWeekdays = 0;
-    let satSeconds = 0;
-    let sunSeconds = 0;
-    // Walk the 7 days of this Mon–Sun week (stops early if period ends mid-week)
+    let qualifyingDays = 0;
+    // Walk all 7 days of this Mon–Sun week (stops early if period ends mid-week)
     for (let d = 0; d < 7; d++) {
       if (cur.getTime() > endTime) break;
-      const dayDow = cur.getDay(); // Sun=0, Mon=1, ..., Sat=6
-      const seconds = hoursByDateKey.get(pabDateKey(cur)) ?? 0;
-      if (dayDow === 6) {
-        satSeconds = seconds;
-      } else if (dayDow === 0) {
-        sunSeconds = seconds;
-      } else if (seconds >= 7 * 3600) {
-        goodWeekdays++;
+      const todaySec = hoursByDateKey.get(pabDateKey(cur)) ?? 0;
+      let effectiveSec = todaySec;
+      // Overnight shift: if the employee has some hours but less than 7h, add
+      // the next calendar day's hours (the portion of the shift recorded under D+1).
+      if (todaySec > 0 && todaySec < 7 * 3600) {
+        const nextDay = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1);
+        effectiveSec += hoursByDateKey.get(pabDateKey(nextDay)) ?? 0;
       }
+      if (effectiveSec >= 7 * 3600) qualifyingDays++;
       cur.setDate(cur.getDate() + 1);
     }
-    // Weekdays that fall short can be reconciled only if BOTH Sat AND Sun reach ≥ 7h
-    const weekendBonus = satSeconds >= 7 * 3600 && sunSeconds >= 7 * 3600 ? 2 : 0;
-    if (goodWeekdays + weekendBonus < 5) return false;
+    if (qualifyingDays < 5) return false;
   }
 
   return true;

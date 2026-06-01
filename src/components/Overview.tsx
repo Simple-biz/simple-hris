@@ -520,7 +520,12 @@ function SimpleView({
       <div className="mx-auto w-full max-w-[1600px] px-3 pb-6 sm:px-4 md:px-6 lg:px-8 xl:px-10 [@media(max-height:900px)]:pb-4 xl:pb-12">
 
         {/* Hero — branded chip, accent rule, floating orbs in the corners */}
-        <section className="relative mb-5 overflow-hidden rounded-3xl border border-orange-100/80 bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 p-5 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] [@media(max-height:900px)]:mb-4 [@media(max-height:900px)]:p-4 lg:mb-8 lg:p-7 xl:mb-10 xl:p-8 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15">
+        <section className={cn(
+          'relative mb-5 overflow-hidden rounded-3xl border bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 p-5 [@media(max-height:900px)]:mb-4 [@media(max-height:900px)]:p-4 lg:mb-8 lg:p-7 xl:mb-10 xl:p-8 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15',
+          (payoutLoading || pabMetrics.loading || loading)
+            ? 'hero-loading-border'
+            : 'border-orange-100/80 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] dark:border-orange-900/30',
+        )}>
           {/* Decorative orbs — pure dopamine */}
           <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
             <motion.div
@@ -737,8 +742,18 @@ function SimpleView({
                 <span className="mr-1.5 text-4xl font-medium text-zinc-400 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-zinc-500">
                   ₱
                 </span>
-                {payoutLoading ? (
-                  <span className="inline-block h-[1em] w-[220px] animate-pulse rounded-md bg-zinc-200/80 align-bottom text-4xl lg:w-[280px] lg:text-5xl xl:w-[360px] xl:text-6xl 2xl:w-[420px] 2xl:text-7xl dark:bg-zinc-800" />
+                {payoutLoading || pabMetrics.loading || loading ? (
+                  <span className="relative inline-flex h-[1em] w-[220px] animate-pulse items-center justify-center rounded-md bg-zinc-200/80 align-bottom text-4xl lg:w-[280px] lg:text-5xl xl:w-[360px] xl:text-6xl 2xl:w-[420px] 2xl:text-7xl dark:bg-zinc-800">
+                    <span className="flex items-center gap-[5px]">
+                      {[0, 1, 2, 3].map(i => (
+                        <span
+                          key={i}
+                          className="inline-block h-1.5 w-1.5 rounded-full bg-zinc-400/80 dark:bg-zinc-500"
+                          style={{ animation: 'payout-dot-bounce 1.2s ease-in-out infinite', animationDelay: `${i * 0.15}s` }}
+                        />
+                      ))}
+                    </span>
+                  </span>
                 ) : (
                   <span className="font-mono text-4xl font-bold tracking-tight text-zinc-900 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-white">
                     {displayTotalPayout != null
@@ -747,6 +762,9 @@ function SimpleView({
                   </span>
                 )}
               </div>
+              {(payoutLoading || pabMetrics.loading || loading) && (
+                <p className="mt-1 text-[11px] italic text-zinc-400 dark:text-zinc-500">Fetching Total Payout</p>
+              )}
               {/* Accent rule — orange→rose hairline under the hero number */}
               <div className="mt-2.5 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
               <p className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-zinc-600 [@media(max-height:900px)]:mt-2 dark:text-zinc-400">
