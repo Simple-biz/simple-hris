@@ -196,7 +196,11 @@
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\" -Recurse -Directory)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Exclude \"node_modules\" -Recurse -Include \"*.md\", \"CLAUDE.md\", \"README*\", \"*.txt\" -ErrorAction SilentlyContinue)",
       "Bash(findstr /n \"fpu_enrollments\\\\|employee_notifications\\\\|### [0-9]\" \"docs\\\\reference\\\\data-sources.md\")",
-      "Bash(findstr \".ts\")"
+      "Bash(findstr \".ts\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Recurse -Filter \"*.tsx\" -o File)",
+      "Bash(xargs dirname)",
+      "Bash(echo \"TSC_EXIT=$?\")",
+      "Bash(echo \"TSC=$?\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

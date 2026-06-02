@@ -6,6 +6,7 @@ import {
 import { deleteOffboardedSheetByWorkEmail } from "@/lib/supabase/global-master-list-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
+import { appendMasterSheetRow } from "@/lib/google-sheets/append-master-sheet";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
     })
     .ilike('"Work Email"', work_email)
     .not("off_boarded_at", "is", null)
-    .select('id, "Name", "Work Email"');
+    .select('id, "Name", "Work Email", "Personal Email", "Department", "Start Date"');
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -80,6 +81,23 @@ export async function POST(req: Request) {
     // Don't fail the whole request — master list is the load-bearing source of
     // truth for active/inactive. Log + continue.
     console.error("[POST /api/hr/reonboard] offboarded_sheet delete failed:", e);
+  }
+
+  // 3. Re-add the person to the Google Sheet Master List so the next
+  //    sheet→DB sync doesn't immediately re-offboard them. Best-effort.
+  if (rows.length > 0) {
+    const r = rows[0] as Record<string, string | null>;
+    try {
+      await appendMasterSheetRow({
+        name:          r['Name']           ?? '',
+        personalEmail: r['Personal Email'] ?? '',
+        workEmail:     r['Work Email']     ?? work_email,
+        department:    r['Department']     ?? '',
+        startDate:     r['Start Date']     ?? null,
+      });
+    } catch (e) {
+      console.error('[POST /api/hr/reonboard] master sheet append failed:', e);
+    }
   }
 
   if (rows.length === 0 && sheetRowsDeleted === 0) {

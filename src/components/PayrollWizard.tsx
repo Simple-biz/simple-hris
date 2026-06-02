@@ -77,6 +77,7 @@ import {
   type EmployeeHourlyRateRow,
 } from '@/lib/supabase/employee-hourly-rates';
 import { normEmail } from '@/lib/email/norm-email';
+import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 import { sortHubstaffColumnsForDisplay } from '@/lib/supabase/hubstaff-hours-db';
 import { comparePayrollToMaster } from '@/lib/payroll/compare-to-master';
 import {
@@ -93,6 +94,7 @@ import {
 import { logAudit, valuesDiffer } from '@/lib/audit/client-log';
 import type { AuditCycleContext } from '@/lib/supabase/audit-log';
 import AuditTrailPanel from '@/components/payroll-clerk/AuditTrailPanel';
+import TimeAdjustmentReviewPanel from '@/components/payroll/TimeAdjustmentReviewPanel';
 import {
   auditEventsToAoa,
   type ClientAuditEvent,
@@ -1206,6 +1208,13 @@ export default function PayrollWizard({
   );
 
   const [approvedDisputeDates, setApprovedDisputeDates] = useState<Map<string, Map<string, number | null>>>(new Map());
+  /** Approved time-adjustment overrides: normalized work_email -> (ISO date -> SET hours). */
+  const [approvedTimeAdjustments, setApprovedTimeAdjustments] = useState<Map<string, Map<string, number>>>(new Map());
+  /** Pending + approved time-adjustment requests (for the Additions review panel). */
+  const [timeAdjustmentRows, setTimeAdjustmentRows] = useState<TimeAdjustmentRow[]>([]);
+  const [timeAdjustmentSignedUrls, setTimeAdjustmentSignedUrls] = useState<Record<string, string>>({});
+  const [decidingAdjustmentId, setDecidingAdjustmentId] = useState<string | null>(null);
+  const [adjustmentHoursDraft, setAdjustmentHoursDraft] = useState<Record<string, string>>({});
   /** ISO date (YYYY-MM-DD) -> holiday name. Built from app_settings; empty when disabled. */
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
   /** Full holiday list (enabled + disabled) — used for validation-section display. */
@@ -2147,6 +2156,152 @@ export default function PayrollWizard({
       .catch(() => setApprovedDisputeDates(new Map()));
   }, [pabMonthRange]);
 
+  // Approved time-adjustment overrides for the PAB period — folded into pay + PAB.
+  const refreshApprovedAdjustmentOverrides = useCallback(() => {
+    if (!pabMonthRange) return;
+    const s = pabMonthRange.start;
+    const e = pabMonthRange.end;
+    const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+    const dayAfterEnd = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1);
+    const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
+    fetch(`/api/time-adjustments?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then((json: { rows?: TimeAdjustmentRow[] }) => {
+        const map = new Map<string, Map<string, number>>();
+        for (const row of json.rows ?? []) {
+          if (row.approved_hours == null) continue;
+          const em = (row.work_email ?? '').trim().toLowerCase();
+          if (!em) continue;
+          if (!map.has(em)) map.set(em, new Map());
+          map.get(em)!.set(row.adjust_date, row.approved_hours);
+        }
+        setApprovedTimeAdjustments(map);
+      })
+      .catch(() => setApprovedTimeAdjustments(new Map()));
+  }, [pabMonthRange]);
+
+  useEffect(() => {
+    refreshApprovedAdjustmentOverrides();
+  }, [refreshApprovedAdjustmentOverrides]);
+
+  // Pending + approved time-adjustment requests for the Additions review panel (step 3).
+  const fetchTimeAdjustmentReview = useCallback(() => {
+    if (!pabMonthRange) return;
+    const s = pabMonthRange.start;
+    const e = pabMonthRange.end;
+    const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
+    const dayAfterEnd = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1);
+    const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
+    fetch(`/api/time-adjustments?status=pending&status=approved&status=denied&from=${from}&to=${to}&limit=500`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then((json: { rows?: TimeAdjustmentRow[]; signedUrls?: Record<string, string> }) => {
+        setTimeAdjustmentRows(json.rows ?? []);
+        setTimeAdjustmentSignedUrls(json.signedUrls ?? {});
+      })
+      .catch(() => { setTimeAdjustmentRows([]); setTimeAdjustmentSignedUrls({}); });
+  }, [pabMonthRange]);
+
+  useEffect(() => {
+    if (currentStep !== 3) return;
+    fetchTimeAdjustmentReview();
+  }, [currentStep, fetchTimeAdjustmentReview]);
+
+  /**
+   * Override lookup the PAB memos consume: approved PAB disputes overlaid by approved
+   * time adjustments (time adjustments win on a same day — they are the explicit
+   * "this is the real number" decision). SET semantics, hours-or-null per date.
+   */
+  const effectiveOverrides = useMemo<Map<string, Map<string, number | null>>>(() => {
+    const map = new Map<string, Map<string, number | null>>();
+    for (const [em, dates] of approvedDisputeDates) {
+      map.set(em, new Map(dates));
+    }
+    for (const [em, dates] of approvedTimeAdjustments) {
+      if (!map.has(em)) map.set(em, new Map());
+      const target = map.get(em)!;
+      for (const [d, h] of dates) target.set(d, h);
+    }
+    return map;
+  }, [approvedDisputeDates, approvedTimeAdjustments]);
+
+  /**
+   * Raw per-day worked hours per employee (NO overrides applied) for the PAB period.
+   * Used to value an approved time adjustment as a pay delta: (SET hours - raw hours)
+   * for each in-period adjustment date. Keyed by normalized + raw Hubstaff email.
+   */
+  const rawDayHoursByEmail = useMemo<Map<string, Map<string, number>>>(() => {
+    const map = new Map<string, Map<string, number>>();
+    const rows = hubstaffRowsForPab;
+    if (!rows || rows.length === 0 || allDaysColumnGroups.length === 0) return map;
+    for (const row of rows) {
+      const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
+      const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
+      if (!email) continue;
+      const byDate = new Map<string, number>();
+      for (const group of allDaysColumnGroups) {
+        const groupDate = isoDateFromColumnGroup(group);
+        if (!groupDate) continue;
+        byDate.set(groupDate, maxSecondsAcrossWeekdayGroup(row, group) / 3600);
+      }
+      map.set(email, byDate);
+    }
+    return map;
+  }, [hubstaffRowsForPab, allDaysColumnGroups]);
+
+  /**
+   * Per-employee pay delta (in hours) from approved time adjustments: sum of
+   * (approved_hours - raw tracked hours) over adjustment dates that fall within the
+   * current pay period. Positive values increase pay; folded into initialPay below.
+   * Dates outside the period are not credited here (they belong to another cycle).
+   */
+  const timeAdjustDeltaHoursByEmail = useMemo<Map<string, number>>(() => {
+    const delta = new Map<string, number>();
+    if (approvedTimeAdjustments.size === 0) return delta;
+    const periodDates = new Set<string>();
+    for (const group of allDaysColumnGroups) {
+      const d = isoDateFromColumnGroup(group);
+      if (d) periodDates.add(d);
+    }
+    for (const [em, dates] of approvedTimeAdjustments) {
+      const raw = rawDayHoursByEmail.get(em);
+      let d = 0;
+      for (const [date, setHours] of dates) {
+        if (periodDates.size > 0 && !periodDates.has(date)) continue;
+        const rawHours = raw?.get(date) ?? 0;
+        d += setHours - rawHours;
+      }
+      if (d !== 0) delta.set(em, d);
+    }
+    return delta;
+  }, [approvedTimeAdjustments, rawDayHoursByEmail, allDaysColumnGroups]);
+
+  const decideTimeAdjustmentRequest = useCallback(
+    async (id: string, action: 'approve' | 'deny', approvedHours: number | null, note?: string) => {
+      setDecidingAdjustmentId(id);
+      try {
+        const res = await fetch(`/api/time-adjustments/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action,
+            approved_hours: action === 'approve' ? approvedHours : null,
+            decision_note: note ?? null,
+          }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? 'Failed to update request');
+        toast.success(action === 'approve' ? 'Time adjustment approved' : 'Time adjustment denied');
+        fetchTimeAdjustmentReview();
+        refreshApprovedAdjustmentOverrides();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to update request');
+      } finally {
+        setDecidingAdjustmentId(null);
+      }
+    },
+    [fetchTimeAdjustmentReview, refreshApprovedAdjustmentOverrides],
+  );
+
   useEffect(() => {
     if (currentStep !== 3 || !pabMonthRange) return;
     const s = pabMonthRange.start;
@@ -2179,7 +2334,7 @@ export default function PayrollWizard({
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
 
-      const forgivenDates = approvedDisputeDates.get(email);
+      const forgivenDates = effectiveOverrides.get(email);
       // Check both raw and normalized keys since employeeDepts is keyed by raw Hubstaff email
       const isHsl =
         employeeDepts[rawEmail] === 'hogan_smith_law' ||
@@ -2239,7 +2394,7 @@ export default function PayrollWizard({
     pabMonthColumnCoverageComplete,
     weekdayColumnGroups,
     allDaysColumnGroups,
-    approvedDisputeDates,
+    effectiveOverrides,
     usHolidayDates,
     employeeDepts,
   ]);
@@ -2259,7 +2414,7 @@ export default function PayrollWizard({
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
-      const forgivenDates = approvedDisputeDates.get(email);
+      const forgivenDates = effectiveOverrides.get(email);
       map.set(
         email,
         weekdayColumnGroups.map(group => {
@@ -2288,7 +2443,7 @@ export default function PayrollWizard({
       );
     }
     return map;
-  }, [hubstaffRowsForPab, weekdayColumnGroups, approvedDisputeDates, usHolidayDates]);
+  }, [hubstaffRowsForPab, weekdayColumnGroups, effectiveOverrides, usHolidayDates]);
 
   /**
    * Per-employee Mon–Sun breakdown for HSL PAB display. Same structure as
@@ -2306,7 +2461,7 @@ export default function PayrollWizard({
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
-      const forgivenDates = approvedDisputeDates.get(email);
+      const forgivenDates = effectiveOverrides.get(email);
       map.set(
         email,
         allDaysColumnGroups.map(group => {
@@ -2331,7 +2486,7 @@ export default function PayrollWizard({
       );
     }
     return map;
-  }, [hubstaffRowsForPab, allDaysColumnGroups, approvedDisputeDates, usHolidayDates]);
+  }, [hubstaffRowsForPab, allDaysColumnGroups, effectiveOverrides, usHolidayDates]);
 
   /**
    * Tri-state PAB display status per employee:
@@ -2795,16 +2950,32 @@ export default function PayrollWizard({
         ? false
         : (deptKey ? (otDeptEnabled[`ot_dept_${deptKey}`] ?? true) : true);
 
-      if (deptOtOn) return row;
+      let base = row;
+      if (!deptOtOn) {
+        base = {
+          ...row,
+          otHours: 0,
+          otPay: 0,
+          initialPay: row.regularPay != null ? Math.round(row.regularPay * 100) / 100 : null,
+        };
+      }
 
-      return {
-        ...row,
-        otHours: 0,
-        otPay: 0,
-        initialPay: row.regularPay != null ? Math.round(row.regularPay * 100) / 100 : null,
-      };
+      // Approved time-adjustment pay delta: (corrected - raw) hours for in-period dates,
+      // valued at the regular rate, folded into initialPay so all downstream totals
+      // (final pay, dispatch) reflect the corrected time. Never mutates Hubstaff data.
+      const em = normEmail(row.email) ?? row.email.toLowerCase();
+      const adjHours =
+        timeAdjustDeltaHoursByEmail.get(em) ?? timeAdjustDeltaHoursByEmail.get(row.email) ?? 0;
+      if (adjHours !== 0 && base.regularRate != null && base.initialPay != null) {
+        const adjPesos =
+          adjHours >= 0
+            ? phpHourlyPayFromSeconds(base.regularRate, adjHours * 3600)
+            : -phpHourlyPayFromSeconds(base.regularRate, -adjHours * 3600);
+        base = { ...base, initialPay: Math.round((base.initialPay + adjPesos) * 100) / 100 };
+      }
+      return base;
     });
-  }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled]);
+  }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled, timeAdjustDeltaHoursByEmail]);
 
   /**
    * Tech Bonus week detection — mirrors the logic inside `dispatchData` but
@@ -5635,6 +5806,25 @@ export default function PayrollWizard({
       case 3: {
         const activeDept = DEPARTMENTS.find(d => d.key === activeDeptTab) ?? DEPARTMENTS[0]!;
         const deptEmployees = effectiveCalcResults.filter(r => employeeDepts[r.email] === activeDeptTab);
+        // Resolve each assigned employee's department by normalized email so time-adjustment
+        // rows (keyed by work_email) can be grouped under the active department.
+        const normEmailToDeptKey = new Map<string, string>();
+        for (const r of effectiveCalcResults) {
+          const em = normEmail(r.email);
+          const d = employeeDepts[r.email];
+          if (em && d) normEmailToDeptKey.set(em, d);
+        }
+        const adjustmentDeptKey = (workEmail: string): string | undefined =>
+          normEmailToDeptKey.get(normEmail(workEmail) ?? (workEmail ?? '').trim().toLowerCase());
+        const pendingAdjustmentCountByDept = new Map<string, number>();
+        for (const a of timeAdjustmentRows) {
+          if (a.status !== 'pending') continue;
+          const d = adjustmentDeptKey(a.work_email);
+          if (d) pendingAdjustmentCountByDept.set(d, (pendingAdjustmentCountByDept.get(d) ?? 0) + 1);
+        }
+        const deptAdjustments = timeAdjustmentRows
+          .filter(a => adjustmentDeptKey(a.work_email) === activeDeptTab)
+          .sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1));
         const unassignedEmployees = effectiveCalcResults.filter(r => !employeeDepts[r.email]);
         const assignedEmployees = effectiveCalcResults.filter(r => employeeDepts[r.email]);
         const totalBonusesAdded = assignedEmployees.reduce((sum, r) => sum + getEffectiveBonus(r.email), 0);
@@ -6157,44 +6347,89 @@ export default function PayrollWizard({
               )}
             </div>
 
-            {/* Department Tabs */}
-            <div className="flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
-              {DEPARTMENTS.filter(dept => dept.key !== 'hogan_smith_law').map(dept => {
-                const count = effectiveCalcResults.filter(r => employeeDepts[r.email] === dept.key).length;
-                return (
-                  <button
-                    key={dept.key}
-                    type="button"
-                    onClick={() => { setActiveDeptTab(dept.key); setAdditionsSearch(''); }}
-                    className={cn(
-                      'flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-                      activeDeptTab === dept.key
-                        ? 'border-indigo-500/50 bg-indigo-600/10 text-indigo-700 dark:text-indigo-300'
-                        : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50',
-                    )}
-                  >
-                    {dept.name}
-                    {count > 0 && (
-                      <span
-                        className={cn(
-                          'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
-                          activeDeptTab === dept.key
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400',
+            {/* Department workspace: vertical rail (left) + content (right). On mobile the
+                rail collapses to a horizontal scroller above the content. */}
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+              {/* Department rail */}
+              <div className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
+                <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
+                  Departments
+                </p>
+                {DEPARTMENTS.filter(dept => dept.key !== 'hogan_smith_law').map(dept => {
+                  const count = effectiveCalcResults.filter(r => employeeDepts[r.email] === dept.key).length;
+                  const pendingAdj = pendingAdjustmentCountByDept.get(dept.key) ?? 0;
+                  const isActive = activeDeptTab === dept.key;
+                  return (
+                    <motion.button
+                      key={dept.key}
+                      type="button"
+                      onClick={() => { setActiveDeptTab(dept.key); setAdditionsSearch(''); }}
+                      whileTap={{ scale: 0.97 }}
+                      className={cn(
+                        'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium xl:w-full xl:justify-between',
+                        isActive
+                          ? 'border-indigo-500/50 text-indigo-700 dark:text-indigo-300'
+                          : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50',
+                      )}
+                    >
+                      {isActive && (
+                        <motion.span
+                          layoutId="additions-dept-active-bg"
+                          className="absolute inset-0 rounded-[7px] bg-indigo-600/10 dark:bg-indigo-500/15"
+                          transition={{ type: 'spring', stiffness: 400, damping: 34 }}
+                        />
+                      )}
+                      <span className="relative truncate">{dept.name}</span>
+                      <span className="relative flex shrink-0 items-center gap-1">
+                        {pendingAdj > 0 && (
+                          <span
+                            className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                            title={`${pendingAdj} pending time adjustment${pendingAdj === 1 ? '' : 's'}`}
+                          >
+                            {pendingAdj}
+                          </span>
                         )}
-                      >
-                        {count}
+                        {count > 0 && (
+                          <span
+                            className={cn(
+                              'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                              isActive
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400',
+                            )}
+                          >
+                            {count}
+                          </span>
+                        )}
                       </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+                    </motion.button>
+                  );
+                })}
+              </div>
 
-            {/* Main layout — single page scroll (wizard ScrollArea); wide table uses horizontal scroll only when needed */}
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,220px)_minmax(0,1fr)] xl:items-start xl:gap-4">
-              {/* Left column: Bonus config + Assign panel */}
-              <div className="min-w-0 space-y-4">
+              {/* Content: review panel + employee table */}
+              <div className="min-w-0 flex-1">
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={activeDeptTab}
+                    initial={{ opacity: 0, y: 8, filter: 'blur(2px)' }}
+                    animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                    exit={{ opacity: 0, y: -6, filter: 'blur(2px)' }}
+                    transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                    className="space-y-4"
+                  >
+                <TimeAdjustmentReviewPanel
+                  deptName={activeDept.name}
+                  adjustments={deptAdjustments}
+                  signedUrls={timeAdjustmentSignedUrls}
+                  decidingId={decidingAdjustmentId}
+                  hoursDraft={adjustmentHoursDraft}
+                  setHoursDraft={setAdjustmentHoursDraft}
+                  onDecide={decideTimeAdjustmentRequest}
+                />
+
+            {/* Left bonus-rules panel hidden — table now spans full width */}
+            <div className="hidden">
                 {/* Common Bonuses card removed — PAB counters live per-row in the dept table */}
 
                 {/* Dept-specific Bonus Panel — hover-info for formulas, action card for toggles */}
@@ -6731,9 +6966,9 @@ export default function PayrollWizard({
                   );
                 })()}
 
-              </div>
+              </div>{/* end hidden bonus-rules panel */}
 
-              {/* Right column: Employee bonus table */}
+              {/* Employee bonus table */}
               <div className="flex min-w-0 flex-col gap-2">
                 {deptEmployees.length === 0 ? (
                   <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-zinc-200 bg-zinc-50/50 text-center dark:border-zinc-800 dark:bg-zinc-950/30">
@@ -7618,7 +7853,10 @@ export default function PayrollWizard({
                   );
                 })()}
               </div>
-            </div>
+                  </motion.div>
+                </AnimatePresence>
+              </div>{/* content: review panel + table */}
+            </div>{/* department workspace flex-row */}
           </div>
         );
       }

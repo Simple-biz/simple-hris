@@ -2089,15 +2089,24 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                       </>
                     }
                   >
-                    <span
-                      className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white"
-                      title={formatPHP(totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount)}
-                    >
-                      {formatPHP(totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount)}
-                    </span>
-                    <span className="text-xs tabular-nums text-zinc-500 sm:text-sm dark:text-zinc-500">
-                      ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount) / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                    </span>
+                    {(pabMergeLoading || perfectAttendanceBonusStatus === 'pending') ? (
+                      <span className="flex items-baseline gap-3">
+                        <span className="inline-block h-10 w-52 animate-pulse rounded-md bg-zinc-200 sm:h-12 sm:w-64 lg:h-14 lg:w-72 dark:bg-zinc-800" />
+                        <span className="inline-block h-4 w-24 animate-pulse rounded bg-zinc-200/70 dark:bg-zinc-800/70" />
+                      </span>
+                    ) : (
+                      <>
+                        <span
+                          className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white"
+                          title={formatPHP(totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount)}
+                        >
+                          {formatPHP(totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount)}
+                        </span>
+                        <span className="text-xs tabular-nums text-zinc-500 sm:text-sm dark:text-zinc-500">
+                          ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount) / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                        </span>
+                      </>
+                    )}
                   </HiddenValue>
                 ) : (
                   <span className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white">

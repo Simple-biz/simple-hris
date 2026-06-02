@@ -50,6 +50,8 @@ import {
 } from '@/lib/us-holidays';
 import HiddenValue from './HiddenValue';
 import DisputeDialog from './DisputeDialog';
+import TimeAdjustmentDialog from './TimeAdjustmentDialog';
+import type { TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 
 /** Matches PayrollWizard COMMON_BONUSES / EmployeeDashboard. */
 const PERFECT_ATTENDANCE_BONUS_PHP = 5000;
@@ -218,6 +220,8 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
   const [disputeDialog, setDisputeDialog] = useState<{ date: string; seconds: number; existingDispute: PabDayDisputeRow | null } | null>(null);
+  const [timeAdjustments, setTimeAdjustments] = useState<TimeAdjustmentRow[]>([]);
+  const [timeAdjustDialog, setTimeAdjustDialog] = useState<{ date: string; seconds: number; existing: TimeAdjustmentRow | null } | null>(null);
   const [orphanageVisits, setOrphanageVisits] = useState<PabDayDisputeRow[]>([]);
   const [orphanageLoading, setOrphanageLoading] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -464,6 +468,25 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     void fetchDisputes();
   }, [fetchDisputes]);
 
+  const fetchTimeAdjustments = useCallback(async () => {
+    try {
+      const from = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}-${String(monthStart.getDate()).padStart(2, '0')}`;
+      const to = `${monthEnd.getFullYear()}-${String(monthEnd.getMonth() + 1).padStart(2, '0')}-${String(monthEnd.getDate()).padStart(2, '0')}`;
+      const res = await fetch(
+        `/api/time-adjustments?email=${encodeURIComponent(email)}&from=${from}&to=${to}&limit=200`,
+        { cache: 'no-store' },
+      );
+      const json = (await res.json()) as { rows?: TimeAdjustmentRow[] };
+      setTimeAdjustments(json.rows ?? []);
+    } catch {
+      setTimeAdjustments([]);
+    }
+  }, [email, monthStart, monthEnd]);
+
+  useEffect(() => {
+    void fetchTimeAdjustments();
+  }, [fetchTimeAdjustments]);
+
   const fetchOrphanageVisits = useCallback(async () => {
     setOrphanageLoading(true);
     try {
@@ -511,7 +534,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([fetchMerged(), fetchDisputes(), fetchRatesAndFx(), fetchOrphanageVisits(), fetchMemberPay()]);
+      await Promise.all([fetchMerged(), fetchDisputes(), fetchTimeAdjustments(), fetchRatesAndFx(), fetchOrphanageVisits(), fetchMemberPay()]);
     } finally {
       setRefreshing(false);
     }
@@ -574,6 +597,12 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     for (const d of disputes) map.set(d.dispute_date, d);
     return map;
   }, [disputes]);
+
+  const adjustmentsByDate = useMemo(() => {
+    const map = new Map<string, TimeAdjustmentRow>();
+    for (const a of timeAdjustments) map.set(a.adjust_date, a);
+    return map;
+  }, [timeAdjustments]);
 
   /** Merged Hubstaff + approved dispute overrides, all calendar days (for pay + calendar grid). */
   const mergedHoursByDateKey = useMemo(() => {
@@ -1030,7 +1059,24 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           !day.passes &&
                           !dispute &&
                           !isFutureOrToday;
-                        const cellClickable = canDispute || !!dispute;
+                        // Time adjustment: any in-month, non-future day (works even with no
+                        // Hubstaff data yet). Today is allowed; future days are not.
+                        const adjustment = inMonth ? adjustmentsByDate.get(dayIso) : undefined;
+                        const canRequestAdjust = inMonth && cellMid.getTime() <= todayMid.getTime();
+                        const cellClickable = canRequestAdjust || canDispute || !!dispute || !!adjustment;
+                        const handleCellClick = () => {
+                          if (adjustment) {
+                            setTimeAdjustDialog({ date: dayIso, seconds: day.seconds, existing: adjustment });
+                            return;
+                          }
+                          if (canRequestAdjust) {
+                            setTimeAdjustDialog({ date: dayIso, seconds: day.seconds, existing: null });
+                            return;
+                          }
+                          if (canDispute || dispute) {
+                            setDisputeDialog({ date: dayIso, seconds: day.seconds, existingDispute: dispute ?? null });
+                          }
+                        };
 
                         const forgiven =
                           !!dispute &&
@@ -1157,14 +1203,39 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                         return (
                           <div
                             key={di}
-                            className={`relative flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-200 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:ring-2 hover:ring-orange-300/50' : ''}`}
+                            className={`group relative flex h-10 flex-col items-center justify-center gap-px rounded-md border transition-all duration-200 ${cellBorder} ${cellClickable ? 'cursor-pointer hover:z-30 hover:ring-2 hover:ring-orange-300/50' : ''}`}
                             title={`${titleBody}${titleDispute}${rateTooltip}`}
-                            onClick={
-                              cellClickable
-                                ? () => setDisputeDialog({ date: dayIso, seconds: day.seconds, existingDispute: dispute ?? null })
-                                : undefined
-                            }
+                            onClick={cellClickable ? handleCellClick : undefined}
                           >
+                            {cellClickable && (
+                              <div className="absolute bottom-full left-1/2 z-40 hidden -translate-x-1/2 pb-1 group-hover:block">
+                                <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-left shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+                                  <p className="whitespace-nowrap text-[10px] font-semibold text-zinc-700 dark:text-zinc-200">
+                                    {day.dayLabel} {day.dateStr}
+                                  </p>
+                                  <p className="whitespace-nowrap text-[10px] text-zinc-500 dark:text-zinc-400">
+                                    {hours > 0 ? `${hours.toFixed(1)}h tracked` : 'No hours tracked'}
+                                  </p>
+                                  {(adjustment || canRequestAdjust) && (
+                                    <p className="mt-0.5 whitespace-nowrap text-[9.5px] font-medium text-orange-600 dark:text-orange-400">
+                                      {adjustment ? 'Click to view your request' : 'Click to request time adjustment'}
+                                    </p>
+                                  )}
+                                  {(canDispute || dispute) && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setDisputeDialog({ date: dayIso, seconds: day.seconds, existingDispute: dispute ?? null });
+                                      }}
+                                      className="mt-1 w-full whitespace-nowrap rounded border border-zinc-200 px-1.5 py-0.5 text-[9.5px] font-medium text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                    >
+                                      {dispute ? 'View PAB dispute' : 'File PAB dispute'}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
                             <span className="text-[7px] font-medium leading-none tabular-nums text-zinc-400 dark:text-zinc-500 sm:text-[8px]">
                               {day.dateStr}
                             </span>
@@ -1564,6 +1635,21 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
           onSubmitted={() => {
             setDisputeDialog(null);
             void fetchDisputes();
+          }}
+        />
+      )}
+
+      {timeAdjustDialog && (
+        <TimeAdjustmentDialog
+          open
+          onOpenChange={(open) => { if (!open) setTimeAdjustDialog(null); }}
+          employeeEmail={email}
+          adjustDate={timeAdjustDialog.date}
+          hoursWorked={timeAdjustDialog.seconds}
+          existingRequest={timeAdjustDialog.existing}
+          onSubmitted={() => {
+            setTimeAdjustDialog(null);
+            void fetchTimeAdjustments();
           }}
         />
       )}

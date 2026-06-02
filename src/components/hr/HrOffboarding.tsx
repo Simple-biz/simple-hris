@@ -522,7 +522,7 @@ export default function HrOffboarding() {
                         <td data-label="Name" className="px-4 py-2.5 text-zinc-900 dark:text-zinc-100">{r.name ?? '—'}</td>
                         <td data-label="Department" className="px-4 py-2.5 text-xs text-zinc-700 dark:text-zinc-300">{r.department ?? '—'}</td>
                         <td data-label="Work email" className="break-all px-4 py-2.5 font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.work_email ?? '—'}</td>
-                        <td data-label="Start" className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">{r.start_date ?? '—'}</td>
+                        <td data-label="Start" className="px-4 py-2.5 text-xs text-zinc-600 dark:text-zinc-400">{r.start_date ? (() => { const d = new Date(r.start_date); return isNaN(d.getTime()) ? r.start_date : d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }); })() : '—'}</td>
                         <td data-label="Action" className="px-4 py-2.5">
                           <div className="flex flex-wrap items-center justify-end gap-1.5">
                             <Button size="sm" variant="outline" onClick={() => setTarget(r)} disabled={webhookBusy || !r.work_email}

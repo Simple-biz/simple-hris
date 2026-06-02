@@ -174,6 +174,30 @@ async function fetchAllApprovedDisputes(
   return map;
 }
 
+/**
+ * Fetches ALL approved time adjustments and overlays them onto the supplied dispute map
+ * (time adjustments win on a same day). Used so an employee's PAB eligibility reflects
+ * accounting-corrected hours. Never touches hubstaff_hours — hours are overlaid at calc time.
+ */
+async function mergeApprovedTimeAdjustments(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+  map: Map<string, Map<string, number | null>>,
+): Promise<Map<string, Map<string, number | null>>> {
+  const { data, error } = await supabase
+    .from("time_adjustment_requests")
+    .select("work_email, adjust_date, approved_hours")
+    .eq("status", "approved");
+  if (error || !data) return map;
+  for (const row of data as Array<{ work_email: string; adjust_date: string; approved_hours: number | null }>) {
+    if (row.approved_hours == null) continue;
+    const email = normEmail(row.work_email) ?? (row.work_email ?? "").toLowerCase();
+    if (!email) continue;
+    if (!map.has(email)) map.set(email, new Map());
+    map.get(email)!.set(row.adjust_date, row.approved_hours);
+  }
+  return map;
+}
+
 interface MasterEmployeeMin {
   work_email: string | null;
   personal_email: string | null;
@@ -333,7 +357,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     listOrphanageBudgetRequests({ status: "approved" }),
     listGiftPayments({}),
     supabase
-      ? fetchAllApprovedDisputes(supabase)
+      ? fetchAllApprovedDisputes(supabase).then((m) => mergeApprovedTimeAdjustments(supabase, m))
       : Promise.resolve(new Map<string, Map<string, number | null>>()),
   ]);
 
