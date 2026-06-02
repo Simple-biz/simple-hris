@@ -18,6 +18,7 @@ import ExcludedQueue from './ExcludedQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
 import DispatchReports from './DispatchReports';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
+import UrgentPaymentsQueue from './UrgentPaymentsQueue';
 import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
 
@@ -39,6 +40,7 @@ export default function PayrollClerkApp() {
   const [pending, setPending] = useState<QueueRow[]>([]);
   const [markPaidRow, setMarkPaidRow] = useState<QueueRow | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [urgentCount, setUrgentCount] = useState(0);
 
   // Carla's gate: list only appears once a cycle is marked "ready".
   // For now this is a UI toggle so we can demo both states.
@@ -160,6 +162,9 @@ export default function PayrollClerkApp() {
     if (activeTab === 'reports') {
       return <DispatchReports />;
     }
+    if (activeTab === 'urgent') {
+      return <UrgentPaymentsQueue onCountChange={setUrgentCount} />;
+    }
     if (!cycleReady) {
       return (
         <div className="flex h-full flex-col items-center justify-center gap-4 bg-[#fafaf8] px-6 text-center dark:bg-[#0d1117]">
@@ -235,6 +240,7 @@ export default function PayrollClerkApp() {
         viewerEmail={viewerEmail}
         counts={counts}
         cycleReady={cycleReady}
+        urgentCount={urgentCount}
       />
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-[#ececec] bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-zinc-800 dark:bg-zinc-950/95 md:hidden">

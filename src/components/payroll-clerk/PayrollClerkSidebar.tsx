@@ -19,6 +19,7 @@ import {
   Wallet,
   Wifi,
   Wallet2,
+  Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -47,6 +48,8 @@ interface PayrollClerkSidebarProps {
   /** Map of processor id → number of pending rows (for badges). */
   counts: Record<ProcessorId, number>;
   cycleReady: boolean;
+  /** Number of approved MESA disbursements pending dispatch. */
+  urgentCount: number;
 }
 
 export default function PayrollClerkSidebar({
@@ -56,6 +59,7 @@ export default function PayrollClerkSidebar({
   viewerEmail,
   counts,
   cycleReady,
+  urgentCount,
 }: PayrollClerkSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
@@ -197,6 +201,29 @@ export default function PayrollClerkSidebar({
           </nav>
 
           <div className="my-5 mx-2.5 h-px bg-[#ececec] dark:bg-zinc-800" />
+
+          <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
+            Urgent
+          </p>
+          <nav className="mb-5 flex flex-col gap-px">
+            {navBtn(
+              'urgent',
+              'Urgent Payments',
+              Zap,
+              urgentCount > 0 ? (
+                <span
+                  className={cn(
+                    'ml-auto rounded-full px-1.5 py-px text-[10.5px] font-semibold tabular-nums',
+                    activeTab === 'urgent'
+                      ? 'bg-amber-400/20 text-amber-200'
+                      : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
+                  )}
+                >
+                  {urgentCount}
+                </span>
+              ) : null,
+            )}
+          </nav>
 
           <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
             History

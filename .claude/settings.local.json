@@ -201,7 +201,8 @@
       "Bash(xargs dirname)",
       "Bash(echo \"TSC_EXIT=$?\")",
       "Bash(echo \"TSC=$?\")",
-      "Bash(Select-Object -First 20 FullName)"
+      "Bash(Select-Object -First 20 FullName)",
+      "Bash(Select-String -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\payroll-clerk\\\\DispatchReports.tsx\" -Pattern \"\\(Orphan|orphanage|urgent|OrphanageSection|function Orphan\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

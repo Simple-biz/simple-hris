@@ -270,6 +270,41 @@ export default function CreateOrphanageStyleDisputeDialog({
     searchInputRef.current?.focus();
   }, []);
 
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text');
+    // Only intercept when the pasted text looks like a list (comma, semicolon, or newline).
+    if (!/[,;\n\r]/.test(text)) return;
+    e.preventDefault();
+    const tokens = text.split(/[,;\n\r]+/).map((t) => t.trim()).filter(Boolean);
+    if (tokens.length === 0) return;
+    let lastAdded: string | null = null;
+    let notFound = 0;
+    const toAdd: string[] = [];
+    for (const token of tokens) {
+      const norm = normEmail(token);
+      if (!norm) { notFound++; continue; }
+      if (employeesByEmail.has(norm)) {
+        toAdd.push(norm);
+        lastAdded = norm;
+      } else {
+        notFound++;
+      }
+    }
+    if (toAdd.length > 0) {
+      setSelectedEmployees((prev) => {
+        const set = new Set(prev);
+        const fresh = toAdd.filter((e) => !set.has(e));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+      if (lastAdded) setActivePerson(lastAdded);
+    }
+    if (notFound > 0) {
+      toast.warning(`${notFound} ${notFound === 1 ? 'email' : 'emails'} not recognised — check spelling or ask HR to add them`);
+    }
+    setSearch('');
+    searchInputRef.current?.focus();
+  }, [employeesByEmail]);
+
   const handleRemoveEmployee = useCallback((email: string) => {
     setSelectedEmployees((prev) => prev.filter((e) => e !== email));
     setPerPersonDates((prev) => {
@@ -553,6 +588,7 @@ export default function CreateOrphanageStyleDisputeDialog({
                     ref={searchInputRef}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
+                    onPaste={handlePaste}
                     placeholder={selectedEmployees.length === 0 ? '+ add person...' : 'Search to add another...'}
                     className="h-8 pl-8 text-xs"
                     disabled={submitting || employeesLoading}

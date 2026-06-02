@@ -865,6 +865,15 @@ export default function PayrollWizard({
   const [qcModalEmail, setQcModalEmail] = useState<string | null>(null);
   const [hrModalEmail, setHrModalEmail] = useState<string | null>(null);
   const [pabCalendarModalEmail, setPabCalendarModalEmail] = useState<string | null>(null);
+  const [pabForgiveActiveIso, setPabForgiveActiveIso] = useState<string | null>(null);
+  const [pabForgiveNote, setPabForgiveNote] = useState('');
+  const [pabForgiveLoadingIso, setPabForgiveLoadingIso] = useState<string | null>(null);
+  const [pabForgiveError, setPabForgiveError] = useState<string | null>(null);
+  const [pabRevokeActiveIso, setPabRevokeActiveIso] = useState<string | null>(null);
+  const [pabRevokeLoadingIso, setPabRevokeLoadingIso] = useState<string | null>(null);
+  const [pabRevokeError, setPabRevokeError] = useState<string | null>(null);
+  const [techBonusManualGrants, setTechBonusManualGrants] = useState<Set<string>>(new Set());
+  const [techBonusManualRevokes, setTechBonusManualRevokes] = useState<Set<string>>(new Set());
   // ── Inline PAB period setter: per-month memory + active-month selector ──────
   /** Local YYYY-MM-DD for the active month's start/end date inputs (mirrors the hook after each refresh). */
   const [pabStartLocal, setPabStartLocal] = useState('');
@@ -1208,6 +1217,7 @@ export default function PayrollWizard({
   );
 
   const [approvedDisputeDates, setApprovedDisputeDates] = useState<Map<string, Map<string, number | null>>>(new Map());
+  const [approvedDisputeIds, setApprovedDisputeIds] = useState<Map<string, Map<string, string>>>(new Map());
   /** Approved time-adjustment overrides: normalized work_email -> (ISO date -> SET hours). */
   const [approvedTimeAdjustments, setApprovedTimeAdjustments] = useState<Map<string, Map<string, number>>>(new Map());
   /** Pending + approved time-adjustment requests (for the Additions review panel). */
@@ -2144,17 +2154,23 @@ export default function PayrollWizard({
     const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
     fetch(`/api/pab-disputes?status=approved&status=accounting_approved&from=${from}&to=${to}`, { cache: 'no-store' })
       .then(r => r.json())
-      .then((json: { rows: { work_email: string; dispute_date: string; reason: string; override_hours: number | null }[] }) => {
+      .then((json: { rows: { id: string; work_email: string; dispute_date: string; reason: string; override_hours: number | null }[] }) => {
         const map = new Map<string, Map<string, number | null>>();
+        const idMap = new Map<string, Map<string, string>>();
         for (const row of json.rows ?? []) {
           const em = (row.work_email ?? '').trim().toLowerCase();
           if (!em) continue;
           if (!map.has(em)) map.set(em, new Map());
           map.get(em)!.set(row.dispute_date, row.override_hours);
+          if (row.id) {
+            if (!idMap.has(em)) idMap.set(em, new Map());
+            idMap.get(em)!.set(row.dispute_date, row.id);
+          }
         }
         setApprovedDisputeDates(map);
+        setApprovedDisputeIds(idMap);
       })
-      .catch(() => setApprovedDisputeDates(new Map()));
+      .catch(() => { setApprovedDisputeDates(new Map()); setApprovedDisputeIds(new Map()); });
   }, [pabMonthRange]);
 
   // Approved time-adjustment overrides for the PAB period — folded into pay + PAB.
@@ -3117,20 +3133,25 @@ export default function PayrollWizard({
    */
   const techBonusEligible = useMemo<Set<string>>(() => {
     const set = new Set<string>();
-    if (!techBonusWeekInfo.isTechBonusWeek || !techBonusWeekInfo.weekStartDate) return set;
-    const weekStart = techBonusWeekInfo.weekStartDate;
-    for (const r of effectiveCalcResults) {
-      const hasRates = r.regularRate != null || r.otRate != null;
-      if (!hasRates) continue;
-      const em = normEmail(r.email);
-      const sd = em ? startDateByEmail.get(em) : undefined;
-      if (!sd) continue;
-      const eligibleFrom = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() + 30);
-      if (weekStart.getTime() < eligibleFrom.getTime()) continue;
-      set.add(r.email);
+    if (techBonusWeekInfo.weekStartDate) {
+      const weekStart = techBonusWeekInfo.weekStartDate;
+      if (techBonusWeekInfo.isTechBonusWeek) {
+        for (const r of effectiveCalcResults) {
+          const hasRates = r.regularRate != null || r.otRate != null;
+          if (!hasRates) continue;
+          const em = normEmail(r.email);
+          const sd = em ? startDateByEmail.get(em) : undefined;
+          if (!sd) continue;
+          const eligibleFrom = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate() + 30);
+          if (weekStart.getTime() < eligibleFrom.getTime()) continue;
+          set.add(r.email);
+        }
+      }
     }
+    for (const email of techBonusManualGrants) set.add(email);
+    for (const email of techBonusManualRevokes) set.delete(email);
     return set;
-  }, [techBonusWeekInfo, effectiveCalcResults, startDateByEmail]);
+  }, [techBonusWeekInfo, effectiveCalcResults, startDateByEmail, techBonusManualGrants, techBonusManualRevokes]);
 
   /**
    * Auto-apply / remove tech_bonus toggle whenever the week-eligibility set
@@ -6516,6 +6537,7 @@ export default function PayrollWizard({
                   onDecide={decideTimeAdjustmentRequest}
                   onDelete={deleteTimeAdjustmentRequest}
                   deletingId={deletingAdjustmentId}
+                  locked={lockState.locked}
                 />
 
             {/* Left bonus-rules panel hidden — table now spans full width */}
@@ -6925,15 +6947,21 @@ export default function PayrollWizard({
                     const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
                     fetch(`/api/pab-disputes?status=approved&status=accounting_approved&from=${from}&to=${to}`, { cache: 'no-store' })
                       .then(r2 => r2.json())
-                      .then((json2: { rows: { work_email: string; dispute_date: string; override_hours: number | null }[] }) => {
+                      .then((json2: { rows: { id: string; work_email: string; dispute_date: string; override_hours: number | null }[] }) => {
                         const map = new Map<string, Map<string, number | null>>();
+                        const idMap = new Map<string, Map<string, string>>();
                         for (const row of json2.rows ?? []) {
                           const em = (row.work_email ?? '').trim().toLowerCase();
                           if (!em) continue;
                           if (!map.has(em)) map.set(em, new Map());
                           map.get(em)!.set(row.dispute_date, row.override_hours);
+                          if (row.id) {
+                            if (!idMap.has(em)) idMap.set(em, new Map());
+                            idMap.get(em)!.set(row.dispute_date, row.id);
+                          }
                         }
                         setApprovedDisputeDates(map);
+                        setApprovedDisputeIds(idMap);
                       })
                       .catch(() => {});
                   };
@@ -7118,8 +7146,7 @@ export default function PayrollWizard({
                         <Check className="h-3.5 w-3.5 shrink-0" />
                         <span className="font-semibold">Bonuses submitted by the department manager.</span>
                         <span className="opacity-80">
-                          From the KPI Calculator · week of {managerBonusMeta[activeDeptTab]!.period_start} · {managerBonusMeta[activeDeptTab]!.status}. The Bonus
-                          column below reflects their submission — edit any cell to override.
+                          From the KPI Calculator · week of {managerBonusMeta[activeDeptTab]!.period_start} · {managerBonusMeta[activeDeptTab]!.status}. Amounts appear in the KPI Sub. column — use Adj. to override the total.
                         </span>
                       </div>
                     )}
@@ -7255,6 +7282,15 @@ export default function PayrollWizard({
                                 )}
                               </TableHead>
                             ))}
+                            {managerBonusMeta[activeDeptTab] && (
+                              <TableHead
+                                className="min-w-[80px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-emerald-600 dark:text-emerald-400"
+                                title="Bonus amounts submitted by the department manager via the KPI Calculator"
+                              >
+                                KPI Sub.<br />
+                                <span className="font-mono font-normal text-zinc-400">{managerBonusMeta[activeDeptTab]!.period_start}</span>
+                              </TableHead>
+                            )}
                             <TableHead
                               className="min-w-[60px] px-1 py-2 text-right text-[9px] font-medium leading-tight text-rose-600 dark:text-rose-400"
                               title="MESA deduction — applied automatically to employees enrolled in MESA (mesa_member=true on their rates row)"
@@ -7262,8 +7298,8 @@ export default function PayrollWizard({
                               MESA<br />
                               <span className="font-mono font-normal text-zinc-400">-{formatPHP(100)}</span>
                             </TableHead>
-                            <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                              Bonus
+                            <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                              Adj.
                             </TableHead>
                             <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
                               Final
@@ -7331,39 +7367,70 @@ export default function PayrollWizard({
                                               : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
                                         )}
                                       >
-                                        <span>{label}</span>
+                                        <span>{status === 'eligible' ? '+₱5,000' : label}</span>
                                       </button>
                                     </TableCell>
                                   );
                                 })()}
-                                {/* Tech Bonus — week-detected, read-only pill. Manual toggle still available via the dispatch path. */}
+                                {/* Tech Bonus — week-detected pill; accounting can manually grant */}
                                 {(() => {
                                   const em = normEmail(emp.email);
                                   const sd = em ? startDateByEmail.get(em) : undefined;
                                   const hasRates = emp.regularRate != null || emp.otRate != null;
                                   const techOn = techBonusEligible.has(emp.email);
+                                  const isManualGrant = techBonusManualGrants.has(emp.email);
+                                  const isManualRevoke = techBonusManualRevokes.has(emp.email);
                                   const titleText = techOn
-                                    ? `Auto-applied: salary date ${techBonusWeekInfo.salaryDate?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) ?? ''} lands in the 3rd full Mon–Sun week.`
-                                    : !techBonusWeekInfo.isTechBonusWeek
-                                      ? 'Not the Tech Bonus week. Pays only when the salary date lands in the 3rd full Mon–Sun week of its month.'
-                                      : !hasRates
-                                        ? 'No PH rate — Tech Bonus is PHP-only.'
-                                        : !sd
-                                          ? 'No start date on master list — cannot verify 30-day tenure.'
-                                          : 'Less than 30 days of service — first Tech Bonus is gated until day 30.';
+                                    ? isManualGrant
+                                      ? 'Manually granted by Accounting this session.'
+                                      : `Auto-applied: salary date ${techBonusWeekInfo.salaryDate?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) ?? ''} lands in the 3rd full Mon–Sun week.`
+                                    : isManualRevoke
+                                      ? 'Manually revoked this session — click to restore.'
+                                      : !techBonusWeekInfo.isTechBonusWeek
+                                        ? 'Not the Tech Bonus week — click to grant manually.'
+                                        : !hasRates
+                                          ? 'No PH rate — click to grant manually.'
+                                          : !sd
+                                            ? 'No start date — click to grant manually.'
+                                            : 'Less than 30 days of service — click to grant manually.';
                                   return (
                                     <TableCell className="px-1 py-1.5 text-center">
-                                      <span
-                                        title={titleText}
-                                        className={cn(
-                                          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none',
-                                          techOn
-                                            ? 'bg-sky-100 text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30'
-                                            : 'bg-zinc-100 text-zinc-400 ring-1 ring-zinc-300/40 dark:bg-zinc-800/60 dark:text-zinc-500 dark:ring-zinc-700/40',
-                                        )}
-                                      >
-                                        {techOn ? `+${formatPHP(1850)}` : '—'}
-                                      </span>
+                                      {techOn ? (
+                                        <span className="inline-flex items-center gap-1">
+                                          <span
+                                            title={titleText}
+                                            className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30"
+                                          >
+                                            +{formatPHP(1850)}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            title="Revoke Tech Bonus for this employee"
+                                            onClick={() => {
+                                              if (isManualGrant) {
+                                                setTechBonusManualGrants(prev => { const next = new Set(prev); next.delete(emp.email); return next; });
+                                              } else {
+                                                setTechBonusManualRevokes(prev => { const next = new Set(prev); next.add(emp.email); return next; });
+                                              }
+                                            }}
+                                            className="inline-flex items-center justify-center rounded-full w-3.5 h-3.5 bg-red-100 text-red-500 ring-1 ring-red-300/50 transition-colors hover:bg-red-200 hover:text-red-700 dark:bg-red-900/30 dark:text-red-400 dark:ring-red-700/40 dark:hover:bg-red-900/60"
+                                          >
+                                            <X className="w-2 h-2" />
+                                          </button>
+                                        </span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          title={titleText}
+                                          onClick={() => {
+                                            setTechBonusManualRevokes(prev => { const next = new Set(prev); next.delete(emp.email); return next; });
+                                            setTechBonusManualGrants(prev => { const next = new Set(prev); next.add(emp.email); return next; });
+                                          }}
+                                          className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-zinc-400 ring-1 ring-zinc-300/40 transition-colors hover:bg-amber-100 hover:text-amber-700 hover:ring-amber-400/50 dark:bg-zinc-800/60 dark:text-zinc-500 dark:ring-zinc-700/40 dark:hover:bg-amber-900/30 dark:hover:text-amber-300"
+                                        >
+                                          Grant
+                                        </button>
+                                      )}
                                     </TableCell>
                                   );
                                 })()}
@@ -7780,6 +7847,24 @@ export default function PayrollWizard({
                                     </TableCell>
                                   );
                                 })}
+                                {/* KPI Submission — manager-submitted per-employee bonus from the KPI Calculator */}
+                                {managerBonusMeta[activeDeptTab] && (() => {
+                                  const kpiAmt = resolvedManagerBonus[emp.email];
+                                  return (
+                                    <TableCell className="px-1 py-1.5 text-center">
+                                      {kpiAmt != null ? (
+                                        <span
+                                          title={`Submitted by manager · ${managerBonusMeta[activeDeptTab]!.status}`}
+                                          className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-emerald-700 ring-1 ring-emerald-400/40 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-500/30"
+                                        >
+                                          {formatPHP(kpiAmt)}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[9px] text-zinc-300 dark:text-zinc-700">—</span>
+                                      )}
+                                    </TableCell>
+                                  );
+                                })()}
                                 {/* MESA deduction — automatic -PHP100 for MESA members; shown so reviewers can see the deduction inline (it was previously only visible in the exported XLSX). */}
                                 <TableCell
                                   className={cn(
@@ -7798,41 +7883,41 @@ export default function PayrollWizard({
                                 </TableCell>
                                 <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-bold">
                                   {isRecalcPending ? (
-                                    <span className="inline-block h-3 w-12 animate-pulse rounded bg-emerald-200/60 dark:bg-emerald-900/40" />
-                                  ) : (
+                                    <span className="inline-block h-3 w-12 animate-pulse rounded bg-amber-200/60 dark:bg-amber-900/40" />
+                                  ) : hasOverride ? (
                                     <div className="flex items-center justify-end gap-1">
                                       <input
                                         type="number"
                                         inputMode="decimal"
                                         step="0.01"
-                                        value={bonusTotal}
+                                        value={bonusOverrides[emp.email] ?? ''}
                                         onChange={(e) => {
                                           const raw = e.target.value;
                                           const next = raw === '' ? 0 : Number(raw);
                                           if (!Number.isFinite(next)) return;
                                           updateBonusOverride(emp.email, next);
                                         }}
-                                        title={hasOverride ? `Auto-computed: ${formatPHP(autoBonus)}` : 'Auto-computed bonus — edit to override'}
-                                        className={cn(
-                                          'h-6 w-[88px] rounded border bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums focus:outline-none focus:ring-1 dark:bg-zinc-900',
-                                          hasOverride
-                                            ? 'border-amber-400/70 text-amber-700 focus:ring-amber-400 dark:border-amber-700/60 dark:text-amber-300'
-                                            : bonusTotal > 0
-                                              ? 'border-emerald-300/70 text-emerald-600 focus:ring-emerald-400 dark:border-emerald-700/40 dark:text-emerald-400'
-                                              : 'border-zinc-200 text-zinc-500 focus:ring-zinc-300 dark:border-zinc-700',
-                                        )}
+                                        title={`Overriding auto-computed: ${formatPHP(autoBonus)}`}
+                                        className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
                                       />
-                                      {hasOverride && (
-                                        <button
-                                          type="button"
-                                          onClick={() => updateBonusOverride(emp.email, null)}
-                                          title={`Revert to auto: ${formatPHP(autoBonus)}`}
-                                          className="text-zinc-400 hover:text-red-500"
-                                        >
-                                          <X className="h-3 w-3" />
-                                        </button>
-                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => updateBonusOverride(emp.email, null)}
+                                        title={`Revert to auto: ${formatPHP(autoBonus)}`}
+                                        className="text-zinc-400 hover:text-red-500"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
                                     </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      title={`Auto-computed: ${formatPHP(autoBonus)} — click to set an adjustment`}
+                                      onClick={() => updateBonusOverride(emp.email, 0)}
+                                      className="text-zinc-300 hover:text-amber-600 dark:text-zinc-700 dark:hover:text-amber-400"
+                                    >
+                                      —
+                                    </button>
                                   )}
                                 </TableCell>
                                 <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-semibold text-zinc-900 dark:text-white">
@@ -8777,22 +8862,28 @@ export default function PayrollWizard({
                                           : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
                                     )}
                                   >
-                                    {paStatus === 'eligible' ? '✓ Eligible' : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
+                                    {paStatus === 'eligible' ? '+₱5,000' : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
                                   </button>
                                 </td>
-                                {/* Tech Bonus — auto-detected, read-only */}
+                                {/* Tech Bonus — auto-detected; accounting can manually grant */}
                                 <td className="px-3 py-3 text-center">
-                                  <span
-                                    title={techOn ? `Auto-applied: salary date lands in the 3rd full Mon–Sun week.` : 'Not the Tech Bonus week or tenure/rate requirements not met.'}
-                                    className={cn(
-                                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none',
-                                      techOn
-                                        ? 'bg-sky-100 text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30'
-                                        : 'bg-zinc-100 text-zinc-400 ring-1 ring-zinc-300/40 dark:bg-zinc-800/60 dark:text-zinc-500 dark:ring-zinc-700/40',
-                                    )}
-                                  >
-                                    {techOn ? `+${formatPHP(1850)}` : '—'}
-                                  </span>
+                                  {techOn ? (
+                                    <span
+                                      title={techBonusManualGrants.has(r.email) ? 'Manually granted by Accounting this session.' : 'Auto-applied: salary date lands in the 3rd full Mon–Sun week.'}
+                                      className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30"
+                                    >
+                                      +{formatPHP(1850)}
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      title="Not the Tech Bonus week or tenure/rate requirements not met — click to grant manually."
+                                      onClick={() => setTechBonusManualGrants(prev => { const next = new Set(prev); next.add(r.email); return next; })}
+                                      className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-zinc-400 ring-1 ring-zinc-300/40 transition-colors hover:bg-amber-100 hover:text-amber-700 hover:ring-amber-400/50 dark:bg-zinc-800/60 dark:text-zinc-500 dark:ring-zinc-700/40 dark:hover:bg-amber-900/30 dark:hover:text-amber-300"
+                                    >
+                                      Grant
+                                    </button>
+                                  )}
                                 </td>
                                 <td className="px-3 py-3">
                                   <div className="flex items-center justify-end gap-1">
@@ -12539,6 +12630,102 @@ export default function PayrollWizard({
             return `${m}m`;
           };
 
+          const normModalEmail = pabCalendarModalEmail?.trim().toLowerCase() ?? '';
+          const forgivenIsoSet = new Set<string>(approvedDisputeIds.get(normModalEmail)?.keys() ?? []);
+
+          const handleRevokeDay = async (iso: string) => {
+            if (pabRevokeLoadingIso || !pabCalendarModalEmail) return;
+            const disputeId = approvedDisputeIds.get(normModalEmail)?.get(iso);
+            if (!disputeId) { setPabRevokeError('Dispute ID not found — refresh and try again.'); return; }
+            setPabRevokeLoadingIso(iso);
+            setPabRevokeError(null);
+            try {
+              const res = await fetch(`/api/pab-disputes/${disputeId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'revoke', decision_note: 'Revoked by Accounting' }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error ?? 'Failed to revoke');
+              setApprovedDisputeDates(prev => {
+                const next = new Map(prev);
+                const dates = new Map(next.get(normModalEmail) ?? []);
+                dates.delete(iso);
+                next.set(normModalEmail, dates);
+                return next;
+              });
+              setApprovedDisputeIds(prev => {
+                const next = new Map(prev);
+                const ids = new Map(next.get(normModalEmail) ?? []);
+                ids.delete(iso);
+                next.set(normModalEmail, ids);
+                return next;
+              });
+              setPabRevokeActiveIso(null);
+            } catch (err) {
+              setPabRevokeError(err instanceof Error ? err.message : 'An error occurred');
+            } finally {
+              setPabRevokeLoadingIso(null);
+            }
+          };
+
+          const handleForgiveDay = async (iso: string, note: string, rawSeconds: number) => {
+            if (pabForgiveLoadingIso || !pabCalendarModalEmail) return;
+            setPabForgiveLoadingIso(iso);
+            setPabForgiveError(null);
+            try {
+              const createRes = await fetch('/api/pab-disputes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  work_email: pabCalendarModalEmail,
+                  dispute_date: iso,
+                  reason: 'other',
+                  explanation: note.trim() || 'Forgiven by Accounting',
+                }),
+              });
+              const createData = await createRes.json();
+              if (!createRes.ok || !createData.id) throw new Error(createData.error ?? 'Failed to create dispute');
+              // For days with < 4h raw hours the 4h floor inside disputeForgiven would reject a null
+              // override, so we set a 5h credit to ensure the amber "forgiven" state activates.
+              const overrideHours = rawSeconds < 4 * 3600 ? 5 : null;
+              const approveRes = await fetch(`/api/pab-disputes/${createData.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'approve',
+                  decision_note: note.trim() || 'Forgiven by Accounting',
+                  override_hours: overrideHours,
+                }),
+              });
+              const approveData = await approveRes.json();
+              if (!approveRes.ok) throw new Error(approveData.error ?? 'Failed to approve dispute');
+              const em = pabCalendarModalEmail.trim().toLowerCase();
+              setApprovedDisputeDates(prev => {
+                const next = new Map(prev);
+                const existing = next.get(em) ?? new Map<string, number | null>();
+                const updated = new Map(existing);
+                updated.set(iso, overrideHours);
+                next.set(em, updated);
+                return next;
+              });
+              setApprovedDisputeIds(prev => {
+                const next = new Map(prev);
+                const existing = next.get(em) ?? new Map<string, string>();
+                const updated = new Map(existing);
+                updated.set(iso, createData.id);
+                next.set(em, updated);
+                return next;
+              });
+              setPabForgiveActiveIso(null);
+              setPabForgiveNote('');
+            } catch (err) {
+              setPabForgiveError(err instanceof Error ? err.message : 'An error occurred');
+            } finally {
+              setPabForgiveLoadingIso(null);
+            }
+          };
+
           return (
             <motion.div
               key="pab-cal-backdrop"
@@ -12779,8 +12966,18 @@ export default function PayrollWizard({
                                           }`
                                         : `${cell.date.toDateString()} — no Hubstaff data`
                               }
+                              onClick={
+                                state === 'failed'
+                                  ? () => { setPabForgiveActiveIso(pabForgiveActiveIso === cell.iso ? null : cell.iso); setPabForgiveError(null); }
+                                  : state === 'forgiven' && forgivenIsoSet.has(cell.iso)
+                                    ? () => { setPabRevokeActiveIso(pabRevokeActiveIso === cell.iso ? null : cell.iso); setPabRevokeError(null); }
+                                    : undefined
+                              }
                               className={cn(
-                                'flex h-[46px] cursor-default flex-col items-center justify-center overflow-hidden rounded-md px-0.5 text-center transition-shadow',
+                                'flex h-[46px] flex-col items-center justify-center overflow-hidden rounded-md px-0.5 text-center transition-shadow',
+                                (state === 'failed' || (state === 'forgiven' && forgivenIsoSet.has(cell.iso))) ? 'cursor-pointer' : 'cursor-default',
+                                state === 'failed' && pabForgiveActiveIso === cell.iso ? 'ring-4 ring-indigo-500 ring-offset-1 z-10' : '',
+                                state === 'forgiven' && pabRevokeActiveIso === cell.iso ? 'ring-4 ring-red-400 ring-offset-1 z-10' : '',
                                 stateClasses[state],
                               )}
                             >
@@ -12940,39 +13137,195 @@ export default function PayrollWizard({
 
                         {paStatus === 'ineligible' && failedDetails.length > 0 && (
                           <div className="mt-3 border-t border-red-300/40 pt-2.5 dark:border-red-800/40">
-                            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-red-700 dark:text-red-300">
-                              Failed days ({failedDetails.length})
+                            <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-red-700 dark:text-red-300">
+                              <span>Failed days ({failedDetails.length})</span>
+                              <span className="font-normal normal-case text-red-500/70 dark:text-red-400/60">— click a day to forgive</span>
                             </div>
                             <div className="space-y-1">
-                              {failedDetails.map((f, i) => (
-                                <motion.div
-                                  key={f.iso}
-                                  initial={{ opacity: 0, x: -4 }}
-                                  animate={{ opacity: 1, x: 0 }}
-                                  transition={{ delay: 0.2 + cells.length * 0.008 + i * 0.03, duration: 0.2 }}
-                                  className="flex items-center justify-between gap-2 rounded-md bg-white/60 px-2 py-1 text-[11px] dark:bg-zinc-950/40"
-                                >
-                                  <div className="flex items-center gap-1.5 min-w-0">
-                                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
-                                    <span className="font-mono text-red-800 dark:text-red-200">
-                                      {f.date
-                                        ? f.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                                        : f.iso}
-                                    </span>
+                              {failedDetails.map((f, i) => {
+                                const isExpanded = pabForgiveActiveIso === f.iso;
+                                const isLoading = pabForgiveLoadingIso === f.iso;
+                                return (
+                                  <div key={f.iso}>
+                                    <motion.div
+                                      initial={{ opacity: 0, x: -4 }}
+                                      animate={{ opacity: 1, x: 0 }}
+                                      transition={{ delay: 0.2 + cells.length * 0.008 + i * 0.03, duration: 0.2 }}
+                                      onClick={() => { setPabForgiveActiveIso(isExpanded ? null : f.iso); setPabForgiveError(null); }}
+                                      className={cn(
+                                        'flex cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] transition-colors',
+                                        isExpanded
+                                          ? 'bg-indigo-50 ring-1 ring-indigo-300/60 dark:bg-indigo-950/40 dark:ring-indigo-700/50'
+                                          : 'bg-white/60 hover:bg-white/90 dark:bg-zinc-950/40 dark:hover:bg-zinc-900/60',
+                                      )}
+                                    >
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+                                        <span className="font-mono text-red-800 dark:text-red-200">
+                                          {f.date
+                                            ? f.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                                            : f.iso}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        <span className="font-mono text-red-700 dark:text-red-300">
+                                          {formatSeconds(f.seconds)}
+                                        </span>
+                                        <span className="rounded-sm bg-red-200/70 px-1.5 py-0.5 font-mono text-[10px] font-bold text-red-800 dark:bg-red-900/60 dark:text-red-200">
+                                          −{formatShortfall(f.shortfallSec)}
+                                        </span>
+                                        <span className={cn(
+                                          'rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1 transition-colors',
+                                          isExpanded
+                                            ? 'bg-indigo-100 text-indigo-700 ring-indigo-400/50 dark:bg-indigo-900/40 dark:text-indigo-300'
+                                            : 'bg-amber-100 text-amber-800 ring-amber-400/40 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300',
+                                        )}>
+                                          {isExpanded ? 'Cancel' : 'Forgive'}
+                                        </span>
+                                      </div>
+                                    </motion.div>
+                                    {isExpanded && (
+                                      <motion.div
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: 'auto' }}
+                                        exit={{ opacity: 0, height: 0 }}
+                                        transition={{ duration: 0.18, ease: 'easeOut' }}
+                                        className="mt-1 overflow-hidden rounded-md border border-amber-300/60 bg-amber-50/90 p-2.5 dark:border-amber-700/40 dark:bg-amber-950/30"
+                                      >
+                                        {pabForgiveError && (
+                                          <div className="mb-2 rounded bg-red-100 px-2 py-1 text-[10px] text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                                            {pabForgiveError}
+                                          </div>
+                                        )}
+                                        <div className="mb-1.5 text-[10px] text-amber-800 dark:text-amber-300">
+                                          Forgive <span className="font-semibold">{f.date ? f.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : f.iso}</span> — accounting override. Day will count toward PAB.
+                                        </div>
+                                        <textarea
+                                          value={pabForgiveNote}
+                                          onChange={e => setPabForgiveNote(e.target.value)}
+                                          placeholder="Note (optional) — e.g. Power outage confirmed"
+                                          rows={2}
+                                          className="w-full resize-none rounded border border-amber-300 bg-white px-2 py-1 text-[10px] text-zinc-800 placeholder-zinc-400 outline-none focus:ring-1 focus:ring-amber-400 dark:border-amber-700/50 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500"
+                                        />
+                                        <div className="mt-1.5 flex gap-1.5">
+                                          <button
+                                            disabled={isLoading}
+                                            onClick={() => handleForgiveDay(f.iso, pabForgiveNote, f.seconds)}
+                                            className="rounded bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                          >
+                                            {isLoading ? 'Forgiving...' : 'Confirm Forgive'}
+                                          </button>
+                                          <button
+                                            disabled={isLoading}
+                                            onClick={() => { setPabForgiveActiveIso(null); setPabForgiveNote(''); setPabForgiveError(null); }}
+                                            className="rounded px-2 py-1 text-[10px] font-semibold text-zinc-600 transition-colors hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
+                                      </motion.div>
+                                    )}
                                   </div>
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <span className="font-mono text-red-700 dark:text-red-300">
-                                      {formatSeconds(f.seconds)}
-                                    </span>
-                                    <span className="rounded-sm bg-red-200/70 px-1.5 py-0.5 font-mono text-[10px] font-bold text-red-800 dark:bg-red-900/60 dark:text-red-200">
-                                      −{formatShortfall(f.shortfallSec)}
-                                    </span>
-                                  </div>
-                                </motion.div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         )}
+
+                        {/* Forgiven Days — always shown when any days were forgiven by dispute */}
+                        {forgivenDays > 0 && (() => {
+                          const forgivenEntries = breakdown
+                            .filter(b => b.forgivenByDispute)
+                            .map(b => {
+                              const d = parseColDate(b.col);
+                              const iso = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : b.col;
+                              return { date: d, iso, seconds: b.seconds };
+                            })
+                            .sort((a, b) => (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0));
+                          return (
+                            <div className="mt-3 border-t border-amber-300/40 pt-2.5 dark:border-amber-800/40">
+                              <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                                <span>Forgiven days ({forgivenEntries.length})</span>
+                                <span className="font-normal normal-case text-amber-500/70 dark:text-amber-500/60">— click to revoke</span>
+                              </div>
+                              {pabRevokeError && (
+                                <div className="mb-2 rounded bg-red-100 px-2 py-1 text-[10px] text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                                  {pabRevokeError}
+                                </div>
+                              )}
+                              <div className="space-y-1">
+                                {forgivenEntries.map((f, i) => {
+                                  const isExpanded = pabRevokeActiveIso === f.iso;
+                                  const isLoading = pabRevokeLoadingIso === f.iso;
+                                  return (
+                                    <div key={f.iso}>
+                                      <motion.div
+                                        initial={{ opacity: 0, x: -4 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        transition={{ delay: 0.22 + i * 0.03, duration: 0.2 }}
+                                        onClick={() => { setPabRevokeActiveIso(isExpanded ? null : f.iso); setPabRevokeError(null); }}
+                                        className={cn(
+                                          'flex cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] transition-colors',
+                                          isExpanded
+                                            ? 'bg-red-50 ring-1 ring-red-300/60 dark:bg-red-950/40 dark:ring-red-700/50'
+                                            : 'bg-white/60 hover:bg-white/90 dark:bg-zinc-950/40 dark:hover:bg-zinc-900/60',
+                                        )}
+                                      >
+                                        <div className="flex items-center gap-1.5 min-w-0">
+                                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                                          <span className="font-mono text-amber-800 dark:text-amber-300">
+                                            {f.date ? f.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : f.iso}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          <span className="font-mono text-amber-700 dark:text-amber-400">{formatSeconds(f.seconds)}</span>
+                                          <span className="text-[9px] text-amber-600 dark:text-amber-500">★ forgiven</span>
+                                          <span className={cn(
+                                            'rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1 transition-colors',
+                                            isExpanded
+                                              ? 'bg-indigo-100 text-indigo-700 ring-indigo-400/50 dark:bg-indigo-900/40 dark:text-indigo-300'
+                                              : 'bg-red-100 text-red-700 ring-red-400/40 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300',
+                                          )}>
+                                            {isExpanded ? 'Cancel' : 'Revoke'}
+                                          </span>
+                                        </div>
+                                      </motion.div>
+                                      {isExpanded && (
+                                        <motion.div
+                                          initial={{ opacity: 0, height: 0 }}
+                                          animate={{ opacity: 1, height: 'auto' }}
+                                          exit={{ opacity: 0, height: 0 }}
+                                          transition={{ duration: 0.18, ease: 'easeOut' }}
+                                          className="mt-1 overflow-hidden rounded-md border border-red-300/60 bg-red-50/90 p-2.5 dark:border-red-700/40 dark:bg-red-950/30"
+                                        >
+                                          <div className="mb-2 text-[10px] text-red-800 dark:text-red-300">
+                                            Revoke forgiveness for <span className="font-semibold">{f.date ? f.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : f.iso}</span>. The day will return to failed and the dispute will be marked revoked.
+                                          </div>
+                                          <div className="flex gap-1.5">
+                                            <button
+                                              disabled={isLoading}
+                                              onClick={() => handleRevokeDay(f.iso)}
+                                              className="rounded bg-red-600 px-2.5 py-1 text-[10px] font-semibold text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                            >
+                                              {isLoading ? 'Revoking...' : 'Confirm Revoke'}
+                                            </button>
+                                            <button
+                                              disabled={isLoading}
+                                              onClick={() => { setPabRevokeActiveIso(null); setPabRevokeError(null); }}
+                                              className="rounded px-2 py-1 text-[10px] font-semibold text-zinc-600 transition-colors hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                                            >
+                                              Cancel
+                                            </button>
+                                          </div>
+                                        </motion.div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </motion.div>
 
                       {/* HSL Weekend Pay Premium summary — only for HSL employees */}

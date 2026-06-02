@@ -23,6 +23,7 @@ type Props = {
   onDecide: (id: string, action: 'approve' | 'deny', approvedHours: number | null, note?: string) => void;
   onDelete: (id: string) => void;
   deletingId: string | null;
+  locked?: boolean;
 };
 
 const STATUS_BADGE: Record<string, string> = {
@@ -55,6 +56,7 @@ export default function TimeAdjustmentReviewPanel({
   onDecide,
   onDelete,
   deletingId,
+  locked = false,
 }: Props) {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
@@ -139,6 +141,12 @@ export default function TimeAdjustmentReviewPanel({
           Manager-approved requests are ready for you to set hours and approve.
           Requests still pending manager sign-off are shown below for visibility only.
         </p>
+        {locked && (
+          <div className="mt-2 flex items-center gap-2 rounded-md border border-zinc-300/70 bg-zinc-100 px-3 py-2 text-[11px] font-medium text-zinc-600 dark:border-zinc-700/60 dark:bg-zinc-800/60 dark:text-zinc-400">
+            <Lock className="h-3 w-3 shrink-0" />
+            Payroll processing is in progress — decisions are locked until processing stops.
+          </div>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
 
@@ -228,12 +236,13 @@ export default function TimeAdjustmentReviewPanel({
                   value={draft}
                   onChange={(e) => setHoursDraft((prev) => ({ ...prev, [a.id]: e.target.value }))}
                   placeholder="e.g. 8"
+                  disabled={locked}
                   className="h-8 w-24"
                 />
                 <Button
                   size="sm"
                   className="h-8 bg-emerald-600 text-white hover:bg-emerald-700"
-                  disabled={isDeciding || draft.trim() === ''}
+                  disabled={locked || isDeciding || draft.trim() === ''}
                   onClick={() => onDecide(a.id, 'approve', draft.trim() === '' ? null : parseFloat(draft))}
                 >
                   {isDeciding ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Check className="mr-1 h-3 w-3" />}
@@ -243,7 +252,7 @@ export default function TimeAdjustmentReviewPanel({
                   size="sm"
                   variant="outline"
                   className="h-8 border-rose-300 text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-400"
-                  disabled={isDeciding}
+                  disabled={locked || isDeciding}
                   onClick={() => onDecide(a.id, 'deny', null)}
                 >
                   <X className="mr-1 h-3 w-3" />

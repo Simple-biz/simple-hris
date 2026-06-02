@@ -22,13 +22,12 @@ import {
   X,
   Menu,
   Search,
-  Sparkles,
   Trash2,
   UserRound,
   Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Toaster } from '@/components/ui/sonner';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normEmail } from '@/lib/email/norm-email';
@@ -407,25 +406,30 @@ function Overview({
   const greeting = firstName.charAt(0).toUpperCase() + firstName.slice(1);
 
   return (
-    <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-      <header className="relative overflow-hidden rounded-2xl border border-blue-100/70 bg-gradient-to-br from-blue-600 via-blue-700 to-black px-6 py-7 text-white shadow-lg shadow-blue-600/15 dark:border-blue-900/60 dark:from-blue-700 dark:via-blue-900 dark:to-black">
-        <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-white/10 blur-3xl" aria-hidden />
-        <div className="absolute -bottom-10 -left-10 h-32 w-32 rounded-full bg-blue-300/20 blur-2xl" aria-hidden />
-        <div className="relative flex flex-col gap-1">
-          <div className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-blue-100/90">
-            <Sparkles className="h-3 w-3" />
-            Manager dashboard
+    <div className="flex flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      {/* Compact header — no marketing banner */}
+      <header className="flex items-start justify-between gap-4">
+        <div className="flex gap-3">
+          <div className="mt-1.5 h-8 w-0.5 shrink-0 rounded-full bg-blue-500" />
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">
+              Manager workspace
+            </div>
+            <h1 className="mt-0.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl dark:text-white">
+              Hi {greeting}.
+            </h1>
+            <p className="mt-1 max-w-lg text-sm text-zinc-500 dark:text-zinc-400">
+              Approve time adjustments, keep tabs on your direct reports, and submit KPI scores.
+            </p>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-            Hi {greeting}, here's your team at a glance.
-          </h1>
-          <p className="max-w-2xl text-sm text-blue-100/80">
-            Approve time adjustments, keep tabs on your direct reports, and (soon) submit
-            KPI scores so accounting doesn't have to chase.
-          </p>
+        </div>
+        <div className="hidden shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-[11px] font-medium text-zinc-500 sm:flex dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+          Live
         </div>
       </header>
 
+      {/* KPI cards */}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <StatTile
           label="Pending approvals"
@@ -464,46 +468,75 @@ function Overview({
         />
       </section>
 
-      <Card className="border-blue-100/80 bg-gradient-to-br from-white to-blue-50/50 ring-1 ring-blue-500/10 dark:border-blue-950/60 dark:from-zinc-950 dark:to-blue-950/20 dark:ring-blue-400/15">
-        <CardHeader className="flex-row items-center gap-3 space-y-0 pb-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-sm shadow-blue-500/30">
-            <ClipboardCheck className="h-4 w-4" />
-          </div>
-          <div className="flex-1">
-            <CardTitle className="text-base">Time adjustment approvals</CardTitle>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Workers submit, two managers sign off, system posts to Hubstaff. No more email chains.
-            </p>
+      {/* Time adjustment approvals */}
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex items-center justify-between gap-4 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white">
+              <ClipboardCheck className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-zinc-900 dark:text-white">
+                Time adjustment approvals
+              </div>
+              <div className="text-xs text-zinc-500 dark:text-zinc-500">
+                Workers submit — two managers sign off — system posts to Hubstaff.
+              </div>
+            </div>
           </div>
           <Button
             size="sm"
-            className="bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800"
+            className="shrink-0 bg-blue-600 text-white hover:bg-blue-700"
             onClick={onJumpToApprovals}
           >
             Open queue
           </Button>
-        </CardHeader>
-        <CardContent className="grid gap-2 text-xs text-zinc-600 sm:grid-cols-2 dark:text-zinc-400">
-          <Requirement icon={Camera} text="Screenshot proof attached to every request" />
-          <Requirement icon={Clock} text="Exact start + end timestamps" />
-          <Requirement icon={CheckCircle2} text="Two manager sign-offs before payroll sees it" />
-          <Requirement icon={AlertTriangle} text="Auto-posts to Hubstaff once both approve" />
-        </CardContent>
-      </Card>
+        </div>
+        <div className="grid grid-cols-2 border-t border-zinc-100 sm:grid-cols-4 dark:border-zinc-800">
+          {(
+            [
+              { icon: Camera, label: 'Screenshot proof', sub: 'Attached to every request' },
+              { icon: Clock, label: 'Timestamps', sub: 'Exact start and end times' },
+              { icon: CheckCircle2, label: 'Two sign-offs', sub: 'Both managers must approve' },
+              { icon: AlertTriangle, label: 'Auto-posts', sub: 'Syncs to Hubstaff on approval' },
+            ] as const
+          ).map(({ icon: Icon, label, sub }, i) => (
+            <div
+              key={label}
+              className={cn(
+                'flex flex-col gap-1 px-4 py-3',
+                i > 0 && 'border-l border-zinc-100 dark:border-zinc-800',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400" />
+              <div className="text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">{label}</div>
+              <div className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">{sub}</div>
+            </div>
+          ))}
+        </div>
+      </div>
 
-      <Card className="border-zinc-200/80 bg-white/70 ring-1 ring-zinc-900/5 dark:border-zinc-800 dark:bg-zinc-950/60 dark:ring-white/5">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">What's coming</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-zinc-600 dark:text-zinc-400">
-          <ul className="grid gap-1.5 sm:grid-cols-2">
-            <RoadmapItem text="Pick your team via simple.biz email" />
-            <RoadmapItem text="Submit team transfers without email" />
-            <RoadmapItem text="Enter KPI scores → auto-bonus calc" />
-            <RoadmapItem text="Notifications when a request lands" />
-          </ul>
-        </CardContent>
-      </Card>
+      {/* Roadmap */}
+      <div className="rounded-xl border border-zinc-200 bg-white px-5 py-4 dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-400 dark:text-zinc-500">
+          What&apos;s coming
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {[
+            'Pick your team via simple.biz email',
+            'Submit team transfers without email',
+            'Enter KPI scores — auto-bonus calc',
+            'Notifications when a request lands',
+          ].map((text, i) => (
+            <div key={text} className="flex items-center gap-2.5">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-200 text-[9px] font-bold tabular-nums text-zinc-400 dark:border-zinc-700 dark:text-zinc-600">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              <span className="text-sm text-zinc-600 dark:text-zinc-400">{text}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2376,29 +2409,5 @@ function StatTile({ label, value, hint, icon: Icon, accent, onClick }: StatTileP
         <div className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">{hint}</div>
       </div>
     </Wrapper>
-  );
-}
-
-function Requirement({
-  icon: Icon,
-  text,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  text: string;
-}) {
-  return (
-    <div className="flex items-start gap-2 rounded-md bg-blue-50/60 px-3 py-2 ring-1 ring-blue-500/5 dark:bg-blue-950/30 dark:ring-blue-400/10">
-      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600 dark:text-blue-400" />
-      <span>{text}</span>
-    </div>
-  );
-}
-
-function RoadmapItem({ text }: { text: string }) {
-  return (
-    <li className="flex items-start gap-2">
-      <span className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-gradient-to-br from-blue-500 to-blue-700" />
-      {text}
-    </li>
   );
 }
