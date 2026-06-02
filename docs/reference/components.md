@@ -96,7 +96,7 @@ The component reflects the two-stage approval model. Accounting can only act on 
 **Manager-approved** (actionable):
 - Employee email, date, reason, requested hours, period label.
 - Manager's name and any manager note shown as context.
-- Evidence thumbnails (signed URLs from `signedUrls` prop, `<a target="_blank">`).
+- Evidence thumbnails — clicking any thumbnail opens a **lightbox modal** (portal to `document.body` via `createPortal`, `AnimatePresence` for smooth enter/exit — backdrop fades, image springs up from below). Escape key or clicking the backdrop closes it. No new tab is opened.
 - Hours `<Input>` (pre-filled from `requested_hours`), **Approve** button (green, requires a value), **Deny** button (rose outline).
 - Both call `onDecide(id, 'approve'|'deny', hours)` → `PATCH /api/time-adjustments/[id]`.
 
@@ -104,24 +104,28 @@ The component reflects the two-stage approval model. Accounting can only act on 
 - A lock icon header: "Waiting for manager sign-off before you can act."
 - Compact amber rows showing date, email, reason, requested hours. No action controls.
 
-**Decided** (compact list): `approved`, `denied`, `manager_denied` rows with status badges and `approved_hours` where applicable.
+**Decided** (compact list): `approved`, `denied`, `manager_denied` rows with status badges and `approved_hours` where applicable. `denied` and `manager_denied` rows show a **trash icon button** that calls `onDelete(id)` → `DELETE /api/time-adjustments/[id]`. Spins while in-flight (`deletingId` match). Only Accounting roles can reach this endpoint; only denied rows are deletable.
 
 **Props:**
 ```ts
 {
   deptName: string;
-  adjustments: TimeAdjustmentRow[];      // pre-filtered to active dept
-  signedUrls: Record<string, string>;    // storage path → 1-hour signed URL
+  adjustments: TimeAdjustmentRow[];
+  signedUrls: Record<string, string>;
   decidingId: string | null;
+  deletingId: string | null;
   hoursDraft: Record<string, string>;
   setHoursDraft: Dispatch<...>;
   onDecide: (id, action, approvedHours, note?) => void;
+  onDelete: (id: string) => void;
 }
 ```
 
-**Fetch scope (PayrollWizard.tsx `fetchTimeAdjustmentReview`):** fetches all statuses with **no date range restriction** (`?status=pending&status=manager_approved&...&limit=500`), so requests from any past period appear. This is intentional — time adjustments can be submitted for dates months in the past and must still reach Accounting.
+**Lightbox implementation:** `useState<string | null>(lightboxUrl)` + `useEffect` for Escape key. The portal is always rendered (`typeof document !== 'undefined' && createPortal(<AnimatePresence>...</AnimatePresence>, document.body)`) so `AnimatePresence` fires exit animations before unmounting. `z-[9999]` ensures it sits above the wizard's `ScrollArea` and any other stacking context.
 
-**Relationship to pay:** when Accounting approves, `decideTimeAdjustmentRequest` re-fetches both the review list and `approvedTimeAdjustments`, so `effectiveCalcResults.initialPay` updates immediately.
+**Fetch scope (PayrollWizard.tsx `fetchTimeAdjustmentReview`):** fetches all statuses with **no date range restriction** (`?status=pending&status=manager_approved&...&limit=500`), so requests from any past period appear.
+
+**Relationship to pay:** when Accounting approves, `decideTimeAdjustmentRequest` re-fetches both the review list and `approvedTimeAdjustments`, so `effectiveCalcResults.initialPay` updates immediately. `deleteTimeAdjustmentRequest` only re-fetches the review list (deleted rows were denied, so they had no pay effect).
 
 ---
 
@@ -1076,9 +1080,13 @@ Top-level client shell -- resolves viewer, gates access, loads the department-sc
 
 Tabs (`ManagerTab`): `overview`, `time-adjustments` (`ManagerTimeAdjustments` — live as of 2026-06-02), `leaves` (`LeaveRequestsPanel`), `team`, `announcements`, `s-wall`, `hsl-bonus` (the KPI Calculator -- renders `HslBonusCalculator` and/or `DeptBonusCalculator` based on `hslVisible`/`deptVisible`), `bonus-history`, `notifications`.
 
-**`ManagerTimeAdjustments`** (defined inline in `ManagerApp.tsx`, replaced the placeholder stub 2026-06-02): fetches from `GET /api/manager/time-adjustments` on every `activeTab` change (no date restriction — any past request for the manager's departments appears). Shows two sections:
-- **Pending cards** (`status = 'pending'`): employee email, date, reason, requested hours, period label, explanation paragraph, evidence thumbnails (signed URLs), optional manager-note input, **Approve & forward to Accounting** and **Decline** buttons. Calls `PATCH /api/time-adjustments/[id]` with `action: manager_approve` or `manager_deny`.
-- **Already-actioned list** (compact, `status ≠ 'pending'`): email, date, reason, status badge.
+**`ManagerTimeAdjustments`** (defined inline in `ManagerApp.tsx`, replaced the placeholder stub 2026-06-02, redesigned 2026-06-02): fetches from `GET /api/manager/time-adjustments` on every `activeTab` change (no date restriction). **Width** is constrained to `max-w-2xl`. **Visual style:** smoked glass — `bg-white/6 backdrop-blur-xl border border-white/10` cards on a dark background; text uses `text-white/{opacity}` tiers; Approve/Decline buttons are translucent glass pills (`bg-emerald-500/20 ring-emerald-500/30`); actioned rows use `bg-white/4` with a small colored status dot.
+
+Two sections:
+- **Pending cards** (`status = 'pending'`): employee email, date, reason, requested hours, period label, explanation, evidence thumbnails, optional manager-note input, **Approve & forward to Accounting** and **Decline** buttons. Calls `PATCH /api/time-adjustments/[id]` with `action: manager_approve` or `manager_deny`. Evidence thumbnails open an **in-component lightbox modal** (full-screen `fixed` overlay with `AnimatePresence` — backdrop fades, image springs up). Previously clicked thumbnails opened a new browser tab.
+- **Already-actioned list** (compact, `status ≠ 'pending'`): colored dot + email + date + reason + status label.
+
+**Lightbox:** `useState<string | null>(lightboxUrl)` + Escape-key `useEffect`. Wrapped in `AnimatePresence` directly in the JSX (no portal needed here — manager page has no conflicting `overflow: hidden` ancestor). Backdrop: `motion.div` `opacity 0→1→0`. Image: `motion.div` `opacity + scale(0.9→1) + y(12→0)`, spring curve `[0.22, 1, 0.36, 1]`, 240ms.
 
 The sidebar pending-approval badge (`pendingApprovals`) is updated by a `useEffect` keyed on `activeTab` that fetches the same endpoint and counts `status === 'pending'` rows. Previously this was a hardcoded `0`.
 

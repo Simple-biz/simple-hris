@@ -271,6 +271,7 @@ function computeProratedRowPay(
   history: RateHistoryByEmail,
   email: string,
   fallbackRate: { reg: number | null; ot: number | null } | undefined,
+  isHsl?: boolean,
 ): { regularPayPHP: number | null; otPayPHP: number | null } | null {
   const days: Array<{ date: Date; seconds: number }> = [];
   for (const [k, v] of Object.entries(rowResolved)) {
@@ -304,8 +305,12 @@ function computeProratedRowPay(
     const dayOtSec = d.seconds - dayRegSec;
     usedRegSec += dayRegSec;
 
-    if (reg != null) regularPayPHP += (dayRegSec / 3600) * reg;
-    if (ot != null) otPayPHP += (dayOtSec / 3600) * ot;
+    // HSL weekend premium: all hours on Saturday (6) or Sunday (0) earn +15 PHP/h
+    const dow = d.date.getDay();
+    const weekendBonus = isHsl && (dow === 0 || dow === 6) ? 15 : 0;
+
+    if (reg != null) regularPayPHP += (dayRegSec / 3600) * (reg + weekendBonus);
+    if (ot != null) otPayPHP += (dayOtSec / 3600) * (ot + weekendBonus);
   }
 
   return {
@@ -547,7 +552,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     const rowResolved = sourceFileForRow
       ? resolveCanonicalColumnsToIso(raw, sourceFileForRow)
       : raw;
-    const prorated = computeProratedRowPay(rowResolved, rateHistory, em, rate);
+    const prorated = computeProratedRowPay(rowResolved, rateHistory, em, rate, hslEmails.has(em));
 
     let regularPayPHP: number | null;
     let otPayPHP: number | null;

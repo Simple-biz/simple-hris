@@ -1214,6 +1214,7 @@ export default function PayrollWizard({
   const [timeAdjustmentRows, setTimeAdjustmentRows] = useState<TimeAdjustmentRow[]>([]);
   const [timeAdjustmentSignedUrls, setTimeAdjustmentSignedUrls] = useState<Record<string, string>>({});
   const [decidingAdjustmentId, setDecidingAdjustmentId] = useState<string | null>(null);
+  const [deletingAdjustmentId, setDeletingAdjustmentId] = useState<string | null>(null);
   const [adjustmentHoursDraft, setAdjustmentHoursDraft] = useState<Record<string, string>>({});
   /** ISO date (YYYY-MM-DD) -> holiday name. Built from app_settings; empty when disabled. */
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
@@ -2301,6 +2302,24 @@ export default function PayrollWizard({
     [fetchTimeAdjustmentReview, refreshApprovedAdjustmentOverrides],
   );
 
+  const deleteTimeAdjustmentRequest = useCallback(
+    async (id: string) => {
+      setDeletingAdjustmentId(id);
+      try {
+        const res = await fetch(`/api/time-adjustments/${id}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? 'Failed to delete request');
+        toast.success('Request deleted');
+        fetchTimeAdjustmentReview();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to delete request');
+      } finally {
+        setDeletingAdjustmentId(null);
+      }
+    },
+    [fetchTimeAdjustmentReview],
+  );
+
   useEffect(() => {
     if (currentStep !== 3 || !pabMonthRange) return;
     const s = pabMonthRange.start;
@@ -2875,9 +2894,71 @@ export default function PayrollWizard({
   }, []);
 
   /**
+   * HSL weekend pay premium: +15 PHP/h for all Saturday and Sunday hours.
+   * Splits the premium between the regular and OT buckets using chronological
+   * per-day ordering (same logic as computeProratedRowPay in current-pay.ts).
+   * Non-HSL employees get an empty entry so lookups are O(1) no-ops.
+   */
+  const weekendPremiumByEmail = useMemo<Map<string, { regPremiumPHP: number; otPremiumPHP: number }>>(() => {
+    const map = new Map<string, { regPremiumPHP: number; otPremiumPHP: number }>();
+    const rows = hubstaffDisplayRows;
+    if (!rows || rows.length === 0) return map;
+
+    const REG_CAP_SEC = 40 * 3600;
+
+    for (const row of rows) {
+      const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
+      const em = normEmail(rawEmail) ?? rawEmail.toLowerCase();
+      if (!em) continue;
+
+      const deptKey = employeeDepts[rawEmail] ?? employeeDepts[rawEmail.toLowerCase()];
+      if (deptKey !== 'hogan_smith_law') continue;
+
+      const resolvedRow = calcSourceFile && columnsAreAllCanonical(Object.keys(row))
+        ? resolveCanonicalColumnsToIso(row, calcSourceFile)
+        : row;
+
+      const days: Array<{ date: Date; seconds: number }> = [];
+      for (const [k, v] of Object.entries(resolvedRow)) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(k.trim());
+        if (!m) continue;
+        const hrs = parseHoursToDecimal(v);
+        if (hrs <= 0) continue;
+        days.push({ date: new Date(+m[1], +m[2] - 1, +m[3]), seconds: Math.round(hrs * 3600) });
+      }
+      if (days.length === 0) continue;
+      days.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+      let usedRegSec = 0;
+      let wkndRegSec = 0;
+      let wkndOtSec = 0;
+
+      for (const d of days) {
+        const remaining = Math.max(0, REG_CAP_SEC - usedRegSec);
+        const dayRegSec = Math.min(d.seconds, remaining);
+        const dayOtSec = d.seconds - dayRegSec;
+        usedRegSec += dayRegSec;
+        const dow = d.date.getDay();
+        if (dow === 0 || dow === 6) {
+          wkndRegSec += dayRegSec;
+          wkndOtSec += dayOtSec;
+        }
+      }
+
+      const regPremiumPHP = phpHourlyPayFromSeconds(15, wkndRegSec);
+      const otPremiumPHP = phpHourlyPayFromSeconds(15, wkndOtSec);
+      if (regPremiumPHP !== 0 || otPremiumPHP !== 0) {
+        map.set(em, { regPremiumPHP, otPremiumPHP });
+      }
+    }
+    return map;
+  }, [hubstaffDisplayRows, calcSourceFile, employeeDepts]);
+
+  /**
    * Match Hubstaff Email to employee_hourly_rates Work Email (or Personal Email).
    * Reg Pay = Reg Rate × Reg Hrs, OT Pay = OT Rate × OT Hrs (Reg Hrs = min(Total, 40), OT = rest).
    * Total hours rounded to 2dp (Hubstaff-style) before split; pay uses whole seconds + centavo rounding.
+   * HSL employees receive an additional +15 PHP/h for Saturday and Sunday hours.
    */
   const calcResults = useMemo<CalcRow[]>(() => {
     return hubstaffData.map((row) => {
@@ -2913,10 +2994,18 @@ export default function PayrollWizard({
       const regularRate = parseRateField(rateRow?.regular_rate);
       const otRate = parseRateField(rateRow?.ot_rate);
 
-      const regularPay =
+      let regularPay =
         regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
-      const otPay =
+      let otPay =
         otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
+
+      // Apply HSL weekend premium (+15 PHP/h for Sat/Sun hours, split by reg/OT bucket)
+      const wknd = em ? weekendPremiumByEmail.get(em) : undefined;
+      if (wknd) {
+        if (regularPay != null) regularPay = Math.round((regularPay + wknd.regPremiumPHP) * 100) / 100;
+        if (otPay != null) otPay = Math.round((otPay + wknd.otPremiumPHP) * 100) / 100;
+      }
+
       const initialPay =
         regularPay != null && otPay != null
           ? Math.round((regularPay + otPay) * 100) / 100
@@ -2935,7 +3024,7 @@ export default function PayrollWizard({
         initialPay,
       };
     });
-  }, [hubstaffData, ratesByEmail, masterIndex]);
+  }, [hubstaffData, ratesByEmail, masterIndex, weekendPremiumByEmail]);
 
   /**
    * Applies per-department and global OT suspension from System Settings.
@@ -6425,6 +6514,8 @@ export default function PayrollWizard({
                   hoursDraft={adjustmentHoursDraft}
                   setHoursDraft={setAdjustmentHoursDraft}
                   onDecide={decideTimeAdjustmentRequest}
+                  onDelete={deleteTimeAdjustmentRequest}
+                  deletingId={deletingAdjustmentId}
                 />
 
             {/* Left bonus-rules panel hidden — table now spans full width */}
@@ -8609,6 +8700,7 @@ export default function PayrollWizard({
                           <tr>
                             <th className="px-4 py-2.5 text-left">Employee</th>
                             <th className="px-3 py-2.5 text-right">Hours</th>
+                            <th className="px-3 py-2.5 text-right" title="+15 PHP/h for Saturday and Sunday hours (included in Initial Pay)">Wknd +</th>
                             <th className="px-3 py-2.5 text-right">Initial Pay</th>
                             <th className="px-3 py-2.5 text-right">KPI Bonus</th>
                             <th className="px-3 py-2.5 text-center">PAB</th>
@@ -8640,6 +8732,19 @@ export default function PayrollWizard({
                                 <td className="px-3 py-3 text-right font-mono text-xs text-zinc-600 tabular-nums dark:text-zinc-400">
                                   {r.totalHours != null ? r.totalHours.toFixed(2) : '—'}
                                 </td>
+                                {(() => {
+                                  const wp = weekendPremiumByEmail.get(em);
+                                  const wkndTotal = wp ? Math.round((wp.regPremiumPHP + wp.otPremiumPHP) * 100) / 100 : 0;
+                                  return (
+                                    <td className="px-3 py-3 text-right font-mono text-xs tabular-nums" title="+15 PHP/h for Sat/Sun hours">
+                                      {wkndTotal > 0 ? (
+                                        <span className="font-semibold text-amber-600 dark:text-amber-400">+{formatPHP(wkndTotal)}</span>
+                                      ) : (
+                                        <span className="text-zinc-300 dark:text-zinc-600">—</span>
+                                      )}
+                                    </td>
+                                  );
+                                })()}
                                 <td className="px-3 py-3 text-right font-mono text-xs font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">
                                   {r.initialPay != null ? formatPHP(r.initialPay) : '—'}
                                 </td>
@@ -8739,7 +8844,7 @@ export default function PayrollWizard({
                         </tbody>
                         <tfoot className="border-t-2 border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/40">
                           {(() => {
-                            let totalPab = 0, totalTech = 0, totalEffective = 0;
+                            let totalPab = 0, totalTech = 0, totalEffective = 0, totalWkndPremium = 0;
                             for (const r of hslCalcRows) {
                               const em = (r.email ?? '').toLowerCase();
                               const ov = bonusOverrides[r.email] ?? null;
@@ -8748,11 +8853,16 @@ export default function PayrollWizard({
                               const st = pabStatusByEmail.get(em) ?? 'in_progress';
                               if (st === 'eligible') totalPab += 5000;
                               if (techBonusEligible.has(r.email)) totalTech += 1850;
+                              const wp = weekendPremiumByEmail.get(em);
+                              if (wp) totalWkndPremium += wp.regPremiumPHP + wp.otPremiumPHP;
                             }
                             return (
                               <tr>
                                 <td colSpan={2} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                                   Totals ({hslCalcRows.length} employees)
+                                </td>
+                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                                  {totalWkndPremium > 0 ? `+${formatPHP(Math.round(totalWkndPremium * 100) / 100)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
                                   {formatPHP(totalHslInitialPay)}
@@ -12223,6 +12333,12 @@ export default function PayrollWizard({
           const isHsl =
             employeeDepts[pabCalendarModalEmail] === 'hogan_smith_law' ||
             employeeDepts[pabCalendarModalEmail.toLowerCase()] === 'hogan_smith_law';
+
+          // Weekend premium for this pay week (current source file only)
+          const wkndPremiumData = isHsl ? weekendPremiumByEmail.get(normEmpEmail) : undefined;
+          const wkndPremiumTotal = wkndPremiumData
+            ? Math.round((wkndPremiumData.regPremiumPHP + wkndPremiumData.otPremiumPHP) * 100) / 100
+            : 0;
           const breakdown = isHsl
             ? (employeeAllDaysHours.get(normEmpEmail) ?? [])
             : (employeeWeekdayHours.get(normEmpEmail) ?? []);
@@ -12702,6 +12818,10 @@ export default function PayrollWizard({
                               {cell.inRange && (!weekend || isHsl) && !data && state !== 'idle' && (
                                 <span className="mt-0.5 text-[9px] leading-none opacity-60">—</span>
                               )}
+                              {/* Weekend premium badge for HSL Sat/Sun cells with logged hours */}
+                              {isHsl && weekend && cell.inRange && data && data.seconds > 0 && (
+                                <span className="mt-0.5 text-[8px] font-bold leading-none text-amber-700 dark:text-amber-300" title="+15 PHP/h weekend rate applied">+₱15</span>
+                              )}
                             </motion.div>
                           );
                         })}
@@ -12854,6 +12974,39 @@ export default function PayrollWizard({
                           </div>
                         )}
                       </motion.div>
+
+                      {/* HSL Weekend Pay Premium summary — only for HSL employees */}
+                      {isHsl && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.2 + cells.length * 0.008, duration: 0.3 }}
+                          className="mt-3 rounded-xl border border-amber-300/60 bg-amber-50/80 p-3 dark:border-amber-800/50 dark:bg-amber-950/30"
+                        >
+                          <div className="flex items-start gap-2">
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white shadow-[0_0_0_3px_rgba(245,158,11,0.15)]">
+                              ₱+
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-bold text-amber-800 dark:text-amber-200">
+                                Weekend Pay Premium &mdash; Current Pay Week
+                              </div>
+                              {wkndPremiumTotal > 0 ? (
+                                <div className="mt-0.5 text-[11px] leading-snug text-amber-700/90 dark:text-amber-300/80">
+                                  <span className="font-semibold">{formatPHP(wkndPremiumTotal)}</span> applied (+₱15/h for Sat &amp; Sun hours) &mdash; already included in Initial Pay.
+                                  {wkndPremiumData && wkndPremiumData.regPremiumPHP > 0 && wkndPremiumData.otPremiumPHP > 0 && (
+                                    <span> Split: {formatPHP(wkndPremiumData.regPremiumPHP)} regular + {formatPHP(wkndPremiumData.otPremiumPHP)} OT.</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="mt-0.5 text-[11px] text-amber-700/70 dark:text-amber-400/70">
+                                  No weekend hours logged this pay week &mdash; no premium applied.
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
                     </>
                   )}
                 </div>

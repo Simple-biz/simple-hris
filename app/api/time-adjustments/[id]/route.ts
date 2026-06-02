@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import {
   decideTimeAdjustment,
+  deleteTimeAdjustment,
   getTimeAdjustmentById,
   managerDecideTimeAdjustment,
 } from '@/lib/supabase/time-adjustments';
@@ -129,6 +130,34 @@ export async function PATCH(
       }
     }
 
+    return NextResponse.json({ success: true, error: null });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+export async function DELETE(
+  _request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await context.params;
+    if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+
+    const session = await getServerSession(authOptions);
+    const sessionEmail = ((session?.user as { email?: string | null } | undefined)?.email ?? '')
+      .toString().trim().toLowerCase();
+    if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+    const { error } = await deleteTimeAdjustment(id, sessionEmail);
+    if (error) {
+      const code = error === 'Request not found' ? 404
+        : error.includes('Not authorized') ? 403
+        : error.includes('Only denied') ? 400
+        : 500;
+      return NextResponse.json({ error }, { status: code });
+    }
     return NextResponse.json({ success: true, error: null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

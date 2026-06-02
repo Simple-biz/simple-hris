@@ -19,6 +19,7 @@ import {
   EyeOff,
   Inbox,
   Mail,
+  X,
   Menu,
   Search,
   Sparkles,
@@ -574,14 +575,6 @@ import { TIME_ADJUSTMENT_REASONS } from '@/lib/supabase/time-adjustments';
 const TA_REASON_LABEL = (code: string) =>
   TIME_ADJUSTMENT_REASONS.find((r) => r.code === code)?.label ?? code;
 
-const TA_STATUS_BADGE: Record<string, string> = {
-  pending: 'border-amber-400 bg-amber-50 text-amber-700',
-  manager_approved: 'border-emerald-400 bg-emerald-50 text-emerald-700',
-  manager_denied: 'border-rose-400 bg-rose-50 text-rose-700',
-  approved: 'border-emerald-500 bg-emerald-50 text-emerald-800',
-  denied: 'border-rose-400 bg-rose-50 text-rose-700',
-};
-
 const TA_STATUS_LABEL: Record<string, string> = {
   pending: 'Awaiting your approval',
   manager_approved: 'Forwarded to Accounting',
@@ -590,12 +583,20 @@ const TA_STATUS_LABEL: Record<string, string> = {
   denied: 'Denied by Accounting',
 };
 
+const TA_STATUS_DOT: Record<string, string> = {
+  manager_approved: 'bg-emerald-400',
+  manager_denied: 'bg-rose-400',
+  approved: 'bg-emerald-500',
+  denied: 'bg-rose-400',
+};
+
 function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) => void }) {
   const [rows, setRows] = useState<TimeAdjustmentRow[]>([]);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   const fetchRows = React.useCallback(() => {
     setLoading(true);
@@ -612,6 +613,14 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
   }, [onCountChange]);
 
   useEffect(() => { fetchRows(); }, [fetchRows]);
+
+  // Close lightbox on Escape
+  useEffect(() => {
+    if (!lightboxUrl) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightboxUrl(null); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [lightboxUrl]);
 
   const decide = async (id: string, action: 'manager_approve' | 'manager_deny') => {
     setDecidingId(id);
@@ -636,81 +645,121 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
   const decided = rows.filter((r) => r.status !== 'pending');
 
   return (
-    <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-      <header className="flex flex-col gap-1">
-        <h2 className="bg-gradient-to-r from-blue-700 via-zinc-900 to-zinc-900 bg-clip-text text-xl font-bold tracking-tight text-transparent dark:from-blue-400 dark:via-white dark:to-white">
-          Time adjustment approvals
-        </h2>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Review your team&apos;s time adjustment requests. Approve to forward to Accounting, or decline.
-          Requests can be from any past date &mdash; Accounting will apply corrections to the relevant payroll cycle.
-        </p>
-      </header>
+    <>
+      {/* Image lightbox — AnimatePresence owns both enter and exit */}
+      <AnimatePresence>
+        {lightboxUrl && (
+          <motion.div
+            key="mgr-lightbox-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+            onClick={() => setLightboxUrl(null)}
+          >
+            <motion.div
+              key="mgr-lightbox-img"
+              initial={{ opacity: 0, scale: 0.9, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 8 }}
+              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+              className="relative max-h-[88vh] max-w-[90vw]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={lightboxUrl}
+                alt="Evidence"
+                className="max-h-[88vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
+              />
+              <button
+                onClick={() => setLightboxUrl(null)}
+                className="absolute -right-3 -top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md ring-1 ring-white/20 transition hover:bg-white/20"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {loading ? (
-        <div className="flex items-center gap-2 text-sm text-zinc-500">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading requests...
-        </div>
-      ) : pending.length === 0 && decided.length === 0 ? (
-        <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15">
-          <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/25">
-              <Inbox className="h-6 w-6" />
+      <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        {/* Header */}
+        <header className="max-w-2xl space-y-1">
+          <h2 className="bg-gradient-to-r from-blue-400 via-white to-white bg-clip-text text-xl font-bold tracking-tight text-transparent">
+            Time adjustment approvals
+          </h2>
+          <p className="text-sm text-white/40">
+            Review your team&apos;s requests. Approve to forward to Accounting, or decline.
+            Requests can be from any past date.
+          </p>
+        </header>
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-white/40">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading requests...
+          </div>
+        ) : pending.length === 0 && decided.length === 0 ? (
+          /* Empty state — smoked glass */
+          <div className="max-w-2xl rounded-2xl border border-white/8 bg-white/4 px-8 py-14 text-center backdrop-blur-md">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/8">
+              <Inbox className="h-5 w-5 text-white/40" />
             </div>
-            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">No pending approvals</p>
-            <p className="max-w-xs text-xs text-zinc-500 dark:text-zinc-400">
+            <p className="text-sm font-medium text-white/60">No pending approvals</p>
+            <p className="mt-1 text-xs text-white/30">
               Requests from your team will appear here when employees submit a time adjustment.
             </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-6">
-          {pending.length > 0 && (
-            <section className="space-y-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                Awaiting your approval ({pending.length})
-              </h3>
-              {pending.map((row) => (
-                <ManagerAdjustmentCard
-                  key={row.id}
-                  row={row}
-                  signedUrls={signedUrls}
-                  decidingId={decidingId}
-                  note={notesDraft[row.id] ?? ''}
-                  onNoteChange={(v) => setNotesDraft((p) => ({ ...p, [row.id]: v }))}
-                  onDecide={decide}
-                />
-              ))}
-            </section>
-          )}
+          </div>
+        ) : (
+          <div className="max-w-2xl space-y-6">
+            {pending.length > 0 && (
+              <section className="space-y-3">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30">
+                  Awaiting your approval &nbsp;&middot;&nbsp; {pending.length}
+                </p>
+                {pending.map((row) => (
+                  <ManagerAdjustmentCard
+                    key={row.id}
+                    row={row}
+                    signedUrls={signedUrls}
+                    decidingId={decidingId}
+                    note={notesDraft[row.id] ?? ''}
+                    onNoteChange={(v) => setNotesDraft((p) => ({ ...p, [row.id]: v }))}
+                    onDecide={decide}
+                    onImageClick={(url) => setLightboxUrl(url)}
+                  />
+                ))}
+              </section>
+            )}
 
-          {decided.length > 0 && (
-            <section className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                Already actioned
-              </h3>
-              {decided.map((row) => (
-                <div
-                  key={row.id}
-                  className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-900"
-                >
-                  <span className="font-medium text-zinc-700 dark:text-zinc-200">{row.work_email}</span>
-                  <span className="font-mono text-zinc-500">{row.adjust_date}</span>
-                  <span className="text-zinc-400">&middot;</span>
-                  <span className="text-zinc-500">{TA_REASON_LABEL(row.reason)}</span>
-                  <span
-                    className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] font-medium ${TA_STATUS_BADGE[row.status] ?? ''}`}
+            {decided.length > 0 && (
+              <section className="space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30">
+                  Already actioned
+                </p>
+                {decided.map((row) => (
+                  <div
+                    key={row.id}
+                    className="flex flex-wrap items-center gap-2 rounded-xl border border-white/6 bg-white/4 px-3.5 py-2.5 text-xs backdrop-blur-sm"
                   >
-                    {TA_STATUS_LABEL[row.status] ?? row.status}
-                  </span>
-                </div>
-              ))}
-            </section>
-          )}
-        </div>
-      )}
-    </div>
+                    <span className={`h-1.5 w-1.5 rounded-full ${TA_STATUS_DOT[row.status] ?? 'bg-white/30'}`} />
+                    <span className="font-medium text-white/70">{row.work_email}</span>
+                    <span className="font-mono text-white/30">{row.adjust_date}</span>
+                    <span className="text-white/20">&middot;</span>
+                    <span className="text-white/40">{TA_REASON_LABEL(row.reason)}</span>
+                    <span className="ml-auto text-[10px] text-white/30">
+                      {TA_STATUS_LABEL[row.status] ?? row.status}
+                    </span>
+                  </div>
+                ))}
+              </section>
+            )}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -723,6 +772,7 @@ function ManagerAdjustmentCard({
   note,
   onNoteChange,
   onDecide,
+  onImageClick,
 }: {
   row: TimeAdjustmentRow;
   signedUrls: Record<string, string>;
@@ -730,80 +780,98 @@ function ManagerAdjustmentCard({
   note: string;
   onNoteChange: (v: string) => void;
   onDecide: (id: string, action: 'manager_approve' | 'manager_deny') => void;
+  onImageClick: (url: string) => void;
 }) {
   const isDeciding = decidingId === row.id;
-  const trackedH = row.requested_hours != null ? `${row.requested_hours}h requested` : null;
 
   return (
-    <Card className="border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-      <CardContent className="space-y-3 py-4">
-        {/* Header */}
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{row.work_email}</p>
-            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-              <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">{row.adjust_date}</span>
-              <span className="mx-1.5 text-zinc-300">&middot;</span>
-              {TA_REASON_LABEL(row.reason)}
-              {trackedH && (
+    /* Smoked glass card */
+    <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/6 shadow-xl shadow-black/30 backdrop-blur-xl">
+      {/* Top stripe — subtle colored accent */}
+      <div className="h-px w-full bg-gradient-to-r from-transparent via-blue-400/40 to-transparent" />
+
+      <div className="space-y-4 p-5">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-white/90">{row.work_email}</p>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-white/40">
+              <span className="font-mono text-white/60">{row.adjust_date}</span>
+              <span>&middot;</span>
+              <span>{TA_REASON_LABEL(row.reason)}</span>
+              {row.requested_hours != null && (
                 <>
-                  <span className="mx-1.5 text-zinc-300">&middot;</span>
-                  {trackedH}
+                  <span>&middot;</span>
+                  <span className="text-white/50">{row.requested_hours}h requested</span>
                 </>
               )}
             </p>
           </div>
           {row.period_label && (
-            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
-              Period {row.period_label}
+            <span className="shrink-0 rounded-md border border-white/8 bg-white/6 px-2 py-0.5 text-[10px] font-medium text-white/30">
+              {row.period_label}
             </span>
           )}
         </div>
 
         {/* Explanation */}
         {row.explanation && (
-          <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300">
+          <p className="rounded-xl border border-white/6 bg-white/4 px-3.5 py-2.5 text-xs leading-relaxed text-white/60">
             {row.explanation}
           </p>
         )}
 
-        {/* Evidence thumbnails */}
+        {/* Evidence thumbnails — click opens lightbox */}
         {row.image_paths.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {row.image_paths.map((p, idx) => {
               const url = signedUrls[p];
               return url ? (
-                <a key={idx} href={url} target="_blank" rel="noopener noreferrer"
-                  className="block h-16 w-16 overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-700">
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => onImageClick(url)}
+                  className="group relative h-20 w-20 overflow-hidden rounded-xl border border-white/10 transition-transform duration-150 hover:scale-105 hover:border-white/25 hover:shadow-lg hover:shadow-black/30"
+                >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={url} alt={`evidence ${idx + 1}`} className="h-full w-full object-cover" />
-                </a>
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/20">
+                    <Eye className="h-4 w-4 scale-0 text-white drop-shadow transition-transform group-hover:scale-100" />
+                  </div>
+                </button>
               ) : (
-                <div key={idx} className="flex h-16 w-16 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
-                  <ImageOff className="h-4 w-4 text-zinc-300" />
+                <div
+                  key={idx}
+                  className="flex h-20 w-20 items-center justify-center rounded-xl border border-white/6 bg-white/4"
+                >
+                  <ImageOff className="h-4 w-4 text-white/20" />
                 </div>
               );
             })}
           </div>
         ) : (
-          <p className="flex items-center gap-1.5 text-[11px] italic text-zinc-400">
-            <Info className="h-3 w-3 shrink-0" /> No evidence images attached
+          <p className="flex items-center gap-1.5 text-[11px] italic text-white/25">
+            <Info className="h-3 w-3 shrink-0" />
+            No evidence images attached
           </p>
         )}
 
-        {/* Manager note (optional) */}
-        <div className="space-y-1">
-          <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
-            Note for employee <span className="text-zinc-400">(optional)</span>
+        {/* Note input */}
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-semibold uppercase tracking-wider text-white/25">
+            Note for employee <span className="normal-case font-normal">(optional)</span>
           </label>
           <input
             type="text"
             value={note}
             onChange={(e) => onNoteChange(e.target.value)}
             placeholder="e.g. Confirmed with project logs"
-            className="w-full rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            className="w-full rounded-xl border border-white/8 bg-white/6 px-3 py-2 text-xs text-white/80 placeholder:text-white/20 focus:border-blue-400/40 focus:bg-white/8 focus:outline-none transition-colors"
           />
         </div>
+
+        {/* Divider */}
+        <div className="h-px bg-white/6" />
 
         {/* Actions */}
         <div className="flex gap-2">
@@ -811,22 +879,24 @@ function ManagerAdjustmentCard({
             type="button"
             disabled={isDeciding}
             onClick={() => onDecide(row.id, 'manager_approve')}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/30 transition hover:bg-emerald-500/30 hover:ring-emerald-400/50 disabled:opacity-40"
           >
-            {isDeciding ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+            {isDeciding
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <CheckCircle2 className="h-3.5 w-3.5" />}
             Approve &amp; forward to Accounting
           </button>
           <button
             type="button"
             disabled={isDeciding}
             onClick={() => onDecide(row.id, 'manager_deny')}
-            className="flex items-center gap-1.5 rounded-md border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400"
+            className="flex items-center gap-1.5 rounded-xl bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-400 ring-1 ring-rose-500/20 transition hover:bg-rose-500/20 hover:ring-rose-400/40 disabled:opacity-40"
           >
             Decline
           </button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 

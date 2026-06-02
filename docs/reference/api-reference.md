@@ -2208,6 +2208,25 @@ Signed URLs are always included (manager must be able to view evidence). 1-hour 
 
 ---
 
+### `DELETE /api/time-adjustments/[id]`
+
+Hard-deletes a denied time adjustment request. Only callable by Accounting roles (`canActOnDisputes`). Only rows with `status = 'denied'` or `status = 'manager_denied'` may be deleted — attempting to delete any other status returns `400`.
+
+**Auth:** accounting role required (same gate as approve/deny). Session identity used — no body needed.
+
+**Response `200`:**
+```json
+{ "success": true, "error": null }
+```
+
+**Errors:** `400` (row not denied), `401` (not signed in), `403` (not an accounting role), `404` (not found), `500`.
+
+**Audit log:** `time_adjustment.deleted` with `prior_status`, `employee`, `adjust_date`.
+
+**UI surface:** small trash icon button that appears only on `denied`/`manager_denied` rows in the Decided section of `TimeAdjustmentReviewPanel`. Spinner while in-flight (`deletingId` match). Accounting uses this to clean up the list after reviewing denials.
+
+---
+
 ## Error Handling
 
 All endpoints follow a consistent error pattern:

@@ -160,6 +160,7 @@ The `TimeAdjustmentReviewPanel` now shows **three sections** for the selected de
 
 **Decided** (compact list — approved, denied, manager_denied):
 - Shows date, email, status badge, and approved hours if applicable.
+- `denied` and `manager_denied` rows display a **trash icon** that calls `DELETE /api/time-adjustments/[id]`. Only Accounting roles can delete; only denied rows are eligible (enforced both client and server). Deleted rows are audit-logged with action `time_adjustment.deleted`.
 
 The panel fetch (`fetchTimeAdjustmentReview` in `PayrollWizard.tsx`) has **no date range restriction** — all statuses across all periods are fetched. This means a request submitted for a date two months ago will still appear in the Additions panel and be actionable once the manager approves it.
 
@@ -241,6 +242,7 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | List department requests (manager) | `manager` or `admin` role + scoped to `department_managers` assignments |
 | Manager approve / deny | `manager`/`admin` role + caller manages the employee's department |
 | Accounting approve / deny | Accounting role (`canActOnDisputes`) + row must be `manager_approved` |
+| Accounting delete | Accounting role (`canActOnDisputes`) + row must be `denied` or `manager_denied` |
 | Evidence signed URLs | Included in GET response only for elevated/accounting callers |
 
 ---
@@ -251,14 +253,14 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 |---|---|
 | `references/time_adjustment_requests.sql` | **New** — base DB migration |
 | `references/add_manager_approval_to_time_adjustments.sql` | **New** — adds manager decision columns |
-| `src/lib/supabase/time-adjustments.ts` | **New/Edited** — added `manager_approved`/`manager_denied` statuses, `managerDecideTimeAdjustment`, status helper functions; `decideTimeAdjustment` now requires `manager_approved` before Accounting can act |
+| `src/lib/supabase/time-adjustments.ts` | **New/Edited** — `manager_approved`/`manager_denied` statuses, `managerDecideTimeAdjustment`, `deleteTimeAdjustment` (accounting-only, denied rows only); `decideTimeAdjustment` now requires `manager_approved` |
 | `app/api/time-adjustments/route.ts` | **New** — GET (list) + POST (create) |
 | `app/api/time-adjustments/upload/route.ts` | **New** — POST (image upload) |
-| `app/api/time-adjustments/[id]/route.ts` | **New/Edited** — PATCH now handles `approve`, `deny`, `manager_approve`, `manager_deny` |
+| `app/api/time-adjustments/[id]/route.ts` | **New/Edited** — PATCH handles `approve`, `deny`, `manager_approve`, `manager_deny`; DELETE added for accounting to remove denied rows |
 | `app/api/manager/time-adjustments/route.ts` | **New** — GET scoped to manager's departments, no date restriction |
 | `src/components/employee/TimeAdjustmentDialog.tsx` | **New** — 4-step wizard + human-readable status labels for all five statuses |
-| `src/components/payroll/TimeAdjustmentReviewPanel.tsx` | **New/Edited** — three sections (actionable / awaiting manager / decided); locked UI on pending rows |
-| `src/components/manager/ManagerApp.tsx` | **Edited** — replaced `TimeAdjustments` stub with live `ManagerTimeAdjustments` component; pending badge wired to real API |
+| `src/components/payroll/TimeAdjustmentReviewPanel.tsx` | **New/Edited** — three sections; portal lightbox modal (`createPortal` + `AnimatePresence`) for evidence images; trash button on denied rows (`onDelete` / `deletingId` props) |
+| `src/components/manager/ManagerApp.tsx` | **Edited** — replaced `TimeAdjustments` stub with live smoked-glass `ManagerTimeAdjustments`; `max-w-2xl`; `AnimatePresence` lightbox; pending badge wired to real API |
 | `src/components/employee/EmployeeMyHours.tsx` | **Edited** — hover popover, adjustmentsByDate, fetchTimeAdjustments, dialog render, Forgiven badge + legend |
 | `src/components/PayrollWizard.tsx` | **Edited** — effectiveOverrides, timeAdjustDeltaHoursByEmail, dept rail, AnimatePresence, no-date-restriction fetch, bonus rules hidden |
 | `src/lib/payroll/current-pay.ts` | **Edited** — mergeApprovedTimeAdjustments |

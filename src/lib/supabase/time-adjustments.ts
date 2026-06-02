@@ -352,6 +352,47 @@ export async function decideTimeAdjustment(
 }
 
 /**
+ * Accounting-only hard delete. Only allowed when status is `denied` or `manager_denied`.
+ * Caller must hold an active accounting role.
+ */
+export async function deleteTimeAdjustment(
+  id: string,
+  actorEmail: string,
+): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+
+  const actorLower = actorEmail.trim().toLowerCase();
+  if (!(await canActOnDisputes(actorLower))) {
+    return { error: 'Not authorized — only Accounting roles can delete time adjustments' };
+  }
+
+  const { row, error: fetchErr } = await getTimeAdjustmentById(id);
+  if (fetchErr) return { error: fetchErr };
+  if (!row) return { error: 'Request not found' };
+  if (row.status !== 'denied' && row.status !== 'manager_denied') {
+    return { error: 'Only denied requests can be deleted' };
+  }
+
+  const { error } = await supabase.from(TABLE).delete().eq('id', id);
+  if (error) return { error: error.message };
+
+  void (async () => {
+    const role = await resolveUserRole(actorLower, 'Admin');
+    await insertAuditLog({
+      user_name: actorLower,
+      user_role: role,
+      action: 'time_adjustment.deleted',
+      resource: TABLE,
+      resource_id: id,
+      details: { employee: row.work_email, adjust_date: row.adjust_date, prior_status: row.status },
+    });
+  })();
+
+  return { error: null };
+}
+
+/**
  * Uploads one evidence image to the private bucket. Returns the object PATH (not a URL).
  * Path: <sanitized-email>/<requestKey>/<idx>-<ts>.<ext>
  */
