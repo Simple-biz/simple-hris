@@ -85,6 +85,46 @@ The `activeTab` cases are: `overview` -> `Overview`, `rates` -> `Rates`, `payrol
 
 ---
 
+## `src/components/payroll/TimeAdjustmentReviewPanel.tsx` *(added 2026-06-02, updated 2026-06-02)*
+
+**Accounting → Payroll Wizard → Additions tab.** Renders inside the Additions tab content column for the currently selected department. Hidden (`return null`) when the department has no adjustment requests at all.
+
+The component reflects the two-stage approval model. Accounting can only act on `manager_approved` rows; `pending` rows are shown read-only as a visibility aid.
+
+**Three sections:**
+
+**Manager-approved** (actionable):
+- Employee email, date, reason, requested hours, period label.
+- Manager's name and any manager note shown as context.
+- Evidence thumbnails (signed URLs from `signedUrls` prop, `<a target="_blank">`).
+- Hours `<Input>` (pre-filled from `requested_hours`), **Approve** button (green, requires a value), **Deny** button (rose outline).
+- Both call `onDecide(id, 'approve'|'deny', hours)` → `PATCH /api/time-adjustments/[id]`.
+
+**Awaiting manager** (read-only):
+- A lock icon header: "Waiting for manager sign-off before you can act."
+- Compact amber rows showing date, email, reason, requested hours. No action controls.
+
+**Decided** (compact list): `approved`, `denied`, `manager_denied` rows with status badges and `approved_hours` where applicable.
+
+**Props:**
+```ts
+{
+  deptName: string;
+  adjustments: TimeAdjustmentRow[];      // pre-filtered to active dept
+  signedUrls: Record<string, string>;    // storage path → 1-hour signed URL
+  decidingId: string | null;
+  hoursDraft: Record<string, string>;
+  setHoursDraft: Dispatch<...>;
+  onDecide: (id, action, approvedHours, note?) => void;
+}
+```
+
+**Fetch scope (PayrollWizard.tsx `fetchTimeAdjustmentReview`):** fetches all statuses with **no date range restriction** (`?status=pending&status=manager_approved&...&limit=500`), so requests from any past period appear. This is intentional — time adjustments can be submitted for dates months in the past and must still reach Accounting.
+
+**Relationship to pay:** when Accounting approves, `decideTimeAdjustmentRequest` re-fetches both the review list and `approvedTimeAdjustments`, so `effectiveCalcResults.initialPay` updates immediately.
+
+---
+
 ## `src/components/payroll/PabDisputeQueue.tsx`
 
 **Accounting → Disputes.** Lists `pab_day_disputes` via `GET /api/pab-disputes` with `awaiting_accounting=1` when the status filter is **Pending** (so Accounting sees both plain `pending` and `orphanage_manager_approved` rows). Search, pagination, and filters for Approved / Denied / All.
@@ -389,7 +429,50 @@ The core feature. A multi-step wizard for the weekly payroll cycle, called the *
 
 ### Step 3 — Additions (Department Bonuses)
 
-**Purpose**: Apply per-department bonus rules on top of initial pay.
+**Purpose**: Apply per-department bonus rules on top of initial pay, and review / decide employee time adjustment requests.
+
+#### Layout (updated 2026-06-02)
+
+The Additions tab uses a **flex-row workspace** (`xl:flex-row`, collapses to column below `xl`):
+
+- **Left vertical department rail** (`xl:w-48 xl:flex-col`): replaces the former horizontal scrolling tab strip. Each button shows the department name, an assigned-employee count badge, and an **amber badge** with the count of pending time adjustment requests for that department. The active department highlight is a `motion.span` with `layoutId="additions-dept-active-bg"` that springs between buttons (`stiffness: 400, damping: 34`). Buttons have `whileTap={{ scale: 0.97 }}`. Below `xl` the rail becomes a horizontal scroller.
+
+- **Content column**: full width (the former 220px left bonus-config column is hidden). Top-to-bottom:
+  1. `TimeAdjustmentReviewPanel` — pending/decided time adjustments for the active department (hidden when the department has no requests).
+  2. Employee bonus table — now spans the full content width.
+
+**Department switching animation**: the content column wraps in `AnimatePresence mode="wait"` keyed on `activeDeptTab`. Switching animates out (opacity 0, 6px up, `blur(2px)`) and in (from 8px below, blurred), 180ms.
+
+**Bonus rule panels**: the per-department formula info cards and bonus configuration inputs are wrapped in `<div className="hidden">` (display: none). The JSX is preserved for potential restoration.
+
+#### Department Auto-Assignment
+
+Runs as a `useEffect` after calc rows are available. For each Hubstaff employee, tries 4 resolution tiers in order, stopping at the first match:
+
+1. `personal_email` from their rate row → look up in master list → use `Department`
+2. `name` from rate row → name match in master list → use `Department`
+3. `work_email` from rate row → look up in master list → use `Department`
+4. Hubstaff row `Job type` field → use as department string directly
+
+Manual tab clicks override the auto-assignment. Once a user manually assigns someone, the effect will not overwrite it on re-render.
+
+The **unassigned count** badge in the header shows how many Hubstaff employees have no department yet.
+
+#### Time Adjustment Pay Integration (added 2026-06-02)
+
+Three state additions drive the pay-correction flow:
+
+- **`approvedTimeAdjustments`** (`Map<email, Map<date, number>>`): fetched from `GET /api/time-adjustments?status=approved` for the PAB period on period change. Hours-only (unlike dispute `override_hours` which can be `null`).
+- **`effectiveOverrides`** (`Map<email, Map<date, number | null>>`): merges `approvedDisputeDates` + `approvedTimeAdjustments` (time adjustments win on same-day collision). All three PAB memos (`perfectAttendanceEligible`, `employeeWeekdayHours`, `employeeAllDaysHours`) read this instead of `approvedDisputeDates` directly.
+- **`timeAdjustDeltaHoursByEmail`** (`Map<email, number>`): for each employee, sums `(approved_hours − raw tracked hours)` over adjustment dates that fall within the currently loaded pay period. Folded into `effectiveCalcResults.initialPay`:
+  ```
+  adjPesos = phpHourlyPayFromSeconds(regularRate, |deltaHours| × 3600)
+  newInitialPay = initialPay ± adjPesos
+  ```
+  Hubstaff data is never mutated — the delta is applied at calc time only.
+
+- **`timeAdjustmentRows`**: fetched on step 3 mount from `GET /api/time-adjustments?status=pending&status=approved&status=denied`. Used by the review panel UI.
+- **`decideTimeAdjustmentRequest`**: calls `PATCH /api/time-adjustments/[id]`, then re-fetches both `timeAdjustmentRows` and the approved-override map so pay totals update immediately.
 
 **15 department tabs** (rendered as `<Tabs>`):
 Accounting, Edit, Devs, Lead Gen, US-Manager Bonus, Callback, QC, Discovery, HR, Sales Assistant, Smart Staff, Hogan Smith Law, Social Media, PM Team, Client VA, Site Building.
@@ -630,6 +713,26 @@ Displays employee photo with fallback chain: **Google SSO photo → uploaded pho
 ### `EmployeeMyHours.tsx` — My Hours
 
 Calendar-month view of merged Hubstaff hours with a Pay Summary side panel. Mon–Sun grid that includes weekends + dashed cells for adjacent-month days (informational only).
+
+**Time adjustment integration (added 2026-06-02):**
+
+Each day cell that is non-future and in-month gains a **CSS `group` hover popover** (position: `absolute bottom-full left-1/2`, `group-hover:block`). The popover shows the full date, tracked hours, and:
+- A primary text prompt ("Click to request time adjustment" / "Click to view your request").
+- A secondary `button` for the PAB dispute flow that appears only on cells currently eligible for a PAB dispute (under-7h weekday, no existing dispute). This keeps the two features independently accessible on the same cell.
+
+State additions:
+- `timeAdjustments: TimeAdjustmentRow[]` — fetched via `GET /api/time-adjustments?email=&from=&to=` on every month change (parallels `fetchDisputes`).
+- `adjustmentsByDate: Map<string, TimeAdjustmentRow>` — computed memo from `timeAdjustments`, keyed by ISO date.
+- `timeAdjustDialog: { date, seconds, existing } | null` — controls the `TimeAdjustmentDialog` render at the bottom of the component.
+
+`handleCellClick` logic (replaces the old single `onClick`):
+1. If an adjustment exists for this day → open read-only view.
+2. Else if the day is past or today → open new-request wizard.
+3. Else if cell is PAB-dispute-eligible or has an existing dispute → open `DisputeDialog`.
+
+`handleRefresh` now also calls `fetchTimeAdjustments()`.
+
+**Data fetch:** `GET /api/time-adjustments?email={email}&from={monthStart}&to={monthEnd}&limit=200`. Scoped to the visible month so response size stays bounded.
 
 **Pay Summary** (right column):
 - **Estimated take-home** = `regular pay + OT pay + PAB bonus + Tech bonus`. The breakdown line below shows the components separately.
@@ -971,7 +1074,13 @@ Route shell; `<Suspense>`-wraps `<ManagerApp />`. No server gating here -- acces
 
 Top-level client shell -- resolves viewer, gates access, loads the department-scoped roster, routes 9 tabs (~2000 lines; also defines `Overview`, `TeamPanel`, `TimeAdjustments`, announcement/S-Wall wrappers, `ActiveNowButton`, `StatTile`). **Access gate:** `GET /api/employee-roles?email=`; lacking `manager`/`admin` -> `router.replace('/employee')`. **Team roster:** `GET /api/manager/department-members` returns `{ rows, scope: 'elevated'|'department', departments }`. The server scopes the roster: explicit `department_managers` assignments win even for elevated users; full org roster only when elevated AND no assignments; empty when a plain manager has no assignments. Rows are decorated with `hsl_role`/`hsl_hourly_rate` (from `active_hsl_agents`) and `regular_rate`/`ot_rate`/`mesa_member` (from `employee_hourly_rates`). Pending-leaves badge from `GET /api/leave-requests?scope=all`.
 
-Tabs (`ManagerTab`): `overview`, `time-adjustments` (stub), `leaves` (`LeaveRequestsPanel`), `team`, `announcements`, `s-wall`, `hsl-bonus` (the KPI Calculator -- renders `HslBonusCalculator` and/or `DeptBonusCalculator` based on `hslVisible`/`deptVisible`), `bonus-history`, `notifications`.
+Tabs (`ManagerTab`): `overview`, `time-adjustments` (`ManagerTimeAdjustments` — live as of 2026-06-02), `leaves` (`LeaveRequestsPanel`), `team`, `announcements`, `s-wall`, `hsl-bonus` (the KPI Calculator -- renders `HslBonusCalculator` and/or `DeptBonusCalculator` based on `hslVisible`/`deptVisible`), `bonus-history`, `notifications`.
+
+**`ManagerTimeAdjustments`** (defined inline in `ManagerApp.tsx`, replaced the placeholder stub 2026-06-02): fetches from `GET /api/manager/time-adjustments` on every `activeTab` change (no date restriction — any past request for the manager's departments appears). Shows two sections:
+- **Pending cards** (`status = 'pending'`): employee email, date, reason, requested hours, period label, explanation paragraph, evidence thumbnails (signed URLs), optional manager-note input, **Approve & forward to Accounting** and **Decline** buttons. Calls `PATCH /api/time-adjustments/[id]` with `action: manager_approve` or `manager_deny`.
+- **Already-actioned list** (compact, `status ≠ 'pending'`): email, date, reason, status badge.
+
+The sidebar pending-approval badge (`pendingApprovals`) is updated by a `useEffect` keyed on `activeTab` that fetches the same endpoint and counts `status === 'pending'` rows. Previously this was a hardcoded `0`.
 
 **TeamPanel (My Team)** is the most complex tab: wrapped in `<MedalProvider>`; toggles between **Roster** and **Newly Hired** (`NewlyHiredPanel`). A **per-department wallpaper banner** (multipart upload, 10 MB cap, drag-to-reposition that PATCHes a `background-position` string) via `GET/POST/PATCH/DELETE /api/manager/team-wallpaper?department=`. The roster table has client search + dept-filter + pagination (`TEAM_PAGE_SIZE=10`); rate columns (`hsl_hourly_rate ?? regular_rate`) are masked by default (`AnimatedRate`, opacity+translate, no blur for mobile perf); MESA badge; per-row **View** (`ManagerMemberDialog`) and **Transfer** (`ManagerTransferDialog`). Live presence via `useOnlineEmails()` (green dots + `ActiveNowButton`). Roster rows are medal drop targets.
 
@@ -1263,6 +1372,58 @@ Self-contained **PAB** calendar grid for the employee -- mirrors the dashboard c
 | GET | `/api/employee-rate-history?email=` | per-day rate badges |
 | GET | `/api/hubstaff-hours?source_files=1` then `?source_file=` | merged hours |
 | GET | `/api/pab-disputes?email=&limit=200` | the employee's disputes |
+
+### `src/components/employee/TimeAdjustmentDialog.tsx`
+
+**Added 2026-06-02.** Four-step guided wizard for filing a time adjustment request — used when an employee's hours were not tracked despite working (forgot tracker, crash, offline work, etc.). Opened from the My Hours day-cell hover popover on any past, in-month day regardless of tracked hours.
+
+**Two render paths:**
+- **Existing request** (`existingRequest` prop is non-null): read-only status card showing reason, requested hours, explanation, image count, and decision details. Status labels are human-readable across all five statuses:
+
+| Status | Label shown |
+|---|---|
+| `pending` | Awaiting manager approval |
+| `manager_approved` | Manager approved — with Accounting |
+| `manager_denied` | Declined by manager |
+| `approved` | Approved |
+| `denied` | Denied |
+
+- **New request**: 4-step wizard (see below).
+
+**Step rail:** `motion.div` nodes + `AnimatePresence` icon cross-fade per node; `motion.div` connector bar animated to `100%` via spring on completion.
+
+**Steps:**
+
+| # | Title | Required fields |
+|---|---|---|
+| 1 | What happened? | Reason selection (one of four `TIME_ADJUSTMENT_REASONS` cards) |
+| 2 | The correct time | Explanation paragraph (required); optional corrected hours (0–24, 0.5 step) |
+| 3 | Add proof | Drag-and-drop image upload, max 5 images (`MAX_ADJUSTMENT_IMAGES`). Uses `dragCounterRef` pattern; `URL.createObjectURL` previews. |
+| 4 | Review & submit | Delta callout + summary table + deadline notice |
+
+**Delta callout (Step 4):** shows when `requested_hours` was filled. Three states: green (`Nh will be added`), rose (`Nh will be removed`), zinc (no change). Shows `{tracked}h → {corrected}h (+/-Nh)` inline.
+
+**Submission sequence:** images upload in parallel to `POST /api/time-adjustments/upload` → paths collected → `POST /api/time-adjustments` with all fields. On success: toast + `onOpenChange(false)` + `onSubmitted()` callback.
+
+**Step transitions:** `AnimatePresence mode="wait"`, direction-aware `x` travel (enter `+48px`, exit `-32px`), `blur(3px)` clearing on arrival, 260ms `[0.22, 1, 0.36, 1]` easing.
+
+**Props:**
+```ts
+{
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  employeeEmail: string;
+  employeeName?: string | null;
+  adjustDate: string;      // YYYY-MM-DD
+  hoursWorked: number;     // seconds (raw Hubstaff)
+  existingRequest?: TimeAdjustmentRow | null;
+  onSubmitted?: () => void;
+}
+```
+
+**Layout notes:** `DialogContent` base classes (`grid gap-4 p-4 sm:max-w-sm`) are overridden with `gap-0 p-0 sm:max-w-lg` via twMerge. `DialogFooter` base negative margins (`-mx-4 -mb-4 sm:justify-end`) are neutralized with `mx-0 mb-0 sm:justify-between` so the footer sits flush in the custom layout.
+
+---
 
 ### `src/components/employee/DisputeDialog.tsx`
 

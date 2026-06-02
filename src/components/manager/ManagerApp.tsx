@@ -148,8 +148,21 @@ export default function ManagerApp() {
     return () => { document.body.style.overflow = ''; };
   }, [mobileNavOpen]);
 
-  // Stub — wire to real /api/time-adjustments when that table lands.
-  const pendingApprovals = 0;
+  const [pendingApprovals, setPendingApprovals] = useState(0);
+
+  // Keep the pending-approval badge live — refetch whenever the tab is opened.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/manager/time-adjustments', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((json: { rows?: Array<{ status: string }> }) => {
+        if (cancelled) return;
+        const pending = (json.rows ?? []).filter((r) => r.status === 'pending').length;
+        setPendingApprovals(pending);
+      })
+      .catch(() => { if (!cancelled) setPendingApprovals(0); });
+    return () => { cancelled = true; };
+  }, [activeTab]);
 
   const [teamMembers, setTeamMembers] = useState<EmployeeRow[]>([]);
   const [teamGate, setTeamGate] = useState<ManagerTeamGate>({ kind: 'loading' });
@@ -293,7 +306,11 @@ export default function ManagerApp() {
                   onJumpToTeam={() => handleNavigate('team')}
                 />
               )}
-              {activeTab === 'time-adjustments' && <TimeAdjustments />}
+              {activeTab === 'time-adjustments' && (
+                <ManagerTimeAdjustments
+                  onCountChange={(n) => setPendingApprovals(n)}
+                />
+              )}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
               {activeTab === 'team' && (
                 <TeamPanel members={teamMembers} teamGate={teamGate} viewerEmail={viewerEmail} />
@@ -549,35 +566,267 @@ function ManagerAnnouncementsTab({
   );
 }
 
-function TimeAdjustments() {
+// ─── Time Adjustment Approvals ──────────────────────────────────────────────
+
+import type { TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
+import { TIME_ADJUSTMENT_REASONS } from '@/lib/supabase/time-adjustments';
+
+const TA_REASON_LABEL = (code: string) =>
+  TIME_ADJUSTMENT_REASONS.find((r) => r.code === code)?.label ?? code;
+
+const TA_STATUS_BADGE: Record<string, string> = {
+  pending: 'border-amber-400 bg-amber-50 text-amber-700',
+  manager_approved: 'border-emerald-400 bg-emerald-50 text-emerald-700',
+  manager_denied: 'border-rose-400 bg-rose-50 text-rose-700',
+  approved: 'border-emerald-500 bg-emerald-50 text-emerald-800',
+  denied: 'border-rose-400 bg-rose-50 text-rose-700',
+};
+
+const TA_STATUS_LABEL: Record<string, string> = {
+  pending: 'Awaiting your approval',
+  manager_approved: 'Forwarded to Accounting',
+  manager_denied: 'Declined by you',
+  approved: 'Approved by Accounting',
+  denied: 'Denied by Accounting',
+};
+
+function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) => void }) {
+  const [rows, setRows] = useState<TimeAdjustmentRow[]>([]);
+  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
+
+  const fetchRows = React.useCallback(() => {
+    setLoading(true);
+    fetch('/api/manager/time-adjustments', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((json: { rows?: TimeAdjustmentRow[]; signedUrls?: Record<string, string> }) => {
+        const r = json.rows ?? [];
+        setRows(r);
+        setSignedUrls(json.signedUrls ?? {});
+        onCountChange(r.filter((x) => x.status === 'pending').length);
+      })
+      .catch(() => { setRows([]); onCountChange(0); })
+      .finally(() => setLoading(false));
+  }, [onCountChange]);
+
+  useEffect(() => { fetchRows(); }, [fetchRows]);
+
+  const decide = async (id: string, action: 'manager_approve' | 'manager_deny') => {
+    setDecidingId(id);
+    try {
+      const res = await fetch(`/api/time-adjustments/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, decision_note: notesDraft[id]?.trim() || null }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Failed');
+      toast.success(action === 'manager_approve' ? 'Forwarded to Accounting' : 'Request declined');
+      fetchRows();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update request');
+    } finally {
+      setDecidingId(null);
+    }
+  };
+
+  const pending = rows.filter((r) => r.status === 'pending');
+  const decided = rows.filter((r) => r.status !== 'pending');
+
   return (
     <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <header className="flex flex-col gap-1">
         <h2 className="bg-gradient-to-r from-blue-700 via-zinc-900 to-zinc-900 bg-clip-text text-xl font-bold tracking-tight text-transparent dark:from-blue-400 dark:via-white dark:to-white">
           Time adjustment approvals
         </h2>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          Pending requests from your team. Approve or reject; two manager sign-offs send it to Hubstaff.
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          Review your team&apos;s time adjustment requests. Approve to forward to Accounting, or decline.
+          Requests can be from any past date &mdash; Accounting will apply corrections to the relevant payroll cycle.
         </p>
       </header>
 
-      <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15 dark:ring-blue-400/10">
-        <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/25">
-            <Inbox className="h-6 w-6" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-              No pending approvals.
+      {loading ? (
+        <div className="flex items-center gap-2 text-sm text-zinc-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading requests...
+        </div>
+      ) : pending.length === 0 && decided.length === 0 ? (
+        <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15">
+          <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/25">
+              <Inbox className="h-6 w-6" />
+            </div>
+            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">No pending approvals</p>
+            <p className="max-w-xs text-xs text-zinc-500 dark:text-zinc-400">
+              Requests from your team will appear here when employees submit a time adjustment.
             </p>
-            <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-400">
-              Once the time-adjustment table lands, requests from your team will appear here.
-              Approval requires a screenshot, exact timestamps, and a second manager's sign-off.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-6">
+          {pending.length > 0 && (
+            <section className="space-y-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                Awaiting your approval ({pending.length})
+              </h3>
+              {pending.map((row) => (
+                <ManagerAdjustmentCard
+                  key={row.id}
+                  row={row}
+                  signedUrls={signedUrls}
+                  decidingId={decidingId}
+                  note={notesDraft[row.id] ?? ''}
+                  onNoteChange={(v) => setNotesDraft((p) => ({ ...p, [row.id]: v }))}
+                  onDecide={decide}
+                />
+              ))}
+            </section>
+          )}
+
+          {decided.length > 0 && (
+            <section className="space-y-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                Already actioned
+              </h3>
+              {decided.map((row) => (
+                <div
+                  key={row.id}
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-900"
+                >
+                  <span className="font-medium text-zinc-700 dark:text-zinc-200">{row.work_email}</span>
+                  <span className="font-mono text-zinc-500">{row.adjust_date}</span>
+                  <span className="text-zinc-400">&middot;</span>
+                  <span className="text-zinc-500">{TA_REASON_LABEL(row.reason)}</span>
+                  <span
+                    className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] font-medium ${TA_STATUS_BADGE[row.status] ?? ''}`}
+                  >
+                    {TA_STATUS_LABEL[row.status] ?? row.status}
+                  </span>
+                </div>
+              ))}
+            </section>
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+import { Loader2, ImageOff, Info } from 'lucide-react';
+
+function ManagerAdjustmentCard({
+  row,
+  signedUrls,
+  decidingId,
+  note,
+  onNoteChange,
+  onDecide,
+}: {
+  row: TimeAdjustmentRow;
+  signedUrls: Record<string, string>;
+  decidingId: string | null;
+  note: string;
+  onNoteChange: (v: string) => void;
+  onDecide: (id: string, action: 'manager_approve' | 'manager_deny') => void;
+}) {
+  const isDeciding = decidingId === row.id;
+  const trackedH = row.requested_hours != null ? `${row.requested_hours}h requested` : null;
+
+  return (
+    <Card className="border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+      <CardContent className="space-y-3 py-4">
+        {/* Header */}
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{row.work_email}</p>
+            <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+              <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">{row.adjust_date}</span>
+              <span className="mx-1.5 text-zinc-300">&middot;</span>
+              {TA_REASON_LABEL(row.reason)}
+              {trackedH && (
+                <>
+                  <span className="mx-1.5 text-zinc-300">&middot;</span>
+                  {trackedH}
+                </>
+              )}
+            </p>
+          </div>
+          {row.period_label && (
+            <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">
+              Period {row.period_label}
+            </span>
+          )}
+        </div>
+
+        {/* Explanation */}
+        {row.explanation && (
+          <p className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300">
+            {row.explanation}
+          </p>
+        )}
+
+        {/* Evidence thumbnails */}
+        {row.image_paths.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {row.image_paths.map((p, idx) => {
+              const url = signedUrls[p];
+              return url ? (
+                <a key={idx} href={url} target="_blank" rel="noopener noreferrer"
+                  className="block h-16 w-16 overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-700">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt={`evidence ${idx + 1}`} className="h-full w-full object-cover" />
+                </a>
+              ) : (
+                <div key={idx} className="flex h-16 w-16 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
+                  <ImageOff className="h-4 w-4 text-zinc-300" />
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="flex items-center gap-1.5 text-[11px] italic text-zinc-400">
+            <Info className="h-3 w-3 shrink-0" /> No evidence images attached
+          </p>
+        )}
+
+        {/* Manager note (optional) */}
+        <div className="space-y-1">
+          <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+            Note for employee <span className="text-zinc-400">(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={note}
+            onChange={(e) => onNoteChange(e.target.value)}
+            placeholder="e.g. Confirmed with project logs"
+            className="w-full rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-400 focus:border-blue-400 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+          />
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={isDeciding}
+            onClick={() => onDecide(row.id, 'manager_approve')}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {isDeciding ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+            Approve &amp; forward to Accounting
+          </button>
+          <button
+            type="button"
+            disabled={isDeciding}
+            onClick={() => onDecide(row.id, 'manager_deny')}
+            className="flex items-center gap-1.5 rounded-md border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800 dark:text-rose-400"
+          >
+            Decline
+          </button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

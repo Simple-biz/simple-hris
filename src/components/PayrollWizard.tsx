@@ -2184,22 +2184,21 @@ export default function PayrollWizard({
     refreshApprovedAdjustmentOverrides();
   }, [refreshApprovedAdjustmentOverrides]);
 
-  // Pending + approved time-adjustment requests for the Additions review panel (step 3).
+  // All time-adjustment requests for the Additions review panel (step 3).
+  // No date restriction — requests from any past period are shown to Accounting.
+  // Accounting can only ACT on manager_approved rows; pending rows are shown read-only.
   const fetchTimeAdjustmentReview = useCallback(() => {
-    if (!pabMonthRange) return;
-    const s = pabMonthRange.start;
-    const e = pabMonthRange.end;
-    const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
-    const dayAfterEnd = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1);
-    const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
-    fetch(`/api/time-adjustments?status=pending&status=approved&status=denied&from=${from}&to=${to}&limit=500`, { cache: 'no-store' })
+    fetch(
+      `/api/time-adjustments?status=pending&status=manager_approved&status=manager_denied&status=approved&status=denied&limit=500`,
+      { cache: 'no-store' },
+    )
       .then(r => r.json())
       .then((json: { rows?: TimeAdjustmentRow[]; signedUrls?: Record<string, string> }) => {
         setTimeAdjustmentRows(json.rows ?? []);
         setTimeAdjustmentSignedUrls(json.signedUrls ?? {});
       })
       .catch(() => { setTimeAdjustmentRows([]); setTimeAdjustmentSignedUrls({}); });
-  }, [pabMonthRange]);
+  }, []);
 
   useEffect(() => {
     if (currentStep !== 3) return;

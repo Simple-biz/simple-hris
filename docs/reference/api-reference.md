@@ -24,6 +24,7 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 12. [Disbursement Reports](#12-disbursement-reports)
 12.5. [Leave Requests](#125-leave-requests)
 12.7. [Admin Diagnostics](#127-admin-diagnostics)
+12.9. [Time Adjustment Requests](#129-time-adjustment-requests)
 13. [Planned Endpoints (Payroll Automation)](#13-planned-endpoints-payroll-automation)
 
 ---
@@ -1991,6 +1992,219 @@ Lists all finalized payroll runs.
 | `NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE` | No | Override `global_master_list` table name |
 | `NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE` | No | Override `employee_hourly_rates` table name |
 | `NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE` | No | Override `hubstaff_hours` table name |
+
+---
+
+## 12.9. Time Adjustment Requests
+
+> Added 2026-06-02. Requires the `time_adjustment_requests` table and private `time-adjustment-evidence` bucket in Supabase. See [time-adjustment-requests.md](../features/time-adjustment-requests.md) for the full feature description.
+
+All three routes are fully authenticated via NextAuth. Employees may only act on their own requests; elevated/accounting roles may act on any.
+
+---
+
+### `GET /api/time-adjustments`
+
+List time adjustment requests.
+
+**Query parameters:**
+
+| Param | Notes |
+|---|---|
+| `email` | Filter to a single employee. Self-or-elevated (same contract as `/api/pab-disputes`). Omit for a full list (elevated only). |
+| `status` | One or more status values: `pending`, `approved`, `denied`. Repeat the param for multiple. |
+| `from` | ISO date lower bound on `adjust_date` (inclusive). |
+| `to` | ISO date upper bound on `adjust_date` (inclusive). |
+| `limit` | Max rows returned (integer). |
+
+**Response `200`:**
+```json
+{
+  "rows": [
+    {
+      "id": "uuid",
+      "work_email": "employee@simple.biz",
+      "adjust_date": "2026-05-28",
+      "reason": "forgot_tracker",
+      "explanation": "Was on client calls 9-11:30am...",
+      "requested_hours": 8,
+      "image_paths": ["employee/draft-abc/0-1234567890.jpg"],
+      "status": "pending",
+      "approved_hours": null,
+      "decided_by": null,
+      "decided_at": null,
+      "decision_note": null,
+      "period_label": "2026-05",
+      "created_at": "2026-05-29T10:00:00Z",
+      "created_by": "employee@simple.biz",
+      "updated_at": "2026-05-29T10:00:00Z"
+    }
+  ],
+  "signedUrls": {
+    "employee/draft-abc/0-1234567890.jpg": "https://...supabase.co/storage/v1/..."
+  },
+  "error": null
+}
+```
+
+`signedUrls` is only populated when the caller holds an elevated/accounting role (empty object for plain employees). Keys are the `image_paths` values; values are 1-hour signed download URLs.
+
+---
+
+### `POST /api/time-adjustments`
+
+Create or upsert a time adjustment request.
+
+**Auth:** session email must match `work_email` unless the caller is elevated.
+
+**Body:**
+```json
+{
+  "work_email": "employee@simple.biz",
+  "adjust_date": "2026-05-28",
+  "reason": "forgot_tracker",
+  "explanation": "Was on client calls 9–11:30am, then working on ticket #4821 until 5pm.",
+  "requested_hours": 8,
+  "image_paths": ["employee/draft-abc/0-1234567890.jpg"],
+  "created_by": "Employee Name"
+}
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `work_email` | Yes | |
+| `adjust_date` | Yes | YYYY-MM-DD; must not be a future date |
+| `reason` | Yes | Must be one of the four `TIME_ADJUSTMENT_REASONS` codes |
+| `explanation` | Required when `reason = other`; strongly expected otherwise | |
+| `requested_hours` | No | Employee's claimed correct total (0–24) |
+| `image_paths` | No | Storage paths returned by the upload endpoint; max 5 |
+| `created_by` | No | Display name stamped on `created_by` for accounting view |
+
+**Upsert semantics:** if a `pending` row already exists for this `(work_email, adjust_date)` pair it is overwritten. If a `approved` or `denied` row exists, the request returns `409 Conflict`.
+
+**Response `200`:**
+```json
+{ "success": true, "id": "uuid", "error": null }
+```
+
+**Errors:** `400` (validation), `401` (not signed in), `403` (wrong employee), `409` (already decided).
+
+---
+
+### `POST /api/time-adjustments/upload`
+
+Upload one evidence image to the private `time-adjustment-evidence` bucket. Called for each image before `POST /api/time-adjustments`.
+
+**Auth:** any signed-in user (their session email becomes the path prefix).
+
+**Body:** `multipart/form-data`
+
+| Field | Notes |
+|---|---|
+| `file` | The image file. Must be `image/*`; max 5 MB. |
+| `request_key` | An arbitrary slug grouping images for one in-progress request (e.g. `2026-05-28-abc12345`). Sanitized to `[a-zA-Z0-9_-]`. |
+| `idx` | Integer index (0-based) for ordering within the request. |
+
+Storage path: `{sanitized_session_email}/{request_key}/{idx}-{timestamp}.{ext}`
+
+**Response `200`:**
+```json
+{ "path": "employee/2026-05-28-abc12345/0-1717000000000.jpg" }
+```
+
+**Errors:** `400` (no file / not image / too large), `401` (not signed in), `500` (upload failed).
+
+---
+
+### `PATCH /api/time-adjustments/[id]`
+
+Two-stage decision endpoint. The caller identity is always taken from the session. Supports four actions split across two roles:
+
+**Stage 1 — Manager (`manager_approve` / `manager_deny`)**
+
+Requires `manager` or `admin` role. The DB layer additionally checks that the session email manages the employee's department (via `department_managers`). Row must be in `pending` status.
+
+```json
+{
+  "action": "manager_approve",
+  "decision_note": "Confirmed with project activity log."
+}
+```
+
+On `manager_deny` the employee receives an `employee_notifications` row. On `manager_approve` the row moves to `manager_approved` and Accounting can now act.
+
+**Stage 2 — Accounting (`approve` / `deny`)**
+
+Requires an active accounting role (`canActOnDisputes`). Row **must be `manager_approved`**; returns `400` if still `pending`.
+
+```json
+{
+  "action": "approve",
+  "approved_hours": 8,
+  "decision_note": "Confirmed with Asana activity log."
+}
+```
+
+| Field | Stage | Notes |
+|---|---|---|
+| `action` | both | `"approve"`, `"deny"`, `"manager_approve"`, or `"manager_deny"` |
+| `approved_hours` | accounting only | Required when `action = approve`. SET-semantics override replacing Hubstaff for this day at pay-calc time. |
+| `decision_note` | both | Optional free text forwarded to the employee notification. |
+
+On accounting decision the employee receives an `employee_notifications` row (`type: time_adjustment.approved` or `time_adjustment.denied`).
+
+**Response `200`:**
+```json
+{ "success": true, "error": null }
+```
+
+**Errors:** `400` (bad action / row not in the expected status), `401` (not signed in), `403` (wrong role or manager does not manage employee's dept), `404` (not found), `500`.
+
+**Audit log actions:** `time_adjustment.manager_approved`, `time_adjustment.manager_denied`, `time_adjustment.approved`, `time_adjustment.denied`.
+
+---
+
+### `GET /api/manager/time-adjustments`
+
+Returns time adjustment requests scoped to the authenticated manager's departments. No date restriction — requests from any past period are included so managers always see their team's queue regardless of the cycle the request was filed in.
+
+**Auth:** `manager` or `admin` role required. Elevated users (admin/HR/finance) bypass department scoping and see all requests.
+
+**Statuses returned:** `pending`, `manager_approved`, `manager_denied` (i.e. everything not yet finally decided by Accounting). Currently excludes `approved` and `denied` rows.
+
+**Department scoping (non-elevated):**
+1. Fetches the manager's active dept assignments from `department_managers`.
+2. Batch-looks up each unique `work_email` in the result set against `active_employees."Department"`.
+3. Keeps only rows where the employee's department is in the manager's assignments.
+
+**Response `200`:**
+```json
+{
+  "rows": [
+    {
+      "id": "uuid",
+      "work_email": "employee@simple.biz",
+      "adjust_date": "2026-03-15",
+      "reason": "forgot_tracker",
+      "explanation": "Was on client calls all morning...",
+      "requested_hours": 8,
+      "image_paths": ["employee/draft-abc/0-1234567890.jpg"],
+      "status": "pending",
+      "manager_decided_by": null,
+      "manager_decided_at": null,
+      "manager_decision_note": null,
+      "approved_hours": null,
+      "period_label": "2026-03"
+    }
+  ],
+  "signedUrls": {
+    "employee/draft-abc/0-1234567890.jpg": "https://...supabase.co/storage/v1/..."
+  },
+  "error": null
+}
+```
+
+Signed URLs are always included (manager must be able to view evidence). 1-hour expiry.
 
 ---
 

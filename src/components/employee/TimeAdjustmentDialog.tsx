@@ -50,8 +50,18 @@ type Preview = { file: File; url: string };
 
 const STATUS_STYLES: Record<string, string> = {
   pending: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400',
+  manager_approved: 'border-blue-400 bg-blue-50 text-blue-700 dark:border-blue-600 dark:bg-blue-950/40 dark:text-blue-400',
+  manager_denied: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400',
   approved: 'border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400',
   denied: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: 'Awaiting manager approval',
+  manager_approved: 'Manager approved — with Accounting',
+  manager_denied: 'Declined by manager',
+  approved: 'Approved',
+  denied: 'Denied',
 };
 
 const REASON_ICONS: Record<string, typeof AlarmClock> = {
@@ -267,7 +277,7 @@ export default function TimeAdjustmentDialog({
             <div className="flex items-center gap-2">
               <span className="text-zinc-600 dark:text-zinc-400">Status:</span>
               <Badge variant="outline" className={STATUS_STYLES[existingRequest.status] ?? ''}>
-                {existingRequest.status}
+                {STATUS_LABEL[existingRequest.status] ?? existingRequest.status}
               </Badge>
             </div>
             <div><span className="text-zinc-600 dark:text-zinc-400">Reason:</span> {reasonLabel}</div>

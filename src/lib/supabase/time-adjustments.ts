@@ -2,6 +2,7 @@ import { createSupabaseServiceRoleClient } from './server';
 import { insertAuditLog } from './audit-log';
 import { canActOnDisputes, resolveUserRole } from './pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
+import { listDepartmentsForManager } from './department-managers';
 
 /**
  * Time Adjustment Requests — employee-initiated, evidence-backed requests for Accounting
@@ -14,7 +15,17 @@ export const MAX_ADJUSTMENT_IMAGES = 5;
 
 const TABLE = 'time_adjustment_requests';
 
-export type TimeAdjustmentStatus = 'pending' | 'approved' | 'denied';
+/**
+ * Status lifecycle:
+ *   pending -> manager_approved | manager_denied
+ *   manager_approved -> approved | denied   (accounting step)
+ */
+export type TimeAdjustmentStatus =
+  | 'pending'
+  | 'manager_approved'
+  | 'manager_denied'
+  | 'approved'
+  | 'denied';
 
 export type TimeAdjustmentRow = {
   id: string;
@@ -29,11 +40,26 @@ export type TimeAdjustmentRow = {
   decided_by: string | null;
   decided_at: string | null;
   decision_note: string | null;
+  manager_decided_by: string | null;
+  manager_decided_at: string | null;
+  manager_decision_note: string | null;
   period_label: string | null;
   created_at: string;
   created_by: string | null;
   updated_at: string;
 };
+
+export function adjustmentIsAwaitingManager(row: Pick<TimeAdjustmentRow, 'status'>): boolean {
+  return row.status === 'pending';
+}
+
+export function adjustmentIsAwaitingAccounting(row: Pick<TimeAdjustmentRow, 'status'>): boolean {
+  return row.status === 'manager_approved';
+}
+
+export function adjustmentIsFinallyDecided(row: Pick<TimeAdjustmentRow, 'status'>): boolean {
+  return row.status === 'approved' || row.status === 'denied' || row.status === 'manager_denied';
+}
 
 export type TimeAdjustmentReasonCode = { code: string; label: string };
 
@@ -176,6 +202,90 @@ async function getTimeAdjustmentByEmailDate(
   return { row: (data as TimeAdjustmentRow) ?? null };
 }
 
+/**
+ * Manager decision (stage 1). Requires the caller to manage the employee's department.
+ * Moves status from `pending` -> `manager_approved` | `manager_denied`.
+ */
+export async function managerDecideTimeAdjustment(
+  id: string,
+  params: {
+    action: 'manager_approve' | 'manager_deny';
+    decided_by: string;
+    decision_note?: string | null;
+  },
+): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+
+  const manager = params.decided_by.trim();
+  const managerLower = manager.toLowerCase();
+
+  const { row, error: fetchErr } = await getTimeAdjustmentById(id);
+  if (fetchErr) return { error: fetchErr };
+  if (!row) return { error: 'Request not found' };
+  if (row.status !== 'pending') return { error: 'Request is no longer pending manager review' };
+
+  // Verify the manager oversees this employee's department.
+  const { rows: deptAssigns } = await listDepartmentsForManager(managerLower);
+  if (deptAssigns.length === 0) {
+    return { error: 'Not authorized — no department assignments found for this manager' };
+  }
+  const managedDepts = deptAssigns.map((a) => a.department.trim().toLowerCase());
+
+  // Look up the employee's department from global_master_list.
+  const { data: masterData } = await supabase
+    .from('active_employees')
+    .select('"Department"')
+    .ilike('"Work Email"', row.work_email)
+    .maybeSingle();
+  const empDept = ((masterData as Record<string, unknown> | null)?.['Department'] as string | null)
+    ?.trim()
+    .toLowerCase() ?? '';
+  if (!empDept || !managedDepts.includes(empDept)) {
+    return { error: 'Not authorized — employee is not in your managed departments' };
+  }
+
+  const nextStatus: TimeAdjustmentStatus =
+    params.action === 'manager_approve' ? 'manager_approved' : 'manager_denied';
+  const nowIso = new Date().toISOString();
+
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      status: nextStatus,
+      manager_decided_by: manager,
+      manager_decided_at: nowIso,
+      manager_decision_note: params.decision_note?.trim() || null,
+      updated_at: nowIso,
+    })
+    .eq('id', id);
+  if (error) return { error: error.message };
+
+  void (async () => {
+    const role = await resolveUserRole(managerLower, 'Manager');
+    await insertAuditLog({
+      user_name: manager,
+      user_role: role,
+      action: params.action === 'manager_approve'
+        ? 'time_adjustment.manager_approved'
+        : 'time_adjustment.manager_denied',
+      resource: TABLE,
+      resource_id: id,
+      details: {
+        employee: row.work_email,
+        adjust_date: row.adjust_date,
+        decision_note: params.decision_note ?? null,
+      },
+    });
+  })();
+
+  return { error: null };
+}
+
+/**
+ * Accounting decision (stage 2). Requires `manager_approved` status and an accounting role.
+ * Moves status from `manager_approved` -> `approved` | `denied`.
+ */
 export async function decideTimeAdjustment(
   id: string,
   params: {
@@ -197,6 +307,9 @@ export async function decideTimeAdjustment(
   const { row, error: fetchErr } = await getTimeAdjustmentById(id);
   if (fetchErr) return { error: fetchErr };
   if (!row) return { error: 'Request not found' };
+  if (row.status !== 'manager_approved') {
+    return { error: 'Request must be approved by a manager before Accounting can act on it' };
+  }
 
   const nowIso = new Date().toISOString();
   // 0 is a valid SET override (zero the day). Only null/negative/undefined means "no override".

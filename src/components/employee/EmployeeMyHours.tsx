@@ -1078,11 +1078,12 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           }
                         };
 
+                        // Accounting's explicit approval is the definitive signal — no hour floor.
+                        // The old 4h floor only applied to the implicit day-after orphanage rule (removed 2026-05-01).
                         const forgiven =
                           !!dispute &&
                           disputeGrantsPabForgiveness(dispute) &&
-                          !day.passes &&
-                          (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
+                          !day.passes;
                         // For HSL: overnight-qualifying days (today + tomorrow OR yesterday + today ≥ 7h) show green
                         const hslOvernight = isHsl && inMonth && hslOvernightIsos.has(dayIso);
                         const effectivelyPasses = day.passes || forgiven || hslOvernight;
@@ -1242,6 +1243,11 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                             {isHoliday && (
                               <span className="pointer-events-none max-w-[calc(100%-2px)] truncate text-[6px] font-semibold leading-none tracking-tight text-blue-500 dark:text-blue-400 sm:text-[7px]">
                                 Holiday
+                              </span>
+                            )}
+                            {forgiven && !isHoliday && (
+                              <span className="pointer-events-none max-w-[calc(100%-2px)] truncate text-[6px] font-semibold leading-none tracking-tight text-emerald-600 dark:text-emerald-400 sm:text-[7px]">
+                                Forgiven
                               </span>
                             )}
                             {isToday && !day.hasData ? (
