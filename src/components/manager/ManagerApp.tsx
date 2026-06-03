@@ -156,6 +156,10 @@ export default function ManagerApp() {
   // the Overview gallery hero cycles through them.
   const [pendingRequests, setPendingRequests] = useState<TimeAdjustmentRow[]>([]);
   const [pendingSignedUrls, setPendingSignedUrls] = useState<Record<string, string>>({});
+  // One-shot flag: flips true after the first time-adjustments fetch settles. Drives the
+  // Overview skeleton (alongside the roster gate) and never flips back, so revisiting the
+  // tab doesn't reflash the skeleton.
+  const [requestsLoaded, setRequestsLoaded] = useState(false);
 
   // Keep the pending-approval badge live — refetch whenever the tab is opened.
   useEffect(() => {
@@ -170,12 +174,14 @@ export default function ManagerApp() {
         setPendingApprovals(pendingRows.length);
         setPendingRequests(pendingRows);
         setPendingSignedUrls(json.signedUrls ?? {});
+        setRequestsLoaded(true);
       })
       .catch(() => {
         if (cancelled) return;
         setPendingApprovals(0);
         setPendingRequests([]);
         setPendingSignedUrls({});
+        setRequestsLoaded(true);
       });
     return () => { cancelled = true; };
   }, [activeTab]);
@@ -324,6 +330,7 @@ export default function ManagerApp() {
             >
               {activeTab === 'overview' && (
                 <Overview
+                  loading={teamGate.kind === 'loading' || !requestsLoaded}
                   viewerEmail={viewerEmail}
                   pendingApprovals={pendingApprovals}
                   pendingRequests={pendingRequests}
@@ -467,6 +474,7 @@ export default function ManagerApp() {
 // ─── Overview ────────────────────────────────────────────────────────────────
 
 interface OverviewProps {
+  loading: boolean;
   viewerEmail: string | null;
   pendingApprovals: number;
   pendingRequests: TimeAdjustmentRow[];
@@ -480,6 +488,7 @@ interface OverviewProps {
 }
 
 function Overview({
+  loading,
   viewerEmail,
   pendingApprovals,
   pendingRequests,
@@ -495,6 +504,8 @@ function Overview({
     ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ').split(' ')[0]
     : 'there';
   const greeting = firstName.charAt(0).toUpperCase() + firstName.slice(1);
+
+  if (loading) return <OverviewSkeleton />;
 
   return (
     <div className="flex flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
@@ -642,6 +653,127 @@ function Overview({
                 {String(i + 1).padStart(2, '0')}
               </span>
               <span className="text-sm text-zinc-600 dark:text-zinc-400">{text}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Overview: skeleton (initial load) ───────────────────────────────────────
+
+/** A single shimmering placeholder block. */
+function Sk({ className }: { className?: string }) {
+  return (
+    <div
+      className={cn(
+        'animate-pulse rounded-md bg-zinc-200/80 dark:bg-zinc-800/80',
+        className,
+      )}
+    />
+  );
+}
+
+/**
+ * Layout-faithful placeholder shown while the roster + pending-request fetches
+ * are in flight. Mirrors the real Overview's grid so nothing shifts on swap-in.
+ */
+function OverviewSkeleton() {
+  return (
+    <div
+      className="flex flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-8"
+      aria-busy="true"
+      aria-live="polite"
+    >
+      <span className="sr-only">Loading your dashboard…</span>
+
+      {/* Header */}
+      <header className="flex items-start justify-between gap-4">
+        <div className="flex gap-3">
+          <div className="mt-1.5 h-8 w-0.5 shrink-0 rounded-full bg-blue-500/40" />
+          <div className="space-y-2.5">
+            <Sk className="h-2.5 w-32" />
+            <Sk className="h-7 w-44 sm:h-8" />
+            <Sk className="h-3.5 w-72 max-w-[80vw]" />
+          </div>
+        </div>
+        <Sk className="hidden h-7 w-16 rounded-full sm:block" />
+      </header>
+
+      {/* KPI cards */}
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            className="flex items-center gap-4 rounded-xl border border-blue-100/70 bg-white/90 px-4 py-4 ring-1 ring-blue-500/5 dark:border-blue-950/50 dark:bg-zinc-950/70 dark:ring-blue-400/10"
+          >
+            <Sk className="h-10 w-10 shrink-0 rounded-lg" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <Sk className="h-2.5 w-24" />
+              <Sk className="h-6 w-12" />
+              <Sk className="h-2.5 w-32" />
+            </div>
+          </div>
+        ))}
+      </section>
+
+      {/* Gallery — hero (left) + spotlight (right) */}
+      <section className="grid gap-5 lg:grid-cols-5">
+        <div className="lg:col-span-3">
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <Sk className="aspect-[16/10] w-full rounded-none sm:aspect-[16/9]" />
+            <div className="space-y-2.5 px-5 py-4">
+              <Sk className="h-3 w-28" />
+              <Sk className="h-4 w-3/4" />
+              <Sk className="h-3.5 w-1/2" />
+            </div>
+          </div>
+        </div>
+        <div className="lg:col-span-2">
+          <div className="flex h-full flex-col gap-4 rounded-xl border border-zinc-200 bg-white px-5 py-5 dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex items-center gap-3">
+              <Sk className="h-14 w-14 shrink-0 rounded-full" />
+              <div className="flex-1 space-y-2">
+                <Sk className="h-4 w-32" />
+                <Sk className="h-3 w-24" />
+              </div>
+            </div>
+            <Sk className="h-3 w-full" />
+            <Sk className="h-3 w-5/6" />
+            <div className="mt-auto flex gap-2 pt-2">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Sk key={i} className="h-9 w-9 shrink-0 rounded-full" />
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Lower info band */}
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex items-center justify-between gap-4 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <Sk className="h-8 w-8 shrink-0 rounded-lg" />
+            <div className="space-y-2">
+              <Sk className="h-3.5 w-48" />
+              <Sk className="h-3 w-64 max-w-[60vw]" />
+            </div>
+          </div>
+          <Sk className="hidden h-8 w-24 rounded-md sm:block" />
+        </div>
+        <div className="grid grid-cols-2 border-t border-zinc-100 sm:grid-cols-4 dark:border-zinc-800">
+          {[0, 1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className={cn(
+                'flex flex-col gap-2 px-4 py-3',
+                i > 0 && 'border-l border-zinc-100 dark:border-zinc-800',
+              )}
+            >
+              <Sk className="h-3.5 w-3.5 rounded" />
+              <Sk className="h-2.5 w-20" />
+              <Sk className="h-2.5 w-16" />
             </div>
           ))}
         </div>
