@@ -345,6 +345,40 @@ function finalizeProfileFields(rawFields: { key: string; value: unknown }[]): {
   return { fields, department, organization, primaryEmail, workEmail, personalEmail };
 }
 
+/**
+ * Master-authoritative identity overlay. The Global Master List is the source of
+ * truth for an employee's Department and work identity (Work Email / Personal
+ * Email / Organization). The "All Dept" payroll rates CSV is only a fallback for
+ * these — it supplies them when no master row exists, or when the master omits
+ * them. Pay and bank fields are untouched: the master never carries them, so the
+ * rates CSV stays their source automatically via the normal merge.
+ *
+ * Returns null for any field the master lacks so callers can `?? finalized.x`
+ * back to the rates-derived value.
+ */
+function masterIdentityOverrides(master: RawRow | null): {
+  department: string | null;
+  workEmail: string | null;
+  personalEmail: string | null;
+  organization: string | null;
+} {
+  const empty = { department: null, workEmail: null, personalEmail: null, organization: null };
+  if (!master) return empty;
+  // Preserve the master's original email casing for display, but only accept a
+  // value that parses as a real email (normEmail also trims).
+  const weRaw = toStr(getField(master, ["Work Email", "work_email", "Work_Email"])).trim();
+  const peRaw = toStr(getField(master, ["Personal Email", "personal_email", "Personal_Email"])).trim();
+  return {
+    department: toStr(getField(master, ["Department", "department"])).trim() || null,
+    workEmail: normEmail(weRaw) ? weRaw : null,
+    personalEmail: normEmail(peRaw) ? peRaw : null,
+    organization:
+      toStr(
+        getField(master, ["Organization", "organization", "Organisation", "Org", "Company", "Client"]),
+      ).trim() || null,
+  };
+}
+
 function masterIdentityKey(master: RawRow): string | null {
   const w = normEmail(toStr(getField(master, ["Work Email", "work_email", "Work_Email"])));
   const p = normEmail(toStr(getField(master, ["Personal Email", "personal_email", "Personal_Email"])));
@@ -925,8 +959,16 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
     }
 
     const rawFields = mergeSourcesDeduped(sources);
-    const { fields, department, organization, primaryEmail, workEmail, personalEmail } =
-      finalizeProfileFields(rawFields);
+    const finalized = finalizeProfileFields(rawFields);
+    // Global Master List is the source of truth for Department + work identity;
+    // the All Dept rates CSV only fills these when the master lacks them.
+    const mo = masterIdentityOverrides(master);
+    const { fields } = finalized;
+    const department = mo.department ?? finalized.department;
+    const organization = mo.organization ?? finalized.organization;
+    const workEmail = mo.workEmail ?? finalized.workEmail;
+    const personalEmail = mo.personalEmail ?? finalized.personalEmail;
+    const primaryEmail = workEmail ?? personalEmail;
     const displayName =
       memberFromHubstaff || resolveDisplayName(mergedRates, master);
 
@@ -1267,8 +1309,17 @@ export async function getEmployeeRateProfileByEmail(
 
   const sources: RawRow[] = [mergedRates, master ?? {}];
   const rawFields = mergeSourcesDeduped(sources);
-  let { fields, department, organization, primaryEmail, workEmail, personalEmail } =
-    finalizeProfileFields(rawFields);
+  const finalized = finalizeProfileFields(rawFields);
+  // Global Master List is the source of truth for Department + work identity;
+  // the rates CSV / employee_ids probe below only fill these when the master
+  // lacks them.
+  const mo = masterIdentityOverrides(master);
+  const { fields } = finalized;
+  const department = mo.department ?? finalized.department;
+  const organization = mo.organization ?? finalized.organization;
+  const workEmail = mo.workEmail ?? finalized.workEmail;
+  let personalEmail = mo.personalEmail ?? finalized.personalEmail;
+  const primaryEmail = workEmail ?? personalEmail;
 
   // Fallback: rates + master sometimes omit Personal Email (e.g. Accounting
   // Team rows seeded without it), but `employee_ids` carries it for payroll
@@ -1399,8 +1450,16 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
     matchedMasters.add(master);
 
     const rawFields = mergeSourcesDeduped([mergedRates, master]);
-    const { department, organization, primaryEmail, workEmail, personalEmail } =
-      finalizeProfileFields(rawFields);
+    const finalized = finalizeProfileFields(rawFields);
+    // Global Master List is the source of truth for Department + work identity;
+    // the All Dept rates CSV only fills these when the master lacks them. This
+    // also steers pickEmployeeId off any stale rates-keyed (e.g. PENDING-) id.
+    const mo = masterIdentityOverrides(master);
+    const department = mo.department ?? finalized.department;
+    const organization = mo.organization ?? finalized.organization;
+    const workEmail = mo.workEmail ?? finalized.workEmail;
+    const personalEmail = mo.personalEmail ?? finalized.personalEmail;
+    const primaryEmail = workEmail ?? personalEmail;
 
     profiles.push({
       id: uniqueId(groupId),
@@ -1502,8 +1561,15 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
         : {};
 
     const rawFields = mergeSourcesDeduped([mergedRates, masterRow]);
-    const { department, organization, primaryEmail, workEmail, personalEmail } =
-      finalizeProfileFields(rawFields);
+    const finalized = finalizeProfileFields(rawFields);
+    // Global Master List is the source of truth for Department + work identity;
+    // the All Dept rates CSV only fills these when the master lacks them.
+    const mo = masterIdentityOverrides(masterRow);
+    const department = mo.department ?? finalized.department;
+    const organization = mo.organization ?? finalized.organization;
+    const workEmail = mo.workEmail ?? finalized.workEmail;
+    const personalEmail = mo.personalEmail ?? finalized.personalEmail;
+    const primaryEmail = workEmail ?? personalEmail;
     const identity = buildIdentity(mergedRates, masterRow);
     const idEmail = [...identity.emails][0] || identity.nameNorm || `row-${i}`;
 

@@ -1691,10 +1691,26 @@ export default function PayrollWizard({
     return hubstaffDisplayRows ?? null;
   }, [sourceFilesLoading, pabAllRows, pabMergeLoaded, uploadedSourceFiles, hubstaffDisplayRows]);
 
-  const ratesByEmail = useMemo(
-    () => indexHourlyRatesByEmail(hourlyRateRows),
-    [hourlyRateRows],
-  );
+  const ratesByEmail = useMemo(() => {
+    const idx = indexHourlyRatesByEmail(hourlyRateRows);
+    // Bridge alternate work emails. A rate row can be keyed on an employee's
+    // alternate gsuite alias (e.g. kevin@simple.biz) while the roster + Hubstaff
+    // match on their primary work email (kevt@simple.biz). For each roster
+    // employee, if any of their emails resolves to a rate row, alias ALL of
+    // their emails to that row — so the rate attaches under the primary work
+    // email the rest of the wizard looks up by. The Global Master List is the
+    // source of truth for which addresses belong to one human.
+    for (const e of masterEmployees) {
+      const emails = [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]
+        .map((x) => normEmail(x ?? ''))
+        .filter((x): x is string => !!x);
+      if (emails.length < 2) continue;
+      const hit = emails.map((em) => idx.get(em)).find(Boolean);
+      if (!hit) continue;
+      for (const em of emails) if (!idx.has(em)) idx.set(em, hit);
+    }
+    return idx;
+  }, [hourlyRateRows, masterEmployees]);
 
   // Lookup maps over masterEmployees, built once per roster change. The Step 2
   // calc, the department auto-assign effect, and dispatchData each need to match
@@ -1716,6 +1732,16 @@ export default function PayrollWizard({
       if (e.name) {
         const t = normalizeNameTokens(e.name);
         if (t && !byNameTokens.has(t)) byNameTokens.set(t, e);
+      }
+    }
+    // Second pass: index alternate work emails as byWorkEmail aliases so a
+    // Hubstaff row keyed on an alias (e.g. kevin@simple.biz) still resolves to
+    // this master record. Runs after every primary is mapped and never
+    // overwrites a primary match — primary work email always wins.
+    for (const e of masterEmployees) {
+      for (const alt of [e.alternate_work_email, e.alternate_work_email_2]) {
+        const a = normEmail(alt);
+        if (a && !byWorkEmail.has(a)) byWorkEmail.set(a, e);
       }
     }
     return { byWorkEmail, byPersonalEmail, byNameTokens };

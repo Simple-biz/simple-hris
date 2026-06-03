@@ -17,6 +17,12 @@ export type EmployeeRow = {
   /** Work / company email from the "Work Email" column in global_master_list.
    *  Used as a secondary lookup key when personal_email matching fails. */
   work_email?: string | null;
+  /** Alternate work emails from global_master_list ("Alternate Work Email" /
+   *  "Alternate Work Email 2") — gsuite aliases for the same human. Used to
+   *  bridge a rate/Hubstaff row keyed on an alternate address back to this
+   *  employee's primary work email when matching. */
+  alternate_work_email?: string | null;
+  alternate_work_email_2?: string | null;
   start_date: string | null;
   hourlyRate?: number | null;
   bankInfo?: {
@@ -165,6 +171,8 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
   const name = pick(row, ["Name", "name"]);
   const personal_email = pick(row, ["Personal Email", "personal_email", "Personal_Email", "personal email"]);
   const work_email = pick(row, ["Work Email", "work_email", "Work_Email", "work email", "WorkEmail"]);
+  const alternate_work_email = pick(row, ["Alternate Work Email", "alternate_work_email", "Alternate_Work_Email"]);
+  const alternate_work_email_2 = pick(row, ["Alternate Work Email 2", "alternate_work_email_2", "Alternate_Work_Email_2"]);
   const start_date = pick(row, [
     "Start Date",
     "Start_date",
@@ -194,6 +202,10 @@ export function mapEmployeeRow(row: RawRow): EmployeeRow {
     name: name != null ? String(name) : null,
     personal_email: personal_email != null ? String(personal_email) : null,
     work_email: work_email != null ? String(work_email) : null,
+    alternate_work_email:
+      alternate_work_email != null ? String(alternate_work_email).trim() || null : null,
+    alternate_work_email_2:
+      alternate_work_email_2 != null ? String(alternate_work_email_2).trim() || null : null,
     start_date: start_date != null ? String(start_date) : null,
     hourlyRate: null,
     bankInfo: null,
@@ -234,7 +246,8 @@ const GLOBAL_MASTER_SELECT_BASE =
  *  shape resolves successfully against the view. */
 const GLOBAL_MASTER_SELECT =
   GLOBAL_MASTER_SELECT_BASE +
-  ',street,city,province,postal_code,full_address,google_photo_url,employee_id';
+  ',street,city,province,postal_code,full_address,google_photo_url,employee_id' +
+  ',"Alternate Work Email","Alternate Work Email 2"';
 
 /** True when every field is null, empty, or whitespace-only. */
 function isRowEmptyOrWhitespace(row: EmployeeRow): boolean {

@@ -202,7 +202,8 @@
       "Bash(echo \"TSC_EXIT=$?\")",
       "Bash(echo \"TSC=$?\")",
       "Bash(Select-Object -First 20 FullName)",
-      "Bash(Select-String -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\payroll-clerk\\\\DispatchReports.tsx\" -Pattern \"\\(Orphan|orphanage|urgent|OrphanageSection|function Orphan\\)\")"
+      "Bash(Select-String -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\payroll-clerk\\\\DispatchReports.tsx\" -Pattern \"\\(Orphan|orphanage|urgent|OrphanageSection|function Orphan\\)\")",
+      "Bash(sed -i \"s/m\\\\[2\\\\].trim\\(\\)/m[2].trim\\(\\).replace\\(\\\\/^['\\\\\\\\\\\\\"]|['\\\\\\\\\\\\\"]\\\\$\\\\/g,''\\)/\" /tmp/q.mjs && node /tmp/q.mjs)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
