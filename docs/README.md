@@ -38,6 +38,7 @@ docs/
 | [delete-authorization.md](./features/delete-authorization.md) | Who can delete what, and the audit trail |
 | [system-diagnostics.md](./features/system-diagnostics.md) | Admin diagnostics service map + probes |
 | [time-adjustment-requests.md](./features/time-adjustment-requests.md) | Employee time adjustment requests: wizard, evidence upload, Accounting review, pay wiring |
+| [identity-resolution.md](./features/identity-resolution.md) | Master-authoritative identity + Department; alternate-work-email bridging for hours/rate matching across Rates & Profiles, Payroll Wizard, manager + employee dashboards |
 | [paystub.html](./features/paystub.html) | Paystub HTML template |
 
 ## design/ -- UI/UX standards
