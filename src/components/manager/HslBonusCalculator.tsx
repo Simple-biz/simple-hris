@@ -1,10 +1,13 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
-  CheckCircle2, ChevronLeft, ChevronRight, Download, Eye,
+  CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Download, Eye,
   Lock, RefreshCw, Save, Search, Users,
 } from 'lucide-react';
+
+const COLLAPSE_EASE = [0.22, 1, 0.36, 1] as const;
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -241,6 +244,12 @@ export default function HslBonusCalculator({
    *  it overlays the page rather than nesting inside a single dept block. */
   const [viewingDept, setViewingDept] = useState<HslDeptKey | null>(null);
   const [reopenSubmitting, setReopenSubmitting] = useState(false);
+
+  // Department navigation: which dept's block is expanded, and the active filter
+  // pill. With many HSL branches visible at once a flat stack is unreadable, so
+  // "All" shows a collapsed overview and a single dept can be focused.
+  const [activeFilter, setActiveFilter] = useState<HslDeptKey | 'all'>('all');
+  const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
 
   function periodStart(dept: DeptConfig): string {
     return dept.cadence === 'weekly' ? weekStart : monthStart;
@@ -483,6 +492,37 @@ export default function HslBonusCalculator({
     [deptState, visibleDepts],
   );
 
+  const multiDept = visibleDepts.length > 1;
+
+  // If the active filter points at a dept that's no longer visible, fall back.
+  useEffect(() => {
+    if (activeFilter !== 'all' && !visibleDepts.includes(activeFilter)) {
+      setActiveFilter('all');
+    }
+  }, [activeFilter, visibleDepts]);
+
+  const filteredDepts = useMemo<HslDeptKey[]>(
+    () => (activeFilter === 'all' ? visibleDepts : visibleDepts.filter((k) => k === activeFilter)),
+    [activeFilter, visibleDepts],
+  );
+
+  // "All" overview lays the collapsed branches out as a grid; an expanded card
+  // spans the full width so its wide tables aren't squeezed into one column.
+  const gridMode = activeFilter === 'all' && multiDept;
+
+  /** A block is expanded when: only one dept exists, it's the focused filter,
+   *  or the user manually opened it. With multiple depts under "All" the blocks
+   *  start collapsed so the page reads as a tidy overview. */
+  function isOpen(key: HslDeptKey): boolean {
+    if (key in manualOpen) return manualOpen[key]!;
+    if (!multiDept) return true;
+    return activeFilter === key;
+  }
+
+  function toggleOpen(key: HslDeptKey) {
+    setManualOpen((m) => ({ ...m, [key]: !isOpen(key) }));
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (visibleDepts.length === 0) {
@@ -503,20 +543,20 @@ export default function HslBonusCalculator({
   return (
     <div className="flex min-h-0 flex-col bg-gradient-to-b from-white via-blue-50/20 to-white text-zinc-900 dark:from-black dark:via-blue-950/15 dark:to-black dark:text-zinc-100">
       {/* Top bar */}
-      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/90 px-5 py-3 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/90">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-            KPI Calculator · HSL
-          </p>
-          <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-            {isElevated ? 'All Departments' : visibleDepts.length === 1 ? HSL_DEPTS[visibleDepts[0]!].name : 'My Departments'}
-            <span className="ml-2 font-mono text-xs font-normal text-zinc-500">
-              week of {isoWeekStart(today)}
-            </span>
-          </h2>
-        </div>
-        <div className="flex items-center gap-2">
-          {isElevated && (
+      <div className="sticky top-0 z-10 flex flex-col gap-2.5 border-b border-zinc-200/80 bg-white/90 px-5 py-3 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/90">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
+              KPI Calculator · HSL
+            </p>
+            <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+              {isElevated ? 'All Departments' : visibleDepts.length === 1 ? HSL_DEPTS[visibleDepts[0]!].name : 'My Departments'}
+              <span className="ml-2 font-mono text-xs font-normal text-zinc-500">
+                week of {isoWeekStart(today)}
+              </span>
+            </h2>
+          </div>
+          <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
               <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">Total</span>
               <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
@@ -524,28 +564,64 @@ export default function HslBonusCalculator({
               </span>
               <span className="font-mono text-[10px] text-zinc-500">{totalPeople} ppl</span>
             </div>
-          )}
-          {isElevated && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 text-xs"
-              onClick={exportCsv}
-            >
-              <Download className="h-3.5 w-3.5" /> Export CSV
-            </Button>
-          )}
+            {isElevated && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5 text-xs"
+                onClick={exportCsv}
+              >
+                <Download className="h-3.5 w-3.5" /> Export CSV
+              </Button>
+            )}
+          </div>
         </div>
+
+        {/* Department filter rail — focus one branch or scan them all */}
+        {multiDept && (
+          <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
+            <DeptPill
+              active={activeFilter === 'all'}
+              label="All"
+              count={visibleDepts.length}
+              onClick={() => setActiveFilter('all')}
+            />
+            {visibleDepts.map((k) => (
+              <DeptPill
+                key={k}
+                active={activeFilter === k}
+                label={HSL_DEPTS[k].name}
+                color={HSL_DEPTS[k].color}
+                count={deptState[k]!.entries.length}
+                onClick={() => {
+                  setActiveFilter(k);
+                  setManualOpen((m) => ({ ...m, [k]: true }));
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Department blocks */}
-      <div className="flex flex-col gap-4 px-4 py-5 sm:px-6">
-        {visibleDepts.map((key) => (
+      <div
+        className={cn(
+          'px-4 py-5 sm:px-6',
+          gridMode
+            ? 'grid grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-3'
+            : 'flex flex-col gap-4',
+        )}
+      >
+        {filteredDepts.map((key) => (
           <DeptBlock
             key={key}
             deptKey={key}
             state={deptState[key]!}
             loading={loadingDepts.has(key)}
+            collapsible={multiDept}
+            open={isOpen(key)}
+            sectionClassName={cn(gridMode && isOpen(key) && 'sm:col-span-2 xl:col-span-3')}
+            onToggleOpen={() => toggleOpen(key)}
             periodStartStr={periodStart(HSL_DEPTS[key])}
             onKpiChange={(email, kpiKey, val) => {
               setDeptState((prev) => {
@@ -637,12 +713,45 @@ export default function HslBonusCalculator({
   );
 }
 
+// ── Department filter pill ──────────────────────────────────────────────────
+
+function DeptPill({
+  active, label, color, count, onClick,
+}: {
+  active: boolean;
+  label: string;
+  color?: string;
+  count: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
+        active
+          ? 'border-transparent bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+          : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:bg-zinc-800/60',
+      )}
+    >
+      {color && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} aria-hidden />}
+      <span className="max-w-[10rem] truncate">{label}</span>
+      <span className={cn('font-mono text-[10px] tabular-nums', active ? 'opacity-70' : 'text-zinc-400')}>{count}</span>
+    </button>
+  );
+}
+
 // ── DeptBlock ─────────────────────────────────────────────────────────────────
 
 interface DeptBlockProps {
   deptKey: HslDeptKey;
   state: DeptState;
   loading: boolean;
+  collapsible: boolean;
+  open: boolean;
+  sectionClassName?: string;
+  onToggleOpen: () => void;
   periodStartStr: string;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   onToggleManager: (email: string) => void;
@@ -656,7 +765,7 @@ interface DeptBlockProps {
 const DEPT_PAGE_SIZE = 10;
 
 function DeptBlock({
-  deptKey, state, loading, periodStartStr,
+  deptKey, state, loading, collapsible, open, sectionClassName, onToggleOpen, periodStartStr,
   onKpiChange, onToggleManager,
   onSave, onMarkReady, onView, onSubTeamChange, ssdShareForTeam,
 }: DeptBlockProps) {
@@ -698,11 +807,42 @@ function DeptBlock({
 
   return (
     <section
-      className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60"
+      className={cn(
+        'overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60',
+        sectionClassName,
+      )}
       style={{ borderLeft: `3px solid ${dept.color}` }}
     >
-      {/* Header */}
-      <header className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-zinc-50/70 px-5 py-3.5 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+      {/* Header — click to expand/collapse when several depts are visible */}
+      <header
+        className={cn(
+          'flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-zinc-50/70 px-5 py-3.5 dark:border-zinc-800/80 dark:bg-zinc-900/40',
+          collapsible && 'cursor-pointer select-none transition-colors hover:bg-zinc-100/70 dark:hover:bg-zinc-900/70',
+        )}
+        {...(collapsible
+          ? {
+              role: 'button' as const,
+              tabIndex: 0,
+              'aria-expanded': open,
+              onClick: onToggleOpen,
+              onKeyDown: (ev: React.KeyboardEvent) => {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                  ev.preventDefault();
+                  onToggleOpen();
+                }
+              },
+            }
+          : {})}
+      >
+        {collapsible && (
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 shrink-0 text-zinc-400 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+              open ? 'rotate-180' : 'rotate-0',
+            )}
+            aria-hidden
+          />
+        )}
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
             {dept.name}
@@ -737,6 +877,16 @@ function DeptBlock({
       </header>
 
       {/* Body */}
+      <AnimatePresence initial={false}>
+      {open && (
+      <motion.div
+        key="dept-body"
+        initial={{ height: 0, opacity: 0 }}
+        animate={{ height: 'auto', opacity: 1 }}
+        exit={{ height: 0, opacity: 0 }}
+        transition={{ height: { duration: 0.36, ease: COLLAPSE_EASE }, opacity: { duration: 0.22, ease: 'easeOut' } }}
+        className="overflow-hidden"
+      >
       <div className="space-y-4 px-5 py-5">
         {/* Search + pagination toolbar */}
         {state.entries.length > 0 && (
@@ -943,6 +1093,9 @@ function DeptBlock({
           </div>
         </div>
       </div>
+      </motion.div>
+      )}
+      </AnimatePresence>
     </section>
   );
 }
@@ -1240,6 +1393,8 @@ export function SubTeamChips({
 }
 
 export function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTeam, onSubTeamAssign }: SsdEmployeeTableProps) {
+  const SUB_TEAM_NAMES: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
+
   // Member counts must reflect every entry in the dept, not just the current page
   const memberCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1250,61 +1405,205 @@ export function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTea
     return counts;
   }, [allEntries]);
 
+  // ── Bulk selection ──────────────────────────────────────────────────────────
+  // Selection is keyed by email so it survives pagination; checkboxes only show
+  // for the rows currently on the page.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Drop any selected emails that no longer exist (e.g. roster changed).
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set(allEntries.map((e) => e.employee_email));
+      let changed = false;
+      const next = new Set<string>();
+      for (const em of prev) {
+        if (valid.has(em)) next.add(em);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [allEntries]);
+
+  const pageEmails = entries.map((e) => e.employee_email);
+  const allPageSelected = pageEmails.length > 0 && pageEmails.every((em) => selected.has(em));
+  const somePageSelected = pageEmails.some((em) => selected.has(em));
+
+  const selectAllRef = React.useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = somePageSelected && !allPageSelected;
+  }, [somePageSelected, allPageSelected]);
+
+  function toggleOne(email: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email);
+      else next.add(email);
+      return next;
+    });
+  }
+
+  function toggleAllOnPage() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) pageEmails.forEach((em) => next.delete(em));
+      else pageEmails.forEach((em) => next.add(em));
+      return next;
+    });
+  }
+
+  function bulkAssign(target: SubTeamName | '') {
+    if (selected.size === 0) return;
+    // Each call composes via functional setState in the parent, so looping is safe.
+    selected.forEach((em) => onSubTeamAssign(em, target));
+    setSelected(new Set());
+  }
+
   return (
-    <div className="h-full overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <table className="table-keep w-full min-w-[560px] text-xs">
-        <thead>
-          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
-            <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Employee</th>
-            <th className="px-2 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Sub-Team</th>
-            <th className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Share</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.length === 0 && (
-            <tr>
-              <td colSpan={3} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
-                No employees on this page.
-              </td>
-            </tr>
+    <div className="flex h-full flex-col gap-2">
+      {/* Bulk-assign bar */}
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 transition-colors',
+          selected.size > 0
+            ? 'border-blue-300 bg-blue-50/70 dark:border-blue-800/70 dark:bg-blue-950/30'
+            : 'border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/40',
+        )}
+      >
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+          {selected.size > 0 ? (
+            <span className="font-semibold text-blue-700 dark:text-blue-300">{selected.size} selected</span>
+          ) : (
+            'Tick rows to bulk-assign'
           )}
-          {entries.map((e) => {
-            const subTeam = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
-            const memberCount = subTeam ? (memberCounts[subTeam] ?? 0) : 0;
-            const share = subTeam ? ssdShareForTeam(subTeam, memberCount) : 0;
-            const palette = subTeam ? SUB_TEAM_PALETTE[subTeam] : null;
+        </span>
+        <span className="font-mono text-[10px] text-zinc-400">→ assign to</span>
+        <div className="flex flex-wrap items-center gap-1">
+          {SUB_TEAM_NAMES.map((name) => {
+            const palette = SUB_TEAM_PALETTE[name];
             return (
-              <tr
-                key={e.employee_email}
+              <button
+                key={name}
+                type="button"
+                disabled={isLocked || selected.size === 0}
+                onClick={() => bulkAssign(name)}
+                title={`Assign ${selected.size} selected to ${name}`}
                 className={cn(
-                  'border-b border-zinc-100 transition-colors hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40',
-                  palette && palette.bodyBg,
+                  'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all',
+                  selected.size > 0
+                    ? `${palette.headerBg} ${palette.headerText} shadow-sm hover:brightness-105`
+                    : 'bg-white text-zinc-400 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:text-zinc-600 dark:ring-zinc-800',
+                  (isLocked || selected.size === 0) && 'cursor-not-allowed opacity-50',
                 )}
               >
-                <td className="px-3 py-2">
-                  <div className="font-medium text-zinc-900 dark:text-zinc-100">{e.employee_name}</div>
-                  <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
-                </td>
-                <td className="px-2 py-2">
-                  <SubTeamChips
-                    value={subTeam}
-                    isLocked={isLocked}
-                    onChange={(v) => onSubTeamAssign(e.employee_email, v)}
-                  />
-                </td>
-                <td
-                  className={cn(
-                    'px-3 py-2 text-right font-mono font-bold tabular-nums',
-                    palette ? palette.accent : 'text-zinc-300 dark:text-zinc-700',
-                  )}
-                >
-                  {subTeam ? formatPeso(share) : '—'}
-                </td>
-              </tr>
+                <span className={cn('h-1.5 w-1.5 rounded-full', selected.size > 0 ? 'bg-white/85' : palette.dotOn)} />
+                {name}
+              </button>
             );
           })}
-        </tbody>
-      </table>
+          <button
+            type="button"
+            disabled={isLocked || selected.size === 0}
+            onClick={() => bulkAssign('')}
+            title={`Clear sub-team for ${selected.size} selected`}
+            className={cn(
+              'rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider transition-colors',
+              'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800',
+              (isLocked || selected.size === 0) && 'cursor-not-allowed opacity-50',
+            )}
+          >
+            none
+          </button>
+        </div>
+        {selected.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            className="ml-auto font-mono text-[10px] text-zinc-500 underline-offset-2 hover:text-zinc-800 hover:underline dark:hover:text-zinc-200"
+          >
+            clear
+          </button>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table className="table-keep w-full min-w-[600px] text-xs">
+          <thead>
+            <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
+              <th className="w-9 px-2 py-2 text-center">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  className="accent-blue-600"
+                  checked={allPageSelected}
+                  disabled={isLocked || pageEmails.length === 0}
+                  onChange={toggleAllOnPage}
+                  aria-label="Select all on this page"
+                />
+              </th>
+              <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Employee</th>
+              <th className="px-2 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Sub-Team</th>
+              <th className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
+                  No employees on this page.
+                </td>
+              </tr>
+            )}
+            {entries.map((e) => {
+              const subTeam = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
+              const memberCount = subTeam ? (memberCounts[subTeam] ?? 0) : 0;
+              const share = subTeam ? ssdShareForTeam(subTeam, memberCount) : 0;
+              const palette = subTeam ? SUB_TEAM_PALETTE[subTeam] : null;
+              const isSel = selected.has(e.employee_email);
+              return (
+                <tr
+                  key={e.employee_email}
+                  className={cn(
+                    'border-b border-zinc-100 transition-colors hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40',
+                    palette && palette.bodyBg,
+                    isSel && 'bg-blue-50/70 dark:bg-blue-950/30',
+                  )}
+                >
+                  <td className="px-2 py-2 text-center">
+                    <input
+                      type="checkbox"
+                      className="accent-blue-600"
+                      checked={isSel}
+                      disabled={isLocked}
+                      onChange={() => toggleOne(e.employee_email)}
+                      aria-label={`Select ${e.employee_name}`}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-zinc-900 dark:text-zinc-100">{e.employee_name}</div>
+                    <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <SubTeamChips
+                      value={subTeam}
+                      isLocked={isLocked}
+                      onChange={(v) => onSubTeamAssign(e.employee_email, v)}
+                    />
+                  </td>
+                  <td
+                    className={cn(
+                      'px-3 py-2 text-right font-mono font-bold tabular-nums',
+                      palette ? palette.accent : 'text-zinc-300 dark:text-zinc-700',
+                    )}
+                  >
+                    {subTeam ? formatPeso(share) : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

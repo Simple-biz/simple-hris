@@ -50,7 +50,7 @@ import ManagerTransferDialog from '@/components/manager/ManagerTransferDialog';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useOnlineEmails } from '@/components/presence/PresenceProvider';
-import { TeamAvatar } from '@/components/team/team-ui';
+import { TeamAvatar, initialsOf, gradientFor } from '@/components/team/team-ui';
 import { formatCurrentProjects } from '@/lib/skill-set-titles';
 import {
   MedalProvider,
@@ -76,6 +76,9 @@ export default function ManagerApp() {
   const emailFromQuery = searchParams?.get('email') ?? null;
 
   const [activeTab, setActiveTab] = useState<ManagerTab>('overview');
+  // When a manager owns both HSL branches and regular departments, the KPI tab
+  // shows one calculator at a time (null = default to first-assigned).
+  const [kpiCalc, setKpiCalc] = useState<'hsl' | 'dept' | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -149,18 +152,31 @@ export default function ManagerApp() {
   }, [mobileNavOpen]);
 
   const [pendingApprovals, setPendingApprovals] = useState(0);
+  // All pending requests (newest first) + signed URLs for their evidence images —
+  // the Overview gallery hero cycles through them.
+  const [pendingRequests, setPendingRequests] = useState<TimeAdjustmentRow[]>([]);
+  const [pendingSignedUrls, setPendingSignedUrls] = useState<Record<string, string>>({});
 
   // Keep the pending-approval badge live — refetch whenever the tab is opened.
   useEffect(() => {
     let cancelled = false;
     fetch('/api/manager/time-adjustments', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((json: { rows?: Array<{ status: string }> }) => {
+      .then((json: { rows?: TimeAdjustmentRow[]; signedUrls?: Record<string, string> }) => {
         if (cancelled) return;
-        const pending = (json.rows ?? []).filter((r) => r.status === 'pending').length;
-        setPendingApprovals(pending);
+        const rows = json.rows ?? [];
+        // Rows arrive ordered created_at desc, so the first pending row is the newest.
+        const pendingRows = rows.filter((r) => r.status === 'pending');
+        setPendingApprovals(pendingRows.length);
+        setPendingRequests(pendingRows);
+        setPendingSignedUrls(json.signedUrls ?? {});
       })
-      .catch(() => { if (!cancelled) setPendingApprovals(0); });
+      .catch(() => {
+        if (cancelled) return;
+        setPendingApprovals(0);
+        setPendingRequests([]);
+        setPendingSignedUrls({});
+      });
     return () => { cancelled = true; };
   }, [activeTab]);
 
@@ -233,6 +249,16 @@ export default function ManagerApp() {
     setMobileNavOpen(false);
   };
 
+  // Deep-link from the Overview spotlight into My Team with a specific employee's
+  // profile open. `teamFocusEmail` is consumed (cleared) once the panel opens it.
+  const [teamFocusEmail, setTeamFocusEmail] = useState<string | null>(null);
+  const handleViewEmployee = React.useCallback((email: string) => {
+    setTeamFocusEmail(email);
+    setActiveTab('team');
+    setMobileNavOpen(false);
+  }, []);
+  const clearTeamFocus = React.useCallback(() => setTeamFocusEmail(null), []);
+
   if (!authChecked) {
     return (
       <div className="flex h-screen items-center justify-center bg-white dark:bg-[#0d1117]">
@@ -300,10 +326,14 @@ export default function ManagerApp() {
                 <Overview
                   viewerEmail={viewerEmail}
                   pendingApprovals={pendingApprovals}
+                  pendingRequests={pendingRequests}
+                  pendingSignedUrls={pendingSignedUrls}
+                  teamMembers={teamMembers}
                   teamCount={teamGate.kind === 'loading' ? null : teamMembers.length}
                   teamGate={teamGate}
                   onJumpToApprovals={() => handleNavigate('time-adjustments')}
                   onJumpToTeam={() => handleNavigate('team')}
+                  onViewEmployee={handleViewEmployee}
                 />
               )}
               {activeTab === 'time-adjustments' && (
@@ -313,7 +343,13 @@ export default function ManagerApp() {
               )}
               {activeTab === 'leaves' && <LeaveRequestsPanel />}
               {activeTab === 'team' && (
-                <TeamPanel members={teamMembers} teamGate={teamGate} viewerEmail={viewerEmail} />
+                <TeamPanel
+                  members={teamMembers}
+                  teamGate={teamGate}
+                  viewerEmail={viewerEmail}
+                  focusEmail={teamFocusEmail}
+                  onFocusConsumed={clearTeamFocus}
+                />
               )}
               {activeTab === 'announcements' && (
                 <ManagerAnnouncementsTab viewerEmail={viewerEmail} teamGate={teamGate} />
@@ -344,12 +380,59 @@ export default function ManagerApp() {
                     </div>
                   );
                 }
+
+                // Both calculators have their own sticky toolbar; stacking them
+                // collides. When a manager owns both, show ONE at a time and
+                // default to whichever calculator owns their first-assigned dept
+                // (assignment order is preserved in `managed`).
+                const both = hslVisible && deptVisible;
+                const firstAssigned: 'hsl' | 'dept' = (() => {
+                  if (!both) return hslVisible ? 'hsl' : 'dept';
+                  for (const dStr of managed) {
+                    if (dStr.toLowerCase().startsWith('hsl:')) return 'hsl';
+                    const k = normalizeDeptToKey(dStr);
+                    if (k && k in DEPT_INPUT_CONFIG) return 'dept';
+                  }
+                  return 'hsl';
+                })();
+                const active: 'hsl' | 'dept' = both ? (kpiCalc ?? firstAssigned) : firstAssigned;
+
                 return (
-                  <>
-                    {hslVisible && (
+                  <div className="flex min-h-0 flex-col">
+                    {both && (
+                      <div className="flex items-center gap-2 border-b border-zinc-200/80 bg-white px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-950 sm:px-6">
+                        <span className="mr-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400">
+                          Calculator
+                        </span>
+                        {([
+                          { id: 'hsl' as const, label: 'HSL Branches' },
+                          { id: 'dept' as const, label: 'Departments' },
+                        ]).map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => setKpiCalc(t.id)}
+                            className={cn(
+                              'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                              active === t.id
+                                ? 'border-transparent bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                                : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:bg-zinc-800/60',
+                            )}
+                          >
+                            {t.label}
+                            {t.id === firstAssigned && (
+                              <span className={cn('ml-1.5 font-mono text-[9px]', active === t.id ? 'opacity-60' : 'text-zinc-400')}>
+                                primary
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {active === 'hsl' && hslVisible && (
                       <HslBonusCalculator viewerEmail={viewerEmail} managedDepts={managed} isElevated={elevated} />
                     )}
-                    {deptVisible && (
+                    {active === 'dept' && deptVisible && (
                       <DeptBonusCalculator
                         viewerEmail={viewerEmail}
                         teamMembers={teamMembers}
@@ -357,7 +440,7 @@ export default function ManagerApp() {
                         isElevated={elevated}
                       />
                     )}
-                  </>
+                  </div>
                 );
               })()}
               {activeTab === 'bonus-history' && (
@@ -386,19 +469,27 @@ export default function ManagerApp() {
 interface OverviewProps {
   viewerEmail: string | null;
   pendingApprovals: number;
+  pendingRequests: TimeAdjustmentRow[];
+  pendingSignedUrls: Record<string, string>;
+  teamMembers: EmployeeRow[];
   teamCount: number | null;
   teamGate: ManagerTeamGate;
   onJumpToApprovals: () => void;
   onJumpToTeam: () => void;
+  onViewEmployee: (email: string) => void;
 }
 
 function Overview({
   viewerEmail,
   pendingApprovals,
+  pendingRequests,
+  pendingSignedUrls,
+  teamMembers,
   teamCount,
   teamGate,
   onJumpToApprovals,
   onJumpToTeam,
+  onViewEmployee,
 }: OverviewProps) {
   const firstName = viewerEmail?.includes('@')
     ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ').split(' ')[0]
@@ -466,6 +557,24 @@ function Overview({
           icon={Clock}
           accent="mono"
         />
+      </section>
+
+      {/* Gallery — latest request as the hero (left) + live team spotlight (right) */}
+      <section className="grid gap-5 lg:grid-cols-5">
+        <div className="lg:col-span-3">
+          <LatestRequestHero
+            requests={pendingRequests}
+            signedUrls={pendingSignedUrls}
+            onReview={onJumpToApprovals}
+          />
+        </div>
+        <div className="lg:col-span-2">
+          <TeamSpotlight
+            members={teamMembers}
+            onOpenTeam={onJumpToTeam}
+            onViewEmployee={onViewEmployee}
+          />
+        </div>
       </section>
 
       {/* Time adjustment approvals */}
@@ -537,6 +646,544 @@ function Overview({
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Overview: latest-request gallery hero ───────────────────────────────────
+
+function LatestRequestHero({
+  requests,
+  signedUrls,
+  onReview,
+}: {
+  requests: TimeAdjustmentRow[];
+  signedUrls: Record<string, string>;
+  onReview: () => void;
+}) {
+  // Which request is featured (auto-cycles), and which evidence image within it.
+  const [reqIdx, setReqIdx] = useState(0);
+  const [imgIdx, setImgIdx] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  const total = requests.length;
+  const safeReq = total ? reqIdx % total : 0;
+  const latestPending = requests[safeReq] ?? null;
+
+  // Reset to the first request when the underlying list changes.
+  useEffect(() => { setReqIdx(0); }, [total]);
+  // Reset the featured image whenever the active request changes.
+  useEffect(() => { setImgIdx(0); }, [latestPending?.id]);
+
+  // Auto-advance through pending requests. Pauses on hover/focus.
+  useEffect(() => {
+    if (paused || total <= 1) return;
+    const t = window.setInterval(() => setReqIdx((i) => (i + 1) % total), 5000);
+    return () => window.clearInterval(t);
+  }, [paused, total]);
+
+  const urls = useMemo(
+    () => (latestPending?.image_paths ?? []).map((p) => signedUrls[p]).filter(Boolean) as string[],
+    [latestPending, signedUrls],
+  );
+  const featured = urls[imgIdx] ?? urls[0] ?? null;
+  const setActive = setImgIdx;
+  const active = imgIdx;
+
+  if (!latestPending) {
+    // No pending requests — keep the slot (same card chrome) and show an
+    // "all cleared" message in the body so the gallery layout stays intact.
+    return (
+      <div className="flex h-full min-h-[18rem] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        {/* Banner — mirrors the populated card */}
+        <div className="flex items-center gap-1.5 border-b border-zinc-100 bg-zinc-50/60 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+            Latest request
+          </span>
+        </div>
+        {/* All-cleared body */}
+        <div className="flex flex-1 flex-col items-center justify-center px-6 py-8 text-center">
+          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+            <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+          </div>
+          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">All cleared</p>
+          <p className="mt-1 max-w-xs text-xs text-zinc-500 dark:text-zinc-500">
+            No time adjustments are waiting on you. New requests from your team will appear here.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex h-full flex-col overflow-hidden rounded-xl border border-blue-200 bg-white shadow-sm dark:border-blue-900/50 dark:bg-zinc-950"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocusCapture={() => setPaused(true)}
+      onBlurCapture={() => setPaused(false)}
+    >
+      {/* Banner */}
+      <div className="flex items-center justify-between gap-2 border-b border-blue-100 bg-blue-50/60 px-3 py-1.5 dark:border-blue-900/40 dark:bg-blue-950/20">
+        <div className="flex items-center gap-1.5">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-blue-500" />
+          </span>
+          <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-blue-700 dark:text-blue-300">
+            {total > 1 ? 'Pending requests' : 'Latest request'}
+          </span>
+        </div>
+        {total > 1 && (
+          <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-white">
+            {safeReq + 1} / {total}
+          </span>
+        )}
+      </div>
+
+      {/* Featured evidence image */}
+      <button
+        type="button"
+        onClick={onReview}
+        className="group relative aspect-[16/5] w-full shrink-0 overflow-hidden bg-zinc-100 dark:bg-zinc-900"
+        aria-label="Open the time adjustment queue to review this request"
+      >
+        {featured ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={featured}
+              alt="Evidence submitted by the employee"
+              className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
+            <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded bg-black/55 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-sm">
+              <Camera className="h-2.5 w-2.5" />
+              Proof
+            </span>
+            <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between gap-2 p-2.5">
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-white">{latestPending.work_email}</p>
+                <p className="truncate font-mono text-[10px] text-white/80">
+                  {latestPending.adjust_date}
+                </p>
+              </div>
+            </div>
+          </>
+        ) : (
+          <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-zinc-400 dark:text-zinc-600">
+            <ImageOff className="h-5 w-5" />
+            <span className="text-[10px] font-medium">No image attached</span>
+          </span>
+        )}
+      </button>
+
+      {/* Thumbnail strip — switch the featured image */}
+      {urls.length > 1 && (
+        <div className="flex gap-1.5 overflow-x-auto border-b border-zinc-100 px-2.5 py-1.5 dark:border-zinc-800">
+          {urls.map((u, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => setActive(i)}
+              className={cn(
+                'relative h-7 w-10 shrink-0 overflow-hidden rounded border-2 transition',
+                i === active
+                  ? 'border-blue-500 ring-1 ring-blue-500/20'
+                  : 'border-transparent opacity-60 hover:opacity-100',
+              )}
+              aria-label={`Show evidence image ${i + 1}`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={u} alt={`Evidence ${i + 1}`} className="h-full w-full object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Details */}
+      <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-2.5">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-zinc-500 dark:text-zinc-400">
+          <span className="rounded bg-blue-50 px-1.5 py-0.5 font-medium text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+            {TA_REASON_LABEL(latestPending.reason)}
+          </span>
+          {latestPending.requested_hours != null && (
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">
+              {latestPending.requested_hours}h requested
+            </span>
+          )}
+        </div>
+        {latestPending.explanation && (
+          <p className="line-clamp-1 rounded border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] leading-snug text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+            &ldquo;{latestPending.explanation}&rdquo;
+          </p>
+        )}
+        <div className="mt-auto flex items-center justify-between gap-2 pt-0.5">
+          <Button
+            size="sm"
+            className="h-6 bg-blue-600 text-[11px] text-white hover:bg-blue-700"
+            onClick={onReview}
+          >
+            Review request
+          </Button>
+          {/* Request-cycling dots */}
+          {total > 1 && (
+            <div className="flex items-center gap-1">
+              {requests.slice(0, 8).map((_, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setReqIdx(i)}
+                  aria-label={`Show pending request ${i + 1}`}
+                  className={cn(
+                    'h-1 rounded-full transition-all',
+                    i === safeReq
+                      ? 'w-4 bg-blue-500'
+                      : 'w-1 bg-zinc-300 hover:bg-zinc-400 dark:bg-zinc-700 dark:hover:bg-zinc-600',
+                  )}
+                />
+              ))}
+              {total > 8 && (
+                <span className="ml-0.5 text-[9px] tabular-nums text-zinc-400 dark:text-zinc-600">
+                  +{total - 8}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Overview: live team spotlight (auto-cycling) ────────────────────────────
+
+/** Round avatar at an arbitrary pixel size — photo proxy with initials fallback. */
+function SpotlightAvatar({
+  name,
+  email,
+  px,
+}: {
+  name: string;
+  email: string | null;
+  px: number;
+}) {
+  const [failed, setFailed] = useState(false);
+  const seed = email ?? name;
+  if (email && !failed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- internal photo proxy
+      <img
+        src={`/api/employee-profile-photo?email=${encodeURIComponent(email)}&_fmt=img`}
+        alt=""
+        width={px}
+        height={px}
+        className="shrink-0 rounded-full object-cover"
+        style={{ height: px, width: px }}
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <div
+      aria-hidden
+      className={cn(
+        'flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br font-bold text-white shadow-sm',
+        gradientFor(seed),
+      )}
+      style={{ height: px, width: px, fontSize: Math.round(px * 0.34) }}
+    >
+      {initialsOf(name, email)}
+    </div>
+  );
+}
+
+function TeamSpotlight({
+  members,
+  onOpenTeam,
+  onViewEmployee,
+}: {
+  members: EmployeeRow[];
+  onOpenTeam: () => void;
+  onViewEmployee: (email: string) => void;
+}) {
+  const onlineEmails = useOnlineEmails();
+  const isOnline = React.useCallback(
+    (m: EmployeeRow) => {
+      const w = normEmail(m.work_email ?? '');
+      const p = normEmail(m.personal_email ?? '');
+      return (!!w && onlineEmails.has(w)) || (!!p && onlineEmails.has(p));
+    },
+    [onlineEmails],
+  );
+
+  // Bulk-fetch skill sets so each card can show "currently working on".
+  const [skillSets, setSkillSets] = useState<Record<string, TeamSkillSet>>({});
+  const emailsKey = useMemo(
+    () => members.map((m) => normEmail(m.work_email ?? '') ?? '').filter(Boolean).join(','),
+    [members],
+  );
+  useEffect(() => {
+    if (!emailsKey) { setSkillSets({}); return; }
+    let cancelled = false;
+    fetch(`/api/employee-skill-sets?emails=${encodeURIComponent(emailsKey)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { rows?: (TeamSkillSet & { work_email: string })[] }) => {
+        if (cancelled) return;
+        const map: Record<string, TeamSkillSet> = {};
+        for (const row of j.rows ?? []) {
+          const k = normEmail(row.work_email ?? '') ?? '';
+          if (k) map[k] = row;
+        }
+        setSkillSets(map);
+      })
+      .catch(() => { /* non-fatal - cards render without detail */ });
+    return () => { cancelled = true; };
+  }, [emailsKey]);
+
+  // Order: online members first so the spotlight always feels alive, but the
+  // rotation still walks the entire roster so everyone gets seen.
+  const ordered = useMemo(() => {
+    return [...members].sort((a, b) => Number(isOnline(b)) - Number(isOnline(a)));
+  }, [members, isOnline]);
+
+  const onlineCount = useMemo(() => members.filter(isOnline).length, [members, isOnline]);
+
+  const [idx, setIdx] = useState(0);
+  const [paused, setPaused] = useState(false);
+  useEffect(() => { setIdx(0); }, [emailsKey]);
+
+  // Auto-advance the spotlight. Pauses on hover/focus so a manager can read.
+  useEffect(() => {
+    if (paused || ordered.length <= 1) return;
+    const t = window.setInterval(() => {
+      setIdx((i) => (i + 1) % ordered.length);
+    }, 4200);
+    return () => window.clearInterval(t);
+  }, [paused, ordered.length]);
+
+  const safeIdx = ordered.length ? idx % ordered.length : 0;
+  const current = ordered[safeIdx] ?? null;
+
+  // The next few members in the rotation — shown as a clickable "Up next" rail.
+  const upNext = useMemo(() => {
+    if (ordered.length <= 1) return [] as { m: EmployeeRow; i: number }[];
+    const out: { m: EmployeeRow; i: number }[] = [];
+    const count = Math.min(8, ordered.length - 1);
+    for (let k = 1; k <= count; k += 1) {
+      const i = (safeIdx + k) % ordered.length;
+      out.push({ m: ordered[i]!, i });
+    }
+    return out;
+  }, [ordered, safeIdx]);
+
+  const skillFor = (m: EmployeeRow) => {
+    const w = normEmail(m.work_email ?? '');
+    return w ? skillSets[w] : undefined;
+  };
+  const roleFor = (m: EmployeeRow) => skillFor(m)?.role_title || m.hsl_role || '';
+
+  // Manual back/forward through the rotation.
+  const goPrev = () => setIdx((i) => (i - 1 + ordered.length) % ordered.length);
+  const goNext = () => setIdx((i) => (i + 1) % ordered.length);
+
+  // Hold-to-open: while the card is hovered/focused (which also pauses the
+  // rotation), arm a 10s timer that jumps into My Team with this employee's
+  // profile open. Re-arms whenever the featured member changes.
+  const currentEmail = current ? (current.work_email ?? current.personal_email ?? null) : null;
+  useEffect(() => {
+    if (!paused || !currentEmail) return;
+    const t = window.setTimeout(() => onViewEmployee(currentEmail), 10000);
+    return () => window.clearTimeout(t);
+  }, [paused, currentEmail, onViewEmployee]);
+
+  return (
+    <div
+      className="flex h-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocusCapture={() => setPaused(true)}
+      onBlurCapture={() => setPaused(false)}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-1.5 dark:border-zinc-800">
+        <div className="flex items-center gap-1.5">
+          <Users className="h-3.5 w-3.5 text-zinc-400 dark:text-zinc-500" />
+          <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+            Team spotlight
+          </span>
+        </div>
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          {onlineCount} active
+        </span>
+      </div>
+
+      {/* Cycling member card — profile picture + what they're working on */}
+      <div className="relative flex flex-1 items-stretch">
+        {current ? (
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={current.work_email ?? current.personal_email ?? current.name ?? safeIdx}
+              role="button"
+              tabIndex={0}
+              onClick={onOpenTeam}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenTeam(); }
+              }}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              className="absolute inset-0 flex cursor-pointer flex-col items-center justify-center gap-2.5 px-9 py-4 text-center"
+            >
+              {/* Big highlighted profile picture */}
+              <div className="relative">
+                <span
+                  className={cn(
+                    'block rounded-full p-1 ring-2 ring-offset-2 ring-offset-white dark:ring-offset-zinc-950',
+                    isOnline(current)
+                      ? 'ring-emerald-400/80'
+                      : 'ring-zinc-200 dark:ring-zinc-700',
+                  )}
+                >
+                  <SpotlightAvatar
+                    name={current.name ?? '—'}
+                    email={current.work_email ?? current.personal_email}
+                    px={108}
+                  />
+                </span>
+                {isOnline(current) && (
+                  <span className="absolute bottom-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-white dark:bg-zinc-950">
+                    <span className="h-3 w-3 rounded-full bg-emerald-500" />
+                  </span>
+                )}
+              </div>
+
+              {/* Name + role/department */}
+              <div className="min-w-0 px-2">
+                <p className="truncate text-base font-bold tracking-tight text-zinc-900 dark:text-white">
+                  {current.name ?? current.work_email ?? '—'}
+                </p>
+                {(roleFor(current) || current.department) && (
+                  <p className="mt-0.5 truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                    {roleFor(current)}
+                    {roleFor(current) && current.department && (
+                      <span className="mx-1 text-zinc-300 dark:text-zinc-600">&middot;</span>
+                    )}
+                    {current.department}
+                  </p>
+                )}
+              </div>
+
+              {/* Active / offline */}
+              {isOnline(current) ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  </span>
+                  Active now
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                  <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-600" />
+                  Offline
+                </span>
+              )}
+
+              {/* Currently working on — the emphasized highlight */}
+              <div className="w-full rounded-xl border-l-2 border-blue-400 bg-blue-50/60 px-3 py-2 text-left dark:border-blue-500/60 dark:bg-blue-500/5">
+                <div className="mb-0.5 flex items-center gap-1 text-[8px] font-semibold uppercase tracking-[0.14em] text-blue-500/90 dark:text-blue-400/90">
+                  <Briefcase className="h-2.5 w-2.5" />
+                  Working on
+                </div>
+                <p className="line-clamp-3 text-xs font-medium leading-snug text-zinc-800 dark:text-zinc-100">
+                  {formatCurrentProjects(
+                    skillFor(current)?.current_projects,
+                    skillFor(current)?.currently_working_on,
+                  ) ?? 'Nothing logged yet'}
+                </p>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-4 py-6 text-center">
+            <Users className="h-6 w-6 text-zinc-300 dark:text-zinc-700" />
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+              No team members to show yet.
+            </p>
+          </div>
+        )}
+
+        {/* Back / forward navigation */}
+        {ordered.length > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={goPrev}
+              aria-label="Previous team member"
+              className="absolute left-1.5 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-500 shadow-sm backdrop-blur transition hover:bg-white hover:text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-400 dark:hover:text-zinc-100"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={goNext}
+              aria-label="Next team member"
+              className="absolute right-1.5 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-zinc-200 bg-white/90 text-zinc-500 shadow-sm backdrop-blur transition hover:bg-white hover:text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900/90 dark:text-zinc-400 dark:hover:text-zinc-100"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </>
+        )}
+
+        {/* Hold-to-open progress — fills over 10s while hovered, then opens the
+            profile in My Team. Communicates the dwell behavior. */}
+        {paused && currentEmail && (
+          <motion.div
+            key={`hold-${currentEmail}`}
+            initial={{ scaleX: 0 }}
+            animate={{ scaleX: 1 }}
+            transition={{ duration: 10, ease: 'linear' }}
+            style={{ transformOrigin: 'left' }}
+            className="pointer-events-none absolute left-0 top-0 z-10 h-0.5 w-full bg-blue-500/80"
+          />
+        )}
+      </div>
+
+      {/* Up next — clickable avatar rail of upcoming members */}
+      {upNext.length > 0 && (
+        <div className="flex items-center gap-2 border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
+          <span className="shrink-0 text-[8px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
+            Up next
+          </span>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+            {upNext.map(({ m, i }) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setIdx(i)}
+                aria-label={`Show ${m.name ?? 'team member'}`}
+                className="relative shrink-0 transition hover:scale-110"
+                title={m.name ?? m.work_email ?? undefined}
+              >
+                <SpotlightAvatar name={m.name ?? '—'} email={m.work_email ?? m.personal_email} px={28} />
+                {isOnline(m) && (
+                  <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-1 ring-white dark:ring-zinc-950" />
+                )}
+              </button>
+            ))}
+          </div>
+          <span className="shrink-0 text-[9px] tabular-nums text-zinc-400 dark:text-zinc-600">
+            {safeIdx + 1}/{ordered.length}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -720,28 +1367,28 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
       <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         {/* Header */}
         <header className="max-w-2xl space-y-1">
-          <h2 className="bg-gradient-to-r from-blue-400 via-white to-white bg-clip-text text-xl font-bold tracking-tight text-transparent">
+          <h2 className="text-xl font-bold tracking-tight text-zinc-900 dark:text-white">
             Time adjustment approvals
           </h2>
-          <p className="text-sm text-white/40">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
             Review your team&apos;s requests. Approve to forward to Accounting, or decline.
             Requests can be from any past date.
           </p>
         </header>
 
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-white/40">
+          <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading requests...
           </div>
         ) : pending.length === 0 && decided.length === 0 ? (
-          /* Empty state — smoked glass */
-          <div className="max-w-2xl rounded-2xl border border-white/8 bg-white/4 px-8 py-14 text-center backdrop-blur-md">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/8">
-              <Inbox className="h-5 w-5 text-white/40" />
+          /* Empty state */
+          <div className="max-w-2xl rounded-2xl border border-zinc-200 bg-white px-8 py-14 text-center dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
+              <Inbox className="h-5 w-5 text-zinc-400 dark:text-zinc-500" />
             </div>
-            <p className="text-sm font-medium text-white/60">No pending approvals</p>
-            <p className="mt-1 text-xs text-white/30">
+            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">No pending approvals</p>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
               Requests from your team will appear here when employees submit a time adjustment.
             </p>
           </div>
@@ -749,7 +1396,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
           <div className="max-w-2xl space-y-6">
             {pending.length > 0 && (
               <section className="space-y-3">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
                   Awaiting your approval &nbsp;&middot;&nbsp; {pending.length}
                 </p>
                 {pending.map((row) => (
@@ -769,20 +1416,20 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
 
             {decided.length > 0 && (
               <section className="space-y-1.5">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
                   Already actioned
                 </p>
                 {decided.map((row) => (
                   <div
                     key={row.id}
-                    className="flex flex-wrap items-center gap-2 rounded-xl border border-white/6 bg-white/4 px-3.5 py-2.5 text-xs backdrop-blur-sm"
+                    className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
                   >
-                    <span className={`h-1.5 w-1.5 rounded-full ${TA_STATUS_DOT[row.status] ?? 'bg-white/30'}`} />
-                    <span className="font-medium text-white/70">{row.work_email}</span>
-                    <span className="font-mono text-white/30">{row.adjust_date}</span>
-                    <span className="text-white/20">&middot;</span>
-                    <span className="text-white/40">{TA_REASON_LABEL(row.reason)}</span>
-                    <span className="ml-auto text-[10px] text-white/30">
+                    <span className={`h-1.5 w-1.5 rounded-full ${TA_STATUS_DOT[row.status] ?? 'bg-zinc-300 dark:bg-zinc-600'}`} />
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">{row.work_email}</span>
+                    <span className="font-mono text-zinc-400 dark:text-zinc-500">{row.adjust_date}</span>
+                    <span className="text-zinc-300 dark:text-zinc-600">&middot;</span>
+                    <span className="text-zinc-500 dark:text-zinc-400">{TA_REASON_LABEL(row.reason)}</span>
+                    <span className="ml-auto text-[10px] text-zinc-400 dark:text-zinc-500">
                       {TA_STATUS_LABEL[row.status] ?? row.status}
                     </span>
                   </div>
@@ -796,7 +1443,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
   );
 }
 
-import { Loader2, ImageOff, Info } from 'lucide-react';
+import { Loader2, ImageOff } from 'lucide-react';
 
 function ManagerAdjustmentCard({
   row,
@@ -816,117 +1463,144 @@ function ManagerAdjustmentCard({
   onImageClick: (url: string) => void;
 }) {
   const isDeciding = decidingId === row.id;
+  const [active, setActive] = useState(0);
+  const urls = row.image_paths.map((p) => signedUrls[p]).filter(Boolean) as string[];
+  const featured = urls[active] ?? urls[0] ?? null;
 
   return (
-    /* Smoked glass card */
-    <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/6 shadow-xl shadow-black/30 backdrop-blur-xl">
+    <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-xl dark:shadow-black/30">
       {/* Top stripe — subtle colored accent */}
-      <div className="h-px w-full bg-gradient-to-r from-transparent via-blue-400/40 to-transparent" />
+      <div className="h-1 w-full bg-gradient-to-r from-blue-500 via-blue-400 to-transparent" />
 
-      <div className="space-y-4 p-5">
-        {/* Header row */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-white/90">{row.work_email}</p>
-            <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-white/40">
-              <span className="font-mono text-white/60">{row.adjust_date}</span>
-              <span>&middot;</span>
-              <span>{TA_REASON_LABEL(row.reason)}</span>
-              {row.requested_hours != null && (
-                <>
-                  <span>&middot;</span>
-                  <span className="text-white/50">{row.requested_hours}h requested</span>
-                </>
+      <div className="flex flex-col sm:flex-row">
+        {/* LEFT — evidence image, the main attraction */}
+        <div className="flex shrink-0 flex-col gap-2 p-4 sm:w-[46%] sm:pr-2">
+          {featured ? (
+            <button
+              type="button"
+              onClick={() => onImageClick(featured)}
+              className="group relative block min-h-[13rem] flex-1 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
+              aria-label="View evidence full size"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={featured}
+                alt={`Evidence ${active + 1}`}
+                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+              />
+              <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/25" />
+              <span className="absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-md bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
+                <Camera className="h-3 w-3" />
+                Proof
+              </span>
+              {urls.length > 1 && (
+                <span className="absolute right-2.5 top-2.5 rounded-md bg-black/55 px-2 py-0.5 text-[10px] font-medium tabular-nums text-white backdrop-blur-sm">
+                  {active + 1}/{urls.length}
+                </span>
               )}
-            </p>
-          </div>
-          {row.period_label && (
-            <span className="shrink-0 rounded-md border border-white/8 bg-white/6 px-2 py-0.5 text-[10px] font-medium text-white/30">
-              {row.period_label}
-            </span>
+              <span className="absolute bottom-2.5 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-white/15 px-3 py-1 text-[10px] font-medium text-white opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100">
+                <Eye className="h-3 w-3" />
+                View full size
+              </span>
+            </button>
+          ) : (
+            <div className="flex min-h-[13rem] flex-1 flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-600">
+              <ImageOff className="h-7 w-7" />
+              <span className="text-[11px] font-medium">No evidence images attached</span>
+            </div>
+          )}
+
+          {/* Thumbnail strip — switch the featured image */}
+          {urls.length > 1 && (
+            <div className="flex gap-1.5 overflow-x-auto">
+              {urls.map((u, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setActive(i)}
+                  className={cn(
+                    'relative h-11 w-14 shrink-0 overflow-hidden rounded-lg border-2 transition',
+                    i === active
+                      ? 'border-blue-500 ring-2 ring-blue-500/20'
+                      : 'border-transparent opacity-60 hover:opacity-100',
+                  )}
+                  aria-label={`Show evidence image ${i + 1}`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={u} alt={`Evidence ${i + 1}`} className="h-full w-full object-cover" />
+                </button>
+              ))}
+            </div>
           )}
         </div>
 
-        {/* Explanation */}
-        {row.explanation && (
-          <p className="rounded-xl border border-white/6 bg-white/4 px-3.5 py-2.5 text-xs leading-relaxed text-white/60">
-            {row.explanation}
-          </p>
-        )}
-
-        {/* Evidence thumbnails — click opens lightbox */}
-        {row.image_paths.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {row.image_paths.map((p, idx) => {
-              const url = signedUrls[p];
-              return url ? (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => onImageClick(url)}
-                  className="group relative h-20 w-20 overflow-hidden rounded-xl border border-white/10 transition-transform duration-150 hover:scale-105 hover:border-white/25 hover:shadow-lg hover:shadow-black/30"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={url} alt={`evidence ${idx + 1}`} className="h-full w-full object-cover" />
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/20">
-                    <Eye className="h-4 w-4 scale-0 text-white drop-shadow transition-transform group-hover:scale-100" />
-                  </div>
-                </button>
-              ) : (
-                <div
-                  key={idx}
-                  className="flex h-20 w-20 items-center justify-center rounded-xl border border-white/6 bg-white/4"
-                >
-                  <ImageOff className="h-4 w-4 text-white/20" />
-                </div>
-              );
-            })}
+        {/* RIGHT — details + actions */}
+        <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 sm:p-5">
+          {/* Header row */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">{row.work_email}</p>
+              <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                <span className="font-mono font-medium text-zinc-700 dark:text-zinc-300">{row.adjust_date}</span>
+                <span aria-hidden>&middot;</span>
+                <span className="rounded bg-blue-50 px-1.5 py-0.5 font-medium text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+                  {TA_REASON_LABEL(row.reason)}
+                </span>
+                {row.requested_hours != null && (
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">{row.requested_hours}h requested</span>
+                )}
+              </p>
+            </div>
+            {row.period_label && (
+              <span className="shrink-0 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                {row.period_label}
+              </span>
+            )}
           </div>
-        ) : (
-          <p className="flex items-center gap-1.5 text-[11px] italic text-white/25">
-            <Info className="h-3 w-3 shrink-0" />
-            No evidence images attached
-          </p>
-        )}
 
-        {/* Note input */}
-        <div className="space-y-1.5">
-          <label className="text-[10px] font-semibold uppercase tracking-wider text-white/25">
-            Note for employee <span className="normal-case font-normal">(optional)</span>
-          </label>
-          <input
-            type="text"
-            value={note}
-            onChange={(e) => onNoteChange(e.target.value)}
-            placeholder="e.g. Confirmed with project logs"
-            className="w-full rounded-xl border border-white/8 bg-white/6 px-3 py-2 text-xs text-white/80 placeholder:text-white/20 focus:border-blue-400/40 focus:bg-white/8 focus:outline-none transition-colors"
-          />
-        </div>
+          {/* Explanation */}
+          {row.explanation && (
+            <p className="rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-2.5 text-xs leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+              {row.explanation}
+            </p>
+          )}
 
-        {/* Divider */}
-        <div className="h-px bg-white/6" />
+          {/* Note input */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              Note for employee <span className="normal-case font-normal">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => onNoteChange(e.target.value)}
+              placeholder="e.g. Confirmed with project logs"
+              className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-600"
+            />
+          </div>
 
-        {/* Actions */}
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={isDeciding}
-            onClick={() => onDecide(row.id, 'manager_approve')}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/30 transition hover:bg-emerald-500/30 hover:ring-emerald-400/50 disabled:opacity-40"
-          >
-            {isDeciding
-              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              : <CheckCircle2 className="h-3.5 w-3.5" />}
-            Approve &amp; forward to Accounting
-          </button>
-          <button
-            type="button"
-            disabled={isDeciding}
-            onClick={() => onDecide(row.id, 'manager_deny')}
-            className="flex items-center gap-1.5 rounded-xl bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-400 ring-1 ring-rose-500/20 transition hover:bg-rose-500/20 hover:ring-rose-400/40 disabled:opacity-40"
-          >
-            Decline
-          </button>
+          {/* Actions */}
+          <div className="mt-auto flex gap-2 pt-1">
+            <button
+              type="button"
+              disabled={isDeciding}
+              onClick={() => onDecide(row.id, 'manager_approve')}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-40"
+            >
+              {isDeciding
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <CheckCircle2 className="h-3.5 w-3.5" />}
+              Approve &amp; forward to Accounting
+            </button>
+            <button
+              type="button"
+              disabled={isDeciding}
+              onClick={() => onDecide(row.id, 'manager_deny')}
+              className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-100 disabled:opacity-40 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-400 dark:hover:bg-rose-500/20"
+            >
+              Decline
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -939,6 +1613,10 @@ interface TeamPanelProps {
   members: EmployeeRow[];
   teamGate: ManagerTeamGate;
   viewerEmail: string | null;
+  /** When set, open this employee's profile dialog on mount (deep-link from
+   *  the Overview spotlight). Cleared via `onFocusConsumed` once opened. */
+  focusEmail?: string | null;
+  onFocusConsumed?: () => void;
 }
 
 /** Shared-profile fields shown on roster cards + the member dialog. */
@@ -1016,7 +1694,7 @@ function memberOtRate(member: EmployeeRow): number | null {
   return member.hsl_ot_rate ?? member.ot_rate ?? null;
 }
 
-function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
+function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusConsumed }: TeamPanelProps) {
   const { draggedMedal, dragOverEmail, setDragOverEmail, openAwardForDrop } = useMedalCtx();
 
   // Inner tab toggle: Roster (existing) | Newly Hired (HR pending hires routed
@@ -1037,6 +1715,20 @@ function TeamPanelInner({ members, teamGate, viewerEmail }: TeamPanelProps) {
   };
   const [selectedMember, setSelectedMember] = useState<EmployeeRow | null>(null);
   const [transferMember, setTransferMember] = useState<EmployeeRow | null>(null);
+
+  // Deep-link: open a specific employee's profile when the Overview spotlight
+  // requested it, then clear the request so normal navigation doesn't reopen it.
+  useEffect(() => {
+    if (!focusEmail) return;
+    const f = normEmail(focusEmail);
+    const target = members.find((m) => {
+      const w = normEmail(m.work_email ?? '');
+      const p = normEmail(m.personal_email ?? '');
+      return (!!w && w === f) || (!!p && p === f);
+    });
+    if (target) setSelectedMember(target);
+    onFocusConsumed?.();
+  }, [focusEmail, members, onFocusConsumed]);
   const [page, setPage] = useState(1);
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
