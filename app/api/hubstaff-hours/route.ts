@@ -1,4 +1,4 @@
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { mapHubstaffHoursRow } from "@/lib/supabase/hubstaff-hours";
 import {
   deleteHubstaffRowsBySourceFile,
@@ -26,7 +26,7 @@ const HUBSTAFF_ROW_EMAIL_KEYS = [
   'user_email',
 ] as const;
 
-function rowMatchesEmail(row: Record<string, unknown>, normTarget: string): boolean {
+function rowMatchesAnyEmail(row: Record<string, unknown>, normTargets: Set<string>): boolean {
   const lowerIdx = new Map<string, unknown>();
   for (const [k, v] of Object.entries(row)) lowerIdx.set(k.toLowerCase(), v);
   for (const key of HUBSTAFF_ROW_EMAIL_KEYS) {
@@ -35,9 +35,45 @@ function rowMatchesEmail(row: Record<string, unknown>, normTarget: string): bool
       : lowerIdx.get(key.toLowerCase());
     if (v == null) continue;
     const n = normEmail(String(v));
-    if (n && n === normTarget) return true;
+    if (n && normTargets.has(n)) return true;
   }
   return false;
+}
+
+/**
+ * Expand a single email to the full set of a person's emails using the master
+ * list. Hubstaff rows are sometimes keyed on a gsuite alternate work email
+ * (e.g. kevin@) while the caller looks up by the primary work email (kevt@), so
+ * matching only the literal email misses their hours. Returns at least the input
+ * email; on any failure it degrades to just that. The Global Master List is the
+ * source of truth for which addresses belong to one human.
+ */
+async function expandEmailAliases(norm: string): Promise<Set<string>> {
+  const set = new Set<string>([norm]);
+  try {
+    const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+    if (!supabase) return set;
+    const { data } = await supabase
+      .from("active_employees")
+      .select('"Work Email","Personal Email","Alternate Work Email","Alternate Work Email 2"');
+    for (const raw of (data ?? []) as Array<Record<string, unknown>>) {
+      const emails = [
+        raw["Work Email"],
+        raw["Personal Email"],
+        raw["Alternate Work Email"],
+        raw["Alternate Work Email 2"],
+      ]
+        .map((v) => (typeof v === "string" ? normEmail(v) : null))
+        .filter((v): v is string => !!v);
+      if (emails.includes(norm)) {
+        for (const e of emails) set.add(e);
+        break;
+      }
+    }
+  } catch {
+    /* non-fatal — fall back to the single email */
+  }
+  return set;
 }
 
 function clientIp(req: NextRequest): string | null {
@@ -97,6 +133,7 @@ export async function GET(req: NextRequest) {
   if (searchParams.get("merge_all") === "1" && mergeEmail) {
     try {
       const norm = normEmail(mergeEmail) ?? mergeEmail.toLowerCase();
+      const aliasSet = await expandEmailAliases(norm);
       const uploads = await listHubstaffUploads().catch(() => []);
       const files = uploads.length > 0
         ? [...new Set(uploads.map((u) => (u.source_file ?? "").trim()).filter(Boolean))]
@@ -109,7 +146,7 @@ export async function GET(req: NextRequest) {
         files.map(async (file) => {
           const { columns, rows } = await fetchHubstaffRowsBySourceFile(file);
           for (const c of columns) allCols.add(c);
-          const myRow = rows.find((r) => rowMatchesEmail(r, norm)) ?? null;
+          const myRow = rows.find((r) => rowMatchesAnyEmail(r, aliasSet)) ?? null;
           perFile.push({ source_file: file, row: myRow });
         }),
       );
@@ -136,7 +173,8 @@ export async function GET(req: NextRequest) {
       let outRows = rows;
       if (emailFilter) {
         const norm = normEmail(emailFilter) ?? emailFilter.toLowerCase();
-        const match = rows.find((r) => rowMatchesEmail(r, norm));
+        const aliasSet = await expandEmailAliases(norm);
+        const match = rows.find((r) => rowMatchesAnyEmail(r, aliasSet));
         outRows = match ? [match] : [];
       }
       const payrollRows = rowsToPayrollRows(outRows);

@@ -189,22 +189,30 @@ type MemberMonthlyPaySummary = {
 interface ManagerMemberHoursMiniProps {
   workEmail: string | null;
   personalEmail: string | null;
+  /** Alternate work emails from the master sheet — gsuite aliases for the same
+   *  human. Hubstaff tracks some people under an alias (e.g. kevin@) while their
+   *  primary work email is different (kevt@), so they must be part of the match
+   *  set or the hours calendar comes up empty. */
+  alternateWorkEmail?: string | null;
+  alternateWorkEmail2?: string | null;
   ratesHidden?: boolean;
 }
 
 export default function ManagerMemberHoursMini({
   workEmail,
   personalEmail,
+  alternateWorkEmail = null,
+  alternateWorkEmail2 = null,
   ratesHidden = false,
 }: ManagerMemberHoursMiniProps) {
   const aliasNorms = useMemo(() => {
     const set = new Set<string>();
-    const we = normEmail(workEmail ?? '');
-    const pe = normEmail(personalEmail ?? '');
-    if (we) set.add(we);
-    if (pe) set.add(pe);
+    for (const e of [workEmail, personalEmail, alternateWorkEmail, alternateWorkEmail2]) {
+      const n = normEmail(e ?? '');
+      if (n) set.add(n);
+    }
     return set;
-  }, [workEmail, personalEmail]);
+  }, [workEmail, personalEmail, alternateWorkEmail, alternateWorkEmail2]);
 
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);

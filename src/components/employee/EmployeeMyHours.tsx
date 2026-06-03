@@ -274,6 +274,8 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
           employees?: {
             work_email?: string | null;
             personal_email?: string | null;
+            alternate_work_email?: string | null;
+            alternate_work_email_2?: string | null;
             start_date?: string | null;
           }[];
         };
@@ -285,10 +287,12 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         });
         const aliases = new Set<string>(candidates);
         if (me) {
-          const we = normEmail(me.work_email ?? '');
-          const pe = normEmail(me.personal_email ?? '');
-          if (we) aliases.add(we);
-          if (pe) aliases.add(pe);
+          // Include gsuite alternate work emails — Hubstaff tracks some people
+          // under an alias (e.g. kevin@) while their login/primary is kevt@.
+          for (const e of [me.work_email, me.personal_email, me.alternate_work_email, me.alternate_work_email_2]) {
+            const n = normEmail(e ?? '');
+            if (n) aliases.add(n);
+          }
         }
         setAliasEmails([...aliases]);
         if (!me?.start_date) {
@@ -360,24 +364,53 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const fetchRatesAndFx = useCallback(async () => {
     setRatesLoading(true);
     try {
-      const [ratesRes, fxRes, historyRes] = await Promise.all([
+      const [ratesRes, fxRes, historyRes, empRes] = await Promise.all([
         fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
         fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
         // Per-employee rate history — drives per-day prorating in the pay calc
         // so mid-cycle rate changes show up immediately in My Hours totals.
         fetch(`/api/employee-rate-history?email=${encodeURIComponent(email)}`, { cache: 'no-store' }),
+        // Master row — lets us resolve this employee's gsuite alternate work
+        // emails so a rate row keyed on an alias (e.g. kevin@) still matches the
+        // login (kevt@). Resolved locally here to keep this callback's [email]
+        // dependency stable (the aliasEmails state depends on `rate`, so reading
+        // it here would create a setRate → aliasEmails → setRate loop).
+        fetch(`/api/employees?_=${Date.now()}`, { cache: 'no-store' }),
       ]);
       const ratesJson = (await ratesRes.json()) as { rows?: EmployeeHourlyRateRow[] };
       const fxJson = (await fxRes.json()) as { value: string | null };
       const historyJson = (await historyRes.json()) as {
         rows?: Array<{ regular_rate: string | null; ot_rate: string | null; effective_from: string }>;
       };
+      const empJson = (await empRes.json()) as {
+        employees?: Array<{
+          work_email?: string | null;
+          personal_email?: string | null;
+          alternate_work_email?: string | null;
+          alternate_work_email_2?: string | null;
+        }>;
+      };
       setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
       const allRates = ratesJson.rows ?? [];
+      // Build the alias set from the login email + this employee's master row
+      // (work / personal / alternate work emails). The rate row may be keyed on
+      // a gsuite alternate (kevin@) while the login is the primary (kevt@).
+      const aliasSet = new Set<string>([email]);
+      const meRow = (empJson.employees ?? []).find((e) => {
+        const we = normEmail(e.work_email ?? '');
+        const pe = normEmail(e.personal_email ?? '');
+        return we === email || pe === email;
+      });
+      if (meRow) {
+        for (const e of [meRow.work_email, meRow.personal_email, meRow.alternate_work_email, meRow.alternate_work_email_2]) {
+          const n = normEmail(e ?? '');
+          if (n) aliasSet.add(n);
+        }
+      }
       const myRate = allRates.find((r) => {
         const we = normEmail(r.work_email);
         const pe = normEmail(r.personal_email);
-        return we === email || pe === email;
+        return (we != null && aliasSet.has(we)) || (pe != null && aliasSet.has(pe));
       });
       setRate(myRate ?? null);
       const parsed: RateHistoryEntry[] = [];

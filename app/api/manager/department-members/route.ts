@@ -96,8 +96,22 @@ export async function GET() {
     const decorateWithHsl = (row: EmployeeRow): EmployeeRow => {
       const w = normEmail(row.work_email ?? null);
       const p = normEmail(row.personal_email ?? null);
-      const hit = (w && hslByEmail.get(w)) || (p && hslByEmail.get(p)) || null;
-      const rateHit = (w && ratesByEmail.get(w)) || (p && ratesByEmail.get(p)) || null;
+      // gsuite alternate work emails — rates/HSL rows are sometimes keyed on an
+      // alias (e.g. kevin@) while the roster work email is the primary (kevt@).
+      const a1 = normEmail(row.alternate_work_email ?? null);
+      const a2 = normEmail(row.alternate_work_email_2 ?? null);
+      const hit =
+        (w && hslByEmail.get(w)) ||
+        (p && hslByEmail.get(p)) ||
+        (a1 && hslByEmail.get(a1)) ||
+        (a2 && hslByEmail.get(a2)) ||
+        null;
+      const rateHit =
+        (w && ratesByEmail.get(w)) ||
+        (p && ratesByEmail.get(p)) ||
+        (a1 && ratesByEmail.get(a1)) ||
+        (a2 && ratesByEmail.get(a2)) ||
+        null;
       return {
         ...row,
         hsl_role: hit?.role ?? null,

@@ -489,6 +489,8 @@ export default function ManagerMemberDialog({
                       <ManagerMemberHoursMini
                         workEmail={member.work_email ?? null}
                         personalEmail={member.personal_email ?? null}
+                        alternateWorkEmail={member.alternate_work_email ?? null}
+                        alternateWorkEmail2={member.alternate_work_email_2 ?? null}
                         ratesHidden={ratesHidden}
                       />
                     )}

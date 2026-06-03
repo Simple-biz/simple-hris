@@ -207,6 +207,10 @@ async function fetchHubstaffRowsForEmail(
 interface MasterMin {
   work_email: string | null;
   personal_email: string | null;
+  /** gsuite aliases for the same human. Hubstaff/rates rows are sometimes keyed
+   *  on an alternate, so these must join the alias set used to query hours. */
+  alternate_work_email: string | null;
+  alternate_work_email_2: string | null;
   start_date: string | null;
   department: string | null;
 }
@@ -219,7 +223,7 @@ async function fetchMasterRowsForEmail(
   if (!supabase) return { row: null, allHsl };
   const { data } = await supabase
     .from('active_employees')
-    .select('"Work Email", "Personal Email", "Start Date", "Department"');
+    .select('"Work Email", "Personal Email", "Start Date", "Department", "Alternate Work Email", "Alternate Work Email 2"');
   if (!data) return { row: null, allHsl };
   let myRow: MasterMin | null = null;
   for (const raw of data as Array<Record<string, unknown>>) {
@@ -227,17 +231,29 @@ async function fetchMasterRowsForEmail(
       work_email: typeof raw['Work Email'] === 'string' ? (raw['Work Email'] as string) : null,
       personal_email:
         typeof raw['Personal Email'] === 'string' ? (raw['Personal Email'] as string) : null,
+      alternate_work_email:
+        typeof raw['Alternate Work Email'] === 'string' ? (raw['Alternate Work Email'] as string) : null,
+      alternate_work_email_2:
+        typeof raw['Alternate Work Email 2'] === 'string' ? (raw['Alternate Work Email 2'] as string) : null,
       start_date: typeof raw['Start Date'] === 'string' ? (raw['Start Date'] as string) : null,
       department:
         typeof raw['Department'] === 'string' ? (raw['Department'] as string) : null,
     };
     const we = normEmail(m.work_email);
     const pe = normEmail(m.personal_email);
+    const a1 = normEmail(m.alternate_work_email);
+    const a2 = normEmail(m.alternate_work_email_2);
     if (m.department && m.department.trim().toLowerCase() === 'hsl') {
       if (we) allHsl.add(we);
       if (pe) allHsl.add(pe);
     }
-    if (!myRow && ((we && emailNorms.has(we)) || (pe && emailNorms.has(pe)))) {
+    if (
+      !myRow &&
+      ((we && emailNorms.has(we)) ||
+        (pe && emailNorms.has(pe)) ||
+        (a1 && emailNorms.has(a1)) ||
+        (a2 && emailNorms.has(a2)))
+    ) {
       myRow = m;
     }
   }
@@ -379,12 +395,19 @@ export async function computeMemberMonthlyPay(args: {
   const hslEmails = masterMin.allHsl;
   const startDate = parseLocalIso(masterRow?.start_date ?? null);
 
-  // Build the alias set: this employee's emails (work + personal).
+  // Build the alias set: this employee's emails (work + personal + gsuite
+  // alternate work emails). Alternates matter because Hubstaff/rates rows are
+  // sometimes keyed on an alias (e.g. kevin@) while the lookup email is the
+  // primary work email (kevt@) — without them the hours/pay come up empty.
   const aliasNorms = new Set<string>([emailNorm]);
   const we = normEmail(masterRow?.work_email ?? null);
   const pe = normEmail(masterRow?.personal_email ?? null);
+  const a1 = normEmail(masterRow?.alternate_work_email ?? null);
+  const a2 = normEmail(masterRow?.alternate_work_email_2 ?? null);
   if (we) aliasNorms.add(we);
   if (pe) aliasNorms.add(pe);
+  if (a1) aliasNorms.add(a1);
+  if (a2) aliasNorms.add(a2);
 
   // Step 2: Fetch only this employee's Hubstaff rows (server-side filtered by email).
   const hsRes = await fetchHubstaffRowsForEmail(aliasNorms);
