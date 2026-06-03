@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Download, Eye,
-  Lock, RefreshCw, Save, Search, Users,
+  Lock, RefreshCw, RotateCcw, Save, Search, Users,
 } from 'lucide-react';
 
 const COLLAPSE_EASE = [0.22, 1, 0.36, 1] as const;
@@ -17,6 +17,7 @@ import {
   calcBonus, calcTeamSplitShare, canAccessHslDept, formatPeso,
 } from '@/lib/hsl-bonus/schema';
 import HslBonusReadyPreview from './HslBonusReadyPreview';
+import { useDispatchLock } from '@/hooks/useDispatchLock';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -244,6 +245,8 @@ export default function HslBonusCalculator({
    *  it overlays the page rather than nesting inside a single dept block. */
   const [viewingDept, setViewingDept] = useState<HslDeptKey | null>(null);
   const [reopenSubmitting, setReopenSubmitting] = useState(false);
+  const { state: dispatchLock } = useDispatchLock();
+  const payrollLocked = dispatchLock.locked;
 
   // Department navigation: which dept's block is expanded, and the active filter
   // pill. With many HSL branches visible at once a flat stack is unreadable, so
@@ -603,6 +606,14 @@ export default function HslBonusCalculator({
         )}
       </div>
 
+      {/* Payroll processing lock banner */}
+      {payrollLocked && (
+        <div className="flex items-center gap-2 border-b border-red-200 bg-red-50 px-5 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
+          <Lock className="h-3.5 w-3.5 shrink-0" />
+          <span>Payroll is being processed — KPI Calculator is locked. You cannot mark ready or unready until processing is complete.</span>
+        </div>
+      )}
+
       {/* Department blocks */}
       <div
         className={cn(
@@ -662,7 +673,10 @@ export default function HslBonusCalculator({
             }}
             onSave={() => void saveDept(key)}
             onMarkReady={() => void markReady(key)}
+            onMarkUnready={() => void reopenToDraft(key)}
             onView={() => setViewingDept(key)}
+            payrollLocked={payrollLocked}
+            markUnreadySubmitting={reopenSubmitting}
             onSubTeamChange={(subTeam, field, val) => {
               setDeptState((prev) => {
                 const d = prev[key]!;
@@ -757,9 +771,12 @@ interface DeptBlockProps {
   onToggleManager: (email: string) => void;
   onSave: () => void;
   onMarkReady: () => void;
+  onMarkUnready: () => void;
   onView: () => void;
   onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records', val: string) => void;
   ssdShareForTeam?: (subTeam: SubTeamName, memberCount: number) => number;
+  payrollLocked: boolean;
+  markUnreadySubmitting: boolean;
 }
 
 const DEPT_PAGE_SIZE = 10;
@@ -767,7 +784,8 @@ const DEPT_PAGE_SIZE = 10;
 function DeptBlock({
   deptKey, state, loading, collapsible, open, sectionClassName, onToggleOpen, periodStartStr,
   onKpiChange, onToggleManager,
-  onSave, onMarkReady, onView, onSubTeamChange, ssdShareForTeam,
+  onSave, onMarkReady, onMarkUnready, onView, onSubTeamChange, ssdShareForTeam,
+  payrollLocked, markUnreadySubmitting,
 }: DeptBlockProps) {
   const dept = HSL_DEPTS[deptKey];
   const deptTotal = state.entries.reduce((s, e) => s + e.calculated_bonus, 0);
@@ -1028,12 +1046,17 @@ function DeptBlock({
           />
         )}
 
-        {/* Action bar — Save / Mark Ready (draft) → View (ready/locked). */}
+        {/* Action bar — Save / Mark Ready (draft) → Mark as Unready + View (ready/locked). */}
         <div className="flex items-center gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
           <span className="font-mono text-[10px] text-zinc-500">
-            {state.status === 'draft' && state.dirty && 'Unsaved changes'}
-            {state.status === 'draft' && !state.dirty && state.entries.length > 0 && 'Saved · ready to mark'}
-            {state.status === 'ready' && (
+            {state.status === 'draft' && state.dirty && !payrollLocked && 'Unsaved changes'}
+            {state.status === 'draft' && !state.dirty && state.entries.length > 0 && !payrollLocked && 'Saved · ready to mark'}
+            {(state.status === 'draft' || state.status === 'ready') && payrollLocked && (
+              <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-400">
+                <Lock className="h-3 w-3" /> Payroll processing — locked
+              </span>
+            )}
+            {state.status === 'ready' && !payrollLocked && (
               <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400">
                 <CheckCircle2 className="h-3 w-3" /> Sent to Accounting
               </span>
@@ -1050,7 +1073,7 @@ function DeptBlock({
                 size="sm"
                 variant="outline"
                 className="h-7 gap-1.5 text-xs"
-                disabled={state.saving}
+                disabled={state.saving || payrollLocked}
                 onClick={onSave}
               >
                 <Save className="h-3 w-3" />
@@ -1061,18 +1084,33 @@ function DeptBlock({
               <Button
                 size="sm"
                 className="h-7 gap-1.5 bg-amber-600 text-xs text-white hover:bg-amber-500 disabled:opacity-50"
-                disabled={state.dirty || state.saving || state.entries.length === 0}
+                disabled={state.dirty || state.saving || state.entries.length === 0 || payrollLocked}
                 title={
-                  state.dirty
-                    ? 'Save your changes before marking ready'
-                    : state.entries.length === 0
-                      ? 'No employees to mark ready'
-                      : 'Send these scores to Accounting · PayrollWizard'
+                  payrollLocked
+                    ? 'KPI Calculator is locked while payroll is processing'
+                    : state.dirty
+                      ? 'Save your changes before marking ready'
+                      : state.entries.length === 0
+                        ? 'No employees to mark ready'
+                        : 'Send these scores to Accounting · PayrollWizard'
                 }
                 onClick={onMarkReady}
               >
                 <CheckCircle2 className="h-3 w-3" />
                 Mark Ready
+              </Button>
+            )}
+            {state.status === 'ready' && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1.5 border-red-200 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                disabled={markUnreadySubmitting || payrollLocked}
+                title={payrollLocked ? 'KPI Calculator is locked while payroll is processing' : 'Remove from Accounting — revert to draft'}
+                onClick={onMarkUnready}
+              >
+                <RotateCcw className="h-3 w-3" />
+                {markUnreadySubmitting ? 'Reverting…' : 'Mark as Unready'}
               </Button>
             )}
             {(state.status === 'ready' || state.status === 'locked') && (

@@ -57,6 +57,7 @@ import { toast } from 'sonner';
 import { MOCK_USERS, MOCK_TIME_RECORDS, MOCK_PAYMENTS } from '@/constants';
 import { User, TimeRecord, PaymentLineItem, HubstaffRow, ReconciliationIssue } from '@/types';
 import { parseHoursToDecimal } from '@/lib/supabase/hubstaff-hours';
+import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
   groupDateColumnsByCalendarDay,
   pickPreferredHubstaffColumn,
@@ -830,6 +831,7 @@ export default function PayrollWizard({
   }[]>([]);
   const [hslStepLoading, setHslStepLoading] = useState(false);
   const [hslStepError, setHslStepError] = useState<string | null>(null);
+  const [hslRefreshKey, setHslRefreshKey] = useState(0);
 
   type OrphanageTab = 'visits' | 'wages' | 'budgets';
   const [orphanageTab, setOrphanageTab] = useState<OrphanageTab>('visits');
@@ -1976,6 +1978,20 @@ export default function PayrollWizard({
   // (placeholder comment removed — tenure gifts removed from wizard)
   // than silently nothing.
 
+  // Real-time: when a manager marks a dept ready/unready, update accounting's view live.
+  useEffect(() => {
+    if (currentStep !== 5) return;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const channel = supabase
+      .channel('payroll-wizard-hsl-status')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hsl_bonus_period_status' }, () => {
+        setHslRefreshKey((k) => k + 1);
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [currentStep]);
+
   // ── HSL step (5): load all dept KPI bonus entries when accounting enters the step
   useEffect(() => {
     if (currentStep !== 5) return;
@@ -2031,7 +2047,7 @@ export default function PayrollWizard({
       }
     })();
     return () => { cancelled = true; };
-  }, [currentStep]);
+  }, [currentStep, hslRefreshKey]);
 
   // Fetch all contractor invoices when on step 6 (Contractors)
   useEffect(() => {
@@ -8648,7 +8664,7 @@ export default function PayrollWizard({
               <p className="text-xs text-zinc-600 dark:text-zinc-400">
                 HSL runs Mon&ndash;Sun weeks (&ge;5 days at &ge;7 h). KPI bonuses are pulled from the manager KPI Calculator.
                 PAB (&thinsp;&#8369;5,000) and Tech Bonus (&thinsp;&#8369;1,850) are shown per-row and included in Total Pay.
-                Use the override column to adjust any employee&apos;s bonus before dispatch.
+                Use the Adjustment column to adjust any employee&apos;s bonus before dispatch.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
                 <span className="rounded-full border border-violet-300/70 bg-violet-50 px-2.5 py-0.5 font-medium text-violet-800 dark:border-violet-700/60 dark:bg-violet-950/40 dark:text-violet-200">
@@ -8790,7 +8806,7 @@ export default function PayrollWizard({
                             <th className="px-3 py-2.5 text-right">KPI Bonus</th>
                             <th className="px-3 py-2.5 text-center">PAB</th>
                             <th className="px-3 py-2.5 text-center">Tech Bonus</th>
-                            <th className="px-3 py-2.5 text-right">Override</th>
+                            <th className="px-3 py-2.5 text-right">Adjustment</th>
                             <th className="px-3 py-2.5 text-right">Total Pay</th>
                           </tr>
                         </thead>
@@ -8885,44 +8901,43 @@ export default function PayrollWizard({
                                     </button>
                                   )}
                                 </td>
-                                <td className="px-3 py-3">
-                                  <div className="flex items-center justify-end gap-1">
-                                    <Input
-                                      type="number"
-                                      min={0}
-                                      value={override !== null ? override : ''}
-                                      placeholder={kpiBonus > 0 ? String(kpiBonus) : '0'}
-                                      onChange={e => {
-                                        const v = parseFloat(e.target.value);
-                                        updateBonusOverride(r.email, Number.isFinite(v) && v >= 0 ? v : null);
-                                      }}
-                                      className="h-7 w-[110px] border-zinc-300 text-right font-mono text-xs dark:border-zinc-700"
-                                    />
-                                    {override === null && kpiBonus > 0 && (
-                                      <Button
+                                <td className="px-3 py-3 text-right">
+                                  {override !== null ? (
+                                    <div className="flex items-center justify-end gap-1">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        min={0}
+                                        value={override}
+                                        onChange={e => {
+                                          const raw = e.target.value;
+                                          const next = raw === '' ? 0 : Number(raw);
+                                          if (!Number.isFinite(next) || next < 0) return;
+                                          updateBonusOverride(r.email, next);
+                                        }}
+                                        title={`Overriding KPI bonus: ${formatPHP(kpiBonus)}`}
+                                        className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
+                                      />
+                                      <button
                                         type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        className="h-7 shrink-0 border-violet-300/80 px-2 text-[10px] font-semibold text-violet-700 hover:bg-violet-50 dark:border-violet-700/50 dark:text-violet-300 dark:hover:bg-violet-950/30"
-                                        onClick={() => updateBonusOverride(r.email, kpiBonus)}
-                                        title="Apply KPI bonus as override"
-                                      >
-                                        Apply
-                                      </Button>
-                                    )}
-                                    {override !== null && (
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="ghost"
-                                        className="h-7 shrink-0 px-1.5 text-zinc-400 hover:text-rose-600"
                                         onClick={() => updateBonusOverride(r.email, null)}
-                                        title="Clear override"
+                                        title={`Revert to KPI bonus: ${formatPHP(kpiBonus)}`}
+                                        className="text-zinc-400 hover:text-red-500"
                                       >
                                         <X className="h-3 w-3" />
-                                      </Button>
-                                    )}
-                                  </div>
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      title={`KPI bonus: ${formatPHP(kpiBonus)} — click to set an adjustment`}
+                                      onClick={() => updateBonusOverride(r.email, 0)}
+                                      className="text-zinc-300 hover:text-amber-600 dark:text-zinc-700 dark:hover:text-amber-400"
+                                    >
+                                      —
+                                    </button>
+                                  )}
                                 </td>
                                 <td className="px-3 py-3 text-right">
                                   <span className="font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
@@ -9468,13 +9483,6 @@ export default function PayrollWizard({
                         const dayNum = h.date.getDate();
                         const disabled = !h.isForgivenEnabled;
                         const allClear = h.forgivenEmails.length === 0;
-                        const maxChips = 5;
-                        const visibleChips = h.forgivenEmails.slice(0, maxChips);
-                        const extraCount = h.forgivenEmails.length - visibleChips.length;
-                        const remainingNames = h.forgivenEmails.slice(maxChips).map((email) => {
-                          const emp = finalPayRows.find((r) => (normEmail(r.email) ?? r.email.toLowerCase()) === email);
-                          return emp?.name ?? email;
-                        }).join('\n');
 
                         return (
                           <motion.div
@@ -9541,44 +9549,6 @@ export default function PayrollWizard({
                                 </div>
                               </div>
                             </div>
-
-                            {/* Forgiven employee chips (only when there are any) */}
-                            {!allClear && (
-                              <div className="mt-2.5 border-t border-sky-100 pt-2 dark:border-sky-900/30">
-                                <div className="flex flex-wrap items-center gap-1">
-                                  {visibleChips.map((email) => {
-                                    const emp = finalPayRows.find((r) => (normEmail(r.email) ?? r.email.toLowerCase()) === email);
-                                    const name = emp?.name ?? email;
-                                    const initials = name
-                                      .split(/\s+/)
-                                      .filter(Boolean)
-                                      .slice(0, 2)
-                                      .map((w) => w[0]?.toUpperCase() ?? '')
-                                      .join('') || '?';
-                                    return (
-                                      <span
-                                        key={email}
-                                        className="group/chip inline-flex max-w-[8rem] items-center gap-1 rounded-full border border-sky-200 bg-white py-0.5 pl-0.5 pr-1.5 text-[10px] text-sky-900 shadow-sm dark:border-sky-800/50 dark:bg-zinc-900/60 dark:text-sky-100"
-                                        title={`${name} (${email})`}
-                                      >
-                                        <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-indigo-500 text-[8px] font-bold text-white">
-                                          {initials}
-                                        </span>
-                                        <span className="truncate">{name}</span>
-                                      </span>
-                                    );
-                                  })}
-                                  {extraCount > 0 && (
-                                    <span
-                                      className="inline-flex h-5 items-center rounded-full border border-sky-300 bg-sky-50 px-1.5 text-[10px] font-semibold text-sky-700 dark:border-sky-700/60 dark:bg-sky-950/50 dark:text-sky-300"
-                                      title={remainingNames}
-                                    >
-                                      +{extraCount}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            )}
                           </motion.div>
                         );
                       })}
