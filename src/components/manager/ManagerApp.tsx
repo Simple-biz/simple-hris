@@ -1402,6 +1402,18 @@ const TA_STATUS_DOT: Record<string, string> = {
   denied: 'bg-rose-400',
 };
 
+/** Compact status pill colors for the decided-history rows. */
+const TA_STATUS_PILL: Record<string, string> = {
+  manager_approved: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+  approved: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+  manager_denied: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300',
+  denied: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300',
+};
+
+/** Best available decision timestamp — accounting decision, else manager decision, else creation. */
+const taDecidedAt = (r: TimeAdjustmentRow): string =>
+  r.decided_at ?? r.manager_decided_at ?? r.updated_at ?? r.created_at ?? '';
+
 function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) => void }) {
   const [rows, setRows] = useState<TimeAdjustmentRow[]>([]);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
@@ -1454,7 +1466,10 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
   };
 
   const pending = rows.filter((r) => r.status === 'pending');
-  const decided = rows.filter((r) => r.status !== 'pending');
+  // Full decided history (approved/declined at either stage), newest decision first.
+  const decided = rows
+    .filter((r) => r.status !== 'pending')
+    .sort((a, b) => taDecidedAt(b).localeCompare(taDecidedAt(a)));
 
   return (
     <>
@@ -1549,23 +1564,46 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
             {decided.length > 0 && (
               <section className="space-y-1.5">
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
-                  Already actioned
+                  History &nbsp;&middot;&nbsp; {decided.length}
                 </p>
-                {decided.map((row) => (
-                  <div
-                    key={row.id}
-                    className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
-                  >
-                    <span className={`h-1.5 w-1.5 rounded-full ${TA_STATUS_DOT[row.status] ?? 'bg-zinc-300 dark:bg-zinc-600'}`} />
-                    <span className="font-medium text-zinc-700 dark:text-zinc-300">{row.work_email}</span>
-                    <span className="font-mono text-zinc-400 dark:text-zinc-500">{row.adjust_date}</span>
-                    <span className="text-zinc-300 dark:text-zinc-600">&middot;</span>
-                    <span className="text-zinc-500 dark:text-zinc-400">{TA_REASON_LABEL(row.reason)}</span>
-                    <span className="ml-auto text-[10px] text-zinc-400 dark:text-zinc-500">
-                      {TA_STATUS_LABEL[row.status] ?? row.status}
-                    </span>
-                  </div>
-                ))}
+                <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                  {decided.map((row, i) => {
+                    const decidedOn = taDecidedAt(row).slice(0, 10);
+                    return (
+                      <div
+                        key={row.id}
+                        className={cn(
+                          'flex flex-wrap items-center gap-x-2 gap-y-1 px-3.5 py-2.5 text-xs',
+                          i > 0 && 'border-t border-zinc-100 dark:border-zinc-800/70',
+                        )}
+                      >
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TA_STATUS_DOT[row.status] ?? 'bg-zinc-300 dark:bg-zinc-600'}`} />
+                        <span className="min-w-0 truncate font-medium text-zinc-700 dark:text-zinc-300">{row.work_email}</span>
+                        <span className="font-mono text-zinc-400 dark:text-zinc-500">{row.adjust_date}</span>
+                        <span className="text-zinc-300 dark:text-zinc-600">&middot;</span>
+                        <span className="text-zinc-500 dark:text-zinc-400">{TA_REASON_LABEL(row.reason)}</span>
+                        {row.approved_hours != null ? (
+                          <span className="font-medium text-zinc-600 dark:text-zinc-300">{row.approved_hours}h</span>
+                        ) : row.requested_hours != null ? (
+                          <span className="text-zinc-400 dark:text-zinc-500">{row.requested_hours}h req</span>
+                        ) : null}
+                        <span className="ml-auto flex shrink-0 items-center gap-2">
+                          {decidedOn && (
+                            <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{decidedOn}</span>
+                          )}
+                          <span
+                            className={cn(
+                              'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                              TA_STATUS_PILL[row.status] ?? 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+                            )}
+                          >
+                            {TA_STATUS_LABEL[row.status] ?? row.status}
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </section>
             )}
           </div>

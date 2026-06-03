@@ -28,9 +28,11 @@ export async function GET() {
       return NextResponse.json({ error: 'Manager or admin role required' }, { status: 403 });
     }
 
-    // Fetch all pending requests (no date restriction — time adjustments can be for any past date).
+    // Fetch pending requests plus the full decided history (no date restriction — time
+    // adjustments can be for any past date). 'approved'/'denied' are the final Accounting
+    // decisions; without them, a request would vanish from the manager view once Accounting acts.
     const { rows: all, error } = await listTimeAdjustments({
-      statuses: ['pending', 'manager_approved', 'manager_denied'] as TimeAdjustmentStatus[],
+      statuses: ['pending', 'manager_approved', 'manager_denied', 'approved', 'denied'] as TimeAdjustmentStatus[],
       limit: 500,
     });
     if (error) return NextResponse.json({ rows: [], error }, { status: 500 });

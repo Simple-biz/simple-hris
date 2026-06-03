@@ -78,6 +78,9 @@ export async function getTeamRoster(
   const rows = (empsRes.data ?? []) as ActiveEmployeeRow[];
 
   const profiles: TeamRosterProfile[] = [];
+  // Managers we've already surfaced from active_employees — used to figure out
+  // which assigned managers are missing from the view entirely (see below).
+  const includedManagerEmails = new Set<string>();
   for (const r of rows) {
     const name = (r.Name ?? '').toString().trim();
     const workEmail = (r['Work Email'] ?? '').toString().trim() || null;
@@ -90,8 +93,16 @@ export async function getTeamRoster(
     const p = normEmail(personalEmail ?? '') ?? '';
     const isManager = (!!w && managerSet.has(w)) || (!!p && managerSet.has(p));
 
+    // Include rows whose home department matches the requested team, plus any
+    // assigned manager of this team even when their own department differs
+    // (e.g. a US Manager Bonus employee assigned to manage Accounting).
     const sameDept = !deptNorm || rowDeptNorm === deptNorm;
-    if (!sameDept) continue;
+    if (!sameDept && !isManager) continue;
+
+    if (isManager) {
+      if (w) includedManagerEmails.add(w);
+      if (p) includedManagerEmails.add(p);
+    }
 
     profiles.push({
       id: String(r.id),
@@ -101,6 +112,44 @@ export async function getTeamRoster(
       department: rowDept || null,
       isManager,
     });
+  }
+
+  // Assigned managers who aren't in active_employees at all still need to surface
+  // as their team's manager. US-prefixed employees (e.g. US Manager Bonus) are
+  // dropped from the view by the master-sheet upload filter on every re-sync, so
+  // pull any still-missing assigned managers straight from global_master_list.
+  const missingManagers = [...managerSet].filter((e) => !includedManagerEmails.has(e));
+  if (missingManagers.length > 0) {
+    const quoted = missingManagers.map((e) => `"${e}"`).join(',');
+    const { data: mgrRows } = await supabase
+      .from('global_master_list')
+      .select('id, "Name", "Work Email", "Personal Email", "Department"')
+      .or(`"Work Email".in.(${quoted}),"Personal Email".in.(${quoted})`)
+      .is('off_boarded_at', null);
+    const seenIds = new Set(profiles.map((pr) => pr.id));
+    for (const r of (mgrRows ?? []) as ActiveEmployeeRow[]) {
+      const id = String(r.id);
+      if (seenIds.has(id)) continue;
+      const workEmail = (r['Work Email'] ?? '').toString().trim() || null;
+      const personalEmail = (r['Personal Email'] ?? '').toString().trim() || null;
+      if (!workEmail && !personalEmail) continue;
+      const w = normEmail(workEmail ?? '') ?? '';
+      const p = normEmail(personalEmail ?? '') ?? '';
+      // Re-confirm membership: the .or() matches either column independently, so
+      // guard against pulling in a row that isn't actually an assigned manager.
+      if (!((!!w && managerSet.has(w)) || (!!p && managerSet.has(p)))) continue;
+      const name = (r.Name ?? '').toString().trim();
+      const rowDept = (r.Department ?? '').toString().trim();
+      seenIds.add(id);
+      profiles.push({
+        id,
+        name: name || workEmail || personalEmail || '(unknown)',
+        workEmail,
+        personalEmail,
+        department: rowDept || null,
+        isManager: true,
+      });
+    }
   }
 
   const allWorkEmails = Array.from(
