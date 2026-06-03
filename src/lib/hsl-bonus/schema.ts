@@ -171,6 +171,7 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     headerBg: 'bg-orange-950/40',
     badgeCls: 'bg-orange-900/60 text-orange-300',
     rules: [
+      { type: 'per_unit', key: 'portal_login',      label: 'Patient Portal Login', rate: 100 },
       { type: 'per_unit', key: 'bbb_reviews',       label: 'BBB Reviews',        rate: 250 },
       {
         type: 'tiered',

@@ -231,7 +231,7 @@ INSERT INTO public.hsl_team_members (email, full_name, hsl_name, role_raw, dept_
   ('wilburta@simple.biz', 'Alamo, Wilburt Jonas “Wilburt”', 'Wilburt', 'Intake Specialist', 'intake_specialist', false, 225.00, 337.50),
   ('chelzyc@simple.biz', 'Chavez, Chelzy "Chelzy"', 'Chelzy', 'SSD Medical Records - 
 Vicky''s Asst TL (Accounting)', 'ssd_medical_records', false, 355.00, 532.50),
-  ('jeromea@simple.biz', 'Aguirre, Jerome G "Jerome"', 'Jerome', 'SSD Medical Records- Vicky''s Asst TL', 'vicky_asst_tl', true, 355.00, 532.50),
+  ('jeromea@simple.biz', 'Aguirre, Jerome G "Jerome"', 'Jerome', 'SSD Medical Records- Vicky''s Asst TL', 'ssd_medical_records', false, 355.00, 532.50),
   ('noimeg@simple.biz', 'Gaspar, Noime "Noime"', 'Naomi', 'SSD Medical Records-Team Captain', 'ssd_medical_records', false, 285.00, 427.50),
   ('vanp@simple.biz', 'Patigayon, Evander "Van"', 'Van', 'SSD Medical Records-Team Captain', 'ssd_medical_records', false, 285.00, 427.50),
   ('ninac@simple.biz', 'Cruz, Nina Christina "Nina"', 'Nina', 'SSD Medical Records-Team Captain', 'ssd_medical_records', false, 285.00, 427.50),
