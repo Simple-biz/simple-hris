@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Download, Eye,
-  Lock, RefreshCw, RotateCcw, Save, Search, Users,
+  Filter, Lock, RefreshCw, RotateCcw, Save, Search, Users, X,
 } from 'lucide-react';
 
 const COLLAPSE_EASE = [0.22, 1, 0.36, 1] as const;
@@ -113,6 +113,10 @@ export const SUB_TEAM_PALETTE: Record<SubTeamName, SubTeamPalette> = {
     dotOn:      'bg-red-500 dark:bg-red-400',
   },
 };
+
+/** Active sub-team filter for the SSD roster: a specific team, every member
+ *  ('ALL'), or only the still-unassigned ('NONE'). */
+export type SubTeamFilter = SubTeamName | 'ALL' | 'NONE';
 
 /** Monday-of-week containing `d`, formatted as YYYY-MM-DD in *local* time.
  *  HSL departments work Mon–Sun, so weeks pivot on Monday. We avoid
@@ -801,21 +805,38 @@ function DeptBlock({
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
 
+  // SSD sub-team filter — shared between the colored scoring boxes (left) and the
+  // employee table (right) so clicking either surface filters the roster live.
+  // 'ALL' shows everyone, 'NONE' shows only the unassigned.
+  const [subTeamFilter, setSubTeamFilter] = useState<SubTeamFilter>('ALL');
+  const toggleSubTeamFilter = useCallback((name: SubTeamName) => {
+    setSubTeamFilter((prev) => (prev === name ? 'ALL' : name));
+  }, []);
+
   const filteredEntries = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return state.entries;
-    return state.entries.filter((e) =>
-      e.employee_name.toLowerCase().includes(q) || e.employee_email.toLowerCase().includes(q),
-    );
-  }, [state.entries, search]);
+    let list = state.entries;
+    if (q) {
+      list = list.filter((e) =>
+        e.employee_name.toLowerCase().includes(q) || e.employee_email.toLowerCase().includes(q),
+      );
+    }
+    if (isTeamSplit && subTeamFilter !== 'ALL') {
+      list = list.filter((e) => {
+        const st = String(e.kpi_data.sub_team ?? '');
+        return subTeamFilter === 'NONE' ? !st : st === subTeamFilter;
+      });
+    }
+    return list;
+  }, [state.entries, search, subTeamFilter, isTeamSplit]);
 
   const totalPages = Math.max(1, Math.ceil(filteredEntries.length / DEPT_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * DEPT_PAGE_SIZE;
   const pagedEntries = filteredEntries.slice(pageStart, pageStart + DEPT_PAGE_SIZE);
 
-  // Reset to page 1 whenever the filter changes
-  useEffect(() => { setPage(1); }, [search]);
+  // Reset to page 1 whenever the search or sub-team filter changes
+  useEffect(() => { setPage(1); }, [search, subTeamFilter]);
 
   const statusColors: Record<BonusStatus, string> = {
     draft:  'bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200',
@@ -1019,6 +1040,8 @@ function DeptBlock({
                 onSubTeamChange={onSubTeamChange}
                 ssdShareForTeam={ssdShareForTeam}
                 subTeamMemberCount={subTeamMemberCount}
+                activeFilter={subTeamFilter}
+                onFilterToggle={toggleSubTeamFilter}
               />
             </div>
             <div className="flex min-w-0 flex-col">
@@ -1030,12 +1053,15 @@ function DeptBlock({
                 onSubTeamAssign={(email, subTeam) =>
                   onKpiChange(email, 'sub_team', subTeam as unknown as number)
                 }
+                activeFilter={subTeamFilter}
+                onFilterChange={setSubTeamFilter}
               />
             </div>
           </div>
         )}
 
-        {/* Fallback for any team_split dept that has no KPI inputs (none today) */}
+        {/* Fallback for any team_split dept that has no KPI inputs (none today).
+            No employee table here, so the boxes stay static (no filter toggle). */}
         {isTeamSplit && ssdShareForTeam && dept.noKpi && (
           <SsdSubTeamGrid
             subTeams={state.subTeams}
@@ -1248,10 +1274,18 @@ interface SsdSubTeamGridProps {
   onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records', val: string) => void;
   ssdShareForTeam: (subTeam: SubTeamName, memberCount: number) => number;
   subTeamMemberCount: (subTeam: SubTeamName) => number;
+  /** Currently-active roster filter (shared with the employee table). */
+  activeFilter?: SubTeamFilter;
+  /** Toggle the filter for a team — click the same team again to clear it. */
+  onFilterToggle?: (subTeam: SubTeamName) => void;
 }
 
-export function SsdSubTeamGrid({ subTeams, isLocked, onSubTeamChange, ssdShareForTeam, subTeamMemberCount }: SsdSubTeamGridProps) {
+export function SsdSubTeamGrid({
+  subTeams, isLocked, onSubTeamChange, ssdShareForTeam, subTeamMemberCount,
+  activeFilter = 'ALL', onFilterToggle,
+}: SsdSubTeamGridProps) {
   const SUB_TEAM_NAMES: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
+  const filterActive = activeFilter !== 'ALL';
   return (
     <div className="grid h-full auto-rows-fr gap-3 sm:grid-cols-2">
       {SUB_TEAM_NAMES.map((name) => {
@@ -1266,28 +1300,51 @@ export function SsdSubTeamGrid({ subTeams, isLocked, onSubTeamChange, ssdShareFo
           : tier === 'silver' ? '90–94%  ·  ₱250 / record'
           : 'Below 90%  ·  no bonus';
         const tierStep = tier === 'gold' ? 3 : tier === 'silver' ? 2 : 1;
+        const isPicked = activeFilter === name;       // this box drives the filter
+        const isDimmed = filterActive && !isPicked;   // another team is being viewed
 
         return (
           <div
             key={name}
             className={cn(
-              'overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm ring-1 transition-all dark:border-zinc-800 dark:bg-zinc-950/40',
+              'group/box relative overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm ring-1 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] dark:border-zinc-800 dark:bg-zinc-950/40',
               palette.ring,
               tier === 'gold' && 'shadow-md',
+              isPicked && 'scale-[1.015] shadow-lg ring-2',
+              isDimmed && 'scale-[0.99] opacity-55 saturate-[0.7]',
             )}
           >
-            {/* Header */}
-            <div className={cn('flex items-center justify-between px-3 py-2', palette.headerBg, palette.headerText)}>
-              <span className="font-mono text-[11px] font-bold tracking-[0.2em]">{name}</span>
+            {/* Header — doubles as the filter toggle for this team */}
+            <button
+              type="button"
+              onClick={() => onFilterToggle?.(name)}
+              aria-pressed={isPicked}
+              title={isPicked ? `Showing ${name} only — click to show all` : `Filter roster to ${name}`}
+              className={cn(
+                'flex w-full items-center justify-between px-3 py-2 text-left transition-[filter] duration-200',
+                palette.headerBg, palette.headerText,
+                onFilterToggle ? 'cursor-pointer hover:brightness-110 active:brightness-95' : 'cursor-default',
+              )}
+            >
+              <span className="flex items-center gap-1.5 font-mono text-[11px] font-bold tracking-[0.2em]">
+                <Filter
+                  className={cn(
+                    'h-3 w-3 transition-all duration-300',
+                    isPicked ? 'scale-100 opacity-100' : 'scale-75 opacity-0 group-hover/box:opacity-60',
+                  )}
+                  aria-hidden
+                />
+                {name}
+              </span>
               <span
                 className={cn(
-                  'rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold backdrop-blur-sm',
-                  'bg-white/25',
+                  'rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold backdrop-blur-sm transition-colors',
+                  isPicked ? 'bg-white/40 ring-1 ring-white/60' : 'bg-white/25',
                 )}
               >
                 {members} {members === 1 ? 'member' : 'members'}
               </span>
-            </div>
+            </button>
 
             {/* Body */}
             <div className={cn('px-3 py-3', palette.bodyBg)}>
@@ -1367,6 +1424,10 @@ interface SsdEmployeeTableProps {
   isLocked: boolean;
   ssdShareForTeam: (subTeam: SubTeamName, memberCount: number) => number;
   onSubTeamAssign: (email: string, subTeam: SubTeamName | '') => void;
+  /** Active roster filter, shared with the colored scoring boxes. */
+  activeFilter?: SubTeamFilter;
+  /** Set the active roster filter. */
+  onFilterChange?: (f: SubTeamFilter) => void;
 }
 
 /** Colored sub-team chip picker. Replaces the native <select> — clicking a chip
@@ -1430,7 +1491,10 @@ export function SubTeamChips({
   );
 }
 
-export function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTeam, onSubTeamAssign }: SsdEmployeeTableProps) {
+export function SsdEmployeeTable({
+  entries, allEntries, isLocked, ssdShareForTeam, onSubTeamAssign,
+  activeFilter = 'ALL', onFilterChange,
+}: SsdEmployeeTableProps) {
   const SUB_TEAM_NAMES: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
 
   // Member counts must reflect every entry in the dept, not just the current page
@@ -1442,6 +1506,11 @@ export function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTea
     }
     return counts;
   }, [allEntries]);
+
+  const unassignedCount = useMemo(
+    () => allEntries.filter((e) => !String(e.kpi_data.sub_team ?? '')).length,
+    [allEntries],
+  );
 
   // ── Bulk selection ──────────────────────────────────────────────────────────
   // Selection is keyed by email so it survives pagination; checkboxes only show
@@ -1499,6 +1568,79 @@ export function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTea
 
   return (
     <div className="flex h-full flex-col gap-2">
+      {/* Filter bar — view the roster one team at a time. Stays in sync with the
+          colored scoring boxes: clicking a box sets the same filter. */}
+      {onFilterChange && (
+        <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50/70 px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.12em] text-zinc-500">
+            <Filter className="h-3 w-3" /> Filter
+          </span>
+          <button
+            type="button"
+            onClick={() => onFilterChange('ALL')}
+            aria-pressed={activeFilter === 'ALL'}
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all duration-200',
+              activeFilter === 'ALL'
+                ? 'bg-zinc-800 text-white shadow-sm dark:bg-zinc-200 dark:text-zinc-900'
+                : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800 dark:hover:text-zinc-200',
+            )}
+          >
+            All
+            <span className={cn('tabular-nums', activeFilter === 'ALL' ? 'opacity-80' : 'opacity-60')}>{allEntries.length}</span>
+          </button>
+          {SUB_TEAM_NAMES.map((name) => {
+            const palette = SUB_TEAM_PALETTE[name];
+            const active = activeFilter === name;
+            const count = memberCounts[name] ?? 0;
+            return (
+              <button
+                key={name}
+                type="button"
+                onClick={() => onFilterChange(active ? 'ALL' : name)}
+                aria-pressed={active}
+                title={active ? `Showing ${name} only — click to show all` : `Show ${name} only`}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all duration-200',
+                  active
+                    ? `${palette.headerBg} ${palette.headerText} scale-105 shadow-sm`
+                    : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800 dark:hover:text-zinc-200',
+                )}
+              >
+                <span className={cn('h-1.5 w-1.5 rounded-full transition-colors', active ? 'bg-white/85' : palette.dotOn)} />
+                {name}
+                <span className={cn('tabular-nums', active ? 'opacity-80' : 'opacity-60')}>{count}</span>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => onFilterChange(activeFilter === 'NONE' ? 'ALL' : 'NONE')}
+            aria-pressed={activeFilter === 'NONE'}
+            title={activeFilter === 'NONE' ? 'Showing unassigned only — click to show all' : 'Show unassigned only'}
+            className={cn(
+              'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider transition-all duration-200',
+              activeFilter === 'NONE'
+                ? 'bg-zinc-600 text-white shadow-sm dark:bg-zinc-400 dark:text-zinc-900'
+                : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:text-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-800 dark:hover:text-zinc-200',
+            )}
+          >
+            <span className={cn('h-1.5 w-1.5 rounded-full', activeFilter === 'NONE' ? 'bg-white/85' : 'bg-zinc-300 dark:bg-zinc-600')} />
+            Unassigned
+            <span className={cn('tabular-nums', activeFilter === 'NONE' ? 'opacity-80' : 'opacity-60')}>{unassignedCount}</span>
+          </button>
+          {activeFilter !== 'ALL' && (
+            <button
+              type="button"
+              onClick={() => onFilterChange('ALL')}
+              className="ml-auto inline-flex items-center gap-0.5 font-mono text-[10px] text-zinc-500 underline-offset-2 transition-colors hover:text-zinc-800 hover:underline dark:hover:text-zinc-200"
+            >
+              <X className="h-3 w-3" /> clear
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Bulk-assign bar */}
       <div
         className={cn(
@@ -1588,11 +1730,15 @@ export function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTea
             {entries.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
-                  No employees on this page.
+                  {activeFilter === 'NONE'
+                    ? 'Everyone has a team — nothing unassigned.'
+                    : activeFilter !== 'ALL'
+                    ? `No ${activeFilter} members on this page.`
+                    : 'No employees on this page.'}
                 </td>
               </tr>
             )}
-            {entries.map((e) => {
+            {entries.map((e, i) => {
               const subTeam = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
               const memberCount = subTeam ? (memberCounts[subTeam] ?? 0) : 0;
               const share = subTeam ? ssdShareForTeam(subTeam, memberCount) : 0;
@@ -1600,7 +1746,10 @@ export function SsdEmployeeTable({ entries, allEntries, isLocked, ssdShareForTea
               const isSel = selected.has(e.employee_email);
               return (
                 <tr
-                  key={e.employee_email}
+                  // Key includes the active filter so rows remount — and replay the
+                  // staggered cascade — every time the filter changes.
+                  key={`${activeFilter}-${e.employee_email}`}
+                  style={{ animation: `pab-row-in 0.32s cubic-bezier(0.22,1,0.36,1) ${Math.min(i * 35, 300)}ms both` }}
                   className={cn(
                     'border-b border-zinc-100 transition-colors hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40',
                     palette && palette.bodyBg,
