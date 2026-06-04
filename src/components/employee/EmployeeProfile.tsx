@@ -19,6 +19,7 @@ import {
 import { motion, AnimatePresence, LayoutGroup } from 'motion/react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import EmployeeAvatar from './EmployeeAvatar';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
@@ -1423,20 +1424,18 @@ export default function EmployeeProfile({
                               Shown on your My Team card
                             </span>
                           </div>
-                          <select
+                          <SmoothSelect
+                            aria-label="Role / Title"
                             value={skillSet.role_title}
-                            onChange={(e) =>
-                              setSkillSet((s) => ({ ...s, role_title: e.target.value }))
+                            onChange={(v) =>
+                              setSkillSet((s) => ({ ...s, role_title: v }))
                             }
-                            className="mt-1.5 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13px] text-zinc-900 focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-blue-800 dark:focus:ring-blue-900/40"
-                          >
-                            <option value="">Select a title...</option>
-                            {SKILL_SET_TITLES.map((title) => (
-                              <option key={title} value={title}>
-                                {title}
-                              </option>
-                            ))}
-                          </select>
+                            triggerClassName="mt-1.5 w-full"
+                            options={[
+                              { value: '', label: 'Select a title...' },
+                              ...SKILL_SET_TITLES.map((title) => ({ value: title, label: title })),
+                            ]}
+                          />
                         </label>
                         <ProjectsField
                           projects={skillSet.projects}

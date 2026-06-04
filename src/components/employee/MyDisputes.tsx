@@ -17,6 +17,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import {
   DEFAULT_DISPUTE_REASON_CODES,
   isOrphanageStyleReason,
@@ -429,21 +430,16 @@ export default function MyDisputes({
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="dispute-reason" className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+              <label className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                 Main Reason
               </label>
-              <select
-                id="dispute-reason"
+              <SmoothSelect
+                aria-label="Main Reason"
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                className="h-9 w-full rounded-md border border-zinc-200 bg-white px-2 pr-8 text-xs text-zinc-700 transition-colors focus:border-emerald-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:focus:border-emerald-400"
-              >
-                {employeeFilingReasonCodes.map((rc) => (
-                  <option key={rc.code} value={rc.code}>
-                    {rc.label}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setReason(v)}
+                triggerClassName="w-full"
+                options={employeeFilingReasonCodes.map((rc) => ({ value: rc.code, label: rc.label }))}
+              />
               <p className="text-[10px] leading-snug text-zinc-400 dark:text-zinc-500">
                 Pick the closest match — health issues, power outage, intermittent internet, etc.
                 <span className="block mt-0.5">Orphanage visits and CEO visitation are submitted on your behalf by your manager.</span>

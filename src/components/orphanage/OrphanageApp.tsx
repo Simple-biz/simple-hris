@@ -1016,6 +1016,14 @@ export default function OrphanageApp() {
                   />
                 </nav>
 
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={budgetSubTab}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                  >
                 {budgetSubTab === 'request' ? (
                   <Card className="border-pink-100/80 bg-gradient-to-br from-white via-pink-50/30 to-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:from-zinc-950 dark:via-pink-950/12 dark:to-zinc-950 dark:ring-pink-400/10">
                     <CardHeader className="border-b border-pink-100/60 dark:border-pink-900/40">
@@ -1051,16 +1059,17 @@ export default function OrphanageApp() {
                         </CardTitle>
                       </div>
                       <p className="mt-1.5 text-xs text-muted-foreground">
-                        Static directory for now — edits to the Leftover Budget field stay in this
-                        tab and reset on reload. Wired storage will come once HR confirms where
-                        this list should live.
+                        Add the orphanages your team rotates through. Each entry feeds the
+                        &quot;Leftover from prev month&quot; defaults on the budget request form.
                       </p>
                     </CardHeader>
                     <CardContent className="pt-5">
-                      <OrphanagesPanel />
+                      <OrphanagesPanel viewerEmail={viewerEmail} />
                     </CardContent>
                   </Card>
                 )}
+                  </motion.div>
+                </AnimatePresence>
               </div>
             </motion.div>
           )}

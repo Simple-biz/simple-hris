@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, ChevronDown, Loader2, AlertTriangle } from 'lucide-react';
+import { ArrowRight, Loader2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -12,6 +12,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 
 export interface TransferTarget {
   name: string | null;
@@ -142,22 +143,17 @@ export default function ManagerTransferDialog({ member, open, onOpenChange, onSu
             <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
               Transfer to
             </label>
-            <div className="relative">
-              <select
-                value={toDept}
-                onChange={(e) => setToDept(e.target.value)}
-                disabled={loadingDepts}
-                className="w-full appearance-none rounded-lg border border-zinc-200 bg-white py-2 pl-3 pr-9 text-sm text-zinc-900 focus:border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-200 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              >
-                <option value="">{loadingDepts ? 'Loading departments...' : 'Select a department'}</option>
-                {targetOptions.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-            </div>
+            <SmoothSelect
+              aria-label="Transfer to department"
+              value={toDept}
+              onChange={(v) => setToDept(v)}
+              disabled={loadingDepts}
+              triggerClassName="w-full"
+              options={[
+                { value: '', label: loadingDepts ? 'Loading departments...' : 'Select a department' },
+                ...targetOptions.map((d) => ({ value: d, label: d })),
+              ]}
+            />
           </div>
 
           {/* Reason */}

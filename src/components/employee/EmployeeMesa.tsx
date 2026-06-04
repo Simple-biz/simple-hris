@@ -17,7 +17,6 @@ import {
   History as HistoryIcon,
   Lock,
   ClipboardList,
-  ChevronDown,
   Loader2,
   Clock,
   XCircle,
@@ -27,6 +26,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { toast } from 'sonner';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 
@@ -758,26 +758,25 @@ function MesaRequestForm({
               <label className="text-sm font-semibold text-zinc-900 dark:text-white">
                 Options <span className="text-rose-500">*</span>
               </label>
-              <div className="relative">
-                <select
-                  value={requestType}
-                  onChange={(e) => {
-                    setRequestType(e.target.value as RequestType);
-                    setAgreements(OPT_IN_AGREEMENTS.map(() => false));
-                    setOptInChecked(false);
-                    setOptOutChecked(false);
-                    setDisbursementChecked(false);
-                  }}
-                  className="w-full appearance-none rounded-md border border-zinc-200 bg-white py-2 pl-3 pr-8 text-sm text-zinc-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                >
-                  <option value="">-- Select --</option>
-                  <option value="opt_in">Opt-in</option>
-                  <option value="opt_out">Opt-out</option>
-                  <option value="disbursement">Disbursement Request</option>
-                  <option value="return">Return</option>
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-              </div>
+              <SmoothSelect
+                aria-label="Options"
+                value={requestType}
+                onChange={(v) => {
+                  setRequestType(v as RequestType);
+                  setAgreements(OPT_IN_AGREEMENTS.map(() => false));
+                  setOptInChecked(false);
+                  setOptOutChecked(false);
+                  setDisbursementChecked(false);
+                }}
+                triggerClassName="w-full"
+                options={[
+                  { value: '', label: '-- Select --' },
+                  { value: 'opt_in', label: 'Opt-in' },
+                  { value: 'opt_out', label: 'Opt-out' },
+                  { value: 'disbursement', label: 'Disbursement Request' },
+                  { value: 'return', label: 'Return' },
+                ]}
+              />
             </div>
 
             {/* Option-specific section — keyed so React replaces the node on change,
@@ -866,19 +865,16 @@ function MesaRequestForm({
                       <label className="text-sm font-semibold text-zinc-900 dark:text-white">
                         Disbursement Reason <span className="text-rose-500">*</span>
                       </label>
-                      <div className="relative">
-                        <select
-                          value={disbursementReason}
-                          onChange={(e) => setDisbursementReason(e.target.value)}
-                          className="w-full appearance-none rounded-md border border-zinc-200 bg-white py-2 pl-3 pr-8 text-sm text-zinc-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                        >
-                          <option value="">Select reason</option>
-                          {DISBURSEMENT_REASONS.map((r) => (
-                            <option key={r} value={r}>{r}</option>
-                          ))}
-                        </select>
-                        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                      </div>
+                      <SmoothSelect
+                        aria-label="Disbursement Reason"
+                        value={disbursementReason}
+                        onChange={(v) => setDisbursementReason(v)}
+                        triggerClassName="w-full"
+                        options={[
+                          { value: '', label: 'Select reason' },
+                          ...DISBURSEMENT_REASONS.map((r) => ({ value: r, label: r })),
+                        ]}
+                      />
                     </div>
                     <div className="space-y-1">
                       <label className="text-sm font-semibold text-zinc-900 dark:text-white">

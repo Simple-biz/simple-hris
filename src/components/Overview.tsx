@@ -44,6 +44,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import {
@@ -1109,31 +1110,26 @@ function SimpleView({
                   ⌘K
                 </kbd>
               </div>
-              <select
+              <SmoothSelect
+                aria-label="Department"
                 value={departmentFilter}
-                onChange={(e) => setDepartmentFilter(e.target.value)}
-                className="h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-[12.5px] font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
-              >
-                <option value="">All departments</option>
-                {departmentOptions.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-              <select
+                onChange={(v) => setDepartmentFilter(v)}
+                triggerClassName="h-8"
+                options={[
+                  { value: '', label: 'All departments' },
+                  ...departmentOptions.map((d) => ({ value: d, label: d })),
+                ]}
+              />
+              <SmoothSelect
+                aria-label="PAB month"
                 value={monthFilter}
-                onChange={(e) => setMonthFilter(e.target.value)}
-                className="h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-[12.5px] font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
-                title="PAB month"
-              >
-                <option value="">All months</option>
-                {monthOptions.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setMonthFilter(v)}
+                triggerClassName="h-8"
+                options={[
+                  { value: '', label: 'All months' },
+                  ...monthOptions.map((m) => ({ value: m.value, label: m.label })),
+                ]}
+              />
               {/* PAB filter */}
               <div className="relative flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
                 {(['all', 'eligible', 'not-eligible'] as const).map((f) => {
@@ -1709,14 +1705,16 @@ function AttentionCard({
     <Tag
       type={interactive ? 'button' : undefined}
       onClick={onClick}
-      whileHover={interactive ? { y: -2 } : undefined}
-      whileTap={interactive ? { scale: 0.99 } : undefined}
-      transition={{ type: 'spring', stiffness: 320, damping: 24 }}
+      whileHover={{ y: -4 }}
+      whileTap={interactive ? { scale: 0.985 } : undefined}
+      transition={{ type: 'spring', stiffness: 360, damping: 28, mass: 0.6 }}
       className={cn(
-        'group relative w-full overflow-hidden rounded-2xl border p-5 text-left shadow-sm transition-all duration-300',
+        // Animate ONLY transform (GPU-composited) for a buttery lift. We do NOT
+        // transition box-shadow here — repainting a large soft shadow every frame
+        // is what drops the hover to single-digit fps. Border color is cheap.
+        'group relative w-full transform-gpu overflow-hidden rounded-2xl border p-5 text-left shadow-sm transition-colors duration-300 will-change-transform',
         palette.ring,
         palette.surface,
-        palette.hoverShadow,
         interactive && 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40',
       )}
     >
@@ -3071,18 +3069,16 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
           </div>
           <div className="flex min-w-0 flex-1 items-center gap-2 sm:flex-initial">
             <FileText className="h-4 w-4 shrink-0 text-orange-500" />
-            <select
+            <SmoothSelect
+              aria-label="Source file"
               value={selectedSourceFile ?? ''}
-              onChange={(e) => setSelectedSourceFile(e.target.value || null)}
-              className="h-8 w-full min-w-0 truncate rounded-md border border-zinc-200 bg-white px-2 pr-7 font-mono text-xs text-zinc-700 sm:w-auto sm:max-w-[340px] dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-            >
-              <option value="__all__">All Time (all uploads combined)</option>
-              {sourceFiles.map((file, i) => (
-                <option key={file} value={file}>
-                  {file}{i === 0 ? ' (latest)' : ''}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setSelectedSourceFile(v || null)}
+              triggerClassName="h-8 w-full min-w-0 sm:w-auto sm:max-w-[340px]"
+              options={[
+                { value: '__all__', label: 'All Time (all uploads combined)' },
+                ...sourceFiles.map((file, i) => ({ value: file, label: i === 0 ? `${file} (latest)` : file })),
+              ]}
+            />
             {(payoutLoading || pabMetrics.loading) && (
               <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-orange-600 dark:text-orange-400">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -3291,48 +3287,34 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
                       </div>
                     </div>
                     <div className="w-full space-y-1.5 sm:w-48">
-                      <Label htmlFor="department-filter" className="text-xs text-zinc-600 dark:text-zinc-500">
+                      <Label className="text-xs text-zinc-600 dark:text-zinc-500">
                         Department
                       </Label>
-                      <select
-                        id="department-filter"
+                      <SmoothSelect
+                        aria-label="Department"
                         value={departmentFilter}
-                        onChange={(e) => setDepartmentFilter(e.target.value)}
-                        className={cn(
-                          'h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900',
-                          'outline-none focus-visible:border-orange-500 focus-visible:ring-2 focus-visible:ring-orange-500/30',
-                          'dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200',
-                        )}
-                      >
-                        <option value="">All departments</option>
-                        {departmentOptions.map((d) => (
-                          <option key={d} value={d}>
-                            {d}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => setDepartmentFilter(v)}
+                        triggerClassName="h-9 w-full"
+                        options={[
+                          { value: '', label: 'All departments' },
+                          ...departmentOptions.map((d) => ({ value: d, label: d })),
+                        ]}
+                      />
                     </div>
                     <div className="w-full space-y-1.5 sm:w-44">
-                      <Label htmlFor="month-filter" className="text-xs text-zinc-600 dark:text-zinc-500">
+                      <Label className="text-xs text-zinc-600 dark:text-zinc-500">
                         Month
                       </Label>
-                      <select
-                        id="month-filter"
+                      <SmoothSelect
+                        aria-label="Month"
                         value={monthFilter}
-                        onChange={(e) => setMonthFilter(e.target.value)}
-                        className={cn(
-                          'h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900',
-                          'outline-none focus-visible:border-orange-500 focus-visible:ring-2 focus-visible:ring-orange-500/30',
-                          'dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200',
-                        )}
-                      >
-                        <option value="">All months</option>
-                        {monthOptions.map((m) => (
-                          <option key={m.value} value={m.value}>
-                            {m.label}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => setMonthFilter(v)}
+                        triggerClassName="h-9 w-full"
+                        options={[
+                          { value: '', label: 'All months' },
+                          ...monthOptions.map((m) => ({ value: m.value, label: m.label })),
+                        ]}
+                      />
                     </div>
                   </div>
                   {/* PAB + Tech filters — side-by-side, wrap on narrow widths */}

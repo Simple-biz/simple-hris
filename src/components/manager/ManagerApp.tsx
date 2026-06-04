@@ -58,6 +58,7 @@ import {
   MedalBadges,
   useMedalCtx,
 } from '@/components/manager/MedalRecognition';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 
 /** How `/api/manager/department-members` scoped the roster for this session (server-driven). */
 type ManagerTeamGate =
@@ -849,8 +850,13 @@ function LatestRequestHero({
   }
 
   return (
-    <div
-      className="flex h-full flex-col overflow-hidden rounded-xl border border-blue-200 bg-white shadow-sm dark:border-blue-900/50 dark:bg-zinc-950"
+    <motion.div
+      whileHover={{ y: -4 }}
+      transition={{ type: 'spring', stiffness: 360, damping: 28, mass: 0.6 }}
+      // Animate only the transform (GPU). A constant shadow-md keeps the card
+      // looking raised without transitioning box-shadow, which is what made the
+      // lift stutter on a large card with an image inside.
+      className="flex h-full transform-gpu flex-col overflow-hidden rounded-xl border border-blue-200 bg-white shadow-md transition-colors duration-300 will-change-transform hover:border-blue-300 dark:border-blue-900/50 dark:bg-zinc-950 dark:hover:border-blue-800/70"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocusCapture={() => setPaused(true)}
@@ -985,7 +991,7 @@ function LatestRequestHero({
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -1294,7 +1300,18 @@ function TeamSpotlight({
           <span className="shrink-0 text-[8px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
             Up next
           </span>
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+          {/* Scrollable, padded rail: py/px give the online badges and the
+              hover-scale room to render without being clipped at the borders;
+              a soft right fade signals there's more rather than hard-cutting. */}
+          <div
+            className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto overflow-y-visible px-1 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            style={{
+              maskImage:
+                'linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%)',
+              WebkitMaskImage:
+                'linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%)',
+            }}
+          >
             {upNext.map(({ m, i }) => (
               <button
                 key={i}
@@ -1613,7 +1630,42 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
   );
 }
 
-import { Loader2, ImageOff } from 'lucide-react';
+import { Loader2, ImageOff, Image as ImageIcon } from 'lucide-react';
+
+// Evidence <img> that shows an animated skeleton until the image actually
+// decodes. Keyed on `src` so switching the featured image re-shows the
+// skeleton instead of flashing the previous photo.
+function EvidenceImage({
+  src,
+  alt,
+  className,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <>
+      {!loaded && (
+        <span aria-hidden className="skeleton-shimmer absolute inset-0 flex flex-col items-center justify-center gap-2">
+          <ImageIcon className="h-8 w-8 text-zinc-400/70 dark:text-zinc-600/70" />
+          <span className="h-2 w-24 rounded-full bg-zinc-300/70 dark:bg-zinc-700/70" />
+          <span className="h-2 w-16 rounded-full bg-zinc-300/60 dark:bg-zinc-700/60" />
+        </span>
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        key={src}
+        src={src}
+        alt={alt}
+        onLoad={() => setLoaded(true)}
+        onError={() => setLoaded(true)}
+        className={cn(className, !loaded && 'opacity-0')}
+      />
+    </>
+  );
+}
 
 function ManagerAdjustmentCard({
   row,
@@ -1652,8 +1704,7 @@ function ManagerAdjustmentCard({
               className="group relative block min-h-[13rem] flex-1 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
               aria-label="View evidence full size"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <EvidenceImage
                 src={featured}
                 alt={`Evidence ${active + 1}`}
                 className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
@@ -2744,29 +2795,25 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           {deptOptions.length >= 2 && (
             <>
               <label
-                htmlFor="team-dept-filter"
                 className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
               >
                 Department
               </label>
-              <select
-                id="team-dept-filter"
+              <SmoothSelect
+                aria-label="Department"
                 value={deptFilter}
-                onChange={(e) => setDeptFilter(e.target.value)}
-                className="h-8 min-w-[180px] rounded-md border border-blue-200 bg-white px-2 text-xs text-zinc-800 shadow-sm transition-colors hover:border-blue-300 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-blue-900/50 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:border-blue-800 dark:focus:border-blue-700 dark:focus:ring-blue-900/50"
-              >
-                <option value="all">All ({members.length})</option>
-                {deptOptions.map((d) => {
-                  const count = members.filter(
-                    (m) => (m.department ?? '').trim().toLowerCase() === d.toLowerCase(),
-                  ).length;
-                  return (
-                    <option key={d} value={d}>
-                      {d} ({count})
-                    </option>
-                  );
-                })}
-              </select>
+                onChange={(v) => setDeptFilter(v)}
+                triggerClassName="min-w-[180px]"
+                options={[
+                  { value: 'all', label: `All (${members.length})` },
+                  ...deptOptions.map((d) => {
+                    const count = members.filter(
+                      (m) => (m.department ?? '').trim().toLowerCase() === d.toLowerCase(),
+                    ).length;
+                    return { value: d, label: `${d} (${count})` };
+                  }),
+                ]}
+              />
             </>
           )}
           {(deptFilter !== 'all' || searchQuery.trim() !== '') && (

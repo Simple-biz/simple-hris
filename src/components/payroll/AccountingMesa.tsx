@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -208,26 +209,30 @@ export default function AccountingMesa() {
           </div>
           <div className="flex items-center gap-1.5">
             <Filter className="h-3.5 w-3.5 text-zinc-400" />
-            <select
+            <SmoothSelect
+              aria-label="Filter by status"
               value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value as MesaRequestStatus | '')}
-              className="h-9 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300"
-            >
-              <option value="">All statuses</option>
-              <option value="pending">Pending</option>
-              <option value="approved">Approved</option>
-              <option value="denied">Denied</option>
-            </select>
-            <select
+              onChange={(v) => setFilterStatus(v as MesaRequestStatus | '')}
+              triggerClassName="w-36"
+              options={[
+                { value: '', label: 'All statuses' },
+                { value: 'pending', label: 'Pending' },
+                { value: 'approved', label: 'Approved' },
+                { value: 'denied', label: 'Denied' },
+              ]}
+            />
+            <SmoothSelect
+              aria-label="Filter by type"
               value={filterType}
-              onChange={(e) => setFilterType(e.target.value as MesaRequestType | '')}
-              className="h-9 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300"
-            >
-              <option value="">All types</option>
-              <option value="opt_out">Opt-out</option>
-              <option value="disbursement">Disbursement</option>
-              <option value="return">Return</option>
-            </select>
+              onChange={(v) => setFilterType(v as MesaRequestType | '')}
+              triggerClassName="w-36"
+              options={[
+                { value: '', label: 'All types' },
+                { value: 'opt_out', label: 'Opt-out' },
+                { value: 'disbursement', label: 'Disbursement' },
+                { value: 'return', label: 'Return' },
+              ]}
+            />
           </div>
           <Button
             type="button"

@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import HrFpuEnrollments from './HrFpuEnrollments';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 
 type MesaTab = 'eligible' | 'requests' | 'fpu';
 
@@ -659,16 +660,17 @@ function MesaOptInQueue() {
             className="h-9 border-zinc-200 bg-white pl-9 text-sm focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60"
           />
         </div>
-        <select
+        <SmoothSelect
+          aria-label="Filter by status"
           value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          className="h-9 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-700 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300"
-        >
-          <option value="">All statuses</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="denied">Denied</option>
-        </select>
+          onChange={(v) => setFilterStatus(v)}
+          options={[
+            { value: '', label: 'All statuses' },
+            { value: 'pending', label: 'Pending' },
+            { value: 'approved', label: 'Approved' },
+            { value: 'denied', label: 'Denied' },
+          ]}
+        />
         <Button
           type="button"
           variant="outline"

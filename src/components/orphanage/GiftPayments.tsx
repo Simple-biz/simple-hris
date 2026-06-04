@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 
 type LineItem = {
   id: string;
@@ -737,20 +738,22 @@ export default function GiftPayments({ viewerEmail }: { viewerEmail?: string | n
                                     <Label className="w-[120px] shrink-0 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
                                       Status
                                     </Label>
-                                    <select
+                                    <SmoothSelect
+                                      aria-label="Status"
                                       value={r.status}
-                                      onChange={(e) =>
+                                      onChange={(v) =>
                                         updateRecord(r.id, {
-                                          status: e.target.value as PaymentStatus,
+                                          status: v as PaymentStatus,
                                         })
                                       }
-                                      className="h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-xs dark:border-zinc-700 dark:bg-zinc-900"
-                                    >
-                                      <option value="pending">Pending</option>
-                                      <option value="sent">Sent</option>
-                                      <option value="paid">Paid</option>
-                                      <option value="cancelled">Cancelled</option>
-                                    </select>
+                                      triggerClassName="flex-1"
+                                      options={[
+                                        { value: 'pending', label: 'Pending' },
+                                        { value: 'sent', label: 'Sent' },
+                                        { value: 'paid', label: 'Paid' },
+                                        { value: 'cancelled', label: 'Cancelled' },
+                                      ]}
+                                    />
                                   </div>
                                 </div>
                                 <div className="mt-3">

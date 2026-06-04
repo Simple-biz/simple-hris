@@ -40,6 +40,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { SmoothSelect } from "@/components/ui/smooth-select";
 import { toast } from "sonner";
 import { normEmail } from "@/lib/email/norm-email";
 import {
@@ -123,20 +124,17 @@ function DepartmentSelect({
     trimmed === '' ||
     DEPARTMENT_OPTIONS.some((d) => d.toLowerCase() === trimmed.toLowerCase());
   return (
-    <select
-      id={id}
+    <SmoothSelect
+      aria-label="Department"
       value={trimmed}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
-    >
-      <option value="">— None —</option>
-      {DEPARTMENT_OPTIONS.map((d) => (
-        <option key={d} value={d}>{d}</option>
-      ))}
-      {!isKnown && (
-        <option value={trimmed}>{trimmed} (legacy)</option>
-      )}
-    </select>
+      onChange={(v) => onChange(v)}
+      triggerClassName="w-full"
+      options={[
+        { value: "", label: "-- None --" },
+        ...DEPARTMENT_OPTIONS.map((d) => ({ value: d, label: d })),
+        ...(!isKnown && trimmed !== "" ? [{ value: trimmed, label: `${trimmed} (legacy)` }] : []),
+      ]}
+    />
   );
 }
 
@@ -1231,28 +1229,28 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
               className="h-9 border-zinc-200 bg-white pl-9 text-zinc-900 transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600 dark:hover:border-zinc-700 dark:focus:border-orange-400"
             />
           </div>
-          <select
-            id="rates-department-filter"
+          <SmoothSelect
+            aria-label="Department filter"
             value={departmentFilter}
-            onChange={(e) => setDepartmentFilter(e.target.value)}
+            onChange={(v) => setDepartmentFilter(v)}
             disabled={loading || !!error}
-            className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50 sm:w-56 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:hover:border-zinc-700 dark:focus:border-orange-400"
-          >
-            <option value="all">All departments</option>
-            {departmentOptions.map((d) => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
-          <select
-            id="rates-filter"
+            triggerClassName="w-full sm:w-56"
+            options={[
+              { value: "all", label: "All departments" },
+              ...departmentOptions.map((d) => ({ value: d, label: d })),
+            ]}
+          />
+          <SmoothSelect
+            aria-label="Rate filter"
             value={rateFilter}
-            onChange={(e) => setRateFilter(e.target.value as typeof rateFilter)}
+            onChange={(v) => setRateFilter(v as typeof rateFilter)}
             disabled={loading || !!error}
-            className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 disabled:opacity-50 sm:w-48 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:hover:border-zinc-700 dark:focus:border-orange-400"
-          >
-            <option value="all">All employees</option>
-            <option value="mesa_eligible">MESA Eligible</option>
-          </select>
+            triggerClassName="w-full sm:w-48"
+            options={[
+              { value: "all", label: "All employees" },
+              { value: "mesa_eligible", label: "MESA Eligible" },
+            ]}
+          />
 
           {/* View mode toggle — sliding pill (cards | table). Hidden on mobile (table doesn't fit). */}
           <div

@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 
 export type AuditEvent = {
   id: string;
@@ -345,18 +346,19 @@ export default function AuditTrailPanel({
                 </button>
               )}
             </div>
-            <select
+            <SmoothSelect
+              aria-label="Filter by action"
               value={actionFilter}
-              onChange={(e) => { setActionFilter(e.target.value); setPage(0); }}
-              className="h-7 rounded-md border border-indigo-200/80 bg-white px-2 text-[11px] text-zinc-700 focus:outline-none focus:ring-1 focus:ring-indigo-400/60 dark:border-indigo-500/20 dark:bg-zinc-950/60 dark:text-zinc-300"
-            >
-              <option value="all">All actions</option>
-              {actionOptions.map((a) => (
-                <option key={a} value={a}>
-                  {ACTION_PRESENTATION[a]?.label ?? a}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => { setActionFilter(v); setPage(0); }}
+              triggerClassName="h-7"
+              options={[
+                { value: 'all', label: 'All actions' },
+                ...actionOptions.map((a) => ({
+                  value: a,
+                  label: ACTION_PRESENTATION[a]?.label ?? a,
+                })),
+              ]}
+            />
           </div>
 
           {loading ? (

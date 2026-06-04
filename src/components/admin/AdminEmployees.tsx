@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeRateProfile } from '@/lib/supabase/employee-rate-profiles';
 
@@ -456,20 +457,17 @@ export default function AdminEmployees() {
                   <Building2 className="h-3.5 w-3.5" aria-hidden />
                   Department
                 </span>
-                <select
-                  value={departmentFilter}
-                  onChange={(e) => setDepartmentFilter(e.target.value)}
-                  className="h-10 min-w-[10.5rem] cursor-pointer rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
+                <SmoothSelect
                   aria-label="Filter by department"
-                >
-                  <option value="__all__">All departments</option>
-                  <option value="__unassigned__">Unassigned</option>
-                  {departmentOptions.map((dep) => (
-                    <option key={dep} value={dep}>
-                      {dep}
-                    </option>
-                  ))}
-                </select>
+                  value={departmentFilter}
+                  onChange={(v) => setDepartmentFilter(v)}
+                  triggerClassName="min-w-[10.5rem]"
+                  options={[
+                    { value: '__all__', label: 'All departments' },
+                    { value: '__unassigned__', label: 'Unassigned' },
+                    ...departmentOptions.map((dep) => ({ value: dep, label: dep })),
+                  ]}
+                />
               </label>
               <div className="flex shrink-0 items-center justify-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50/80 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/40">
                 <Button

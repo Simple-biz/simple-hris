@@ -29,6 +29,7 @@ import {
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { toast } from 'sonner';
 import type { AuditLogEntry } from '@/lib/supabase/audit-log';
 
@@ -742,21 +743,17 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
             {/* Filter bar — category dropdown + search + sort + page-size */}
             <div className="mb-2 flex flex-shrink-0 flex-wrap items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50/60 px-2.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/40">
               {/* Category dropdown */}
-              <label className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                 <Layers className="h-3 w-3" />
                 Dashboard
-                <select
+                <SmoothSelect
+                  aria-label="Dashboard category"
                   value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value as CategoryId)}
-                  className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label} ({counts[c.id]})
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  onChange={(v) => setCategoryId(v as CategoryId)}
+                  triggerClassName="w-36"
+                  options={CATEGORIES.map((c) => ({ value: c.id, label: `${c.label} (${counts[c.id]})` }))}
+                />
+              </div>
 
               {/* Search */}
               <div className="relative flex items-center">
@@ -822,18 +819,16 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
                     Clear filters
                   </button>
                 )}
-                <label className="flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400">
+                <div className="flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400">
                   Per page
-                  <select
-                    value={pageSize}
-                    onChange={(e) => setPageSize(Number(e.target.value) as (typeof PAGE_SIZE_OPTIONS)[number])}
-                    className="rounded border border-zinc-200 bg-white px-1 py-0.5 text-[10px] dark:border-zinc-700 dark:bg-zinc-900"
-                  >
-                    {PAGE_SIZE_OPTIONS.map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
-                </label>
+                  <SmoothSelect
+                    aria-label="Per page"
+                    value={String(pageSize)}
+                    onChange={(v) => setPageSize(Number(v) as (typeof PAGE_SIZE_OPTIONS)[number])}
+                    triggerClassName="w-16"
+                    options={PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
+                  />
+                </div>
               </div>
             </div>
 

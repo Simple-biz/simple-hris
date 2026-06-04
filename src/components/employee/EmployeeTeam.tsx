@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Briefcase, ChevronDown, ChevronLeft, ChevronRight, Mail, Search, Shield, Users, WifiOff } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, Mail, Search, Shield, Users, WifiOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import {
   Dialog,
   DialogContent,
@@ -387,21 +388,12 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
 
             {/* Department dropdown — own department only */}
             {deptOptions.length > 0 ? (
-              <div className="relative">
-                <select
-                  value={selectedDept}
-                  onChange={(e) => setSelectedDept(e.target.value)}
-                  aria-label="Select department"
-                  className="appearance-none rounded-md border border-orange-200 bg-orange-50 py-1 pl-2.5 pr-7 text-xs font-medium text-orange-700 focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-orange-300"
-                >
-                  {deptOptions.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-orange-500/70 dark:text-orange-300/70" />
-              </div>
+              <SmoothSelect
+                aria-label="Select department"
+                value={selectedDept}
+                onChange={(v) => setSelectedDept(v)}
+                options={deptOptions.map((d) => ({ value: d, label: d }))}
+              />
             ) : (
               <Badge
                 variant="outline"

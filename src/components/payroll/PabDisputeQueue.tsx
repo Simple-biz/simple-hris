@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
@@ -494,18 +495,19 @@ export default function PabDisputeQueue() {
           </div>
         </div>
         <div className="w-full space-y-1.5 sm:w-44">
-          <Label htmlFor="dispute-status" className="text-xs text-zinc-600 dark:text-zinc-500">Status</Label>
-          <select
-            id="dispute-status"
+          <Label className="text-xs text-zinc-600 dark:text-zinc-500">Status</Label>
+          <SmoothSelect
+            aria-label="Status"
             value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value as typeof statusFilter)}
-            className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200"
-          >
-            <option value="all">All</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="denied">Denied</option>
-          </select>
+            onChange={(v) => setStatusFilter(v as typeof statusFilter)}
+            triggerClassName="w-full sm:w-44"
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'pending', label: 'Pending' },
+              { value: 'approved', label: 'Approved' },
+              { value: 'denied', label: 'Denied' },
+            ]}
+          />
         </div>
       </div>
 

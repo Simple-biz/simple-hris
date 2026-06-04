@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import {
   Dialog,
   DialogContent,
@@ -506,20 +507,15 @@ export default function CreateOrphanageStyleDisputeDialog({
           {/* ── Left: form fields ── */}
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="create-reason" className="text-xs">Reason</Label>
-              <select
-                id="create-reason"
+              <Label className="text-xs">Reason</Label>
+              <SmoothSelect
+                aria-label="Reason"
                 value={reason}
-                onChange={(e) => setReason(e.target.value as ReasonChoice)}
+                onChange={(v) => setReason(v as ReasonChoice)}
                 disabled={submitting}
-                className="h-9 w-full rounded-md border border-zinc-200 bg-white px-2 pr-8 text-xs text-zinc-700 transition-colors focus:border-pink-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:focus:border-pink-400"
-              >
-                {REASON_OPTIONS.map((r) => (
-                  <option key={r.code} value={r.code}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
+                triggerClassName="w-full"
+                options={REASON_OPTIONS.map((r) => ({ value: r.code, label: r.label }))}
+              />
             </div>
 
             <div className="space-y-1.5">
