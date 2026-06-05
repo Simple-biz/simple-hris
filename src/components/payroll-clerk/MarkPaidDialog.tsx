@@ -344,8 +344,7 @@ export default function MarkPaidDialog({ row, onClose, onConfirm }: MarkPaidDial
 
         {/* ── Status selector ───────────────────────────────────────── */}
         <div
-          className="flex flex-wrap gap-1.5 border-b border-zinc-100 px-6 py-3 dark:border-zinc-800"
-          style={{ backgroundColor: 'rgba(250,250,250,0.95)' }}
+          className="flex flex-wrap gap-1.5 border-b border-zinc-100 bg-[rgba(250,250,250,0.95)] px-6 py-3 dark:border-zinc-800 dark:bg-[rgba(24,24,27,0.95)]"
           role="radiogroup"
           aria-label="Dispatch status"
         >

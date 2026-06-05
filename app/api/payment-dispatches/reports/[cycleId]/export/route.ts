@@ -6,6 +6,7 @@ import {
 import { getEmployeeHourlyRatesRows } from "@/lib/supabase/employee-hourly-rates";
 import {
   buildDispatchExportRows,
+  buildDispatchExportRowsFromDispatches,
   dispatchExportFilename,
   dispatchRowsToCsv,
 } from "@/lib/payroll/dispatch-export-csv";
@@ -45,7 +46,12 @@ export async function GET(
   ]);
   const ratesRows = ratesErr ? [] : rates;
 
-  const exportRows = buildDispatchExportRows(records, report.dispatches, ratesRows);
+  // Urgent (MESA) weekly reports have no disbursement_records — each row is a
+  // payment_dispatch. Fall back to a dispatches-only export in that case.
+  const exportRows =
+    records.length === 0 && report.dispatches.length > 0
+      ? buildDispatchExportRowsFromDispatches(report.dispatches, ratesRows)
+      : buildDispatchExportRows(records, report.dispatches, ratesRows);
   const csv = dispatchRowsToCsv(exportRows);
   const filename = dispatchExportFilename(
     report.cycleId,

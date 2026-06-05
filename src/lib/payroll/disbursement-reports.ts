@@ -350,6 +350,233 @@ async function loadProcessorByEmail(): Promise<Map<string, string>> {
   return out;
 }
 
+/** Bucket an ISO date into its Sunday→Saturday week (matches the payroll cycle). */
+function sundayWeekRange(isoDate: string): { start: string; end: string } | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  if (Number.isNaN(d.getTime())) return null;
+  const start = new Date(d);
+  start.setUTCDate(d.getUTCDate() - d.getUTCDay());
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6);
+  const fmt = (x: Date) =>
+    `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, "0")}-${String(x.getUTCDate()).padStart(2, "0")}`;
+  return { start: fmt(start), end: fmt(end) };
+}
+
+/**
+ * Loads every "urgent" dispatch row, normalized to PaymentDispatchRow shape:
+ *   • Real `payment_dispatches` where cycle_id='urgent' (MESA disbursements).
+ *   • Approved orphanage BUDGET REQUESTS paid via `orphanage_dispatches`
+ *     (dispatch_type='budget_request'), synthesized into PaymentDispatchRow
+ *     entries: processor='wires' (paid by wire to the orphanage bank), PHP→USD
+ *     via the active FX rate, and bucketed into the Sun→Sat week they were sent
+ *     (cycle_source_file = `urgent_<weekStart>_to_<weekEnd>`) so they merge into
+ *     the same weekly bucket as MESA payouts. Gift purchases are NOT urgent and
+ *     are excluded.
+ * Both `buildUrgentWeeklyReports` (summary) and `getDisbursementReportDetail`
+ * (table) consume this, so summary totals and the detail table never diverge.
+ */
+async function loadUrgentDispatchRows(): Promise<PaymentDispatchRow[]> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return [];
+
+  const rows: PaymentDispatchRow[] = [];
+
+  // 1. Real urgent payment_dispatches (MESA).
+  const { data: pd } = await supabase
+    .from("payment_dispatches")
+    .select("*")
+    .eq("cycle_id", "urgent")
+    .order("created_at", { ascending: false });
+  rows.push(...((pd ?? []) as PaymentDispatchRow[]));
+
+  // 2. FX rate (PHP → USD) for converting orphanage budget amounts.
+  const { data: fxData } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "usd_to_php_rate")
+    .maybeSingle();
+  const fx = parseFloat((fxData as { value?: string } | null)?.value ?? "0") || 0;
+
+  // 3. Paid/problem orphanage BUDGET requests → synthetic urgent rows.
+  const { data: orph } = await supabase
+    .from("orphanage_dispatches")
+    .select(
+      "id, label, submitter_email, bank_name, bank_account_name, bank_account_number, swift_code, amount_php, status, transaction_id, bank_used, sent_date, note, paid_by, created_by, paid_at, created_at",
+    )
+    .eq("dispatch_type", "budget_request")
+    .in("status", ["paid", "problem"]);
+
+  for (const o of (orph ?? []) as Array<{
+    id: string;
+    label: string | null;
+    submitter_email: string;
+    bank_name: string | null;
+    bank_account_name: string | null;
+    bank_account_number: string | null;
+    swift_code: string | null;
+    amount_php: number | string | null;
+    status: "paid" | "problem";
+    transaction_id: string | null;
+    bank_used: string | null;
+    sent_date: string | null;
+    note: string | null;
+    paid_by: string | null;
+    created_by: string | null;
+    paid_at: string | null;
+    created_at: string;
+  }>) {
+    const basis =
+      o.sent_date ??
+      (o.paid_at ? o.paid_at.slice(0, 10) : null) ??
+      (o.created_at ? o.created_at.slice(0, 10) : null);
+    const wk = basis ? sundayWeekRange(basis) : null;
+    const amountPhp = num(o.amount_php);
+    rows.push({
+      id: o.id,
+      cycle_id: "urgent",
+      cycle_period_start: wk?.start ?? null,
+      cycle_period_end: wk?.end ?? null,
+      cycle_source_file: wk ? `urgent_${wk.start}_to_${wk.end}` : "mesa_urgent",
+      recipient_email: o.submitter_email,
+      recipient_name: o.label,
+      processor: "wires",
+      bank_preferred_raw: null,
+      recipient_preferred_bank: o.bank_name ?? null,
+      recipient_account_number: o.bank_account_number ?? null,
+      recipient_account_holder: o.bank_account_name ?? null,
+      recipient_swift_code: o.swift_code ?? null,
+      amount_usd: fx > 0 ? Math.round((amountPhp / fx) * 100) / 100 : null,
+      amount_php: amountPhp,
+      transaction_id: o.transaction_id ?? "",
+      bank_used: o.bank_used ?? "",
+      sent_date: basis ?? "",
+      arrival_date: null,
+      status: o.status,
+      note: o.note,
+      created_by: o.paid_by ?? o.created_by ?? null,
+      created_at: o.created_at,
+    });
+  }
+
+  return rows;
+}
+
+/**
+ * Synthesizes weekly "Urgent Payments" report summaries from the combined
+ * urgent dispatch rows (MESA disbursements + orphanage budget requests, see
+ * `loadUrgentDispatchRows`). Each is bucketed into the Sun→Sat week it was sent
+ * (cycle_source_file = `urgent_<weekStart>_to_<weekEnd>`), so grouping by
+ * cycle_source_file yields one report per week — listed alongside the regular
+ * Hubstaff cycle reports. There are no disbursement_records for these, so the
+ * detail view's outstanding query simply returns empty for them.
+ */
+async function buildUrgentWeeklyReports(): Promise<DisbursementReportSummary[]> {
+  const data = await loadUrgentDispatchRows();
+  if (data.length === 0) return [];
+
+  type Bucket = {
+    sourceFile: string;
+    periodStart: string | null;
+    periodEnd: string | null;
+    latestCreatedAt: string;
+    latestCreatedBy: string | null;
+    totals: DisbursementReportTotals;
+    byProcessor: Record<string, { count: number; usd: number }>;
+    paidByEmail: Map<string, DisbursementReportRecipient>;
+  };
+  const buckets = new Map<string, Bucket>();
+
+  for (const d of data) {
+    const sourceFile = d.cycle_source_file || "mesa_urgent";
+    let bucket = buckets.get(sourceFile);
+    if (!bucket) {
+      bucket = {
+        sourceFile,
+        periodStart: d.cycle_period_start || null,
+        periodEnd: d.cycle_period_end || null,
+        latestCreatedAt: d.created_at,
+        latestCreatedBy: d.created_by,
+        totals: EMPTY_TOTALS(),
+        byProcessor: {},
+        paidByEmail: new Map(),
+      };
+      buckets.set(sourceFile, bucket);
+    }
+    if (d.created_at > bucket.latestCreatedAt) {
+      bucket.latestCreatedAt = d.created_at;
+      bucket.latestCreatedBy = d.created_by;
+    }
+
+    const owedUSD = num(d.amount_usd);
+    const t = bucket.totals;
+    t.totalRecipients += 1;
+    t.totalOwedUSD += owedUSD;
+    t.sentCount += 1;
+    t.totalDispatchedUSD += owedUSD;
+    if (d.status === "paid") {
+      t.paidCount += 1;
+      t.paidUSD += owedUSD;
+      t.paidPHP += num(d.amount_php);
+      const proc = d.processor || "unknown";
+      const acc = bucket.byProcessor[proc] ?? { count: 0, usd: 0 };
+      acc.count += 1;
+      acc.usd += owedUSD;
+      bucket.byProcessor[proc] = acc;
+      const emailKey = d.recipient_email.trim().toLowerCase();
+      const existing = bucket.paidByEmail.get(emailKey);
+      if (existing) {
+        existing.amountUSD += owedUSD;
+        if (!existing.name && d.recipient_name) existing.name = d.recipient_name;
+      } else {
+        bucket.paidByEmail.set(emailKey, {
+          email: d.recipient_email,
+          name: d.recipient_name,
+          amountUSD: owedUSD,
+        });
+      }
+    } else {
+      if (d.status === "not_paid") t.notPaidCount += 1;
+      else if (d.status === "threshold") t.thresholdCount += 1;
+      else if (d.status === "problem") t.problemCount += 1;
+      t.pendingDispatchedUSD += owedUSD;
+    }
+  }
+
+  const out: DisbursementReportSummary[] = [];
+  for (const bucket of buckets.values()) {
+    let { periodStart, periodEnd } = bucket;
+    if (!periodStart || !periodEnd) {
+      const fromName = periodFromFilename(bucket.sourceFile);
+      periodStart = periodStart ?? fromName.start;
+      periodEnd = periodEnd ?? fromName.end;
+    }
+    const range = formatDisbursementReportName(periodStart, periodEnd, bucket.sourceFile);
+    const paidRecipients = Array.from(bucket.paidByEmail.values()).sort((a, b) => {
+      const an = (a.name ?? a.email).toLocaleLowerCase();
+      const bn = (b.name ?? b.email).toLocaleLowerCase();
+      return an.localeCompare(bn);
+    });
+    out.push({
+      cycleId: `source:${bucket.sourceFile}`,
+      periodStart,
+      periodEnd,
+      sourceFile: bucket.sourceFile,
+      uploadedAt: bucket.latestCreatedAt,
+      uploadedBy: bucket.latestCreatedBy,
+      rowCount: bucket.totals.totalRecipients,
+      isCurrent: false,
+      reportName: `Urgent · ${range}`,
+      totals: bucket.totals,
+      byProcessor: bucket.byProcessor,
+      paidRecipients,
+    });
+  }
+  return out;
+}
+
 export async function listDisbursementReports(): Promise<{
   reports: DisbursementReportSummary[];
   error: string | null;
@@ -484,6 +711,15 @@ export async function listDisbursementReports(): Promise<{
   const unseededCount = uploads.filter(
     (u) => u.source_file && !seededSources.has(u.source_file),
   ).length;
+
+  // Append synthesized weekly urgent (MESA) reports — these live in
+  // payment_dispatches (cycle_id='urgent'), not disbursement_records, and are
+  // additive: a failure here must not break the regular cycle reports.
+  try {
+    reports.push(...(await buildUrgentWeeklyReports()));
+  } catch (e) {
+    console.warn("[disbursement-reports] buildUrgentWeeklyReports failed:", e);
+  }
 
   // Newest period first.
   reports.sort((a, b) => (b.periodStart ?? "").localeCompare(a.periodStart ?? ""));
@@ -717,6 +953,18 @@ export async function getDisbursementReportDetail(
   if (!supabase) {
     return {
       report: { ...summary, dispatches: [], outstanding: [], outstandingUSD: 0 },
+      error: null,
+    };
+  }
+
+  // Urgent (MESA + orphanage budget) weeks have no disbursement_records — the
+  // dispatch rows come from the same combined loader the summary was built
+  // from, filtered to this week's bucket. No outstanding for urgent reports.
+  if (summary.sourceFile.startsWith("urgent_")) {
+    const all = await loadUrgentDispatchRows();
+    const dispatches = all.filter((d) => d.cycle_source_file === summary.sourceFile);
+    return {
+      report: { ...summary, dispatches, outstanding: [], outstandingUSD: 0 },
       error: null,
     };
   }

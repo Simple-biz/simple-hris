@@ -22,6 +22,79 @@
   40%           { transform: translateY(-5px); opacity: 1; }
 }
 
+/* ============================================================================
+   Urgent processor card — a live "pay now" beacon.
+   Every layer is CSS-driven (not motion's JS) so React re-renders can't reset a
+   loop mid-cycle, and only opacity / transform / a registered <angle> animate,
+   so the whole thing stays GPU-composited and smooth.
+   ========================================================================== */
+
+@property --urgent-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* (1) Soft amber halo breathing behind the card. */
+@keyframes urgent-glow-pulse {
+  0%, 100% { opacity: 0.4;  transform: scale(0.92); }
+  50%      { opacity: 0.95; transform: scale(1.08); }
+}
+.urgent-glow-pulse {
+  animation: urgent-glow-pulse 2.4s ease-in-out infinite;
+}
+
+/* (2) Rotating conic rim hugging the card edge. The mask keeps the gradient in
+   the 1.5px border band only, so it reads as a crisp animated ring regardless
+   of the card's own (possibly translucent) background. */
+@keyframes urgent-ring-spin {
+  to { --urgent-angle: 360deg; }
+}
+.urgent-ring {
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--urgent-angle),
+    transparent 0deg,
+    rgba(245, 158, 11, 0) 30deg,
+    #f59e0b 90deg,
+    #fb923c 125deg,
+    #fde68a 155deg,
+    rgba(245, 158, 11, 0) 215deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: urgent-ring-spin 4.2s linear infinite;
+}
+
+/* (3) Energy sheen glinting diagonally across the surface, then resting. */
+@keyframes urgent-sheen {
+  0%        { transform: translateX(-140%) skewX(-14deg); opacity: 0; }
+  12%       { opacity: 1; }
+  45%, 100% { transform: translateX(260%)  skewX(-14deg); opacity: 0; }
+}
+.urgent-sheen {
+  animation: urgent-sheen 4s ease-in-out infinite;
+}
+
+/* (4) Lightning bolt flickering with a faint amber bloom. */
+@keyframes urgent-zap {
+  0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 0 rgba(255, 251, 235, 0)); }
+  50%      { transform: scale(1.14); filter: drop-shadow(0 0 5px rgba(255, 251, 235, 0.9)); }
+}
+.urgent-zap {
+  animation: urgent-zap 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .urgent-glow-pulse { animation: none; opacity: 0.7; }
+  .urgent-ring       { animation: none; --urgent-angle: 130deg; }
+  .urgent-sheen      { animation: none; opacity: 0; }
+  .urgent-zap        { animation: none; }
+}
+
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;

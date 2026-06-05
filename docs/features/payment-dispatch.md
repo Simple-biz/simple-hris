@@ -4,6 +4,8 @@
 
 This document covers the entire Payment Dispatch feature: the UI Lenny uses, the live "payroll being processed" lock employees see, the per-cycle dispatch log, and every supporting migration / API / hook.
 
+> **Related:** non-weekly payouts that bypass this cycle (MESA disbursements + orphanage budget requests) live in the **URGENT** tab — see [urgent-payments.md](./urgent-payments.md).
+
 ---
 
 ## 1. Origin

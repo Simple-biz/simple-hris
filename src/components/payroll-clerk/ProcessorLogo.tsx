@@ -13,6 +13,8 @@ interface ProcessorLogoProps {
   className?: string;
   /** Monogram-on-gradient OR icon-on-gradient. */
   fallback?: 'monogram' | 'icon';
+  /** Extra classes for the rendered fallback icon (e.g. an urgent pulse). */
+  iconClassName?: string;
 }
 
 /**
@@ -24,6 +26,7 @@ export default function ProcessorLogo({
   FallbackIcon,
   className,
   fallback = 'monogram',
+  iconClassName,
 }: ProcessorLogoProps) {
   return (
     <div
@@ -36,7 +39,7 @@ export default function ProcessorLogo({
       {fallback === 'monogram' ? (
         <span className="text-[13px] font-bold tracking-tight">{monogram}</span>
       ) : (
-        <FallbackIcon className="h-4 w-4" />
+        <FallbackIcon className={cn('h-4 w-4', iconClassName)} />
       )}
     </div>
   );

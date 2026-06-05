@@ -694,6 +694,12 @@ export default function PayrollWizard({
   const [previewSearch, setPreviewSearch] = useState('');
   const [previewTab, setPreviewTab] = useState<'paystubs' | 'orphanage' | 'contractors'>('paystubs');
   const [previewSelectedOrphanageId, setPreviewSelectedOrphanageId] = useState<string | null>(null);
+  const [previewPage, setPreviewPage] = useState(1);
+  // Reset pagination whenever the active tab or search query changes so the
+  // user always lands back on the first page of the new result set.
+  useEffect(() => {
+    setPreviewPage(1);
+  }, [previewTab, previewSearch]);
   const [isDispatching, setIsDispatching] = useState(false);
   const [pendingWeekly, setPendingWeekly] = useState<{
     text: string;
@@ -10411,10 +10417,20 @@ export default function PayrollWizard({
             setPreviewSelectedOrphanageId(null);
             setPreviewSearch('');
             setPreviewTab('paystubs');
+            setPreviewPage(1);
           }
         }}
       >
-        <DialogContent className="overflow-hidden rounded-2xl border-zinc-200 bg-white p-0 sm:max-w-md dark:border-zinc-800 dark:bg-zinc-950">
+        <DialogContent
+          className={cn(
+            'overflow-hidden rounded-2xl border-zinc-200 bg-white p-0 dark:border-zinc-800 dark:bg-zinc-950',
+            // Narrow column for the single-email preview (it renders like an
+            // email); wide horizontal layout for the recipient list.
+            previewSelectedEmail || previewSelectedOrphanageId
+              ? 'sm:max-w-md'
+              : 'w-[95vw] sm:max-w-3xl',
+          )}
+        >
           {(() => {
             const selectedOrphanage = previewSelectedOrphanageId
               ? orphanagePreviewItems.find((r) => r.id === previewSelectedOrphanageId) ?? null
@@ -11028,6 +11044,33 @@ export default function PayrollWizard({
                   );
                 })
               : orphanagePreviewItems;
+            const approvedContractors = contractorInvoices.filter((i) => i.status === 'approved');
+            const filteredContractors = needle
+              ? approvedContractors.filter((inv) =>
+                  [inv.contractor_email, inv.from_entity_name, inv.from_name, inv.invoice_number]
+                    .join(' ')
+                    .toLowerCase()
+                    .includes(needle),
+                )
+              : approvedContractors;
+
+            // Pagination — applies to whichever tab is active. The horizontal
+            // modal fits two columns, so a 12-per-page window keeps each page to
+            // ~6 rows and avoids one endless scroll of recipients.
+            const orphanageBusy = orphanageLoading || budgetRequestsLoading || giftPaymentsLoading;
+            const activeCount =
+              previewTab === 'paystubs'
+                ? filteredPaystubs.length
+                : previewTab === 'contractors'
+                ? filteredContractors.length
+                : filteredOrphanage.length;
+            const PREVIEW_PAGE_SIZE = 12;
+            const previewTotalPages = Math.max(1, Math.ceil(activeCount / PREVIEW_PAGE_SIZE));
+            const previewSafePage = Math.min(Math.max(1, previewPage), previewTotalPages);
+            const pageStart = (previewSafePage - 1) * PREVIEW_PAGE_SIZE;
+            const pageEnd = pageStart + PREVIEW_PAGE_SIZE;
+            const pageFirst = activeCount === 0 ? 0 : pageStart + 1;
+            const pageLast = Math.min(pageEnd, activeCount);
             return (
               <>
                 <DialogHeader className="px-6 pt-6">
@@ -11099,7 +11142,7 @@ export default function PayrollWizard({
                     className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
                   />
                 </div>
-                <div className="max-h-[60vh] overflow-y-auto px-6 pb-6 pt-2">
+                <div className="min-h-[220px] max-h-[55vh] overflow-y-auto px-6 pb-4 pt-3">
                   {previewTab === 'paystubs' ? (
                     filteredPaystubs.length === 0 ? (
                       <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
@@ -11108,9 +11151,12 @@ export default function PayrollWizard({
                           : `No employees match “${previewSearch}”.`}
                       </div>
                     ) : (
-                      <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                        {filteredPaystubs.map((e) => (
-                          <div key={e.email} className="flex items-center justify-between gap-3 py-3">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {filteredPaystubs.slice(pageStart, pageEnd).map((e) => (
+                          <div
+                            key={e.email}
+                            className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40"
+                          >
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium text-zinc-900 dark:text-white">
                                 {e.name}
@@ -11132,18 +11178,19 @@ export default function PayrollWizard({
                       </div>
                     )
                   ) : previewTab === 'contractors' ? (
-                    contractorInvoices.filter(i => i.status === 'approved').length === 0 ? (
+                    filteredContractors.length === 0 ? (
                       <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">
-                        No approved contractor invoices queued for dispatch.
+                        {approvedContractors.length === 0
+                          ? 'No approved contractor invoices queued for dispatch.'
+                          : `No invoices match “${previewSearch}”.`}
                       </div>
                     ) : (
-                      <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                        {contractorInvoices.filter(i => i.status === 'approved').filter(inv =>
-                          !previewSearch.trim() ||
-                          [inv.contractor_email, inv.from_entity_name, inv.from_name, inv.invoice_number]
-                            .join(' ').toLowerCase().includes(previewSearch.trim().toLowerCase())
-                        ).map((inv) => (
-                          <div key={inv.id} className="flex items-center justify-between gap-3 py-3">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {filteredContractors.slice(pageStart, pageEnd).map((inv) => (
+                          <div
+                            key={inv.id}
+                            className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40"
+                          >
                             <div className="min-w-0 flex-1">
                               <div className="truncate text-sm font-medium text-zinc-900 dark:text-white">
                                 {inv.from_entity_name || inv.from_name || inv.contractor_email}
@@ -11156,7 +11203,7 @@ export default function PayrollWizard({
                         ))}
                       </div>
                     )
-                  ) : orphanageLoading || budgetRequestsLoading || giftPaymentsLoading ? (
+                  ) : orphanageBusy ? (
                     <div className="flex items-center justify-center gap-2 py-8 text-sm text-zinc-500 dark:text-zinc-400">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Loading orphanage receipts…
@@ -11168,8 +11215,8 @@ export default function PayrollWizard({
                         : `No receipts match “${previewSearch}”.`}
                     </div>
                   ) : (
-                    <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                      {filteredOrphanage.map((r) => {
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {filteredOrphanage.slice(pageStart, pageEnd).map((r) => {
                         const meta = orphanagePreviewItemMeta(r);
                         const typeAccent = (() => {
                           switch (r.kind) {
@@ -11179,7 +11226,10 @@ export default function PayrollWizard({
                           }
                         })();
                         return (
-                          <div key={r.id} className="flex items-center justify-between gap-3 py-3">
+                          <div
+                            key={r.id}
+                            className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40"
+                          >
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2">
                                 <span className={cn('shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide', typeAccent)}>
@@ -11208,6 +11258,44 @@ export default function PayrollWizard({
                     </div>
                   )}
                 </div>
+                {!(previewTab === 'orphanage' && orphanageBusy) && activeCount > 0 && (
+                  <div className="flex items-center justify-between gap-3 border-t border-zinc-200 px-6 py-3 dark:border-zinc-800">
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                      Showing{' '}
+                      <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                        {pageFirst}–{pageLast}
+                      </span>{' '}
+                      of {activeCount}
+                    </span>
+                    {previewTotalPages > 1 && (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1 px-2"
+                          disabled={previewSafePage <= 1}
+                          onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          Prev
+                        </Button>
+                        <span className="min-w-[64px] text-center text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                          {previewSafePage} / {previewTotalPages}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1 px-2"
+                          disabled={previewSafePage >= previewTotalPages}
+                          onClick={() => setPreviewPage((p) => Math.min(previewTotalPages, p + 1))}
+                        >
+                          Next
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             );
           })()}

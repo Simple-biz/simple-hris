@@ -8,9 +8,32 @@ import { deniedResponse, requireElevatedSession } from '@/lib/auth/authorize-ema
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+const KNOWN_PROCESSORS = new Set(['hurupay', 'wepay', 'higlobe', 'wise', 'jeeves', 'wires']);
+
+/**
+ * Bucket a sent date into its Sunday→Saturday payroll week. Urgent payments
+ * reconcile weekly alongside the regular Hubstaff cycles (which also run
+ * Sun→Sat, e.g. 2026-04-12_to_2026-04-18), so we group by the same boundaries.
+ */
+function sundayWeekRange(isoDate: string): { start: string; end: string } | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  if (Number.isNaN(d.getTime())) return null;
+  const start = new Date(d);
+  start.setUTCDate(d.getUTCDate() - d.getUTCDay()); // back up to Sunday
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6); // Saturday
+  const fmt = (x: Date) =>
+    `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, '0')}-${String(x.getUTCDate()).padStart(2, '0')}`;
+  return { start: fmt(start), end: fmt(end) };
+}
+
 // POST /api/mesa-requests/[id]/dispatch
 // Accounting/payroll-clerk: mark an approved MESA disbursement as dispatched
-// and create a payment_dispatches record with cycle_id='urgent'.
+// and create a payment_dispatches record with cycle_id='urgent'. The dispatch
+// is bucketed into the Sun→Sat week it was sent (cycle_source_file =
+// `urgent_<weekStart>_to_<weekEnd>`) so it surfaces as a weekly report.
 // Body mirrors the payment-dispatches POST body minus cycle fields.
 export async function POST(
   request: Request,
@@ -27,6 +50,7 @@ export async function POST(
       recipient_email?: string;
       recipient_name?: string | null;
       amount_php?: number | null;
+      processor?: string | null;
       transaction_id?: string;
       bank_used?: string;
       sent_date?: string;
@@ -70,14 +94,39 @@ export async function POST(
 
     const actor = await getSessionActor();
 
+    // Processor the clerk chose to pay through (defaults to Wise — MESA payouts
+    // are primarily Wise, but the Urgent queue lets them pick per recipient).
+    const processor = KNOWN_PROCESSORS.has((body.processor ?? '').toLowerCase())
+      ? (body.processor as string).toLowerCase()
+      : 'wise';
+
+    // Bucket into the Sun→Sat week it's being sent so it reconciles weekly.
+    const week = sundayWeekRange(body.sent_date!);
+    const cycleSourceFile = week ? `urgent_${week.start}_to_${week.end}` : 'mesa_urgent';
+
+    // Convert the PHP disbursement to USD via the active FX rate so the weekly
+    // report totals (which are USD-centric) include it.
+    let amountUsd: number | null = null;
+    if (body.amount_php != null) {
+      const { data: fxData } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'usd_to_php_rate')
+        .maybeSingle();
+      const fx = parseFloat((fxData as { value?: string } | null)?.value ?? '0') || 0;
+      if (fx > 0) amountUsd = Math.round((body.amount_php / fx) * 100) / 100;
+    }
+
     // Create the payment_dispatches record
     const { row: dispatch, error: dispatchErr } = await insertPaymentDispatch({
       cycle_id: 'urgent',
-      cycle_source_file: 'mesa_urgent',
+      cycle_source_file: cycleSourceFile,
+      cycle_period_start: week?.start ?? null,
+      cycle_period_end: week?.end ?? null,
       recipient_email: body.recipient_email!,
       recipient_name: body.recipient_name ?? null,
-      processor: 'wise',
-      amount_usd: null,
+      processor,
+      amount_usd: amountUsd,
       amount_php: body.amount_php ?? null,
       transaction_id: body.transaction_id!,
       bank_used: body.bank_used!,
@@ -125,6 +174,9 @@ export async function POST(
         mesa_request_id: id,
         recipient_email: body.recipient_email,
         amount_php: body.amount_php ?? null,
+        amount_usd: amountUsd,
+        processor,
+        cycle_source_file: cycleSourceFile,
         transaction_id: body.transaction_id,
         bank_used: body.bank_used,
         sent_date: body.sent_date,

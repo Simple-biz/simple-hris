@@ -46,6 +46,37 @@ function reasonLabel(code: string): string {
   return TIME_ADJUSTMENT_REASONS.find((r) => r.code === code)?.label ?? code;
 }
 
+// Render decimal hours as a human "8h 30m" string.
+function fmtHM(dec: number): string {
+  const totalMin = Math.round(dec * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
+
+// Combine hour + minute input strings into a single decimal-hours value (or null if both blank).
+function toDecimalHours(h: string, m: string): number | null {
+  const hTrim = h.trim();
+  const mTrim = m.trim();
+  if (!hTrim && !mTrim) return null;
+  const hh = hTrim ? parseInt(hTrim, 10) : 0;
+  const mm = mTrim ? parseInt(mTrim, 10) : 0;
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  return hh + mm / 60;
+}
+
+// Split a stored decimal-hours draft string back into hour/minute field values.
+function splitHM(decStr: string): { h: string; m: string } {
+  const trimmed = decStr.trim();
+  if (!trimmed) return { h: '', m: '' };
+  const dec = parseFloat(trimmed);
+  if (!Number.isFinite(dec)) return { h: '', m: '' };
+  const total = Math.round(dec * 60);
+  return { h: String(Math.floor(total / 60)), m: String(total % 60) };
+}
+
 export default function TimeAdjustmentReviewPanel({
   deptName,
   adjustments,
@@ -153,6 +184,7 @@ export default function TimeAdjustmentReviewPanel({
         {/* Actionable: manager already approved, Accounting can decide */}
         {actionable.map((a) => {
           const draft = hoursDraft[a.id] ?? (a.requested_hours != null ? String(a.requested_hours) : '');
+          const draftHM = splitHM(draft);
           const isDeciding = decidingId === a.id;
           return (
             <div
@@ -169,7 +201,7 @@ export default function TimeAdjustmentReviewPanel({
                     {a.requested_hours != null && (
                       <>
                         <span className="mx-1.5 text-zinc-300">&middot;</span>
-                        requested {a.requested_hours}h
+                        requested {fmtHM(a.requested_hours)}
                       </>
                     )}
                     {a.period_label && (
@@ -227,18 +259,37 @@ export default function TimeAdjustmentReviewPanel({
 
               {/* Decision controls */}
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">Set hours</label>
+                <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">Set time</label>
                 <Input
                   type="number"
                   min={0}
                   max={24}
-                  step={0.5}
-                  value={draft}
-                  onChange={(e) => setHoursDraft((prev) => ({ ...prev, [a.id]: e.target.value }))}
+                  step={1}
+                  value={draftHM.h}
+                  onChange={(e) => {
+                    const dec = toDecimalHours(e.target.value, draftHM.m);
+                    setHoursDraft((prev) => ({ ...prev, [a.id]: dec == null ? '' : String(dec) }));
+                  }}
                   placeholder="e.g. 8"
                   disabled={locked}
-                  className="h-8 w-24"
+                  className="h-8 w-16"
                 />
+                <span className="text-[11px] text-zinc-500 dark:text-zinc-400">hr</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={59}
+                  step={5}
+                  value={draftHM.m}
+                  onChange={(e) => {
+                    const dec = toDecimalHours(draftHM.h, e.target.value);
+                    setHoursDraft((prev) => ({ ...prev, [a.id]: dec == null ? '' : String(dec) }));
+                  }}
+                  placeholder="e.g. 30"
+                  disabled={locked}
+                  className="h-8 w-16"
+                />
+                <span className="text-[11px] text-zinc-500 dark:text-zinc-400">min</span>
                 <Button
                   size="sm"
                   className="h-8 bg-emerald-600 text-white hover:bg-emerald-700"
@@ -280,7 +331,7 @@ export default function TimeAdjustmentReviewPanel({
                 <span className="text-zinc-400">&middot;</span>
                 <span className="text-zinc-500">{reasonLabel(a.reason)}</span>
                 {a.requested_hours != null && (
-                  <span className="ml-auto text-zinc-500">{a.requested_hours}h requested</span>
+                  <span className="ml-auto text-zinc-500">{fmtHM(a.requested_hours)} requested</span>
                 )}
               </div>
             ))}
@@ -302,7 +353,7 @@ export default function TimeAdjustmentReviewPanel({
                   <span className="truncate text-zinc-500">{a.work_email}</span>
                   <Badge variant="outline" className={`${STATUS_BADGE[a.status] ?? ''} ml-auto`}>
                     {STATUS_LABEL[a.status] ?? a.status}
-                    {a.status === 'approved' && a.approved_hours != null ? ` · ${a.approved_hours}h` : ''}
+                    {a.status === 'approved' && a.approved_hours != null ? ` · ${fmtHM(a.approved_hours)}` : ''}
                   </Badge>
                   {isDenied && (
                     <button

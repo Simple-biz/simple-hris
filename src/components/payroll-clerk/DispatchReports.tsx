@@ -167,8 +167,6 @@ export default function DispatchReports() {
   const [search, setSearch] = useState('');
   const [orphanageRows, setOrphanageRows] = useState<OrphanageDispatchRow[]>([]);
   const [orphanageLoading, setOrphanageLoading] = useState(true);
-  const [urgentRows, setUrgentRows] = useState<PaymentDispatchRow[]>([]);
-  const [urgentLoading, setUrgentLoading] = useState(true);
   const [unseededCount, setUnseededCount] = useState(0);
   const [seeding, setSeeding] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
@@ -240,22 +238,6 @@ export default function DispatchReports() {
     })();
   }, []);
 
-  // Fetch MESA urgent payment dispatches (cycle_id = 'urgent')
-  useEffect(() => {
-    (async () => {
-      setUrgentLoading(true);
-      try {
-        const res = await fetch('/api/payment-dispatches?cycle_id=urgent', { cache: 'no-store' });
-        const json = (await res.json()) as { rows?: PaymentDispatchRow[]; error?: string };
-        if (!json.error) setUrgentRows(json.rows ?? []);
-      } catch {
-        // non-fatal — urgent section silently omitted
-      } finally {
-        setUrgentLoading(false);
-      }
-    })();
-  }, []);
-
   const filteredSummaries = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return summaries;
@@ -316,7 +298,7 @@ export default function DispatchReports() {
               Disbursement reports
             </h1>
             <p className="mt-1 text-xs text-[#71717a] dark:text-zinc-500">
-              Weekly payroll cycles and orphanage payments.
+              Weekly payroll cycles, urgent (MESA) payouts, and orphanage payments.
             </p>
           </div>
           <div className="hidden items-center gap-1.5 rounded-full border border-orange-200/80 bg-white/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300 sm:inline-flex">
@@ -399,12 +381,7 @@ export default function DispatchReports() {
           <OrphanageReportsPanel rows={orphanageRows} loading={orphanageLoading} />
         )}
 
-        {/* Urgent MESA disbursements panel */}
-        {(urgentRows.length > 0 || urgentLoading) && (
-          <UrgentReportsPanel rows={urgentRows} loading={urgentLoading} />
-        )}
-
-        {/* Payroll reports */}
+        {/* Payroll + weekly urgent (MESA) reports */}
         {loading ? (
           <ReportListSkeleton />
         ) : error ? (
@@ -585,6 +562,7 @@ function ReportCard({
   onOpen: () => void;
 }) {
   const { totals } = report;
+  const isUrgent = report.sourceFile?.startsWith('urgent_') ?? false;
   return (
     <motion.li
       variants={{
@@ -601,12 +579,20 @@ function ReportCard({
         onClick={onOpen}
         className={cn(
           'group relative flex h-full w-full flex-col gap-3 overflow-hidden rounded-2xl border bg-white p-4 text-left shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08)] transition-shadow hover:shadow-[0_10px_28px_-12px_rgba(255,138,76,0.25)] dark:border-zinc-800 dark:bg-zinc-950',
-          report.isCurrent
-            ? 'border-orange-200 ring-1 ring-orange-100/60 dark:border-orange-900/40 dark:ring-orange-900/20'
-            : 'border-[#ececec]',
+          isUrgent
+            ? 'border-amber-200 ring-1 ring-amber-100/60 dark:border-amber-900/40 dark:ring-amber-900/20'
+            : report.isCurrent
+              ? 'border-orange-200 ring-1 ring-orange-100/60 dark:border-orange-900/40 dark:ring-orange-900/20'
+              : 'border-[#ececec]',
         )}
       >
-        {report.isCurrent && (
+        {isUrgent && (
+          <span className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:border-amber-900/40 dark:from-amber-950/40 dark:to-orange-950/30 dark:text-amber-300">
+            <Zap className="h-2.5 w-2.5" />
+            Urgent
+          </span>
+        )}
+        {!isUrgent && report.isCurrent && (
           <span className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full border border-orange-200 bg-gradient-to-br from-orange-50 to-rose-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:border-orange-900/40 dark:from-orange-950/40 dark:to-rose-950/30 dark:text-orange-300">
             <span className="relative flex h-1.5 w-1.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-70" />
@@ -617,8 +603,11 @@ function ReportCard({
         )}
 
         <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-rose-500 text-white shadow-md">
-            <CalendarDays className="h-5 w-5" />
+          <div className={cn(
+            'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-md bg-gradient-to-br',
+            isUrgent ? 'from-amber-500 to-orange-600' : 'from-orange-500 to-rose-500',
+          )}>
+            {isUrgent ? <Zap className="h-5 w-5" /> : <CalendarDays className="h-5 w-5" />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold tracking-tight text-zinc-900 dark:text-white">
@@ -758,6 +747,7 @@ function ReportDetail({
   onBack: () => void;
 }) {
   const { totals } = report;
+  const isUrgent = report.sourceFile?.startsWith('urgent_') ?? false;
   const totalPending =
     totals.notPaidCount + totals.thresholdCount + totals.problemCount;
   const [markingPaid, setMarkingPaid] = useState(false);
@@ -841,7 +831,7 @@ function ReportDetail({
                 Current cycle
               </span>
             )}
-            {(totals.notPaidCount > 0 || totals.thresholdCount > 0 || totals.problemCount > 0 || (report.outstanding && report.outstanding.length > 0)) && (
+            {!isUrgent && (totals.notPaidCount > 0 || totals.thresholdCount > 0 || totals.problemCount > 0 || (report.outstanding && report.outstanding.length > 0)) && (
               <div className="flex flex-col items-end gap-1">
                 <Button
                   variant="outline"
@@ -1490,99 +1480,6 @@ function OrphanageReportsPanel({
   );
 }
 
-// ─── Urgent MESA Disbursements Panel ─────────────────────────────────────────
-
-function UrgentReportsPanel({
-  rows,
-  loading,
-}: {
-  rows: PaymentDispatchRow[];
-  loading: boolean;
-}) {
-  const totalPHP = rows
-    .filter((r) => r.status === 'paid')
-    .reduce((sum, r) => sum + (r.amount_php ?? 0), 0);
-
-  return (
-    <section className="mb-6 overflow-hidden rounded-2xl border border-amber-200/70 bg-white shadow-sm dark:border-amber-800/30 dark:bg-zinc-900/60">
-      <div className="flex items-center gap-3 border-b border-amber-100 bg-gradient-to-r from-amber-50/80 to-orange-50/40 px-4 py-3 dark:border-amber-900/30 dark:from-amber-950/30 dark:to-orange-950/20">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300">
-          <Zap className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-300">
-            Urgent Payments
-          </p>
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            MESA Disbursements
-          </h3>
-        </div>
-        {!loading && rows.length > 0 && (
-          <div className="text-right">
-            <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-              Total sent
-            </div>
-            <div className="font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-              {totalPHP.toLocaleString('en-PH', { style: 'currency', currency: 'PHP', minimumFractionDigits: 2 })}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {loading ? (
-        <div className="flex items-center gap-2 px-4 py-4 text-[11px] text-zinc-400 dark:text-zinc-500">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Loading urgent payments&hellip;
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="px-4 py-4 text-[11px] text-zinc-400 dark:text-zinc-500">
-          No MESA disbursements dispatched yet.
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="border-b border-amber-100/80 bg-amber-50/40 text-[10.5px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-900/30 dark:bg-amber-950/20 dark:text-amber-400">
-              <tr>
-                <th className="px-4 py-2.5">Recipient</th>
-                <th className="px-4 py-2.5 text-right">Amount (PHP)</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5">Bank used</th>
-                <th className="px-4 py-2.5">Sent</th>
-                <th className="px-4 py-2.5">Transaction ID</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-amber-100/60 dark:divide-amber-900/20">
-              {rows.map((r) => (
-                <tr key={r.id} className="transition-colors hover:bg-amber-50/40 dark:hover:bg-amber-950/20">
-                  <td className="px-4 py-3" data-label="Recipient">
-                    <div className="font-medium text-zinc-900 dark:text-zinc-100">
-                      {r.recipient_name ?? r.recipient_email}
-                    </div>
-                    <div className="mt-0.5 font-mono text-[10.5px] text-zinc-500">{r.recipient_email}</div>
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums font-medium text-zinc-900 dark:text-zinc-100" data-label="Amount">
-                    {r.amount_php != null
-                      ? r.amount_php.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                      : '—'}
-                  </td>
-                  <td className="px-4 py-3" data-label="Status">
-                    <StatusBadge status={r.status} />
-                  </td>
-                  <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400" data-label="Bank used">
-                    {r.bank_used}
-                  </td>
-                  <td className="px-4 py-3 text-zinc-500 dark:text-zinc-400" data-label="Sent">
-                    {r.sent_date ? formatDateLong(r.sent_date) : '—'}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-[10.5px] text-zinc-500 dark:text-zinc-400" data-label="Transaction ID">
-                    {r.transaction_id}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
+// ─── Urgent (MESA) weekly reports are synthesized server-side in
+//     listDisbursementReports() and render as ordinary report cards in the
+//     grid (sourceFile prefixed `urgent_`). No separate panel needed.

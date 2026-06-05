@@ -158,6 +158,49 @@ export function buildDispatchExportRows(
   });
 }
 
+/**
+ * Build export rows straight from `payment_dispatches`, for reports that have
+ * no `disbursement_records` backing — i.e. urgent (MESA) weekly reports, where
+ * each row IS the dispatch. `rates` only supplies the personal-email column;
+ * the processor + banking come from the dispatch itself.
+ */
+export function buildDispatchExportRowsFromDispatches(
+  dispatches: PaymentDispatchRow[],
+  rates: EmployeeHourlyRateRow[],
+): DispatchExportRow[] {
+  const personalByEmail = new Map<string, string>();
+  for (const r of rates) {
+    if (!r.personal_email) continue;
+    const work = normEmail(r.work_email);
+    const personal = normEmail(r.personal_email);
+    const v = r.personal_email.trim();
+    if (work) personalByEmail.set(work, v);
+    if (personal) personalByEmail.set(personal, v);
+  }
+
+  return dispatches.map((d) => {
+    const key = normEmail(d.recipient_email) ?? '';
+    return {
+      name: d.recipient_name ?? '',
+      personal_email: personalByEmail.get(key) ?? '',
+      work_email: d.recipient_email,
+      processor: d.processor ?? '',
+      amount_usd: fmtMoney(d.amount_usd),
+      amount_php: fmtMoney(d.amount_php),
+      transaction_id: d.transaction_id ?? '',
+      bank_used: d.bank_used ?? '',
+      date_sent: d.sent_date ?? '',
+      arrival_date: d.arrival_date ?? '',
+      preferred_bank: d.recipient_preferred_bank ?? '',
+      account_holder: d.recipient_account_holder ?? '',
+      account_number: d.recipient_account_number ?? '',
+      swift_code: d.recipient_swift_code ?? '',
+      status: statusLabel(d.status),
+      note: d.note ?? '',
+    };
+  });
+}
+
 /** RFC 4180 quoting: wrap in quotes if value contains comma, quote, CR, or LF. */
 function csvEscape(v: unknown): string {
   if (v == null) return '';

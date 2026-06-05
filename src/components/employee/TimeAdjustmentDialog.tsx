@@ -80,6 +80,27 @@ const STEPS = [
 
 const LAST_STEP = STEPS.length - 1;
 
+// Combine hour + minute inputs into a single decimal-hours value (or null if both blank).
+function toDecimalHours(h: string, m: string): number | null {
+  const hTrim = h.trim();
+  const mTrim = m.trim();
+  if (!hTrim && !mTrim) return null;
+  const hh = hTrim ? parseInt(hTrim, 10) : 0;
+  const mm = mTrim ? parseInt(mTrim, 10) : 0;
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  return hh + mm / 60;
+}
+
+// Render decimal hours as a human "8h 30m" string.
+function fmtHM(dec: number): string {
+  const totalMin = Math.round(dec * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
+}
+
 function fmtDate(iso: string): string {
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', {
     weekday: 'short',
@@ -109,7 +130,8 @@ export default function TimeAdjustmentDialog({
   const [direction, setDirection] = useState(1);
   const [selectedReason, setSelectedReason] = useState('');
   const [explanation, setExplanation] = useState('');
-  const [requestedHours, setRequestedHours] = useState('');
+  const [requestedHrs, setRequestedHrs] = useState('');
+  const [requestedMins, setRequestedMins] = useState('');
   const [previews, setPreviews] = useState<Preview[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -128,7 +150,8 @@ export default function TimeAdjustmentDialog({
       setDirection(1);
       setSelectedReason('');
       setExplanation('');
-      setRequestedHours('');
+      setRequestedHrs('');
+      setRequestedMins('');
       setPreviews((prev) => {
         prev.forEach((p) => URL.revokeObjectURL(p.url));
         return [];
@@ -219,7 +242,7 @@ export default function TimeAdjustmentDialog({
         }),
       );
 
-      const reqHours = requestedHours.trim() ? parseFloat(requestedHours) : null;
+      const reqHours = toDecimalHours(requestedHrs, requestedMins);
       const res = await fetch('/api/time-adjustments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -246,7 +269,8 @@ export default function TimeAdjustmentDialog({
   }, [
     selectedReason,
     explanation,
-    requestedHours,
+    requestedHrs,
+    requestedMins,
     previews,
     requestKey,
     employeeEmail,
@@ -282,7 +306,7 @@ export default function TimeAdjustmentDialog({
             </div>
             <div><span className="text-zinc-600 dark:text-zinc-400">Reason:</span> {reasonLabel}</div>
             {existingRequest.requested_hours != null && (
-              <div><span className="text-zinc-600 dark:text-zinc-400">Requested hours:</span> {existingRequest.requested_hours}h</div>
+              <div><span className="text-zinc-600 dark:text-zinc-400">Requested time:</span> {fmtHM(existingRequest.requested_hours)}</div>
             )}
             {existingRequest.explanation && (
               <div>
@@ -306,8 +330,8 @@ export default function TimeAdjustmentDialog({
                 )}
                 {existingRequest.approved_hours != null && (
                   <div>
-                    <span className="text-zinc-600 dark:text-zinc-400">Hours set to:</span>{' '}
-                    <span className="font-semibold text-emerald-700 dark:text-emerald-400">{existingRequest.approved_hours}h</span>{' '}
+                    <span className="text-zinc-600 dark:text-zinc-400">Time set to:</span>{' '}
+                    <span className="font-semibold text-emerald-700 dark:text-emerald-400">{fmtHM(existingRequest.approved_hours)}</span>{' '}
                     (used for payroll)
                   </div>
                 )}
@@ -472,13 +496,24 @@ export default function TimeAdjustmentDialog({
                           type="number"
                           min={0}
                           max={24}
-                          step={0.5}
-                          value={requestedHours}
-                          onChange={(e) => setRequestedHours(e.target.value)}
+                          step={1}
+                          value={requestedHrs}
+                          onChange={(e) => setRequestedHrs(e.target.value)}
                           placeholder="e.g. 8"
-                          className="w-24 rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                          className="w-20 rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                         />
-                        <span className="text-xs text-zinc-600 dark:text-zinc-400">hours</span>
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">hr</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={59}
+                          step={5}
+                          value={requestedMins}
+                          onChange={(e) => setRequestedMins(e.target.value)}
+                          placeholder="e.g. 30"
+                          className="w-20 rounded-md border border-zinc-200 bg-white px-2.5 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                        />
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">min</span>
                         <span className="ml-auto text-[11px] text-zinc-500 dark:text-zinc-400">
                           Hubstaff: <span className="font-mono">{trackedHours}h</span>
                         </span>
@@ -569,8 +604,8 @@ export default function TimeAdjustmentDialog({
 
                 {/* STEP 4 — Review */}
                 {step === 3 && (() => {
-                  const parsedRequested = requestedHours.trim() ? parseFloat(requestedHours) : null;
-                  const delta = parsedRequested != null ? parsedRequested - parseFloat(trackedHours) : null;
+                  const parsedRequested = toDecimalHours(requestedHrs, requestedMins);
+                  const delta = parsedRequested != null ? parsedRequested - hoursWorked / 3600 : null;
                   const deltaAbs = delta != null ? Math.abs(delta) : null;
                   const deltaAdded = delta != null && delta > 0;
                   const deltaRemoved = delta != null && delta < 0;
@@ -593,9 +628,9 @@ export default function TimeAdjustmentDialog({
                             : 'text-zinc-600 dark:text-zinc-400'
                           }`}>
                             {deltaAdded
-                              ? `${deltaAbs?.toFixed(1)}h will be added to your day`
+                              ? `${deltaAbs != null ? fmtHM(deltaAbs) : ''} will be added to your day`
                               : deltaRemoved
-                                ? `${deltaAbs?.toFixed(1)}h will be removed from your day`
+                                ? `${deltaAbs != null ? fmtHM(deltaAbs) : ''} will be removed from your day`
                                 : 'No change to your tracked hours'}
                           </p>
                           <div className="mt-1 flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -605,13 +640,13 @@ export default function TimeAdjustmentDialog({
                               deltaAdded ? 'text-emerald-700 dark:text-emerald-300'
                               : deltaRemoved ? 'text-rose-700 dark:text-rose-300'
                               : 'text-zinc-700 dark:text-zinc-300'
-                            }`}>{parsedRequested.toFixed(1)}h corrected</span>
+                            }`}>{fmtHM(parsedRequested)} corrected</span>
                             {!deltaZero && deltaAbs != null && (
                               <span className={`ml-0.5 font-mono font-bold ${
                                 deltaAdded ? 'text-emerald-600 dark:text-emerald-400'
                                 : 'text-rose-600 dark:text-rose-400'
                               }`}>
-                                ({deltaAdded ? '+' : '-'}{deltaAbs.toFixed(1)}h)
+                                ({deltaAdded ? '+' : '-'}{fmtHM(deltaAbs)})
                               </span>
                             )}
                           </div>
@@ -635,7 +670,7 @@ export default function TimeAdjustmentDialog({
                       <div className="flex items-center justify-between gap-3 px-3 py-2">
                         <dt className="text-zinc-600 dark:text-zinc-400">Corrected total</dt>
                         <dd className="font-mono font-medium text-zinc-800 dark:text-zinc-200">
-                          {parsedRequested != null ? `${parsedRequested.toFixed(1)}h` : 'Not specified'}
+                          {parsedRequested != null ? fmtHM(parsedRequested) : 'Not specified'}
                         </dd>
                       </div>
                       <div className="flex items-center justify-between gap-3 px-3 py-2">

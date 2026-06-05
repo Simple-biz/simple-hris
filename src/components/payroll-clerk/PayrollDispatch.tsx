@@ -24,6 +24,7 @@ import {
   Wallet,
   Wallet2,
   Wifi,
+  Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -33,6 +34,7 @@ import ExcludedQueue from './ExcludedQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
 import DispatchReports from './DispatchReports';
 import OrphanageQueue from './OrphanageQueue';
+import UrgentPaymentsQueue from './UrgentPaymentsQueue';
 import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import {
   Dialog,
@@ -50,7 +52,7 @@ import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-type TabId = 'all' | 'history' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
+type TabId = 'all' | 'urgent' | 'history' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
 
 interface ProcessorVisual {
   Icon: React.ComponentType<{ className?: string }>;
@@ -135,6 +137,13 @@ const ORPHANAGE_VISUAL: ProcessorVisual = {
   blurb: 'Budgets & gifts',
 };
 
+const URGENT_VISUAL: ProcessorVisual = {
+  Icon: Zap,
+  accent: 'from-amber-500 to-orange-600',
+  glow: 'from-amber-100/80 via-orange-50/60 to-white dark:from-amber-950/40 dark:via-orange-950/30 dark:to-zinc-900',
+  blurb: 'MESA · pay now',
+};
+
 const containerStagger = {
   hidden: { opacity: 0 },
   visible: { opacity: 1, transition: { staggerChildren: 0.04, delayChildren: 0.05 } },
@@ -156,6 +165,7 @@ export default function PayrollDispatch() {
   const { state: lockState, setLocked } = useDispatchLock();
   const [pending, setPending] = useState<QueueRow[]>([]);
   const [markPaidRow, setMarkPaidRow] = useState<QueueRow | null>(null);
+  const [urgentCount, setUrgentCount] = useState(0);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
   const [togglingLock, setTogglingLock] = useState(false);
   // Lenny can only dispatch when she's "started processing" (i.e. lock=true)
@@ -283,6 +293,7 @@ export default function PayrollDispatch() {
     if (activeTab === 'reports') return <DispatchReports />;
     if (activeTab === 'notifications') return <NotificationsPanel accent="zinc" />;
     if (activeTab === 'orphanage') return <OrphanageQueue />;
+    if (activeTab === 'urgent') return <UrgentPaymentsQueue onCountChange={setUrgentCount} />;
     if (error) return <ErrorState message={error} />;
     if (loading || !hydrated) return <QueueSkeleton />;
     if (!cycleReady) return <NoCycleState />;
@@ -449,10 +460,15 @@ export default function PayrollDispatch() {
             initial="hidden"
             animate="visible"
             className={cn(
-              // Mobile / sm: horizontal scroll strip — no more 5-row grid crushing the table
-              'flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
-              // lg: stack vertically inside the narrow left column
-              'lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:pb-0 lg:pr-1',
+              // Mobile / sm: horizontal scroll strip — no more 5-row grid crushing the table.
+              // A scroll container forces its cross-axis (here vertical) to clip, which would
+              // shear the Urgent card's amber glow flat. Negative margin + equal padding pushes
+              // the scrollport out so the glow bleeds freely, with no net layout shift.
+              'flex gap-2 overflow-x-auto -my-4 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+              // lg: stack vertically inside the narrow left column. overflow-y:auto forces the
+              // computed overflow-x to clip too, so the same trick gives the glow room left/right
+              // (fits inside the 16px grid gutter / 32px left padding — no overlap with the table).
+              'lg:my-0 lg:py-0 lg:-mx-4 lg:px-4 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:pb-0',
             )}
           >
             <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
@@ -466,6 +482,20 @@ export default function PayrollDispatch() {
                 active={activeTab === 'all'}
                 onClick={() => setActiveTab('all')}
                 iconOnlyFallback
+              />
+            </motion.div>
+            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+              <ProcessorCard
+                label="Urgent"
+                subtitle={URGENT_VISUAL.blurb}
+                count={urgentCount}
+                Icon={URGENT_VISUAL.Icon}
+                accent={URGENT_VISUAL.accent}
+                glow={URGENT_VISUAL.glow}
+                active={activeTab === 'urgent'}
+                onClick={() => setActiveTab('urgent')}
+                iconOnlyFallback
+                glowBorder
               />
             </motion.div>
             {PROCESSORS.map((p) => {
@@ -543,7 +573,7 @@ export default function PayrollDispatch() {
           <AnimatePresence mode="wait">
             <motion.div
               key={
-                activeTab === 'reports' || activeTab === 'excluded' || activeTab === 'orphanage'
+                activeTab === 'reports' || activeTab === 'excluded' || activeTab === 'orphanage' || activeTab === 'urgent'
                   ? activeTab
                   : activeTab +
                     (loading || !hydrated
