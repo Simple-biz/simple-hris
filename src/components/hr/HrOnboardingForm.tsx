@@ -10,6 +10,7 @@ import {
   ClipboardCopy,
   Download,
   Eye,
+  EyeOff,
   FileText,
   Link2,
   Loader2,
@@ -140,6 +141,9 @@ export default function HrOnboardingForm() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [search, setSearch] = useState('');
+  // Submitted tab only: when on, hide rows whose work email is already set so HR
+  // can focus on the hires that still need an @simple.biz address minted.
+  const [hideEmailSet, setHideEmailSet] = useState(false);
 
   const [generateOpen, setGenerateOpen] = useState(false);
   const [linkCreated, setLinkCreated] = useState<SubmissionRow | null>(null);
@@ -188,12 +192,22 @@ export default function HrOnboardingForm() {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (filter !== 'all' && r.status !== filter) return false;
+      // "Needs work email" toggle — scoped to the Submitted tab so switching
+      // away from it doesn't silently hide rows elsewhere.
+      if (filter === 'submitted' && hideEmailSet && r.work_email) return false;
       if (!q) return true;
       return [r.invite_name, r.invite_personal_email, r.invite_department, r.full_name, r.email]
         .filter(Boolean)
         .some((s) => s!.toLowerCase().includes(q));
     });
-  }, [rows, filter, search]);
+  }, [rows, filter, search, hideEmailSet]);
+
+  // How many submitted hires still need a work email — shown on the toggle and
+  // used to decide whether the toggle is worth rendering at all.
+  const submittedNeedingEmail = useMemo(
+    () => rows.filter((r) => r.status === 'submitted' && !r.work_email).length,
+    [rows],
+  );
 
   // Drop any selected id that's no longer visible (filter/search changed, or a
   // row was archived/deleted). `filtered` is memoized, so this only fires when
@@ -379,6 +393,34 @@ export default function HrOnboardingForm() {
           <FilterPill label="Submitted" count={counts.submitted} active={filter === 'submitted'} onClick={() => setFilter('submitted')} />
           <FilterPill label="Archived" count={counts.archived} active={filter === 'archived'} onClick={() => setFilter('archived')} />
           <FilterPill label="All" count={rows.length} active={filter === 'all'} onClick={() => setFilter('all')} />
+          {filter === 'submitted' && counts.submitted > 0 && (
+            <>
+              <span className="mx-1 h-4 w-px bg-emerald-200/70 dark:bg-emerald-900/50" aria-hidden />
+              <button
+                type="button"
+                onClick={() => setHideEmailSet((v) => !v)}
+                aria-pressed={hideEmailSet}
+                title="Show only submissions that still need a work email — hides the ones whose @simple.biz address is already set"
+                className={cn(
+                  'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
+                  hideEmailSet
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25'
+                    : 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
+                )}
+              >
+                {hideEmailSet ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                Needs work email
+                <span
+                  className={cn(
+                    'rounded-full px-1.5 text-[10px] tabular-nums',
+                    hideEmailSet ? 'bg-white/20 text-white' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                  )}
+                >
+                  {submittedNeedingEmail}
+                </span>
+              </button>
+            </>
+          )}
         </div>
         <div className="relative w-full sm:w-72">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
