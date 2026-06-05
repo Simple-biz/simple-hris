@@ -1,0 +1,31 @@
+import { NextResponse } from "next/server";
+import {
+  createSupabaseServiceRoleClient,
+  createSupabaseServerClient,
+} from "@/lib/supabase/server";
+import { getCurrentHubstaffUploadId } from "@/lib/supabase/hubstaff-hours-db";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+/**
+ * Lightweight lookup of the current Hubstaff upload id (the pay cycle id).
+ *
+ * The Payment Dispatch queue needs the cycle id to fetch which recipients were
+ * already paid. That id is also returned by the much heavier
+ * /api/payroll-current-pay, but waiting for that endpoint just to learn the
+ * cycle id forces the dispatches fetch to run AFTER it. Exposing the id on its
+ * own (a single-row query) lets the client fetch dispatches in parallel with
+ * the pay computation instead of behind it.
+ */
+export async function GET() {
+  try {
+    const supabase =
+      createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+    const cycleId = supabase ? await getCurrentHubstaffUploadId(supabase) : null;
+    return NextResponse.json({ cycleId, error: null });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ cycleId: null, error: msg }, { status: 500 });
+  }
+}

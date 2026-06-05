@@ -338,7 +338,6 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     rates,
     appSettings,
     cycleId,
-    allHubstaffRows,
     masterRows,
     rateHistory,
     budgetRequestsResult,
@@ -354,9 +353,6 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       US_HOLIDAYS_LIST_KEY,
     ]),
     cycleIdPromise,
-    supabase
-      ? fetchAllHubstaffRowsForBonusMonth(supabase)
-      : Promise.resolve<Record<string, unknown>[]>([]),
     supabase ? fetchMasterMin(supabase) : Promise.resolve<MasterEmployeeMin[]>([]),
     fetchAllRateHistory(),
     listOrphanageBudgetRequests({ status: "approved" }),
@@ -365,6 +361,13 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       ? fetchAllApprovedDisputes(supabase).then((m) => mergeApprovedTimeAdjustments(supabase, m))
       : Promise.resolve(new Map<string, Map<string, number | null>>()),
   ]);
+
+  // Deferred: the full-table Hubstaff scan (every row, every upload) is ONLY
+  // needed to compute PAB eligibility, which only matters on the final PAB
+  // week. ~3 of every 4 loads are not the final PAB week, so fetching it here
+  // unconditionally was the single biggest source of lag. We fetch it below,
+  // and only when `weekIsFinalPab` turns out to be true.
+  let allHubstaffRows: Record<string, unknown>[] = [];
 
   const fxValue = appSettings["usd_to_php_rate"];
   const pabOverridesValue = appSettings[PAB_PERIOD_OVERRIDES_KEY];
@@ -448,6 +451,13 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       weekIsFinalPab = gateIsFinalPabWeek(periodEnd, pabRange.end);
     }
     weekIsTechBonus = gateIsTechBonusWeek(weekMonday);
+  }
+
+  // Now that we know whether this is the final PAB week, pull the full-table
+  // Hubstaff scan only if PAB eligibility actually needs computing. On every
+  // other week this stays empty and the expensive scan is skipped entirely.
+  if (supabase && weekIsFinalPab) {
+    allHubstaffRows = await fetchAllHubstaffRowsForBonusMonth(supabase);
   }
 
   // 2. Build HSL email set + start_date map from master.

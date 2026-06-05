@@ -46,7 +46,7 @@ import {
 } from '@/components/ui/dialog';
 import ProcessorCard from './ProcessorCard';
 import AnimatedNumber from './AnimatedNumber';
-import QueueSkeleton from './QueueSkeleton';
+import DispatchLoader from './DispatchLoader';
 import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
@@ -295,7 +295,7 @@ export default function PayrollDispatch() {
     if (activeTab === 'orphanage') return <OrphanageQueue />;
     if (activeTab === 'urgent') return <UrgentPaymentsQueue onCountChange={setUrgentCount} />;
     if (error) return <ErrorState message={error} />;
-    if (loading || !hydrated) return <QueueSkeleton />;
+    if (loading || !hydrated) return <DispatchLoader />;
     if (!cycleReady) return <NoCycleState />;
     if (activeTab === 'history') {
       return (

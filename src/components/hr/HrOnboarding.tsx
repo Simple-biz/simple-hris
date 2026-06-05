@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import {
@@ -10,7 +10,6 @@ import {
   Mail,
   MailQuestion,
   Pencil,
-  RefreshCw,
   RotateCcw,
   Search,
   Trash2,
@@ -36,6 +35,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import type {
   HrPendingEmployeeRow,
   HrPendingStatus,
@@ -127,6 +127,20 @@ export default function HrOnboarding() {
       })
       .catch(() => {/* non-critical */});
   }, [fetchPending]);
+
+  const fetchPendingRef = useRef(fetchPending);
+  fetchPendingRef.current = fetchPending;
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const channel = supabase
+      .channel('hr-pending-employees-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hr_pending_employees' }, () => {
+        void fetchPendingRef.current();
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, []);
 
   const filteredPending = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -370,21 +384,6 @@ export default function HrOnboarding() {
                 <Zap className="mr-1.5 h-3.5 w-3.5" />
               )}
               Bulk promote (Lead Gen)
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-white/35 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 hover:text-white"
-              onClick={() => void fetchPending()}
-              disabled={pendingLoading}
-            >
-              <RefreshCw
-                className={cn(
-                  'mr-1.5 h-3.5 w-3.5',
-                  pendingLoading && 'animate-spin',
-                )}
-              />
-              Refresh
             </Button>
           </div>
           {bulkResult && bulkResult.total > 0 && (

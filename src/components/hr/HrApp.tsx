@@ -416,17 +416,11 @@ function OverviewEditorialSection({
         </p>
       </div>
 
-      {/* Asymmetric three-column grid: headcount chart spans wide, tenure narrow */}
+      {/* Asymmetric three-column grid: province map spans wide, tenure narrow */}
       <div className="relative mt-6 grid gap-5 lg:grid-cols-5 lg:gap-6">
-        {/* Headcount growth — wide left column */}
+        {/* Geographic distribution map -- wide left column */}
         <div className="lg:col-span-3">
-          <HeadcountStoryCard
-            loading={loading}
-            totalActive={totalActive}
-            netDelta={headcountSeries.netDelta}
-            newcomersThisMonth={newcomersThisMonth}
-            points={headcountSeries.points}
-          />
+          <PhilippinesMapCard loading={loading} roster={roster} />
         </div>
 
         {/* Tenure cohorts — narrow right column */}
@@ -450,6 +444,448 @@ function OverviewEditorialSection({
         <AttritionByDeptCard loading={loading} rows={attritionByDept} />
       </div>
     </section>
+  );
+}
+
+// ─── Philippines Province Map ────────────────────────────────────────────────
+
+type PhProvince = { name: string; lat: number; lng: number };
+
+const PH_PROVINCES: PhProvince[] = [
+  { name: 'Abra', lat: 17.597, lng: 120.766 },
+  { name: 'Agusan del Norte', lat: 8.946, lng: 125.526 },
+  { name: 'Agusan del Sur', lat: 8.157, lng: 126.012 },
+  { name: 'Aklan', lat: 11.817, lng: 122.092 },
+  { name: 'Albay', lat: 13.177, lng: 123.528 },
+  { name: 'Antique', lat: 11.366, lng: 122.071 },
+  { name: 'Apayao', lat: 18.016, lng: 121.170 },
+  { name: 'Aurora', lat: 15.978, lng: 121.632 },
+  { name: 'Basilan', lat: 6.423, lng: 122.045 },
+  { name: 'Bataan', lat: 14.642, lng: 120.482 },
+  { name: 'Batanes', lat: 20.449, lng: 121.970 },
+  { name: 'Batangas', lat: 13.757, lng: 121.058 },
+  { name: 'Benguet', lat: 16.402, lng: 120.596 },
+  { name: 'Biliran', lat: 11.584, lng: 124.463 },
+  { name: 'Bohol', lat: 9.850, lng: 124.144 },
+  { name: 'Bukidnon', lat: 8.052, lng: 125.098 },
+  { name: 'Bulacan', lat: 14.794, lng: 120.880 },
+  { name: 'Cagayan', lat: 18.249, lng: 121.869 },
+  { name: 'Camarines Norte', lat: 14.139, lng: 122.763 },
+  { name: 'Camarines Sur', lat: 13.525, lng: 123.349 },
+  { name: 'Camiguin', lat: 9.204, lng: 124.706 },
+  { name: 'Capiz', lat: 11.389, lng: 122.628 },
+  { name: 'Catanduanes', lat: 13.709, lng: 124.242 },
+  { name: 'Cavite', lat: 14.283, lng: 120.869 },
+  { name: 'Cebu', lat: 10.316, lng: 123.885 },
+  { name: 'Davao de Oro', lat: 7.802, lng: 126.106 },
+  { name: 'Cotabato', lat: 7.204, lng: 124.231 },
+  { name: 'Davao del Norte', lat: 7.562, lng: 125.833 },
+  { name: 'Davao del Sur', lat: 6.866, lng: 125.328 },
+  { name: 'Davao Occidental', lat: 6.105, lng: 125.607 },
+  { name: 'Davao Oriental', lat: 7.317, lng: 126.542 },
+  { name: 'Dinagat Islands', lat: 10.128, lng: 125.609 },
+  { name: 'Eastern Samar', lat: 11.650, lng: 125.430 },
+  { name: 'Guimaras', lat: 10.598, lng: 122.633 },
+  { name: 'Ifugao', lat: 16.830, lng: 121.171 },
+  { name: 'Ilocos Norte', lat: 18.165, lng: 120.712 },
+  { name: 'Ilocos Sur', lat: 17.555, lng: 120.386 },
+  { name: 'Iloilo', lat: 10.720, lng: 122.562 },
+  { name: 'Isabela', lat: 16.975, lng: 121.811 },
+  { name: 'Kalinga', lat: 17.474, lng: 121.355 },
+  { name: 'La Union', lat: 16.616, lng: 120.321 },
+  { name: 'Laguna', lat: 14.269, lng: 121.411 },
+  { name: 'Lanao del Norte', lat: 7.872, lng: 123.888 },
+  { name: 'Lanao del Sur', lat: 7.824, lng: 124.420 },
+  { name: 'Leyte', lat: 10.873, lng: 124.881 },
+  { name: 'Maguindanao', lat: 6.942, lng: 124.420 },
+  { name: 'Marinduque', lat: 13.477, lng: 121.903 },
+  { name: 'Masbate', lat: 12.369, lng: 123.621 },
+  { name: 'Metro Manila', lat: 14.600, lng: 120.984 },
+  { name: 'Misamis Occidental', lat: 8.338, lng: 123.707 },
+  { name: 'Misamis Oriental', lat: 8.505, lng: 124.622 },
+  { name: 'Mountain Province', lat: 17.072, lng: 120.994 },
+  { name: 'Negros Occidental', lat: 10.293, lng: 123.027 },
+  { name: 'Negros Oriental', lat: 9.678, lng: 123.065 },
+  { name: 'Northern Samar', lat: 12.570, lng: 124.644 },
+  { name: 'Nueva Ecija', lat: 15.578, lng: 121.107 },
+  { name: 'Nueva Vizcaya', lat: 16.330, lng: 121.171 },
+  { name: 'Occidental Mindoro', lat: 12.968, lng: 121.123 },
+  { name: 'Oriental Mindoro', lat: 13.057, lng: 121.406 },
+  { name: 'Palawan', lat: 9.835, lng: 118.738 },
+  { name: 'Pampanga', lat: 15.079, lng: 120.620 },
+  { name: 'Pangasinan', lat: 15.895, lng: 120.286 },
+  { name: 'Quezon', lat: 14.031, lng: 122.105 },
+  { name: 'Quirino', lat: 16.270, lng: 121.537 },
+  { name: 'Rizal', lat: 14.604, lng: 121.308 },
+  { name: 'Romblon', lat: 12.578, lng: 122.270 },
+  { name: 'Samar', lat: 11.767, lng: 125.013 },
+  { name: 'Sarangani', lat: 5.927, lng: 125.199 },
+  { name: 'Siquijor', lat: 9.206, lng: 123.595 },
+  { name: 'Sorsogon', lat: 12.943, lng: 124.014 },
+  { name: 'South Cotabato', lat: 6.297, lng: 124.846 },
+  { name: 'Southern Leyte', lat: 10.336, lng: 125.172 },
+  { name: 'Sultan Kudarat', lat: 6.687, lng: 124.461 },
+  { name: 'Sulu', lat: 5.975, lng: 121.033 },
+  { name: 'Surigao del Norte', lat: 9.789, lng: 125.497 },
+  { name: 'Surigao del Sur', lat: 8.751, lng: 126.138 },
+  { name: 'Tarlac', lat: 15.476, lng: 120.596 },
+  { name: 'Tawi-Tawi', lat: 5.134, lng: 119.955 },
+  { name: 'Zambales', lat: 15.508, lng: 119.970 },
+  { name: 'Zamboanga del Norte', lat: 8.153, lng: 123.165 },
+  { name: 'Zamboanga del Sur', lat: 7.838, lng: 123.297 },
+  { name: 'Zamboanga Sibugay', lat: 7.522, lng: 122.820 },
+];
+
+const MAP_W = 560;
+const MAP_H = 700;
+const LAT_MAX = 21.6;
+const LAT_MIN = 4.4;
+const LNG_MIN = 116.8;
+const LNG_MAX = 127.6;
+
+function projectCoord(lat: number, lng: number): { x: number; y: number } {
+  return {
+    x: ((lng - LNG_MIN) / (LNG_MAX - LNG_MIN)) * MAP_W,
+    y: ((LAT_MAX - lat) / (LAT_MAX - LAT_MIN)) * MAP_H,
+  };
+}
+
+function bubbleColor(count: number, maxCount: number): string {
+  if (count === 0 || maxCount === 0) return 'transparent';
+  const t = count / maxCount;
+  if (t < 0.12) return '#a7f3d0';
+  if (t < 0.28) return '#6ee7b7';
+  if (t < 0.50) return '#34d399';
+  if (t < 0.75) return '#10b981';
+  return '#059669';
+}
+
+function bubbleRadius(count: number, maxCount: number): number {
+  if (count === 0 || maxCount === 0) return 0;
+  const MIN_R = 5;
+  const MAX_R = 22;
+  return MIN_R + Math.sqrt(count / maxCount) * (MAX_R - MIN_R);
+}
+
+// No geographic path data needed — the Philippines silhouette is rendered
+// from /public/ph-map.jpg via an SVG feColorMatrix filter that converts
+// the black land pixels to emerald and the white ocean pixels to transparent.
+
+function PhilippinesMapCard({
+  loading,
+  roster,
+}: {
+  loading: boolean;
+  roster: EmployeeRow[];
+}) {
+  const [selectedProvince, setSelectedProvince] = useState<string | null>(null);
+  const [listPage, setListPage] = useState(0);
+
+  useEffect(() => { setListPage(0); }, [selectedProvince]);
+
+  const provinceMap = useMemo(() => {
+    const m = new Map<string, EmployeeRow[]>();
+    for (const emp of roster) {
+      const prov = (emp.province ?? '').trim();
+      if (!prov) continue;
+      if (!m.has(prov)) m.set(prov, []);
+      m.get(prov)!.push(emp);
+    }
+    return m;
+  }, [roster]);
+
+  const totalActive = roster.length;
+
+  const newcomersThisMonth = useMemo(() => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    return roster.filter((r) => {
+      const t = r.start_date ? new Date(r.start_date).getTime() : NaN;
+      return Number.isFinite(t) && t >= monthStart;
+    }).length;
+  }, [roster]);
+
+  const maxCount = useMemo(() => {
+    let max = 0;
+    for (const emps of provinceMap.values()) if (emps.length > max) max = emps.length;
+    return max;
+  }, [provinceMap]);
+
+  const resolvedProvinces = useMemo(() => {
+    return PH_PROVINCES.map((p) => {
+      let emps = provinceMap.get(p.name);
+      if (!emps) {
+        const lc = p.name.toLowerCase();
+        for (const [k, v] of provinceMap) {
+          if (k.toLowerCase() === lc) { emps = v; break; }
+        }
+      }
+      return { ...p, count: emps?.length ?? 0, employees: emps ?? [] };
+    });
+  }, [provinceMap]);
+
+  const selectedData = selectedProvince
+    ? resolvedProvinces.find((p) => p.name === selectedProvince) ?? null
+    : null;
+
+  return (
+    <div className="relative flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
+      {/* Header */}
+      <div className="flex shrink-0 items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+            Geographic Distribution
+          </p>
+          <div className="mt-2 flex items-baseline gap-3">
+            {loading ? (
+              <span className="inline-block h-12 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-800" />
+            ) : (
+              <p className="text-5xl font-bold tabular-nums leading-none text-zinc-900 dark:text-zinc-50 sm:text-6xl">
+                {totalActive}
+              </p>
+            )}
+            <span className="text-sm text-zinc-500 dark:text-zinc-400">active employees</span>
+          </div>
+          <p className="mt-1 text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
+            <span className="font-semibold text-zinc-700 dark:text-zinc-300">
+              {loading ? '--' : `+${newcomersThisMonth}`}
+            </span>{' '}
+            joined this month
+            <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">&middot;</span>
+            <span className="font-semibold text-zinc-700 dark:text-zinc-300">
+              {loading ? '--' : provinceMap.size}
+            </span>{' '}
+            provinces represented
+          </p>
+        </div>
+        {/* Size legend */}
+        <div className="flex shrink-0 flex-col items-end gap-1.5 pt-1">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500">
+            Headcount
+          </p>
+          <div className="flex items-end gap-1.5">
+            {([4, 7, 11, 17] as const).map((r) => (
+              <span
+                key={r}
+                className="inline-block shrink-0 rounded-full bg-emerald-400"
+                style={{ width: r * 2, height: r * 2 }}
+              />
+            ))}
+          </div>
+          <p className="text-[9px] text-zinc-400 dark:text-zinc-500">fewer &rarr; more</p>
+        </div>
+      </div>
+
+      {/* Map + detail panel side-by-side */}
+      <div className="mt-4 flex min-h-0 flex-1 gap-3 overflow-hidden">
+        {/* SVG map */}
+        <div className="relative min-h-[300px] flex-1 overflow-hidden">
+          {loading ? (
+            <div className="h-full animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800" />
+          ) : (
+            <svg
+              viewBox={`0 0 ${MAP_W} ${MAP_H}`}
+              className="h-full w-full"
+              preserveAspectRatio="xMidYMid meet"
+              role="img"
+              aria-label="Philippines province headcount bubble map"
+            >
+              <defs>
+                {/* Convert black land silhouette -> emerald-100, white ocean -> transparent */}
+                <filter id="ph-land-color" colorInterpolationFilters="sRGB" x="0" y="0" width="1" height="1">
+                  <feColorMatrix type="matrix"
+                    values="0 0 0 0 0.863
+                            0 0 0 0 0.988
+                            0 0 0 0 0.906
+                           -3 -3 -3 0 4" />
+                </filter>
+              </defs>
+
+              {/* Ocean */}
+              <rect width={MAP_W} height={MAP_H} fill="#dbeafe" rx={6} />
+              {/* Subtle grid */}
+              {Array.from({ length: 9 }, (_, i) => (
+                <line key={`vg${i}`} x1={MAP_W * (i + 1) / 10} y1={0} x2={MAP_W * (i + 1) / 10} y2={MAP_H}
+                  stroke="#93c5fd" strokeWidth={0.5} opacity={0.35} />
+              ))}
+              {Array.from({ length: 9 }, (_, i) => (
+                <line key={`hg${i}`} x1={0} y1={MAP_H * (i + 1) / 10} x2={MAP_W} y2={MAP_H * (i + 1) / 10}
+                  stroke="#93c5fd" strokeWidth={0.5} opacity={0.35} />
+              ))}
+
+              {/* Philippines silhouette image — black land -> emerald, white -> transparent */}
+              <image
+                href="/ph-map.jpg"
+                x={0} y={0}
+                width={MAP_W} height={MAP_H}
+                preserveAspectRatio="xMidYMid meet"
+                filter="url(#ph-land-color)"
+                className="pointer-events-none"
+              />
+
+              {/* Ghost dots — province centroids with no employees */}
+              {resolvedProvinces.filter((p) => p.count === 0).map((p) => {
+                const { x, y } = projectCoord(p.lat, p.lng);
+                return (
+                  <circle key={`ghost-${p.name}`} cx={x} cy={y} r={2}
+                    fill="#6b7280" opacity={0.18} className="pointer-events-none" />
+                );
+              })}
+
+              {/* Active bubbles — smallest rendered first so large ones sit on top */}
+              {resolvedProvinces
+                .filter((p) => p.count > 0)
+                .sort((a, b) => a.count - b.count)
+                .map((p) => {
+                  const { x, y } = projectCoord(p.lat, p.lng);
+                  const r = bubbleRadius(p.count, maxCount);
+                  const fill = bubbleColor(p.count, maxCount);
+                  const isSel = selectedProvince === p.name;
+                  return (
+                    <g key={p.name}>
+                      {isSel && (
+                        <circle cx={x} cy={y} r={r + 6} fill={fill} opacity={0.25}
+                          className="pointer-events-none" />
+                      )}
+                      <circle
+                        cx={x} cy={y} r={r}
+                        fill={fill}
+                        stroke={isSel ? '#065f46' : 'white'}
+                        strokeWidth={isSel ? 2 : 1}
+                        opacity={isSel ? 1 : 0.88}
+                        style={{ cursor: 'pointer', transition: 'all 0.12s ease' }}
+                        onClick={() => setSelectedProvince(isSel ? null : p.name)}
+                      />
+                      {r >= 9 && (
+                        <text
+                          x={x} y={y + r + 9}
+                          textAnchor="middle"
+                          fontSize={8}
+                          fill="#3f3f46"
+                          opacity={isSel ? 1 : 0.65}
+                          className="pointer-events-none select-none"
+                        >
+                          {p.name}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+            </svg>
+          )}
+        </div>
+
+        {/* Province detail panel */}
+        <div className="flex w-44 shrink-0 flex-col overflow-hidden rounded-lg border border-zinc-100 bg-zinc-50/50 dark:border-zinc-800/60 dark:bg-zinc-900/40">
+          <AnimatePresence mode="wait">
+            {selectedData ? (
+              <motion.div
+                key={selectedData.name}
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                transition={{ duration: 0.13, ease: 'easeOut' }}
+                className="flex h-full flex-col"
+              >
+                {/* Province header */}
+                <div className="shrink-0 border-b border-zinc-100 bg-emerald-50 px-3 py-2.5 dark:border-zinc-800 dark:bg-emerald-950/40">
+                  <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-400">
+                    Province
+                  </p>
+                  <p className="mt-0.5 text-[13px] font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+                    {selectedData.name}
+                  </p>
+                  <div className="mt-1.5 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold tabular-nums leading-none text-emerald-600 dark:text-emerald-400">
+                      {selectedData.count}
+                    </span>
+                    <span className="text-[10px] text-zinc-400">
+                      {selectedData.count === 1 ? 'employee' : 'employees'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Employee list */}
+                {selectedData.count > 0 ? (() => {
+                  const PAGE_SIZE = 10;
+                  const totalPages = Math.ceil(selectedData.count / PAGE_SIZE);
+                  const pageEmps = selectedData.employees.slice(listPage * PAGE_SIZE, (listPage + 1) * PAGE_SIZE);
+                  return (
+                    <>
+                      <div className="flex-1 overflow-y-auto py-1">
+                        {pageEmps.map((emp, i) => (
+                          <div
+                            key={i}
+                            className="flex items-start gap-2 px-3 py-1.5 hover:bg-zinc-100/60 dark:hover:bg-zinc-800/30"
+                          >
+                            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+                            <div className="min-w-0">
+                              <p className="truncate text-[11px] font-medium text-zinc-800 dark:text-zinc-200">
+                                {emp.name ?? 'Unknown'}
+                              </p>
+                              {emp.department && (
+                                <p className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+                                  {emp.department}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {totalPages > 1 && (
+                        <div className="flex shrink-0 items-center justify-between border-t border-zinc-100 px-2.5 py-1.5 dark:border-zinc-800">
+                          <button
+                            disabled={listPage === 0}
+                            onClick={() => setListPage((p) => p - 1)}
+                            className="flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
+                          </button>
+                          <span className="text-[9px] tabular-nums text-zinc-400">
+                            {listPage + 1} / {totalPages}
+                          </span>
+                          <button
+                            disabled={listPage === totalPages - 1}
+                            onClick={() => setListPage((p) => p + 1)}
+                            className="flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6" /></svg>
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  );
+                })() : (
+                  <p className="flex-1 px-3 py-3 text-[11px] text-zinc-400">
+                    No employees in this province.
+                  </p>
+                )}
+              </motion.div>
+            ) : (
+              <motion.div
+                key="empty"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="flex h-full flex-col items-center justify-center gap-2.5 p-4 text-center"
+              >
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="1.5" className="text-zinc-400">
+                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" />
+                    <circle cx="12" cy="9" r="2.5" />
+                  </svg>
+                </div>
+                <p className="text-[10px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+                  Click a province bubble to see employees
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </div>
   );
 }
 

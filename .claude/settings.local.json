@@ -203,7 +203,12 @@
       "Bash(echo \"TSC=$?\")",
       "Bash(Select-Object -First 20 FullName)",
       "Bash(Select-String -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\payroll-clerk\\\\DispatchReports.tsx\" -Pattern \"\\(Orphan|orphanage|urgent|OrphanageSection|function Orphan\\)\")",
-      "Bash(sed -i \"s/m\\\\[2\\\\].trim\\(\\)/m[2].trim\\(\\).replace\\(\\\\/^['\\\\\\\\\\\\\"]|['\\\\\\\\\\\\\"]\\\\$\\\\/g,''\\)/\" /tmp/q.mjs && node /tmp/q.mjs)"
+      "Bash(sed -i \"s/m\\\\[2\\\\].trim\\(\\)/m[2].trim\\(\\).replace\\(\\\\/^['\\\\\\\\\\\\\"]|['\\\\\\\\\\\\\"]\\\\$\\\\/g,''\\)/\" /tmp/q.mjs && node /tmp/q.mjs)",
+      "Skill(impeccable)",
+      "Skill(impeccable:*)",
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\.claude\\\\projects\\\\c--Users-Itachi-Desktop-simple-hris\" -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 20 | Format-Table Name, LastWriteTime, Length -AutoSize)",
+      "Bash(cd \"C:\\\\Users\\\\Itachi\\\\.claude\\\\projects\\\\c--Users-Itachi-Desktop-simple-hris\" && grep -o '\"source\":\"data:image/png;base64,[^\"]*\"' 124a13bc-c849-45a9-942f-bedb452d8a19.jsonl | head -1 | wc -c)",
+      "Read(//c/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/**)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

@@ -58,10 +58,33 @@ async function loadAll(signal?: AbortSignal): Promise<{
   fxRate: number;
   error: string | null;
 }> {
-  const [ratesRes, payRes, idsRes] = await Promise.all([
+  // All four endpoints fire at once. Dispatches used to wait for
+  // /api/payroll-current-pay (the slow one) just to learn the cycle id; the
+  // cheap /api/current-cycle endpoint surfaces that id on its own so the
+  // dispatches request runs in parallel with the pay computation instead of
+  // behind it. The dispatches fetch is chained off the cycle lookup only —
+  // not off pay — so it overlaps the slowest endpoint instead of adding to it.
+  const dispatchesPromise = (async (): Promise<PaymentDispatchRow[]> => {
+    const cycleRes = await fetch('/api/current-cycle', { cache: 'no-store', signal });
+    const cycleJson = (await cycleRes.json()) as { cycleId?: string | null };
+    const cycleId = cycleJson.cycleId ?? null;
+    if (!cycleId) return [];
+    const dispatchRes = await fetch(
+      `/api/payment-dispatches?cycle_id=${encodeURIComponent(cycleId)}`,
+      { cache: 'no-store', signal },
+    );
+    const dispatchJson = (await dispatchRes.json()) as {
+      rows?: PaymentDispatchRow[];
+      error?: string;
+    };
+    return dispatchJson.rows ?? [];
+  })();
+
+  const [ratesRes, payRes, idsRes, paid] = await Promise.all([
     fetch('/api/employee-hourly-rates', { cache: 'no-store', signal }),
     fetch('/api/payroll-current-pay', { cache: 'no-store', signal }),
     fetch('/api/employee-ids', { cache: 'no-store', signal }),
+    dispatchesPromise,
   ]);
   const ratesJson = (await ratesRes.json()) as {
     rows?: EmployeeHourlyRateRow[];
@@ -92,20 +115,6 @@ async function loadAll(signal?: AbortSignal): Promise<{
   const idsByEmail = buildIdsMap(idsJson.rows ?? []);
 
   const period = payJson.period ?? EMPTY_PERIOD;
-  // Pull existing dispatches for the current cycle so we can hide them from
-  // the queue (don't pay anyone twice) and surface them in History.
-  let paid: PaymentDispatchRow[] = [];
-  if (period.cycleId) {
-    const dispatchRes = await fetch(
-      `/api/payment-dispatches?cycle_id=${encodeURIComponent(period.cycleId)}`,
-      { cache: 'no-store', signal },
-    );
-    const dispatchJson = (await dispatchRes.json()) as {
-      rows?: PaymentDispatchRow[];
-      error?: string;
-    };
-    paid = dispatchJson.rows ?? [];
-  }
 
   // Only `status='paid'` rows lock a recipient out of the pending queue —
   // Threshold and Problem rows leave the person available for retry, since

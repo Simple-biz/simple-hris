@@ -13,7 +13,7 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { cn } from '@/lib/utils';
 import PayrollClerkSidebar from './PayrollClerkSidebar';
 import ProcessorQueue from './ProcessorQueue';
-import QueueSkeleton from './QueueSkeleton';
+import DispatchLoader from './DispatchLoader';
 import ExcludedQueue from './ExcludedQueue';
 import SentPaymentsHistory from './SentPaymentsHistory';
 import DispatchReports from './DispatchReports';
@@ -193,7 +193,7 @@ export default function PayrollClerkApp() {
       );
     }
     if (loading || !hydrated) {
-      return <QueueSkeleton />;
+      return <DispatchLoader />;
     }
     if (activeTab === 'history') {
       return (
