@@ -6,6 +6,7 @@ import {
   deleteTimeAdjustment,
   getTimeAdjustmentById,
   managerDecideTimeAdjustment,
+  recallTimeAdjustment,
 } from '@/lib/supabase/time-adjustments';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 
@@ -26,10 +27,10 @@ export async function PATCH(
       decision_note?: string | null;
     };
 
-    const validActions = ['approve', 'deny', 'manager_approve', 'manager_deny'];
+    const validActions = ['approve', 'deny', 'manager_approve', 'manager_deny', 'recall'];
     if (!body.action || !validActions.includes(body.action)) {
       return NextResponse.json(
-        { error: 'action must be approve, deny, manager_approve, or manager_deny' },
+        { error: 'action must be approve, deny, manager_approve, manager_deny, or recall' },
         { status: 400 },
       );
     }
@@ -40,6 +41,22 @@ export async function PATCH(
       .trim()
       .toLowerCase();
     if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+    // Manager recall path — pull a forwarded request back into the manager's queue.
+    if (body.action === 'recall') {
+      const { error } = await recallTimeAdjustment(id, {
+        recalled_by: sessionEmail,
+        decision_note: body.decision_note,
+      });
+      if (error) {
+        const code = error === 'Request not found' ? 404
+          : error.includes('Not authorized') || error.includes('not in your managed') ? 403
+          : error.includes('can be recalled') ? 400
+          : 500;
+        return NextResponse.json({ error }, { status: code });
+      }
+      return NextResponse.json({ success: true, error: null });
+    }
 
     // Manager approval path (stage 1)
     if (body.action === 'manager_approve' || body.action === 'manager_deny') {

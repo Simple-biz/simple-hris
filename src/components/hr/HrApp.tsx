@@ -26,6 +26,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Toaster } from '@/components/ui/sonner';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
+import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
+import { useNotificationChime } from '@/hooks/useNotificationChime';
 import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
@@ -54,6 +56,11 @@ export default function HrApp() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+
+  // Live HR alerts: chime + toast on any new notification (e.g. a hire
+  // submitting their onboarding form), and an unread badge on the sidebar.
+  useNotificationChime(viewerEmail);
+  const unreadNotifications = useEmployeeNotificationsUnread(viewerEmail);
 
   useEffect(() => {
     try {
@@ -130,6 +137,7 @@ export default function HrApp() {
         setActiveTab={(tab) => { setActiveTab(tab); setMobileNavOpen(false); }}
         mobileOpen={mobileNavOpen}
         viewerEmail={viewerEmail}
+        unreadNotifications={unreadNotifications}
       />
 
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -333,7 +341,7 @@ const TENURE_COHORT_DEFS: { key: TenureCohort['key']; label: string; range: stri
   { key: 'veteran',     label: 'Veterans',    range: '3+ years',    max: Number.POSITIVE_INFINITY },
 ];
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 
 // ─── Editorial Overview composition ──────────────────────────────────────────
 
@@ -359,6 +367,15 @@ function initialsFromName(name: string | null | undefined): string {
   return ((parts[0][0] ?? '') + (parts[parts.length - 1][0] ?? '')).toUpperCase() || '··';
 }
 
+type OverviewTab = 'arrivals' | 'map' | 'departments' | 'tenure';
+
+const OVERVIEW_TABS: { id: OverviewTab; label: string }[] = [
+  { id: 'tenure', label: 'Tenure' },
+  { id: 'arrivals', label: 'Recent Arrivals' },
+  { id: 'map', label: 'Province Map' },
+  { id: 'departments', label: 'Departments' },
+];
+
 interface OverviewEditorialSectionProps {
   loading: boolean;
   roster: EmployeeRow[];
@@ -378,6 +395,7 @@ function OverviewEditorialSection({
   recentHires,
   attritionByDept,
 }: OverviewEditorialSectionProps) {
+  const [activeTab, setActiveTab] = useState<OverviewTab>('tenure');
   const totalActive = roster.length;
   const newcomersThisMonth = useMemo(() => {
     const now = new Date();
@@ -390,7 +408,7 @@ function OverviewEditorialSection({
   }, [roster]);
 
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-emerald-100/70 bg-white p-5 shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950 sm:p-6 lg:p-8">
+    <section className="relative overflow-hidden rounded-2xl border border-emerald-100/70 bg-white shadow-sm dark:border-emerald-950/40 dark:bg-zinc-950">
       {/* Decorative grain / shape */}
       <div
         aria-hidden
@@ -401,47 +419,98 @@ function OverviewEditorialSection({
         className="pointer-events-none absolute -bottom-32 -left-16 h-64 w-64 rounded-full bg-gradient-to-tr from-emerald-50/80 via-transparent to-transparent blur-3xl dark:from-emerald-950/30"
       />
 
-      {/* Editorial header strip */}
-      <div className="relative flex flex-col gap-2 border-b border-zinc-100 pb-5 sm:flex-row sm:items-end sm:justify-between dark:border-zinc-900">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-emerald-700/80 dark:text-emerald-400/70">
-            Workforce · Issue No. {String(new Date().getFullYear()).slice(-2)}/{String(new Date().getMonth() + 1).padStart(2, '0')}
+      {/* Header + tab nav */}
+      <div className="relative border-b border-zinc-100 px-5 pt-5 dark:border-zinc-900 sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-2 pb-5 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-emerald-700/80 dark:text-emerald-400/70">
+              Workforce &middot; Issue No. {String(new Date().getFullYear()).slice(-2)}/{String(new Date().getMonth() + 1).padStart(2, '0')}
+            </p>
+            <h2 className="mt-1 text-2xl font-semibold leading-tight tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-3xl">
+              The people behind the payroll.
+            </h2>
+          </div>
+          <p className="max-w-sm text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            A monthly readout of headcount, tenure, and who just joined us &mdash; derived directly from the master list.
           </p>
-          <h2 className="mt-1 text-2xl font-semibold leading-tight tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-3xl">
-            The people behind the payroll.
-          </h2>
         </div>
-        <p className="max-w-sm text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-          A monthly readout of headcount, tenure, and who just joined us — derived directly from the master list.
-        </p>
-      </div>
-
-      {/* Asymmetric three-column grid: province map spans wide, tenure narrow */}
-      <div className="relative mt-6 grid gap-5 lg:grid-cols-5 lg:gap-6">
-        {/* Geographic distribution map -- wide left column */}
-        <div className="lg:col-span-3">
-          <PhilippinesMapCard loading={loading} roster={roster} />
-        </div>
-
-        {/* Tenure cohorts — narrow right column */}
-        <div className="lg:col-span-2">
-          <TenureCohortCard loading={loading} cohorts={tenureCohorts} totalActive={totalActive} />
-        </div>
-      </div>
-
-      {/* Recent arrivals + Departments at a glance */}
-      <div className="relative mt-6 grid gap-5 lg:grid-cols-5 lg:gap-6">
-        <div className="lg:col-span-3">
-          <RecentHiresCard loading={loading} hires={recentHires} />
-        </div>
-        <div className="lg:col-span-2">
-          <DepartmentBarsCard loading={loading} deptStats={deptStats} totalActive={totalActive} />
+        <div className="flex" role="tablist">
+          {OVERVIEW_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                'relative px-4 py-2.5 text-[13px] font-medium transition-colors duration-150',
+                activeTab === tab.id
+                  ? 'text-zinc-900 dark:text-zinc-50'
+                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+              )}
+            >
+              {tab.label}
+              {activeTab === tab.id && (
+                <motion.span
+                  layoutId="overview-tab-indicator"
+                  className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-emerald-500"
+                />
+              )}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Attrition by department — full-width bar chart */}
-      <div className="relative mt-6">
-        <AttritionByDeptCard loading={loading} rows={attritionByDept} />
+      {/* Tab panels */}
+      <div className="relative p-5 sm:p-6 lg:p-8">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+          >
+            {activeTab === 'arrivals' && (
+              <RecentHiresCard loading={loading} hires={recentHires} fullGrid />
+            )}
+            {activeTab === 'map' && (
+              <div className="h-[600px]">
+                <PhilippinesMapCard loading={loading} roster={roster} />
+              </div>
+            )}
+            {activeTab === 'departments' && (
+              <div className="space-y-5">
+                <div className="grid gap-5 lg:grid-cols-3 lg:gap-6">
+                  <div className="lg:col-span-2">
+                    <DepartmentBarsCard loading={loading} deptStats={deptStats} totalActive={totalActive} showAll />
+                  </div>
+                  <div>
+                    <DeptSummaryCard loading={loading} deptStats={deptStats} totalActive={totalActive} newcomersThisMonth={newcomersThisMonth} />
+                  </div>
+                </div>
+                <AttritionByDeptCard loading={loading} rows={attritionByDept} />
+              </div>
+            )}
+            {activeTab === 'tenure' && (
+              <div className="space-y-5">
+                <div className="grid gap-5 lg:grid-cols-5 lg:gap-6">
+                  <div className="lg:col-span-3">
+                    <HeadcountStoryCard
+                      loading={loading}
+                      totalActive={totalActive}
+                      netDelta={headcountSeries.netDelta}
+                      newcomersThisMonth={newcomersThisMonth}
+                      points={headcountSeries.points}
+                    />
+                  </div>
+                  <div className="lg:col-span-2">
+                    <TenureCohortCard loading={loading} cohorts={tenureCohorts} totalActive={totalActive} />
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </section>
   );
@@ -807,7 +876,7 @@ function PhilippinesMapCard({
 
                 {/* Employee list */}
                 {selectedData.count > 0 ? (() => {
-                  const PAGE_SIZE = 10;
+                  const PAGE_SIZE = 15;
                   const totalPages = Math.ceil(selectedData.count / PAGE_SIZE);
                   const pageEmps = selectedData.employees.slice(listPage * PAGE_SIZE, (listPage + 1) * PAGE_SIZE);
                   return (
@@ -1258,28 +1327,95 @@ function TenureCohortCard({
 function RecentHiresCard({
   loading,
   hires,
+  fullGrid = false,
 }: {
   loading: boolean;
   hires: { row: EmployeeRow; days: number; t: number }[];
+  fullGrid?: boolean;
 }) {
-  const shown = hires.slice(0, 8);
+  const shown = fullGrid ? hires : hires.slice(0, 8);
+
+  const header = (
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+          Recent arrivals &middot; last 90 days
+        </p>
+        <p className="mt-1 text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
+          {loading ? '…' : hires.length === 0 ? 'No new hires yet.' : `${hires.length} ${hires.length === 1 ? 'person' : 'people'} joined.`}
+        </p>
+      </div>
+      <span className="rounded-full border border-emerald-200/70 bg-emerald-50/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+        NEW
+      </span>
+    </div>
+  );
+
+  if (fullGrid) {
+    return (
+      <div>
+        {header}
+        {loading ? (
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 9 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 rounded-xl border border-zinc-100 bg-zinc-50/60 p-3.5 dark:border-zinc-800/60 dark:bg-zinc-900/30">
+                <div className="h-10 w-10 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3 w-3/4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                  <div className="h-2.5 w-1/2 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : shown.length === 0 ? (
+          <p className="mt-8 text-center text-sm text-zinc-400 dark:text-zinc-500">No new hires in the last 90 days.</p>
+        ) : (
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {shown.map(({ row, days }, i) => (
+              <div
+                key={`${i}-${row.work_email ?? row.personal_email ?? ''}`}
+                className="group relative flex items-start gap-3 rounded-xl border border-zinc-100 bg-zinc-50/50 p-3.5 transition-colors hover:border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800/60 dark:bg-zinc-900/30 dark:hover:border-zinc-700/60 dark:hover:bg-zinc-900/60"
+              >
+                <div className="relative shrink-0">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-emerald-100 to-teal-200 text-sm font-bold text-emerald-900 ring-2 ring-white dark:from-emerald-900/50 dark:to-teal-900/50 dark:text-emerald-200 dark:ring-zinc-950">
+                    {initialsFromName(row.name)}
+                  </div>
+                  {days <= 7 && (
+                    <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
+                    {row.name ?? row.work_email ?? '—'}
+                  </p>
+                  <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                    {row.department ?? 'Unassigned'}
+                  </p>
+                  <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+                    {row.work_email ?? row.personal_email ?? '—'}
+                  </p>
+                </div>
+                <span className={cn(
+                  'shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
+                  days === 0
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                    : days <= 7
+                      ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400'
+                      : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+                )}>
+                  {days === 0 ? 'Today' : `${days}d`}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
-            Recent arrivals · last 90 days
-          </p>
-          <p className="mt-1 text-xl font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
-            {loading ? '…' : hires.length === 0 ? 'No new hires yet.' : `${hires.length} ${hires.length === 1 ? 'person' : 'people'} joined.`}
-          </p>
-        </div>
-        <span className="rounded-full border border-emerald-200/70 bg-emerald-50/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
-          NEW
-        </span>
-      </div>
-
-      {/* List */}
+      {header}
       {loading ? (
         <div className="mt-5 space-y-2.5">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -1301,16 +1437,12 @@ function RecentHiresCard({
               key={`${row.work_email ?? row.personal_email ?? i}`}
               className="group flex items-center gap-3 py-2.5 first:pt-0 last:pb-0"
             >
-              {/* Avatar (initials only — keeps the editorial vibe consistent) */}
               <div className="relative shrink-0">
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-emerald-100 to-teal-200 text-sm font-bold text-emerald-900 ring-2 ring-white dark:from-emerald-900/50 dark:to-teal-900/50 dark:text-emerald-200 dark:ring-zinc-950">
                   {initialsFromName(row.name)}
                 </div>
                 {days <= 7 && (
-                  <span
-                    className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950"
-                    aria-label="Joined this week"
-                  />
+                  <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950" aria-label="Joined this week" />
                 )}
               </div>
               <div className="min-w-0 flex-1">
@@ -1319,7 +1451,7 @@ function RecentHiresCard({
                 </p>
                 <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
                   <span className="font-medium text-zinc-600 dark:text-zinc-300">{row.department ?? 'Unassigned'}</span>
-                  <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">·</span>
+                  <span className="mx-1.5 text-zinc-300 dark:text-zinc-700">&middot;</span>
                   {row.work_email ?? row.personal_email ?? '—'}
                 </p>
               </div>
@@ -1345,13 +1477,15 @@ function DepartmentBarsCard({
   loading,
   deptStats,
   totalActive,
+  showAll = false,
 }: {
   loading: boolean;
   deptStats: DeptStat[];
   totalActive: number;
+  showAll?: boolean;
 }) {
-  const top = deptStats.slice(0, 8);
-  const restCount = deptStats.slice(8).reduce((s, d) => s + d.count, 0);
+  const top = showAll ? deptStats : deptStats.slice(0, 8);
+  const restCount = showAll ? 0 : deptStats.slice(8).reduce((s, d) => s + d.count, 0);
   const maxCount = Math.max(1, ...top.map((d) => d.count));
 
   return (
@@ -1424,6 +1558,59 @@ function DepartmentBarsCard({
 }
 
 // ─── Attrition by department ──────────────────────────────────────────────────
+
+function DeptSummaryCard({
+  loading,
+  deptStats,
+  totalActive,
+  newcomersThisMonth,
+}: {
+  loading: boolean;
+  deptStats: DeptStat[];
+  totalActive: number;
+  newcomersThisMonth: number;
+}) {
+  const largest = deptStats[0] ?? null;
+  const avgSize = deptStats.length > 0 ? Math.round(totalActive / deptStats.length) : 0;
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
+        At a glance
+      </p>
+      <div className="mt-4 grid grid-cols-2 gap-2.5">
+        {([
+          { label: 'Total Active', value: String(totalActive) },
+          { label: 'Departments', value: String(deptStats.length) },
+          { label: 'Avg Team Size', value: `${avgSize}` },
+          { label: 'Joined This Month', value: `+${newcomersThisMonth}` },
+        ] as const).map((s) => (
+          <div key={s.label} className="rounded-lg border border-zinc-100 bg-zinc-50/60 p-3 dark:border-zinc-800/60 dark:bg-zinc-900/40">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-zinc-400 dark:text-zinc-500">
+              {s.label}
+            </p>
+            <p className="mt-1 truncate text-xl font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
+              {loading ? '...' : s.value}
+            </p>
+          </div>
+        ))}
+      </div>
+      {!loading && largest && (
+        <div className="mt-2.5 rounded-lg border border-zinc-100 bg-zinc-50/60 p-3 dark:border-zinc-800/60 dark:bg-zinc-900/40">
+          <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-zinc-400 dark:text-zinc-500">
+            Largest Team
+          </p>
+          <p className="mt-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+            {largest.department}
+          </p>
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+            {largest.count} {largest.count === 1 ? 'person' : 'people'} &middot; {totalActive > 0 ? ((largest.count / totalActive) * 100).toFixed(0) : 0}% of headcount
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const ATTRITION_DEPT_COLORS = [
   // rose palette for the highest-rate bar, cascading down

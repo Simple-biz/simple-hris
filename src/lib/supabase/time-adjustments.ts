@@ -283,6 +283,90 @@ export async function managerDecideTimeAdjustment(
 }
 
 /**
+ * Manager recall. Pulls a request the manager already forwarded back out of Accounting
+ * and into the manager's pending queue for a second review. Moves status from
+ * `manager_approved` -> `pending` and clears BOTH decision sets plus any approved-hours
+ * override, so the request is re-reviewed from scratch. Requires the caller to manage the
+ * employee's department.
+ */
+export async function recallTimeAdjustment(
+  id: string,
+  params: {
+    recalled_by: string;
+    decision_note?: string | null;
+  },
+): Promise<{ error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Supabase not configured' };
+
+  const manager = params.recalled_by.trim();
+  const managerLower = manager.toLowerCase();
+
+  const { row, error: fetchErr } = await getTimeAdjustmentById(id);
+  if (fetchErr) return { error: fetchErr };
+  if (!row) return { error: 'Request not found' };
+  if (row.status !== 'manager_approved') {
+    return { error: 'Only requests forwarded to Accounting can be recalled' };
+  }
+
+  // Verify the manager oversees this employee's department.
+  const { rows: deptAssigns } = await listDepartmentsForManager(managerLower);
+  if (deptAssigns.length === 0) {
+    return { error: 'Not authorized — no department assignments found for this manager' };
+  }
+  const managedDepts = deptAssigns.map((a) => a.department.trim().toLowerCase());
+
+  const { data: masterData } = await supabase
+    .from('active_employees')
+    .select('"Department"')
+    .ilike('"Work Email"', row.work_email)
+    .maybeSingle();
+  const empDept = ((masterData as Record<string, unknown> | null)?.['Department'] as string | null)
+    ?.trim()
+    .toLowerCase() ?? '';
+  if (!empDept || !managedDepts.includes(empDept)) {
+    return { error: 'Not authorized — employee is not in your managed departments' };
+  }
+
+  const nowIso = new Date().toISOString();
+
+  const { error } = await supabase
+    .from(TABLE)
+    .update({
+      status: 'pending' as const,
+      // Clear both decision sets and the payroll override so the request restarts clean.
+      manager_decided_by: null,
+      manager_decided_at: null,
+      manager_decision_note: null,
+      decided_by: null,
+      decided_at: null,
+      decision_note: null,
+      approved_hours: null,
+      updated_at: nowIso,
+    })
+    .eq('id', id);
+  if (error) return { error: error.message };
+
+  void (async () => {
+    const role = await resolveUserRole(managerLower, 'Manager');
+    await insertAuditLog({
+      user_name: manager,
+      user_role: role,
+      action: 'time_adjustment.recalled',
+      resource: TABLE,
+      resource_id: id,
+      details: {
+        employee: row.work_email,
+        adjust_date: row.adjust_date,
+        decision_note: params.decision_note ?? null,
+      },
+    });
+  })();
+
+  return { error: null };
+}
+
+/**
  * Accounting decision (stage 2). Requires `manager_approved` status and an accounting role.
  * Moves status from `manager_approved` -> `approved` | `denied`.
  */

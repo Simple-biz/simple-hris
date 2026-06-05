@@ -208,7 +208,10 @@
       "Skill(impeccable:*)",
       "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\.claude\\\\projects\\\\c--Users-Itachi-Desktop-simple-hris\" -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 20 | Format-Table Name, LastWriteTime, Length -AutoSize)",
       "Bash(cd \"C:\\\\Users\\\\Itachi\\\\.claude\\\\projects\\\\c--Users-Itachi-Desktop-simple-hris\" && grep -o '\"source\":\"data:image/png;base64,[^\"]*\"' 124a13bc-c849-45a9-942f-bedb452d8a19.jsonl | head -1 | wc -c)",
-      "Read(//c/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/**)"
+      "Read(//c/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/**)",
+      "PowerShell(npx tsc --noEmit)",
+      "PowerShell(if \\($?\\) { \"TSC OK\" } else { \"TSC FAILED\" })",
+      "Bash(start \"\" \"c:\\\\tmp\\\\chime-preview.html\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

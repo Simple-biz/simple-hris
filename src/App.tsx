@@ -21,7 +21,7 @@ import AnnouncementWall from './components/announcements/AnnouncementWall';
 import AnnouncementComposer from './components/announcements/AnnouncementComposer';
 import SWall from './components/swall/SWall';
 import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForUser, canAccessAccountingTabForUser } from '@/lib/rbac/accounting-tabs';
-import type { FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
+import { canEditFeature, type FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import AccountingMesa from '@/components/payroll/AccountingMesa';
@@ -100,6 +100,10 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
   const allowedTabs = allowedAccountingTabsForUser(roles, featurePerms);
+  // Deleting a notification is an "edit" action. Admins bypass tab gating;
+  // everyone else needs explicit `edit` access to the notifications feature.
+  const canDeleteNotifications =
+    roles.includes('admin') || canEditFeature(featurePerms, 'accounting', 'notifications');
 
   const tabDirRef = useRef<1 | -1>(1);
 
@@ -166,7 +170,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       case 'mesa':
         return <AccountingMesa />;
       case 'notifications':
-        return <NotificationsPanel viewerEmail={sessionEmail} accent="orange" />;
+        return <NotificationsPanel viewerEmail={sessionEmail} accent="orange" canDelete={canDeleteNotifications} />;
       case 'settings':
         return <SystemSettings sessionEmail={sessionEmail} />;
       case 'announcements':

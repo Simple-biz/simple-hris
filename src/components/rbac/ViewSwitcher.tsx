@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { LayoutDashboard, ShieldCheck, Briefcase, ArrowLeftRight, Sparkles, UserCog, HeartHandshake, Crown, Users, HardHat } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
+import { useNotificationCountsByView } from '@/hooks/useNotificationCountsByView';
 import {
   ACTIVE_VIEW_KEY,
   VIEW_LABELS,
@@ -32,6 +33,7 @@ const VIEW_ICONS: Record<AppView, React.ComponentType<{ className?: string }>> =
 export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) {
   const router = useRouter();
   const { views } = useAvailableViews(email);
+  const notifCounts = useNotificationCountsByView(email);
   const [transitioning, setTransitioning] = useState<AppView | null>(null);
 
   if (views.length <= 1) return null;
@@ -63,6 +65,7 @@ export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) 
             const Icon = VIEW_ICONS[v];
             const active = v === currentView;
             const isPending = transitioning === v;
+            const notifCount = notifCounts[v] ?? 0;
             return (
               <button
                 key={v}
@@ -86,6 +89,17 @@ export default function ViewSwitcher({ email, currentView }: ViewSwitcherProps) 
                   )}
                 />
                 <span className="relative z-10">{VIEW_LABELS[v]}</span>
+                {notifCount > 0 && (
+                  <span
+                    title={`${notifCount} unread notification${notifCount === 1 ? '' : 's'} on the ${VIEW_LABELS[v]} dashboard`}
+                    className={cn(
+                      'relative z-10 ml-auto inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold leading-[18px] tabular-nums text-white shadow-sm',
+                      isPending ? 'bg-red-400' : 'bg-red-500',
+                    )}
+                  >
+                    {notifCount > 99 ? '99+' : notifCount}
+                  </span>
+                )}
                 {isPending && (
                   <span className="absolute inset-y-0 left-0 w-full origin-left animate-[viewswitch-shimmer_500ms_ease-out_forwards] bg-gradient-to-r from-orange-300/0 via-orange-300/60 to-orange-300/0 dark:via-blue-400/40" />
                 )}

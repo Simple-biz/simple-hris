@@ -11,6 +11,7 @@ import {
   Briefcase,
   Camera,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
@@ -19,6 +20,7 @@ import {
   EyeOff,
   Inbox,
   Mail,
+  Undo2,
   X,
   Menu,
   Search,
@@ -1436,6 +1438,8 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [recallingId, setRecallingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
@@ -1479,6 +1483,26 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
       toast.error(e instanceof Error ? e.message : 'Failed to update request');
     } finally {
       setDecidingId(null);
+    }
+  };
+
+  const recall = async (id: string) => {
+    setRecallingId(id);
+    try {
+      const res = await fetch(`/api/time-adjustments/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'recall' }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Failed');
+      toast.success('Recalled from Accounting — back in your queue');
+      setExpandedId(null);
+      fetchRows();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to recall request');
+    } finally {
+      setRecallingId(null);
     }
   };
 
@@ -1586,37 +1610,82 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
                 <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
                   {decided.map((row, i) => {
                     const decidedOn = taDecidedAt(row).slice(0, 10);
+                    const isExpanded = expandedId === row.id;
+                    const canRecall = row.status === 'manager_approved';
+                    const isRecalling = recallingId === row.id;
                     return (
                       <div
                         key={row.id}
-                        className={cn(
-                          'flex flex-wrap items-center gap-x-2 gap-y-1 px-3.5 py-2.5 text-xs',
-                          i > 0 && 'border-t border-zinc-100 dark:border-zinc-800/70',
-                        )}
+                        className={cn(i > 0 && 'border-t border-zinc-100 dark:border-zinc-800/70')}
                       >
-                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TA_STATUS_DOT[row.status] ?? 'bg-zinc-300 dark:bg-zinc-600'}`} />
-                        <span className="min-w-0 truncate font-medium text-zinc-700 dark:text-zinc-300">{row.work_email}</span>
-                        <span className="font-mono text-zinc-400 dark:text-zinc-500">{row.adjust_date}</span>
-                        <span className="text-zinc-300 dark:text-zinc-600">&middot;</span>
-                        <span className="text-zinc-500 dark:text-zinc-400">{TA_REASON_LABEL(row.reason)}</span>
-                        {row.approved_hours != null ? (
-                          <span className="font-medium text-zinc-600 dark:text-zinc-300">{row.approved_hours}h</span>
-                        ) : row.requested_hours != null ? (
-                          <span className="text-zinc-400 dark:text-zinc-500">{row.requested_hours}h req</span>
-                        ) : null}
-                        <span className="ml-auto flex shrink-0 items-center gap-2">
-                          {decidedOn && (
-                            <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{decidedOn}</span>
-                          )}
-                          <span
-                            className={cn(
-                              'rounded px-1.5 py-0.5 text-[10px] font-medium',
-                              TA_STATUS_PILL[row.status] ?? 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3.5 py-2.5 text-xs">
+                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TA_STATUS_DOT[row.status] ?? 'bg-zinc-300 dark:bg-zinc-600'}`} />
+                          <span className="min-w-0 truncate font-medium text-zinc-700 dark:text-zinc-300">{row.work_email}</span>
+                          <span className="font-mono text-zinc-400 dark:text-zinc-500">{row.adjust_date}</span>
+                          <span className="text-zinc-300 dark:text-zinc-600">&middot;</span>
+                          <span className="text-zinc-500 dark:text-zinc-400">{TA_REASON_LABEL(row.reason)}</span>
+                          {row.approved_hours != null ? (
+                            <span className="font-medium text-zinc-600 dark:text-zinc-300">{row.approved_hours}h</span>
+                          ) : row.requested_hours != null ? (
+                            <span className="text-zinc-400 dark:text-zinc-500">{row.requested_hours}h req</span>
+                          ) : null}
+                          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                            {decidedOn && (
+                              <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500">{decidedOn}</span>
                             )}
-                          >
-                            {TA_STATUS_LABEL[row.status] ?? row.status}
+                            <span
+                              className={cn(
+                                'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                                TA_STATUS_PILL[row.status] ?? 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+                              )}
+                            >
+                              {TA_STATUS_LABEL[row.status] ?? row.status}
+                            </span>
+                            {canRecall && (
+                              <button
+                                type="button"
+                                disabled={isRecalling}
+                                onClick={() => recall(row.id)}
+                                className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-40 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
+                                aria-label="Recall this request from Accounting for a second review"
+                              >
+                                {isRecalling
+                                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                                  : <Undo2 className="h-3 w-3" />}
+                                Retrieve
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setExpandedId(isExpanded ? null : row.id)}
+                              aria-expanded={isExpanded}
+                              className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-semibold text-zinc-600 transition hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                            >
+                              {isExpanded ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                              {isExpanded ? 'Unview' : 'View'}
+                              <ChevronDown className={cn('h-3 w-3 transition-transform', isExpanded && 'rotate-180')} />
+                            </button>
                           </span>
-                        </span>
+                        </div>
+
+                        <AnimatePresence initial={false}>
+                          {isExpanded && (
+                            <motion.div
+                              key="detail"
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                              className="overflow-hidden"
+                            >
+                              <ManagerHistoryDetail
+                                row={row}
+                                signedUrls={signedUrls}
+                                onImageClick={(url) => setLightboxUrl(url)}
+                              />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
                       </div>
                     );
                   })}
@@ -1823,6 +1892,147 @@ function ManagerAdjustmentCard({
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Read-only expanded detail for a decided/forwarded history row. Mirrors the
+ * awaiting-approval card layout (evidence + explanation) minus the action
+ * controls, and adds the manager + accounting decision trail.
+ */
+function ManagerHistoryDetail({
+  row,
+  signedUrls,
+  onImageClick,
+}: {
+  row: TimeAdjustmentRow;
+  signedUrls: Record<string, string>;
+  onImageClick: (url: string) => void;
+}) {
+  const [active, setActive] = useState(0);
+  const urls = row.image_paths.map((p) => signedUrls[p]).filter(Boolean) as string[];
+  const featured = urls[active] ?? urls[0] ?? null;
+
+  return (
+    <div className="flex flex-col gap-4 border-t border-zinc-100 bg-zinc-50/60 px-3.5 py-4 dark:border-zinc-800/70 dark:bg-zinc-900/40 sm:flex-row">
+      {/* LEFT — evidence */}
+      <div className="flex shrink-0 flex-col gap-2 sm:w-[40%]">
+        {featured ? (
+          <button
+            type="button"
+            onClick={() => onImageClick(featured)}
+            className="group relative block min-h-[11rem] flex-1 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
+            aria-label="View evidence full size"
+          >
+            <EvidenceImage
+              src={featured}
+              alt={`Evidence ${active + 1}`}
+              className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+            />
+            <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/25" />
+            <span className="absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-md bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
+              <Camera className="h-3 w-3" />
+              Proof
+            </span>
+            {urls.length > 1 && (
+              <span className="absolute right-2.5 top-2.5 rounded-md bg-black/55 px-2 py-0.5 text-[10px] font-medium tabular-nums text-white backdrop-blur-sm">
+                {active + 1}/{urls.length}
+              </span>
+            )}
+          </button>
+        ) : (
+          <div className="flex min-h-[11rem] flex-1 flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-600">
+            <ImageOff className="h-7 w-7" />
+            <span className="text-[11px] font-medium">No evidence images attached</span>
+          </div>
+        )}
+
+        {urls.length > 1 && (
+          <div className="flex gap-1.5 overflow-x-auto">
+            {urls.map((u, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setActive(i)}
+                className={cn(
+                  'relative h-10 w-12 shrink-0 overflow-hidden rounded-lg border-2 transition',
+                  i === active
+                    ? 'border-blue-500 ring-2 ring-blue-500/20'
+                    : 'border-transparent opacity-60 hover:opacity-100',
+                )}
+                aria-label={`Show evidence image ${i + 1}`}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={u} alt={`Evidence ${i + 1}`} className="h-full w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* RIGHT — details */}
+      <div className="flex min-w-0 flex-1 flex-col gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="rounded bg-blue-50 px-1.5 py-0.5 font-medium text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+            {TA_REASON_LABEL(row.reason)}
+          </span>
+          {row.requested_hours != null && (
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">{row.requested_hours}h requested</span>
+          )}
+          {row.approved_hours != null && (
+            <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+              {row.approved_hours}h approved
+            </span>
+          )}
+          {row.period_label && (
+            <span className="rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+              {row.period_label}
+            </span>
+          )}
+        </div>
+
+        {row.explanation && (
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              Employee explanation
+            </p>
+            <p className="rounded-xl border border-zinc-200 bg-white px-3 py-2 leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+              {row.explanation}
+            </p>
+          </div>
+        )}
+
+        {(row.manager_decided_by || row.manager_decision_note) && (
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              Manager decision
+            </p>
+            <p className="leading-relaxed text-zinc-600 dark:text-zinc-400">
+              {row.manager_decided_by && <span className="font-medium text-zinc-700 dark:text-zinc-300">{row.manager_decided_by}</span>}
+              {row.manager_decided_at && (
+                <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500"> &middot; {row.manager_decided_at.slice(0, 10)}</span>
+              )}
+              {row.manager_decision_note && <span className="block italic text-zinc-500 dark:text-zinc-400">&ldquo;{row.manager_decision_note}&rdquo;</span>}
+            </p>
+          </div>
+        )}
+
+        {(row.decided_by || row.decision_note) && (
+          <div className="space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              Accounting decision
+            </p>
+            <p className="leading-relaxed text-zinc-600 dark:text-zinc-400">
+              {row.decided_by && <span className="font-medium text-zinc-700 dark:text-zinc-300">{row.decided_by}</span>}
+              {row.decided_at && (
+                <span className="font-mono text-[10px] text-zinc-400 dark:text-zinc-500"> &middot; {row.decided_at.slice(0, 10)}</span>
+              )}
+              {row.decision_note && <span className="block italic text-zinc-500 dark:text-zinc-400">&ldquo;{row.decision_note}&rdquo;</span>}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

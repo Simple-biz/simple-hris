@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bell, CheckCheck, Lock, AlertTriangle, PartyPopper, BadgeDollarSign, Trash2 } from 'lucide-react';
+import { Bell, CheckCheck, Lock, AlertTriangle, PartyPopper, BadgeDollarSign, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
@@ -48,6 +48,13 @@ function formatRate(v: unknown): string {
 interface NotificationsPanelProps {
   viewerEmail?: string | null;
   accent?: 'orange' | 'blue' | 'emerald' | 'yellow' | 'zinc' | 'pink';
+  /**
+   * Whether the viewer can delete (dismiss) notifications. Deleting is an
+   * "edit" action, so dashboards that enforce per-feature RBAC pass the result
+   * of `canEditFeature(perms, view, 'notifications')` here. Defaults to `true`
+   * so dashboards that don't yet load feature permissions keep working.
+   */
+  canDelete?: boolean;
 }
 
 function formatLockedAt(iso: string | null): string | null {
@@ -67,6 +74,7 @@ function formatLockedAt(iso: string | null): string | null {
 export default function NotificationsPanel({
   viewerEmail,
   accent = 'orange',
+  canDelete = true,
 }: NotificationsPanelProps) {
   const { state: lockState, loading } = useDispatchLock();
   const [items, setItems] = useState<EmployeeNotification[]>([]);
@@ -137,10 +145,12 @@ export default function NotificationsPanel({
   const hasAny = items.length > 0 || lockState.locked;
 
   const handleDelete = useCallback(async (id: string) => {
-    // Optimistic removal; refetch will reconcile if the API rejects.
+    // Optimistic removal; refetch will reconcile if the API rejects (e.g. the
+    // server denies the delete on a permission / ownership check).
     setItems(prev => prev.filter(n => n.id !== id));
     try {
-      await fetch(`/api/employee-notifications?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const res = await fetch(`/api/employee-notifications?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (!res.ok) void refetch();
     } catch {
       void refetch();
     }
@@ -345,14 +355,17 @@ export default function NotificationsPanel({
                               New
                             </span>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => void handleDelete(n.id)}
-                            aria-label="Delete notification"
-                            className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 transition hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/40 dark:text-zinc-500 dark:hover:bg-red-950/30 dark:hover:text-red-400"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {canDelete && (
+                            <button
+                              type="button"
+                              onClick={() => void handleDelete(n.id)}
+                              aria-label="Delete notification"
+                              title="Delete notification"
+                              className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 transition hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/40 dark:text-zinc-500 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                         <p className="mt-1.5 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-400">
                           {n.message}

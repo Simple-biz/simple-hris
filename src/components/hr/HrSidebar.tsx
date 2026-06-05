@@ -38,6 +38,8 @@ interface HrSidebarProps {
   setActiveTab: (tab: HrTab) => void;
   mobileOpen: boolean;
   viewerEmail: string | null;
+  /** Unread notification count — drives the bell badge in the sidebar. */
+  unreadNotifications?: number;
 }
 
 export default function HrSidebar({
@@ -45,6 +47,7 @@ export default function HrSidebar({
   setActiveTab,
   mobileOpen,
   viewerEmail,
+  unreadNotifications = 0,
 }: HrSidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
@@ -151,8 +154,24 @@ export default function HrSidebar({
               'notifications',
               'Notifications',
               Bell,
-              lockState.locked ? (
-                <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
+              (unreadNotifications > 0 || lockState.locked) ? (
+                <span className="ml-auto flex items-center gap-1.5">
+                  {unreadNotifications > 0 && (
+                    <span
+                      className={cn(
+                        'inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-[18px]',
+                        activeTab === 'notifications'
+                          ? 'bg-white/25 text-white'
+                          : 'bg-red-500 text-white',
+                      )}
+                    >
+                      {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                    </span>
+                  )}
+                  {lockState.locked && (
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                  )}
+                </span>
               ) : null,
             )}
             <button

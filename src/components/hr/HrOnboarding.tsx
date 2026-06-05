@@ -10,6 +10,7 @@ import {
   Mail,
   MailQuestion,
   Pencil,
+  RefreshCw,
   RotateCcw,
   Search,
   Trash2,
@@ -469,6 +470,17 @@ export default function HrOnboarding() {
                   className="border-emerald-100/70 bg-white pl-9 dark:border-emerald-900/50 dark:bg-zinc-900"
                 />
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 gap-1.5 border-emerald-200/70 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-200 dark:hover:bg-emerald-950/30"
+                onClick={() => void fetchPending()}
+                disabled={pendingLoading}
+                title="Refresh the pending hires table (it also updates live automatically)"
+              >
+                <RefreshCw className={cn('h-3.5 w-3.5', pendingLoading && 'animate-spin')} />
+                <span className="hidden sm:inline">Refresh</span>
+              </Button>
             </div>
           </div>
 

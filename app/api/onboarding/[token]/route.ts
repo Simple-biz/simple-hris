@@ -4,9 +4,64 @@ import {
   submitHrOnboarding,
   type SubmitOnboardingInput,
 } from "@/lib/supabase/hr-onboarding-submissions";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+/** Active work emails for everyone holding one of `roles`. Used to notify HR. */
+async function recipientsForRoles(roles: string[]): Promise<string[]> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return [];
+  const { data } = await supabase
+    .from("employee_roles")
+    .select("work_email, role")
+    .in("role", roles)
+    .is("revoked_at", null);
+  const out = new Set<string>();
+  for (const r of (data ?? []) as Array<{ work_email?: string | null }>) {
+    const e = (r.work_email ?? "").trim().toLowerCase();
+    if (e) out.add(e);
+  }
+  return Array.from(out);
+}
+
+/**
+ * Drop an in-app notification into every HR coordinator's / admin's bell when a
+ * hire completes their onboarding form. Best-effort: a notification failure must
+ * never block the public submit, so this swallows its own errors.
+ */
+async function notifyHrOfSubmission(args: {
+  submissionId: string;
+  fullName: string;
+  personalEmail: string | null;
+  department: string | null;
+}): Promise<void> {
+  try {
+    const supabase = createSupabaseServiceRoleClient();
+    if (!supabase) return;
+    const recipients = await recipientsForRoles(["hr_coordinator", "admin"]);
+    if (recipients.length === 0) return;
+    const deptSuffix = args.department ? ` for ${args.department}` : "";
+    await supabase.from("employee_notifications").insert(
+      recipients.map((to) => ({
+        recipient_email: to,
+        type: "onboarding.submitted",
+        tone: "positive",
+        title: "New Onboarding Submission",
+        message: `${args.fullName} completed their onboarding paperwork${deptSuffix}. Review it in Onboarding → Onboarding Form.`,
+        details: {
+          submission_id: args.submissionId,
+          full_name: args.fullName,
+          personal_email: args.personalEmail,
+          department: args.department,
+        },
+      })),
+    );
+  } catch {
+    /* non-fatal — the hire's submission still succeeds */
+  }
+}
 
 /**
  * GET /api/onboarding/[token]
@@ -134,5 +189,16 @@ export async function POST(
     const status = /not found|no longer active/i.test(error) ? 409 : 500;
     return NextResponse.json({ error }, { status });
   }
+
+  // Alert HR — pops into their Notifications bell (and chimes) in real time.
+  if (row) {
+    await notifyHrOfSubmission({
+      submissionId: row.id,
+      fullName: row.full_name?.trim() || body.full_name!.trim(),
+      personalEmail: row.invite_personal_email ?? row.email ?? null,
+      department: row.invite_department ?? null,
+    });
+  }
+
   return NextResponse.json({ row: { id: row?.id, status: row?.status } });
 }
