@@ -7,6 +7,8 @@ import {
   CheckCircle2,
   CheckIcon,
   ChevronDownIcon,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCopy,
   Download,
   Eye,
@@ -190,7 +192,7 @@ export default function HrOnboardingForm() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
+    const result = rows.filter((r) => {
       if (filter !== 'all' && r.status !== filter) return false;
       // "Needs work email" toggle — scoped to the Submitted tab so switching
       // away from it doesn't silently hide rows elsewhere.
@@ -200,6 +202,14 @@ export default function HrOnboardingForm() {
         .filter(Boolean)
         .some((s) => s!.toLowerCase().includes(q));
     });
+    if (filter === 'submitted') {
+      result.sort((a, b) => {
+        const ta = a.submitted_at ? new Date(a.submitted_at).getTime() : 0;
+        const tb = b.submitted_at ? new Date(b.submitted_at).getTime() : 0;
+        return tb - ta;
+      });
+    }
+    return result;
   }, [rows, filter, search, hideEmailSet]);
 
   // How many submitted hires still need a work email — shown on the toggle and
@@ -208,6 +218,13 @@ export default function HrOnboardingForm() {
     () => rows.filter((r) => r.status === 'submitted' && !r.work_email).length,
     [rows],
   );
+
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(0);
+  useEffect(() => { setPage(0); }, [filter, search]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   // Drop any selected id that's no longer visible (filter/search changed, or a
   // row was archived/deleted). `filtered` is memoized, so this only fires when
@@ -527,7 +544,7 @@ export default function HrOnboardingForm() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-emerald-100/60 dark:divide-emerald-900/30">
-                {filtered.map((r, i) => {
+                {pageRows.map((r, i) => {
                   const isBusy = busyId === r.id;
                   return (
                     // Keyed by filter so every row remounts and re-runs its
@@ -683,6 +700,30 @@ export default function HrOnboardingForm() {
                 })}
               </tbody>
             </table>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between border-t border-emerald-100/60 px-4 py-2.5 dark:border-emerald-900/30">
+                <p className="text-[11px] text-zinc-400">
+                  {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage(0)}>
+                    <ChevronLeft className="h-3 w-3" /><ChevronLeft className="h-3 w-3 -ml-2" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+                    <ChevronLeft className="h-3 w-3" />
+                  </Button>
+                  <span className="min-w-[4rem] text-center text-[11px] text-zinc-500">
+                    {safePage + 1} / {totalPages}
+                  </span>
+                  <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}>
+                    <ChevronRight className="h-3 w-3" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-7 w-7" disabled={safePage >= totalPages - 1} onClick={() => setPage(totalPages - 1)}>
+                    <ChevronRight className="h-3 w-3" /><ChevronRight className="h-3 w-3 -ml-2" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -6,6 +6,7 @@ import {
 } from "@/lib/supabase/payroll-dispatch-lock";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -55,6 +56,45 @@ export async function POST(req: NextRequest) {
       started_at: state.lockedAt,
     },
   });
+
+  // Persist a notification for all relevant roles so the payroll lock event
+  // appears in the Notifications tab even after processing stops.
+  void (async () => {
+    try {
+      const supabase = createSupabaseServiceRoleClient();
+      if (!supabase) return;
+      const { data: roleRows } = await supabase
+        .from("employee_roles")
+        .select("work_email")
+        .in("role", ["admin", "hr_coordinator", "payroll_coordinator", "payroll_manager", "finance"])
+        .is("revoked_at", null);
+      const recipients = Array.from(
+        new Set(
+          (roleRows ?? [])
+            .map((r: { work_email?: string | null }) => (r.work_email ?? "").trim().toLowerCase())
+            .filter(Boolean),
+        ),
+      );
+      if (recipients.length === 0) return;
+      const type = body.locked ? "payroll.processing_started" : "payroll.processing_stopped";
+      const title = body.locked ? "Payroll Processing Started" : "Payroll Processing Stopped";
+      const message = body.locked
+        ? `${actor ?? "Accounting"} started payroll processing. Disputes, bank changes, and leave requests are temporarily paused.`
+        : `${actor ?? "Accounting"} stopped payroll processing. Normal operations have resumed.`;
+      await supabase.from("employee_notifications").insert(
+        recipients.map((to) => ({
+          recipient_email: to,
+          type,
+          tone: "neutral",
+          title,
+          message,
+          details: { locked: body.locked, actor, started_at: state.lockedAt },
+        })),
+      );
+    } catch {
+      /* non-fatal */
+    }
+  })();
 
   return NextResponse.json(state);
 }

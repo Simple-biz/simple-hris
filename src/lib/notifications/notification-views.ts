@@ -20,6 +20,8 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   'dispute.revoked': ['employee'],
   'time_adjustment.approved': ['employee'],
   'time_adjustment.denied': ['employee'],
+  'payroll.processing_started': ['admin', 'hr', 'accounting'],
+  'payroll.processing_stopped': ['admin', 'hr', 'accounting'],
 };
 
 /** Dashboards a notification of `type` belongs to. Unknown types -> none. */

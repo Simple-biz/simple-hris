@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bell, CheckCheck, Lock, AlertTriangle, PartyPopper, BadgeDollarSign, X } from 'lucide-react';
+import { Bell, CheckCheck, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, X, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
@@ -55,6 +55,9 @@ interface NotificationsPanelProps {
    * so dashboards that don't yet load feature permissions keep working.
    */
   canDelete?: boolean;
+  /** When true, silently backfills notifications for already-submitted
+   *  onboarding forms before the first fetch. Pass on HR/admin panels. */
+  backfillOnboarding?: boolean;
 }
 
 function formatLockedAt(iso: string | null): string | null {
@@ -75,6 +78,7 @@ export default function NotificationsPanel({
   viewerEmail,
   accent = 'orange',
   canDelete = true,
+  backfillOnboarding = false,
 }: NotificationsPanelProps) {
   const { state: lockState, loading } = useDispatchLock();
   const [items, setItems] = useState<EmployeeNotification[]>([]);
@@ -102,8 +106,17 @@ export default function NotificationsPanel({
   }, [normEmail]);
 
   useEffect(() => {
-    void refetch();
-  }, [refetch]);
+    if (backfillOnboarding) {
+      // Silently backfill notifications for any submitted onboarding forms that
+      // were never notified (e.g. submissions predating this feature). Runs once
+      // on mount; idempotent on the server side.
+      void fetch('/api/hr/backfill-onboarding-notifications', { method: 'POST' })
+        .then(() => refetch())
+        .catch(() => refetch());
+    } else {
+      void refetch();
+    }
+  }, [backfillOnboarding, refetch]);
 
   // Realtime: refetch on any insert/update for this recipient.
   useEffect(() => {
@@ -156,6 +169,44 @@ export default function NotificationsPanel({
     }
   }, [refetch]);
 
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 10;
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((n) =>
+      [n.title, n.message].some((s) => s?.toLowerCase().includes(q)),
+    );
+  }, [items, search]);
+
+  // Reset to page 0 whenever search or items change.
+  useEffect(() => { setPage(0); }, [search, items.length]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageItems = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+
+  const [clearing, setClearing] = useState(false);
+  const handleClearAll = useCallback(async () => {
+    if (!normEmail || items.length === 0) return;
+    setClearing(true);
+    const ids = items.map(n => n.id);
+    setItems([]);
+    try {
+      await fetch('/api/employee-notifications/clear-all', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normEmail, ids }),
+      });
+    } catch {
+      void refetch();
+    } finally {
+      setClearing(false);
+    }
+  }, [normEmail, items, refetch]);
+
   const ring: Record<typeof accent, string> = {
     orange: 'ring-orange-200 dark:ring-orange-900/40',
     blue: 'ring-blue-200 dark:ring-blue-900/40',
@@ -197,10 +248,31 @@ export default function NotificationsPanel({
               {unreadCount} active
             </span>
           )}
+          {items.length > 0 && canDelete && (
+            <button
+              onClick={handleClearAll}
+              disabled={clearing}
+              className="ml-auto inline-flex items-center rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 transition-colors duration-150 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-red-800 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+            >
+              {clearing ? 'Clearing…' : 'Clear all'}
+            </button>
+          )}
         </div>
         <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
           System alerts, approvals, and activity updates.
         </p>
+        {items.length > 0 && (
+          <div className="relative mt-3">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search notifications…"
+              className="h-8 w-full rounded-md border border-zinc-200 bg-zinc-50 pl-8 pr-3 text-xs text-zinc-800 placeholder-zinc-400 focus:border-zinc-400 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-200 dark:placeholder-zinc-500 dark:focus:border-zinc-500"
+            />
+          </div>
+        )}
       </div>
 
       {/* Body */}
@@ -224,7 +296,7 @@ export default function NotificationsPanel({
               </div>
             ))}
           </div>
-        ) : hasAny ? (
+        ) : (items.length > 0 || lockState.locked) ? (
           <div className="space-y-4 px-4 py-5 sm:px-6">
             {lockState.locked && (
             <>
@@ -303,22 +375,45 @@ export default function NotificationsPanel({
             </>
             )}
 
-            {items.map((n) => {
+            {filtered.length === 0 && search.trim() && (
+              <p className="py-6 text-center text-xs text-zinc-400">No notifications match &ldquo;{search}&rdquo;.</p>
+            )}
+            {pageItems.map((n) => {
               const positive = n.tone === 'positive';
               const isRate = n.type === 'rate.change';
-              const stripe = positive
-                ? 'bg-gradient-to-r from-emerald-400 to-teal-500'
-                : 'bg-gradient-to-r from-zinc-300 to-zinc-400 dark:from-zinc-700 dark:to-zinc-600';
-              const ringCls = positive
-                ? 'border-emerald-200/80 dark:border-emerald-900/40'
-                : 'border-zinc-200 dark:border-zinc-800';
-              const iconWrap = positive
-                ? 'bg-emerald-50 ring-emerald-200 dark:bg-emerald-950/30 dark:ring-emerald-900/50'
-                : 'bg-zinc-100 ring-zinc-200 dark:bg-zinc-800/60 dark:ring-zinc-700';
-              const iconCls = positive
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : 'text-zinc-500 dark:text-zinc-400';
-              const Icon = positive ? PartyPopper : BadgeDollarSign;
+              const isPayrollStart = n.type === 'payroll.processing_started';
+              const isPayrollStop  = n.type === 'payroll.processing_stopped';
+              const isPayroll = isPayrollStart || isPayrollStop;
+
+              const stripe = isPayrollStart
+                ? 'bg-gradient-to-r from-amber-400 to-orange-500'
+                : isPayrollStop
+                  ? 'bg-gradient-to-r from-zinc-300 to-zinc-400 dark:from-zinc-600 dark:to-zinc-500'
+                  : positive
+                    ? 'bg-gradient-to-r from-emerald-400 to-teal-500'
+                    : 'bg-gradient-to-r from-zinc-300 to-zinc-400 dark:from-zinc-700 dark:to-zinc-600';
+              const ringCls = isPayrollStart
+                ? 'border-amber-200/80 dark:border-amber-900/40'
+                : isPayrollStop
+                  ? 'border-zinc-200 dark:border-zinc-800'
+                  : positive
+                    ? 'border-emerald-200/80 dark:border-emerald-900/40'
+                    : 'border-zinc-200 dark:border-zinc-800';
+              const iconWrap = isPayrollStart
+                ? 'bg-amber-50 ring-amber-200 dark:bg-amber-950/30 dark:ring-amber-900/50'
+                : isPayrollStop
+                  ? 'bg-zinc-100 ring-zinc-200 dark:bg-zinc-800/60 dark:ring-zinc-700'
+                  : positive
+                    ? 'bg-emerald-50 ring-emerald-200 dark:bg-emerald-950/30 dark:ring-emerald-900/50'
+                    : 'bg-zinc-100 ring-zinc-200 dark:bg-zinc-800/60 dark:ring-zinc-700';
+              const iconCls = isPayrollStart
+                ? 'text-amber-600 dark:text-amber-400'
+                : isPayrollStop
+                  ? 'text-zinc-500 dark:text-zinc-400'
+                  : positive
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-zinc-500 dark:text-zinc-400';
+              const Icon = isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
               const beforeReg = n.details?.before?.regular_rate;
               const afterReg  = n.details?.after?.regular_rate;
               const beforeOt  = n.details?.before?.ot_rate;
@@ -416,6 +511,47 @@ export default function NotificationsPanel({
                 </div>
               );
             })}
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                <p className="text-[11px] text-zinc-400">
+                  {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+                </p>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setPage(0)}
+                    disabled={safePage === 0}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  >
+                    <ChevronLeft className="h-3 w-3" /><ChevronLeft className="h-3 w-3 -ml-2" />
+                  </button>
+                  <button
+                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                    disabled={safePage === 0}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  >
+                    <ChevronLeft className="h-3 w-3" />
+                  </button>
+                  <span className="min-w-[3.5rem] text-center text-[11px] text-zinc-500">
+                    {safePage + 1} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                    disabled={safePage >= totalPages - 1}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  >
+                    <ChevronRight className="h-3 w-3" />
+                  </button>
+                  <button
+                    onClick={() => setPage(totalPages - 1)}
+                    disabled={safePage >= totalPages - 1}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  >
+                    <ChevronRight className="h-3 w-3" /><ChevronRight className="h-3 w-3 -ml-2" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           /* Empty state */

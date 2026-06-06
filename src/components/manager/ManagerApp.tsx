@@ -159,14 +159,11 @@ export default function ManagerApp() {
   // the Overview gallery hero cycles through them.
   const [pendingRequests, setPendingRequests] = useState<TimeAdjustmentRow[]>([]);
   const [pendingSignedUrls, setPendingSignedUrls] = useState<Record<string, string>>({});
-  // One-shot flag: flips true after the first time-adjustments fetch settles. Drives the
-  // Overview skeleton (alongside the roster gate) and never flips back, so revisiting the
-  // tab doesn't reflash the skeleton.
-  const [requestsLoaded, setRequestsLoaded] = useState(false);
-
+  const [requestsLoading, setRequestsLoading] = useState(true);
   // Keep the pending-approval badge live — refetch whenever the tab is opened.
   useEffect(() => {
     let cancelled = false;
+    setRequestsLoading(true);
     fetch('/api/manager/time-adjustments', { cache: 'no-store' })
       .then((r) => r.json())
       .then((json: { rows?: TimeAdjustmentRow[]; signedUrls?: Record<string, string> }) => {
@@ -177,14 +174,14 @@ export default function ManagerApp() {
         setPendingApprovals(pendingRows.length);
         setPendingRequests(pendingRows);
         setPendingSignedUrls(json.signedUrls ?? {});
-        setRequestsLoaded(true);
+        setRequestsLoading(false);
       })
       .catch(() => {
         if (cancelled) return;
         setPendingApprovals(0);
         setPendingRequests([]);
         setPendingSignedUrls({});
-        setRequestsLoaded(true);
+        setRequestsLoading(false);
       });
     return () => { cancelled = true; };
   }, [activeTab]);
@@ -333,11 +330,11 @@ export default function ManagerApp() {
             >
               {activeTab === 'overview' && (
                 <Overview
-                  loading={teamGate.kind === 'loading' || !requestsLoaded}
                   viewerEmail={viewerEmail}
                   pendingApprovals={pendingApprovals}
                   pendingRequests={pendingRequests}
                   pendingSignedUrls={pendingSignedUrls}
+                  requestsLoading={requestsLoading}
                   teamMembers={teamMembers}
                   teamCount={teamGate.kind === 'loading' ? null : teamMembers.length}
                   teamGate={teamGate}
@@ -477,11 +474,11 @@ export default function ManagerApp() {
 // ─── Overview ────────────────────────────────────────────────────────────────
 
 interface OverviewProps {
-  loading: boolean;
   viewerEmail: string | null;
   pendingApprovals: number;
   pendingRequests: TimeAdjustmentRow[];
   pendingSignedUrls: Record<string, string>;
+  requestsLoading: boolean;
   teamMembers: EmployeeRow[];
   teamCount: number | null;
   teamGate: ManagerTeamGate;
@@ -491,11 +488,11 @@ interface OverviewProps {
 }
 
 function Overview({
-  loading,
   viewerEmail,
   pendingApprovals,
   pendingRequests,
   pendingSignedUrls,
+  requestsLoading,
   teamMembers,
   teamCount,
   teamGate,
@@ -507,8 +504,6 @@ function Overview({
     ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ').split(' ')[0]
     : 'there';
   const greeting = firstName.charAt(0).toUpperCase() + firstName.slice(1);
-
-  if (loading) return <OverviewSkeleton />;
 
   return (
     <div className="flex flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
@@ -579,208 +574,20 @@ function Overview({
           <LatestRequestHero
             requests={pendingRequests}
             signedUrls={pendingSignedUrls}
+            loading={requestsLoading}
             onReview={onJumpToApprovals}
           />
         </div>
         <div className="lg:col-span-2">
           <TeamSpotlight
             members={teamMembers}
+            loading={teamGate.kind === 'loading'}
             onOpenTeam={onJumpToTeam}
             onViewEmployee={onViewEmployee}
           />
         </div>
       </section>
 
-      {/* Time adjustment approvals */}
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex items-center justify-between gap-4 px-5 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white">
-              <ClipboardCheck className="h-4 w-4" />
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-zinc-900 dark:text-white">
-                Time adjustment approvals
-              </div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-500">
-                Workers submit — two managers sign off — system posts to Hubstaff.
-              </div>
-            </div>
-          </div>
-          <Button
-            size="sm"
-            className="shrink-0 bg-blue-600 text-white hover:bg-blue-700"
-            onClick={onJumpToApprovals}
-          >
-            Open queue
-          </Button>
-        </div>
-        <div className="grid grid-cols-2 border-t border-zinc-100 sm:grid-cols-4 dark:border-zinc-800">
-          {(
-            [
-              { icon: Camera, label: 'Screenshot proof', sub: 'Attached to every request' },
-              { icon: Clock, label: 'Timestamps', sub: 'Exact start and end times' },
-              { icon: CheckCircle2, label: 'Two sign-offs', sub: 'Both managers must approve' },
-              { icon: AlertTriangle, label: 'Auto-posts', sub: 'Syncs to Hubstaff on approval' },
-            ] as const
-          ).map(({ icon: Icon, label, sub }, i) => (
-            <div
-              key={label}
-              className={cn(
-                'flex flex-col gap-1 px-4 py-3',
-                i > 0 && 'border-l border-zinc-100 dark:border-zinc-800',
-              )}
-            >
-              <Icon className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400" />
-              <div className="text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">{label}</div>
-              <div className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">{sub}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Roadmap */}
-      <div className="rounded-xl border border-zinc-200 bg-white px-5 py-4 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-400 dark:text-zinc-500">
-          What&apos;s coming
-        </div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {[
-            'Pick your team via simple.biz email',
-            'Submit team transfers without email',
-            'Enter KPI scores — auto-bonus calc',
-            'Notifications when a request lands',
-          ].map((text, i) => (
-            <div key={text} className="flex items-center gap-2.5">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-200 text-[9px] font-bold tabular-nums text-zinc-400 dark:border-zinc-700 dark:text-zinc-600">
-                {String(i + 1).padStart(2, '0')}
-              </span>
-              <span className="text-sm text-zinc-600 dark:text-zinc-400">{text}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Overview: skeleton (initial load) ───────────────────────────────────────
-
-/** A single shimmering placeholder block. */
-function Sk({ className }: { className?: string }) {
-  return (
-    <div
-      className={cn(
-        'animate-pulse rounded-md bg-zinc-200/80 dark:bg-zinc-800/80',
-        className,
-      )}
-    />
-  );
-}
-
-/**
- * Layout-faithful placeholder shown while the roster + pending-request fetches
- * are in flight. Mirrors the real Overview's grid so nothing shifts on swap-in.
- */
-function OverviewSkeleton() {
-  return (
-    <div
-      className="flex flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-8"
-      aria-busy="true"
-      aria-live="polite"
-    >
-      <span className="sr-only">Loading your dashboard…</span>
-
-      {/* Header */}
-      <header className="flex items-start justify-between gap-4">
-        <div className="flex gap-3">
-          <div className="mt-1.5 h-8 w-0.5 shrink-0 rounded-full bg-blue-500/40" />
-          <div className="space-y-2.5">
-            <Sk className="h-2.5 w-32" />
-            <Sk className="h-7 w-44 sm:h-8" />
-            <Sk className="h-3.5 w-72 max-w-[80vw]" />
-          </div>
-        </div>
-        <Sk className="hidden h-7 w-16 rounded-full sm:block" />
-      </header>
-
-      {/* KPI cards */}
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="flex items-center gap-4 rounded-xl border border-blue-100/70 bg-white/90 px-4 py-4 ring-1 ring-blue-500/5 dark:border-blue-950/50 dark:bg-zinc-950/70 dark:ring-blue-400/10"
-          >
-            <Sk className="h-10 w-10 shrink-0 rounded-lg" />
-            <div className="min-w-0 flex-1 space-y-2">
-              <Sk className="h-2.5 w-24" />
-              <Sk className="h-6 w-12" />
-              <Sk className="h-2.5 w-32" />
-            </div>
-          </div>
-        ))}
-      </section>
-
-      {/* Gallery — hero (left) + spotlight (right) */}
-      <section className="grid gap-5 lg:grid-cols-5">
-        <div className="lg:col-span-3">
-          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-            <Sk className="aspect-[16/10] w-full rounded-none sm:aspect-[16/9]" />
-            <div className="space-y-2.5 px-5 py-4">
-              <Sk className="h-3 w-28" />
-              <Sk className="h-4 w-3/4" />
-              <Sk className="h-3.5 w-1/2" />
-            </div>
-          </div>
-        </div>
-        <div className="lg:col-span-2">
-          <div className="flex h-full flex-col gap-4 rounded-xl border border-zinc-200 bg-white px-5 py-5 dark:border-zinc-800 dark:bg-zinc-950">
-            <div className="flex items-center gap-3">
-              <Sk className="h-14 w-14 shrink-0 rounded-full" />
-              <div className="flex-1 space-y-2">
-                <Sk className="h-4 w-32" />
-                <Sk className="h-3 w-24" />
-              </div>
-            </div>
-            <Sk className="h-3 w-full" />
-            <Sk className="h-3 w-5/6" />
-            <div className="mt-auto flex gap-2 pt-2">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <Sk key={i} className="h-9 w-9 shrink-0 rounded-full" />
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Lower info band */}
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex items-center justify-between gap-4 px-5 py-4">
-          <div className="flex items-center gap-3">
-            <Sk className="h-8 w-8 shrink-0 rounded-lg" />
-            <div className="space-y-2">
-              <Sk className="h-3.5 w-48" />
-              <Sk className="h-3 w-64 max-w-[60vw]" />
-            </div>
-          </div>
-          <Sk className="hidden h-8 w-24 rounded-md sm:block" />
-        </div>
-        <div className="grid grid-cols-2 border-t border-zinc-100 sm:grid-cols-4 dark:border-zinc-800">
-          {[0, 1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className={cn(
-                'flex flex-col gap-2 px-4 py-3',
-                i > 0 && 'border-l border-zinc-100 dark:border-zinc-800',
-              )}
-            >
-              <Sk className="h-3.5 w-3.5 rounded" />
-              <Sk className="h-2.5 w-20" />
-              <Sk className="h-2.5 w-16" />
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
@@ -790,10 +597,12 @@ function OverviewSkeleton() {
 function LatestRequestHero({
   requests,
   signedUrls,
+  loading,
   onReview,
 }: {
   requests: TimeAdjustmentRow[];
   signedUrls: Record<string, string>;
+  loading: boolean;
   onReview: () => void;
 }) {
   // Which request is featured (auto-cycles), and which evidence image within it.
@@ -821,6 +630,23 @@ function LatestRequestHero({
     () => (latestPending?.image_paths ?? []).map((p) => signedUrls[p]).filter(Boolean) as string[],
     [latestPending, signedUrls],
   );
+
+  if (loading) {
+    return (
+      <div className="flex h-full min-h-[18rem] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex items-center gap-1.5 border-b border-zinc-100 bg-zinc-50/60 px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+          <div className="h-1.5 w-1.5 rounded-full bg-zinc-200 dark:bg-zinc-700" />
+          <div className="h-2 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
+        </div>
+        <div className="aspect-[16/5] w-full animate-pulse bg-zinc-100 dark:bg-zinc-900" />
+        <div className="flex flex-1 flex-col gap-3 px-5 py-4">
+          <div className="h-2.5 w-28 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          <div className="h-4 w-3/4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          <div className="h-3 w-1/2 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+        </div>
+      </div>
+    );
+  }
   const featured = urls[imgIdx] ?? urls[0] ?? null;
   const setActive = setImgIdx;
   const active = imgIdx;
@@ -1041,10 +867,12 @@ function SpotlightAvatar({
 
 function TeamSpotlight({
   members,
+  loading,
   onOpenTeam,
   onViewEmployee,
 }: {
   members: EmployeeRow[];
+  loading: boolean;
   onOpenTeam: () => void;
   onViewEmployee: (email: string) => void;
 }) {
@@ -1137,6 +965,33 @@ function TeamSpotlight({
     const t = window.setTimeout(() => onViewEmployee(currentEmail), 10000);
     return () => window.clearTimeout(t);
   }, [paused, currentEmail, onViewEmployee]);
+
+  if (loading) {
+    return (
+      <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-1.5 dark:border-zinc-800">
+          <div className="flex items-center gap-1.5">
+            <div className="h-3.5 w-3.5 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
+            <div className="h-2 w-20 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
+          </div>
+          <div className="h-4 w-12 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-700" />
+        </div>
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-5 py-6">
+          <div className="h-20 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+          <div className="flex flex-col items-center gap-2">
+            <div className="h-4 w-36 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+            <div className="h-3 w-24 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+            <div className="h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
+          </div>
+        </div>
+        <div className="flex items-center gap-2 border-t border-zinc-100 px-4 py-3 dark:border-zinc-800">
+          {[0,1,2,3,4].map((i) => (
+            <div key={i} className="h-9 w-9 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -1441,7 +1296,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
   const [recallingId, setRecallingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ urls: string[]; idx: number } | null>(null);
 
   const fetchRows = React.useCallback(() => {
     setLoading(true);
@@ -1459,13 +1314,17 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
 
   useEffect(() => { fetchRows(); }, [fetchRows]);
 
-  // Close lightbox on Escape
+  // Close lightbox on Escape, navigate with arrow keys
   useEffect(() => {
-    if (!lightboxUrl) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightboxUrl(null); };
+    if (!lightbox) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setLightbox(null); return; }
+      if (e.key === 'ArrowRight') setLightbox((lb) => lb && { ...lb, idx: (lb.idx + 1) % lb.urls.length });
+      if (e.key === 'ArrowLeft')  setLightbox((lb) => lb && { ...lb, idx: (lb.idx - 1 + lb.urls.length) % lb.urls.length });
+    };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [lightboxUrl]);
+  }, [lightbox]);
 
   const decide = async (id: string, action: 'manager_approve' | 'manager_deny') => {
     setDecidingId(id);
@@ -1516,7 +1375,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
     <>
       {/* Image lightbox — AnimatePresence owns both enter and exit */}
       <AnimatePresence>
-        {lightboxUrl && (
+        {lightbox && (
           <motion.div
             key="mgr-lightbox-backdrop"
             initial={{ opacity: 0 }}
@@ -1524,10 +1383,10 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
             className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
-            onClick={() => setLightboxUrl(null)}
+            onClick={() => setLightbox(null)}
           >
             <motion.div
-              key="mgr-lightbox-img"
+              key={lightbox.urls[lightbox.idx]}
               initial={{ opacity: 0, scale: 0.9, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.92, y: 8 }}
@@ -1537,16 +1396,37 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={lightboxUrl}
+                src={lightbox.urls[lightbox.idx]}
                 alt="Evidence"
                 className="max-h-[88vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
               />
               <button
-                onClick={() => setLightboxUrl(null)}
+                onClick={() => setLightbox(null)}
                 className="absolute -right-3 -top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md ring-1 ring-white/20 transition hover:bg-white/20"
               >
                 <X className="h-4 w-4" />
               </button>
+              {lightbox.urls.length > 1 && (
+                <>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setLightbox((lb) => lb && { ...lb, idx: (lb.idx - 1 + lb.urls.length) % lb.urls.length }); }}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md ring-1 ring-white/20 transition hover:bg-white/20"
+                    aria-label="Previous image"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setLightbox((lb) => lb && { ...lb, idx: (lb.idx + 1) % lb.urls.length }); }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white backdrop-blur-md ring-1 ring-white/20 transition hover:bg-white/20"
+                    aria-label="Next image"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                  <span className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-2.5 py-0.5 text-[11px] font-medium tabular-nums text-white backdrop-blur-sm">
+                    {lightbox.idx + 1} / {lightbox.urls.length}
+                  </span>
+                </>
+              )}
             </motion.div>
           </motion.div>
         )}
@@ -1596,7 +1476,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
                     note={notesDraft[row.id] ?? ''}
                     onNoteChange={(v) => setNotesDraft((p) => ({ ...p, [row.id]: v }))}
                     onDecide={decide}
-                    onImageClick={(url) => setLightboxUrl(url)}
+                    onImageClick={(urls, idx) => setLightbox({ urls, idx })}
                   />
                 ))}
               </section>
@@ -1681,7 +1561,7 @@ function ManagerTimeAdjustments({ onCountChange }: { onCountChange: (n: number) 
                               <ManagerHistoryDetail
                                 row={row}
                                 signedUrls={signedUrls}
-                                onImageClick={(url) => setLightboxUrl(url)}
+                                onImageClick={(urls, idx) => setLightbox({ urls, idx })}
                               />
                             </motion.div>
                           )}
@@ -1751,7 +1631,7 @@ function ManagerAdjustmentCard({
   note: string;
   onNoteChange: (v: string) => void;
   onDecide: (id: string, action: 'manager_approve' | 'manager_deny') => void;
-  onImageClick: (url: string) => void;
+  onImageClick: (urls: string[], idx: number) => void;
 }) {
   const isDeciding = decidingId === row.id;
   const [active, setActive] = useState(0);
@@ -1767,18 +1647,20 @@ function ManagerAdjustmentCard({
         {/* LEFT — evidence image, the main attraction */}
         <div className="flex shrink-0 flex-col gap-2 p-4 sm:w-[46%] sm:pr-2">
           {featured ? (
-            <button
-              type="button"
-              onClick={() => onImageClick(featured)}
-              className="group relative block min-h-[13rem] flex-1 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
-              aria-label="View evidence full size"
-            >
-              <EvidenceImage
-                src={featured}
-                alt={`Evidence ${active + 1}`}
-                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-              />
-              <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/25" />
+            <div className="group relative min-h-[13rem] flex-1 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
+              <button
+                type="button"
+                onClick={() => onImageClick(urls, active)}
+                className="absolute inset-0"
+                aria-label="View evidence full size"
+              >
+                <EvidenceImage
+                  src={featured}
+                  alt={`Evidence ${active + 1}`}
+                  className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+                />
+                <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/25" />
+              </button>
               <span className="absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-md bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
                 <Camera className="h-3 w-3" />
                 Proof
@@ -1788,11 +1670,31 @@ function ManagerAdjustmentCard({
                   {active + 1}/{urls.length}
                 </span>
               )}
-              <span className="absolute bottom-2.5 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-white/15 px-3 py-1 text-[10px] font-medium text-white opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100">
+              <span className="pointer-events-none absolute bottom-2.5 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-white/15 px-3 py-1 text-[10px] font-medium text-white opacity-0 backdrop-blur-md transition-opacity group-hover:opacity-100">
                 <Eye className="h-3 w-3" />
                 View full size
               </span>
-            </button>
+              {urls.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setActive((i) => (i - 1 + urls.length) % urls.length)}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1 text-white backdrop-blur-sm transition hover:bg-black/70"
+                    aria-label="Previous image"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActive((i) => (i + 1) % urls.length)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1 text-white backdrop-blur-sm transition hover:bg-black/70"
+                    aria-label="Next image"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </>
+              )}
+            </div>
           ) : (
             <div className="flex min-h-[13rem] flex-1 flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-600">
               <ImageOff className="h-7 w-7" />
@@ -1909,7 +1811,7 @@ function ManagerHistoryDetail({
 }: {
   row: TimeAdjustmentRow;
   signedUrls: Record<string, string>;
-  onImageClick: (url: string) => void;
+  onImageClick: (urls: string[], idx: number) => void;
 }) {
   const [active, setActive] = useState(0);
   const urls = row.image_paths.map((p) => signedUrls[p]).filter(Boolean) as string[];
@@ -1920,18 +1822,20 @@ function ManagerHistoryDetail({
       {/* LEFT — evidence */}
       <div className="flex shrink-0 flex-col gap-2 sm:w-[40%]">
         {featured ? (
-          <button
-            type="button"
-            onClick={() => onImageClick(featured)}
-            className="group relative block min-h-[11rem] flex-1 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
-            aria-label="View evidence full size"
-          >
-            <EvidenceImage
-              src={featured}
-              alt={`Evidence ${active + 1}`}
-              className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-            />
-            <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/25" />
+          <div className="group relative min-h-[11rem] flex-1 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900">
+            <button
+              type="button"
+              onClick={() => onImageClick(urls, active)}
+              className="absolute inset-0"
+              aria-label="View evidence full size"
+            >
+              <EvidenceImage
+                src={featured}
+                alt={`Evidence ${active + 1}`}
+                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+              />
+              <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/25" />
+            </button>
             <span className="absolute left-2.5 top-2.5 inline-flex items-center gap-1 rounded-md bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm">
               <Camera className="h-3 w-3" />
               Proof
@@ -1941,7 +1845,27 @@ function ManagerHistoryDetail({
                 {active + 1}/{urls.length}
               </span>
             )}
-          </button>
+            {urls.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setActive((i) => (i - 1 + urls.length) % urls.length)}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1 text-white backdrop-blur-sm transition hover:bg-black/70"
+                  aria-label="Previous image"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActive((i) => (i + 1) % urls.length)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-1 text-white backdrop-blur-sm transition hover:bg-black/70"
+                  aria-label="Next image"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </>
+            )}
+          </div>
         ) : (
           <div className="flex min-h-[11rem] flex-1 flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-600">
             <ImageOff className="h-7 w-7" />
