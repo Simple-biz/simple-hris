@@ -91,6 +91,12 @@ type EmployeeRateProfileSummary = {
   /** HSL role-within-HSL ("Department/Role" col) when this person is in the
    *  synced HSL roster. Surfaces as a chip on the card. */
   hslRole?: string | null;
+  alternateWorkEmail: string | null;
+  alternateWorkEmail2: string | null;
+  location: string | null;
+  contactNumber: string | null;
+  startDate: string | null;
+  employmentStatus: string;
 };
 
 const DEPARTMENT_OPTIONS = [
@@ -330,6 +336,10 @@ const HIDDEN_FIELD_KEYS = new Set([
   "upload_id",
   "first_seen_upload_id",
   "last_seen_upload_id",
+  // Hide internal IDs to avoid duplicates at the bottom of the modal
+  "id",
+  "uuid",
+  "employee_id",
 ]);
 
 function getAvatarInfoFromProfile(
@@ -355,19 +365,42 @@ function getAvatarInfoFromProfile(
   };
 }
 
+function computeTenure(startDate: string | null): string {
+  if (!startDate) return "—";
+  const start = new Date(startDate);
+  if (isNaN(start.getTime())) return "—";
+  const now = new Date();
+  const months =
+    (now.getFullYear() - start.getFullYear()) * 12 +
+    (now.getMonth() - start.getMonth());
+  if (months < 1) return "< 1 mo";
+  const years = Math.floor(months / 12);
+  const rem = months % 12;
+  if (years === 0) return `${months} mo`;
+  if (rem === 0) return `${years} yr`;
+  return `${years} yr ${rem} mo`;
+}
+
 function tableRowFromSummary(p: EmployeeRateProfileSummary) {
   return {
     employeeId: p.employeeId,
-    name: (p.displayName ?? "").trim() || "â€”",
+    name: (p.displayName ?? "").trim() || "—",
     department: p.department ?? null,
     organization: p.organization ?? null,
-    workEmail: p.workEmail?.trim() || p.subtitle?.trim() || "â€”",
-    regularRate: formatRateDisplay(p.regularRate ?? "â€”"),
-    otRate: formatRateDisplay(p.otRate ?? "â€”"),
+    workEmail: p.workEmail?.trim() || p.subtitle?.trim() || "—",
+    personalEmail: p.personalEmail?.trim() || "—",
+    alternateWorkEmail: p.alternateWorkEmail?.trim() || "—",
+    alternateWorkEmail2: p.alternateWorkEmail2?.trim() || "—",
+    regularRate: formatRateDisplay(p.regularRate ?? "—"),
+    otRate: formatRateDisplay(p.otRate ?? "—"),
     suspended: p.suspended,
     mesaMember: p.mesaMember,
     hasRatesRow: p.hasRatesRow,
     hslRole: (p.hslRole ?? "").trim() || null,
+    location: p.location?.trim() || "—",
+    contactNumber: p.contactNumber?.trim() || "—",
+    tenure: computeTenure(p.startDate ?? null),
+    employmentStatus: p.employmentStatus || "Active",
   };
 }
 
@@ -396,10 +429,8 @@ function profileStubFromSummary(p: EmployeeRateProfileSummary): EmployeeRateProf
     organization: p.organization,
     workEmail: p.workEmail,
     personalEmail: p.personalEmail,
-    // Summary cards don't carry alternates (modal-only); the detail fetch fills
-    // these in. Null here so the dedicated rows render as "—" until it lands.
-    alternateWorkEmail: null,
-    alternateWorkEmail2: null,
+    alternateWorkEmail: p.alternateWorkEmail,
+    alternateWorkEmail2: p.alternateWorkEmail2,
     fields: [
       { key: "Work Email", value: p.workEmail },
       { key: "Personal Email", value: p.personalEmail },
@@ -798,8 +829,8 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     setIsEditingProfile(false);
     setProfileError(null);
 
-    setEditRegularRate(normalizeRateForEdit(p.regularRate ?? "â€”"));
-    setEditOtRate(normalizeRateForEdit(p.otRate ?? "â€”"));
+    setEditRegularRate(normalizeRateForEdit(p.regularRate ?? "—"));
+    setEditOtRate(normalizeRateForEdit(p.otRate ?? "—"));
     void fetchProfileDetail(p);
     void fetchRateHistoryFor(p);
   }
@@ -1399,33 +1430,20 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                       <table className="w-full border-collapse text-[13px]">
                         <thead className="sticky top-0 z-10 bg-gradient-to-r from-orange-50/95 to-blue-50/60 backdrop-blur-sm dark:from-blue-950/90 dark:to-blue-950/70">
                           <tr className="border-b border-zinc-200 dark:border-zinc-800">
-                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                              Employee
-                            </th>
-                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                              ID
-                            </th>
-                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                              Department
-                            </th>
-                            <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                              MESA
-                            </th>
-                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                              Email
-                            </th>
-                            <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                              Regular
-                            </th>
-                            <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                              OT
-                            </th>
-                            <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                              Status
-                            </th>
-                            <th className="w-[120px] px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                              Actions
-                            </th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Employee ID</th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Department</th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Personal Email</th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Work Email</th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Alt Work Email</th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Alt Work Email 2</th>
+                            <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Regular</th>
+                            <th className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">OT</th>
+                            <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">MESA</th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Location</th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Contact</th>
+                            <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Tenure</th>
+                            <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Status</th>
+                            <th className="w-[90px] px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1443,28 +1461,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                   row.suspended && "bg-amber-50/30 opacity-75 dark:bg-amber-950/10",
                                 )}
                               >
-                                <td className="px-3 py-2.5">
-                                  <div className="flex items-center gap-2.5">
-                                    <EmployeeAvatar
-                                      photoUrl={av.photoUrl}
-                                      googlePhotoUrl={av.googlePhotoUrl}
-                                      email={av.email}
-                                      initials={av.initials}
-                                      className="h-7 w-7 shrink-0 text-[10px]"
-                                      pixelSize={56}
-                                    />
-                                    <div className="min-w-0">
-                                      <p className="truncate text-[13px] font-medium leading-tight text-zinc-900 dark:text-zinc-100">
-                                        {row.name}
-                                      </p>
-                                      {row.organization && row.organization !== "—" && (
-                                        <p className="mt-0.5 truncate text-[10.5px] text-zinc-500 dark:text-zinc-400">
-                                          {row.organization}
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-                                </td>
+                                {/* Employee ID */}
                                 <td className="px-3 py-2.5">
                                   {row.employeeId ? (
                                     <span className="inline-flex items-center rounded border border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[11px] font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
@@ -1474,47 +1471,37 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                     <span className="text-[11px] text-zinc-400 dark:text-zinc-600">—</span>
                                   )}
                                 </td>
+                                {/* Department */}
                                 <td className="px-3 py-2.5">
-                                  <div className="flex flex-col items-start gap-1">
-                                    {row.department ? (
-                                      <span className="inline-flex items-center rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
-                                        {row.department}
-                                      </span>
-                                    ) : (
-                                      <span className="text-[11px] text-zinc-400 dark:text-zinc-600">—</span>
-                                    )}
-                                    {row.hslRole && (
-                                      <span
-                                        title="Role within HSL — synced from the HOGAN SMITH AGENT PAY PLAN sheet"
-                                        className="inline-flex items-center rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10.5px] font-medium text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300"
-                                      >
-                                        {row.hslRole}
-                                      </span>
-                                    )}
-                                  </div>
+                                  <span className="block max-w-[140px] truncate text-[11.5px] font-medium text-zinc-700 dark:text-zinc-300">
+                                    {row.department || "—"}
+                                  </span>
                                 </td>
-                                <td className="px-3 py-2.5 text-center">
-                                  {row.mesaMember ? (
-                                    <span
-                                      title="MESA Program member — ₱100 deducted per paycheck"
-                                      className="inline-flex items-center rounded border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300"
-                                    >
-                                      MESA
-                                    </span>
-                                  ) : (
-                                    <span
-                                      title="Not enrolled in MESA Program"
-                                      className="inline-flex items-center rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10.5px] font-medium text-zinc-400 dark:border-zinc-700/60 dark:bg-zinc-800/40 dark:text-zinc-500"
-                                    >
-                                      No MESA
-                                    </span>
-                                  )}
-                                </td>
+                                {/* Personal Email */}
                                 <td className="px-3 py-2.5">
-                                  <span className="block max-w-[220px] truncate text-[11.5px] text-zinc-600 dark:text-zinc-400">
+                                  <span className="block max-w-[180px] truncate text-[11.5px] text-zinc-600 dark:text-zinc-400">
+                                    {row.personalEmail}
+                                  </span>
+                                </td>
+                                {/* Work Email */}
+                                <td className="px-3 py-2.5">
+                                  <span className="block max-w-[180px] truncate text-[11.5px] text-zinc-600 dark:text-zinc-400">
                                     {row.workEmail}
                                   </span>
                                 </td>
+                                {/* Alt Work Email */}
+                                <td className="px-3 py-2.5">
+                                  <span className="block max-w-[160px] truncate text-[11.5px] text-zinc-500 dark:text-zinc-500">
+                                    {row.alternateWorkEmail}
+                                  </span>
+                                </td>
+                                {/* Alt Work Email 2 */}
+                                <td className="px-3 py-2.5">
+                                  <span className="block max-w-[160px] truncate text-[11.5px] text-zinc-500 dark:text-zinc-500">
+                                    {row.alternateWorkEmail2}
+                                  </span>
+                                </td>
+                                {/* Regular Rate */}
                                 <td className="px-3 py-2.5 text-right">
                                   <span className={cn(
                                     "text-[12.5px] font-semibold tabular-nums",
@@ -1523,6 +1510,7 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                     {row.regularRate}
                                   </span>
                                 </td>
+                                {/* OT Rate */}
                                 <td className="px-3 py-2.5 text-right">
                                   <span className={cn(
                                     "text-[12.5px] font-semibold tabular-nums",
@@ -1531,26 +1519,48 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                                     {row.otRate}
                                   </span>
                                 </td>
+                                {/* MESA */}
+                                <td className="px-3 py-2.5 text-center">
+                                  {row.mesaMember ? (
+                                    <span title="MESA Program member" className="inline-flex items-center rounded border border-teal-200 bg-teal-50 px-1.5 py-0.5 text-[10.5px] font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+                                      Yes
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-zinc-400 dark:text-zinc-600">No</span>
+                                  )}
+                                </td>
+                                {/* Location */}
+                                <td className="px-3 py-2.5">
+                                  <span className="block max-w-[140px] truncate text-[11.5px] text-zinc-600 dark:text-zinc-400">
+                                    {row.location}
+                                  </span>
+                                </td>
+                                {/* Contact */}
+                                <td className="px-3 py-2.5">
+                                  <span className="block max-w-[130px] truncate text-[11.5px] text-zinc-600 dark:text-zinc-400">
+                                    {row.contactNumber}
+                                  </span>
+                                </td>
+                                {/* Tenure */}
+                                <td className="px-3 py-2.5">
+                                  <span className="text-[11.5px] text-zinc-600 dark:text-zinc-400 tabular-nums">
+                                    {row.tenure}
+                                  </span>
+                                </td>
+                                {/* Employment Status */}
                                 <td className="px-3 py-2.5 text-center">
                                   {row.suspended ? (
                                     <span className="inline-flex items-center gap-0.5 rounded border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-400">
                                       <UserX className="h-2.5 w-2.5" />
                                       Suspended
                                     </span>
-                                  ) : isComplete ? (
-                                    <span className="inline-flex items-center rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
-                                      Complete
-                                    </span>
-                                  ) : isMasterOnly ? (
-                                    <span title="No row in employee_hourly_rates" className="inline-flex items-center rounded border border-rose-300 bg-rose-100 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-rose-700 dark:border-rose-700/60 dark:bg-rose-950/50 dark:text-rose-400">
-                                      Master only
-                                    </span>
                                   ) : (
-                                    <span title="Rates row exists but blank" className="inline-flex items-center rounded border border-yellow-300 bg-yellow-100 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-yellow-800 dark:border-yellow-700/60 dark:bg-yellow-950/50 dark:text-yellow-300">
-                                      Rates blank
+                                    <span className="inline-flex items-center rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                      Active
                                     </span>
                                   )}
                                 </td>
+                                {/* Actions */}
                                 <td className="px-3 py-2.5 text-right">
                                   <div className="flex items-center justify-end gap-1">
                                     <Button
@@ -1632,6 +1642,11 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                               <p className="truncate text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
                                 {row.name}
                               </p>
+                              {row.department && row.department !== "—" && (
+                                <p className="truncate text-[10.5px] font-medium text-zinc-500 dark:text-zinc-400">
+                                  {row.department}
+                                </p>
+                              )}
                               {row.suspended && (
                                 <span className="mt-0.5 inline-flex items-center gap-0.5 rounded border border-amber-300 bg-amber-100 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-400">
                                   <UserX className="h-2.5 w-2.5" />
@@ -1655,52 +1670,77 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           )}
                         </div>
 
-                        {/* Chips: employee ID + department + HSL role + org */}
+                        {/* Chips: employee ID + MESA + tenure */}
                         <div className="flex flex-wrap gap-1.5">
                           {row.employeeId && (
                             <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-400">
                               {row.employeeId}
                             </span>
                           )}
-                          {row.department && (
-                            <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-400">
-                              {row.department}
-                            </span>
-                          )}
-                          {row.hslRole && (
-                            <span
-                              title="Role within HSL — synced from the HOGAN SMITH AGENT PAY PLAN sheet"
-                              className="inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300"
-                            >
-                              {row.hslRole}
-                            </span>
-                          )}
                           {row.mesaMember ? (
-                            <span
-                              title="MESA Program member — ₱100 deducted per paycheck"
-                              className="inline-flex items-center gap-1 rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300"
-                            >
+                            <span title="MESA Program member" className="inline-flex items-center gap-1 rounded-md border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
                               MESA
                             </span>
-                          ) : (
-                            <span
-                              title="Not enrolled in MESA Program"
-                              className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs font-medium text-zinc-400 dark:border-zinc-700/60 dark:bg-zinc-800/40 dark:text-zinc-500"
-                            >
-                              No MESA
+                          ) : null}
+                          {row.tenure !== "—" && (
+                            <span className="inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-xs font-medium text-zinc-500 dark:border-zinc-700/60 dark:bg-zinc-800/40 dark:text-zinc-400">
+                              {row.tenure}
                             </span>
                           )}
-                          {row.organization && row.organization !== "—" && (
-                            <span className="inline-flex items-center rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-400">
-                              {row.organization}
+                          {row.suspended ? (
+                            <span className="inline-flex items-center gap-0.5 rounded-md border border-amber-300 bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/50 dark:text-amber-400">
+                              Suspended
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
+                              Active
                             </span>
                           )}
                         </div>
 
-                        {/* Work email */}
-                        <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
-                          {row.workEmail}
-                        </p>
+                        {/* Email rows */}
+                        <div className="flex flex-col gap-0.5">
+                          <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                            <span className="mr-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-400">Work</span>
+                            {row.workEmail}
+                          </p>
+                          {row.personalEmail !== "—" && (
+                            <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                              <span className="mr-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-400">Personal</span>
+                              {row.personalEmail}
+                            </p>
+                          )}
+                          {row.alternateWorkEmail !== "—" && (
+                            <p className="truncate text-xs text-zinc-400 dark:text-zinc-500">
+                              <span className="mr-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-400">Alt 1</span>
+                              {row.alternateWorkEmail}
+                            </p>
+                          )}
+                          {row.alternateWorkEmail2 !== "—" && (
+                            <p className="truncate text-xs text-zinc-400 dark:text-zinc-500">
+                              <span className="mr-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-400">Alt 2</span>
+                              {row.alternateWorkEmail2}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Contact + Location */}
+                        {(row.contactNumber !== "—" || row.location !== "—") && (
+                          <div className="flex flex-col gap-0.5">
+                            {row.contactNumber !== "—" && (
+                              <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                                <span className="mr-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-400">Phone</span>
+                                {row.contactNumber}
+                              </p>
+                            )}
+                            {row.location !== "—" && (
+                              <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                                <span className="mr-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-400">Location</span>
+                                {row.location}
+                              </p>
+                            )}
+                          </div>
+                        )}
 
                         {/* Rate tiles */}
                         <div className="grid grid-cols-2 gap-2">
@@ -2043,41 +2083,9 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
               {/* Editorial header — slim, no gradient */}
               <DialogHeader className="shrink-0 space-y-0 border-b border-zinc-200/80 px-6 py-4 dark:border-zinc-800/80">
                 {(() => {
-                  const av = getAvatarInfoFromProfile(activeProfile);
                   const empId = activeProfileSummary?.employeeId ?? null;
                   return (
                     <div className="flex items-start gap-4">
-                      {(() => {
-                        const enlargeUrl =
-                          (av.photoUrl?.trim() || av.googlePhotoUrl?.trim() || '').trim() || null;
-                        const sharedAvatar = (
-                          <EmployeeAvatar
-                            photoUrl={av.photoUrl}
-                            googlePhotoUrl={av.googlePhotoUrl}
-                            email={av.email}
-                            initials={av.initials}
-                            className="h-12 w-12 text-base"
-                            pixelSize={96}
-                          />
-                        );
-                        return enlargeUrl ? (
-                          <button
-                            type="button"
-                            onClick={() => setAvatarViewerUrl(enlargeUrl)}
-                            aria-label={`View ${activeProfile.displayName}'s profile photo`}
-                            className="group relative shrink-0 rounded-full ring-2 ring-zinc-100 transition hover:ring-orange-300 focus-visible:outline-none focus-visible:ring-orange-400 dark:ring-zinc-800 dark:hover:ring-orange-500/60"
-                          >
-                            {sharedAvatar}
-                            <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100">
-                              <Eye className="h-4 w-4 text-white drop-shadow" />
-                            </span>
-                          </button>
-                        ) : (
-                          <div className="shrink-0 rounded-full ring-2 ring-zinc-100 dark:ring-zinc-800">
-                            {sharedAvatar}
-                          </div>
-                        );
-                      })()}
                       <div className="min-w-0 flex-1">
                         <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-amber-700/80 dark:text-amber-500/70">
                           Profile
@@ -2091,29 +2099,13 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                         <DialogTitle className="mt-0.5 truncate text-xl font-semibold tracking-tight text-zinc-900 sm:text-2xl dark:text-white">
                           {activeProfile.displayName}
                         </DialogTitle>
-                        {(activeProfile.department || activeProfile.organization) ? (
+                        {activeProfile.department ? (
                           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-500">
-                            {activeProfile.department ? (
-                              <span className="inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
-                                {activeProfile.department}
-                              </span>
-                            ) : null}
-                            {activeProfile.organization ? (
-                              <span className="inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-                                {activeProfile.organization}
-                              </span>
-                            ) : null}
-                            {activeProfile.subtitle ? (
-                              <span className="text-zinc-400 dark:text-zinc-600">
-                                · {activeProfile.subtitle}
-                              </span>
-                            ) : null}
+                            <span className="inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                              {activeProfile.department}
+                            </span>
                           </div>
-                        ) : (
-                          <DialogDescription className="sr-only">
-                            Complete merged fields for this employee.
-                          </DialogDescription>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   );

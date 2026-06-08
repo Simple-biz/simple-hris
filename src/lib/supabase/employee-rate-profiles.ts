@@ -49,6 +49,17 @@ export type EmployeeRateProfileSummary = {
   /** Synced from `active_hsl_agents` ("Department/Role" column) when this employee
    *  is in the HSL roster. Surfaced as a chip on the Rates card. Null otherwise. */
   hslRole?: string | null;
+  /** Alternate GSuite aliases from global_master_list cols F/G. */
+  alternateWorkEmail: string | null;
+  alternateWorkEmail2: string | null;
+  /** City + Province from global_master_list (e.g. "Manila, Metro Manila"). */
+  location: string | null;
+  /** Phone number from employee_ids table. */
+  contactNumber: string | null;
+  /** ISO date string from master "Start Date" — used to compute tenure in the UI. */
+  startDate: string | null;
+  /** "Active" | "Suspended" */
+  employmentStatus: string;
 };
 
 export type GetEmployeeRateProfilesResult = {
@@ -539,6 +550,19 @@ function buildEmployeeIdMapFromRows(rows: RawRow[]): Map<string, string> {
   return map;
 }
 
+function buildPhoneNumberMapFromRows(rows: RawRow[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    const phone = toStr(getField(row, ["phone_number"]));
+    if (!phone) continue;
+    const work = normEmail(toStr(getField(row, ["work_email"])));
+    const personal = normEmail(toStr(getField(row, ["personal_email"])));
+    if (work) map.set(work, phone);
+    if (personal && !map.has(personal)) map.set(personal, phone);
+  }
+  return map;
+}
+
 async function fetchEmployeeIdRowsForProfiles(): Promise<{
   rows: RawRow[];
   error: string | null;
@@ -555,7 +579,7 @@ async function fetchEmployeeIdRowsForProfiles(): Promise<{
 
   const { data, error } = await supabase
     .from("employee_ids")
-    .select("employee_id, work_email, personal_email");
+    .select("employee_id, work_email, personal_email, phone_number");
 
   if (error) return { rows: [], error: error.message };
   return { rows: (data ?? []) as RawRow[], error: null };
@@ -1409,6 +1433,7 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
   const ratesRaw = ratesRes.rows;
   const masterRaw = masterRes.rows;
   const employeeIdMap = buildEmployeeIdMapFromRows(idsRes.rows);
+  const phoneNumberMap = buildPhoneNumberMapFromRows(idsRes.rows);
   const { byEmail, byName } = buildMasterIndexes(masterRaw);
 
   const groupMap = new Map<string, RawRow[]>();
@@ -1461,6 +1486,15 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
     const personalEmail = mo.personalEmail ?? finalized.personalEmail;
     const primaryEmail = workEmail ?? personalEmail;
 
+    const altSlots1 = altEmailSlotsFromMaster(master);
+    const city1 = toStr(getField(master ?? {}, ["city", "City"]));
+    const province1 = toStr(getField(master ?? {}, ["province", "Province"]));
+    const location1 = city1 && province1 ? `${city1}, ${province1}` : city1 || province1 || null;
+    const startDate1 = toStr(getField(master ?? {}, ["Start Date", "start_date", "Start_date"])) || null;
+    const isSuspended1 = getField(mergedRates, ["suspended", "Suspended"]) === true;
+    const phoneEmails1 = [workEmail, personalEmail].map(e => normEmail(e)).filter((e): e is string => Boolean(e));
+    let contactNumber1: string | null = null;
+    for (const e of phoneEmails1) { const p = phoneNumberMap.get(e); if (p) { contactNumber1 = p; break; } }
     profiles.push({
       id: uniqueId(groupId),
       displayName: resolveDisplayName(mergedRates, master),
@@ -1474,13 +1508,19 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
         toStr(getField(mergedRates, ["Regular Rate", "regular_rate", "Regular_Rate"])) || null,
       otRate:
         toStr(getField(mergedRates, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])) || null,
-      suspended: getField(mergedRates, ["suspended", "Suspended"]) === true,
+      suspended: isSuspended1,
       mesaMember: getField(mergedRates, ["mesa_member", "Mesa Member", "MESA Member"]) === true,
       profilePhotoUrl:
         toStr(getField(master ?? {}, ["Profile Photo URL", "profile_photo_url", "Profile_Photo_URL"])) || null,
       googlePhotoUrl:
         toStr(getField(master ?? {}, ["google_photo_url", "Google Photo URL", "google_picture"])) || null,
       hasRatesRow: Object.keys(mergedRates).length > 0,
+      alternateWorkEmail: altSlots1.alternateWorkEmail,
+      alternateWorkEmail2: altSlots1.alternateWorkEmail2,
+      location: location1,
+      contactNumber: contactNumber1,
+      startDate: startDate1,
+      employmentStatus: isSuspended1 ? "Suspended" : "Active",
     });
   }
 
@@ -1573,6 +1613,15 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
     const identity = buildIdentity(mergedRates, masterRow);
     const idEmail = [...identity.emails][0] || identity.nameNorm || `row-${i}`;
 
+    const altSlots2 = altEmailSlotsFromMaster(masterRow);
+    const city2 = toStr(getField(masterRow, ["city", "City"]));
+    const province2 = toStr(getField(masterRow, ["province", "Province"]));
+    const location2 = city2 && province2 ? `${city2}, ${province2}` : city2 || province2 || null;
+    const startDate2 = toStr(getField(masterRow, ["Start Date", "start_date", "Start_date"])) || null;
+    const isSuspended2 = getField(mergedRates, ["suspended", "Suspended"]) === true;
+    const phoneEmails2 = [workEmail, personalEmail].map(e => normEmail(e)).filter((e): e is string => Boolean(e));
+    let contactNumber2: string | null = null;
+    for (const e of phoneEmails2) { const p = phoneNumberMap.get(e); if (p) { contactNumber2 = p; break; } }
     profiles.push({
       id: uniqueId(`master:${idEmail}`),
       displayName: resolveDisplayName(mergedRates, masterRow),
@@ -1586,13 +1635,19 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
         toStr(getField(mergedRates, ["Regular Rate", "regular_rate", "Regular_Rate"])) || null,
       otRate:
         toStr(getField(mergedRates, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])) || null,
-      suspended: getField(mergedRates, ["suspended", "Suspended"]) === true,
+      suspended: isSuspended2,
       mesaMember: getField(mergedRates, ["mesa_member", "Mesa Member", "MESA Member"]) === true,
       profilePhotoUrl:
         toStr(getField(masterRow, ["Profile Photo URL", "profile_photo_url", "Profile_Photo_URL"])) || null,
       googlePhotoUrl:
         toStr(getField(masterRow, ["google_photo_url", "Google Photo URL", "google_picture"])) || null,
       hasRatesRow: Object.keys(mergedRates).length > 0,
+      alternateWorkEmail: altSlots2.alternateWorkEmail,
+      alternateWorkEmail2: altSlots2.alternateWorkEmail2,
+      location: location2,
+      contactNumber: contactNumber2,
+      startDate: startDate2,
+      employmentStatus: isSuspended2 ? "Suspended" : "Active",
     });
   }
 
