@@ -271,7 +271,13 @@ type MasterListReconcileMatch =
     }
   | { kind: "work"; row: MasterReconcileRow };
 
-/** Paginated read — roster can exceed a single `.range(0, 9999)` window. */
+/** Paginated read — roster can exceed a single `.range(0, 9999)` window.
+ *  Filters ONLY on Department (not Personal Email): a row can have a null personal
+ *  email yet still hold a (Work Email, Department) pair that occupies the
+ *  `global_master_list_work_email_dept_uniq` index — e.g. the manually-seeded US
+ *  employees (seungyong/adrian/brandonb have null personal email) or prior orphan
+ *  inserts. Excluding them here made them invisible to the work+dept collision guard,
+ *  so a sheet row reusing their work email would still INSERT and hit the unique index. */
 async function fetchAllMasterRowsForReconcile(
   supabase: SupabaseClient,
   table: string,
@@ -283,7 +289,6 @@ async function fetchAllMasterRowsForReconcile(
     const { data, error } = await supabase
       .from(table)
       .select(selectCols)
-      .not('"Personal Email"', "is", null)
       .not('"Department"', "is", null)
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`Could not read ${table} for reconciliation: ${error.message}`);
@@ -385,6 +390,10 @@ export async function replaceGlobalMasterListFromCsvText(
   reonboarded: number;
   /** Rows matched to an existing DB row by Work Email + Department when (Personal Email, Department) did not match — fixes sheet/DB personal-email drift. */
   reconciledViaWorkEmail: number;
+  /** INSERT candidates dropped because their (work email, department) was already
+   *  claimed by another row in the same sync — would have violated
+   *  `global_master_list_work_email_dept_uniq`. */
+  skippedWorkDeptCollisions: number;
 }> {
   const { clearOffboarded = false } = options;
   const supabase = requireServiceRole();
@@ -483,6 +492,13 @@ export async function replaceGlobalMasterListFromCsvText(
     { id: unknown; first_seen_upload_id: string | null; off_boarded_at: string | null }
   >();
   const existingByWorkDept = new Map<string, MasterReconcileRow>();
+  // One deterministic representative per ACTIVE (work email, department) bucket.
+  // The partial unique index `global_master_list_work_email_dept_uniq` permits at
+  // most one active row per (lower(work email), lower(department)), so an INSERT
+  // whose work+dept already belongs to an active row must instead UPDATE that row.
+  // Unlike `existingByWorkDept` (single-bucket only), this keeps a pick even when a
+  // bucket has >1 active row (pre-migration leftovers) so the INSERT still never collides.
+  const activeWorkDeptReps = new Map<string, MasterReconcileRow>();
   {
     const selectCols = hasWorkEmailCol
       ? 'id, "Personal Email", "Department", "Work Email", first_seen_upload_id, off_boarded_at'
@@ -511,6 +527,13 @@ export async function replaceGlobalMasterListFromCsvText(
       const wk = composeWorkDeptKey(we, dep);
       if (!workBuckets.has(wk)) workBuckets.set(wk, []);
       workBuckets.get(wk)!.push(r);
+      // Only ACTIVE rows participate in the partial unique index, so only they can
+      // be collided with on INSERT. Keep one deterministic representative (lowest
+      // id) per active bucket so re-runs target the same row.
+      if (!r.off_boarded_at) {
+        const rep = activeWorkDeptReps.get(wk);
+        if (!rep || String(r.id) < String(rep.id)) activeWorkDeptReps.set(wk, r);
+      }
     }
     for (const [wk, arr] of workBuckets) {
       if (arr.length === 1) existingByWorkDept.set(wk, arr[0]!);
@@ -521,7 +544,16 @@ export async function replaceGlobalMasterListFromCsvText(
   let updated = 0;
   let reonboarded = 0;
   let reconciledViaWorkEmail = 0;
+  let skippedWorkDeptCollisions = 0;
   const rowsToInsert: Record<string, string | null>[] = [];
+  // INSERT candidates are collected here and run through the (work email, department)
+  // collision guard below before being committed, so none violates the partial unique
+  // index `global_master_list_work_email_dept_uniq`.
+  const insertCandidates: {
+    payload: Record<string, string | null>;
+    workEmail: string | null;
+    department: string | null;
+  }[] = [];
 
   // ── Dedupe within the CSV itself ──
   // Two rows in the same upload that share `(personal_email, department)` would
@@ -607,25 +639,98 @@ export async function replaceGlobalMasterListFromCsvText(
         payload: updatePayload,
       });
     } else {
-      rowsToInsert.push({
-        ...payload,
-        first_seen_upload_id: uploadId,
-        last_seen_upload_id: uploadId,
-        source_file: sourceFile || null,
+      const we =
+        hasWorkEmailCol && workEmailMappingIdx >= 0
+          ? normalizeEmail(row[insertCols[workEmailMappingIdx].csvIdx])
+          : null;
+      insertCandidates.push({
+        payload: {
+          ...payload,
+          first_seen_upload_id: uploadId,
+          last_seen_upload_id: uploadId,
+          source_file: sourceFile || null,
+        },
+        workEmail: we,
+        department,
       });
     }
   }
 
   // Orphan rows (missing personal_email or department): inserted fresh every upload.
-  // They have no stable identity so we can't dedupe them; HR should patch and re-upload.
+  // They have no stable identity so we can't dedupe them by personal email; HR should
+  // patch and re-upload. They can still carry a work email + department, so they run
+  // through the same collision guard below.
   for (const row of orphanRows) {
     const payload = csvRowToObject(row, insertCols);
-    rowsToInsert.push({
-      ...payload,
-      first_seen_upload_id: uploadId,
-      last_seen_upload_id: uploadId,
-      source_file: sourceFile || null,
+    const we =
+      hasWorkEmailCol && workEmailMappingIdx >= 0
+        ? normalizeEmail(row[insertCols[workEmailMappingIdx].csvIdx])
+        : null;
+    insertCandidates.push({
+      payload: {
+        ...payload,
+        first_seen_upload_id: uploadId,
+        last_seen_upload_id: uploadId,
+        source_file: sourceFile || null,
+      },
+      workEmail: we,
+      department: normalizeDepartment(row[departmentCsvIdx]),
     });
+  }
+
+  // ── (work email, department) collision guard ──
+  // The partial unique index allows at most one ACTIVE row per
+  // (lower(work email), lower(department)). The personal-email dedup above does not
+  // protect this key, so two sheet rows sharing a work email + department (differing
+  // only on personal email), or an orphan row whose work email belongs to an active
+  // row, would both reach INSERT and the batch would fail with
+  // "duplicate key value violates unique constraint global_master_list_work_email_dept_uniq".
+  // Seed the set of claimed keys from every row already heading to UPDATE (those rows
+  // stay/become active and own their key), then for each INSERT candidate:
+  //   • if an active DB row already owns the key → UPDATE that row instead of inserting;
+  //   • else if another candidate this run already claimed it → drop (last one loses);
+  //   • else claim it and insert.
+  const claimedWorkDept = new Set<string>();
+  for (const op of updateOps) {
+    const we = normalizeEmail(op.payload["Work Email"]);
+    const dep = normalizeDepartment(op.payload["Department"]);
+    if (we && dep) {
+      const wk = composeWorkDeptKey(we, dep);
+      claimedWorkDept.add(wk);
+      activeWorkDeptReps.delete(wk);
+    }
+  }
+  for (const cand of insertCandidates) {
+    const wk =
+      cand.workEmail && cand.department
+        ? composeWorkDeptKey(cand.workEmail, cand.department)
+        : null;
+    if (wk) {
+      const rep = activeWorkDeptReps.get(wk);
+      if (rep) {
+        // An active row already owns this canonical (work email, department) identity.
+        // Update it (corrects personal-email drift) rather than inserting a colliding row.
+        // Drop the insert-only stamps so we don't clobber the existing row's original
+        // first_seen_upload_id / source_file — only CSV columns + last_seen move.
+        reconciledViaWorkEmail += 1;
+        activeWorkDeptReps.delete(wk);
+        claimedWorkDept.add(wk);
+        const { first_seen_upload_id: _fs, source_file: _sf, ...cols } = cand.payload;
+        void _fs;
+        void _sf;
+        updateOps.push({
+          id: rep.id as string | number,
+          payload: { ...cols, last_seen_upload_id: uploadId },
+        });
+        continue;
+      }
+      if (claimedWorkDept.has(wk)) {
+        skippedWorkDeptCollisions += 1;
+        continue;
+      }
+      claimedWorkDept.add(wk);
+    }
+    rowsToInsert.push(cand.payload);
   }
 
   // ── UPDATEs in parallel chunks ──
@@ -695,6 +800,7 @@ export async function replaceGlobalMasterListFromCsvText(
     duplicatesInCsv,
     reonboarded,
     reconciledViaWorkEmail,
+    skippedWorkDeptCollisions,
   };
 }
 

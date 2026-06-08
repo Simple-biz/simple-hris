@@ -123,6 +123,7 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
         rows_missing_personal_email: result.rowsMissingPersonalEmail,
         duplicates_in_csv: result.duplicatesInCsv,
         reconciled_via_work_email: result.reconciledViaWorkEmail,
+        skipped_work_dept_collisions: result.skippedWorkDeptCollisions,
         upload_id: result.uploadId,
         clear_offboarded: clearOffboarded,
       },
