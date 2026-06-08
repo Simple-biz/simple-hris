@@ -25,6 +25,7 @@ import {
   Trash2,
   User,
   UserCheck,
+  Users,
   Wand2,
   XCircle,
 } from 'lucide-react';
@@ -164,6 +165,8 @@ export default function HrOnboardingForm() {
     rows: SubmissionRow[];
   } | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Bulk set-work-email: the submitted hires handed to the grouped modal.
+  const [bulkWorkEmail, setBulkWorkEmail] = useState<SubmissionRow[] | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -247,6 +250,28 @@ export default function HrOnboardingForm() {
   const selSendable = selectedRows.filter((r) => r.status === 'pending');
   const selArchivable = selectedRows.filter((r) => r.status !== 'archived');
   const selDeletable = selectedRows.filter((r) => r.status === 'archived');
+  // Only hires who have actually submitted their paperwork can be assigned a
+  // work email. The button shows this count; clicking it drops any non-submitted
+  // rows from the selection so we never carry them into the modal.
+  const selWorkEmailable = selectedRows.filter((r) => r.status === 'submitted');
+
+  function openBulkWorkEmail() {
+    const eligible = selectedRows.filter((r) => r.status === 'submitted');
+    if (eligible.length === 0) {
+      toast.info('Only submitted hires can be assigned a work email.');
+      return;
+    }
+    const removed = selectedRows.length - eligible.length;
+    if (removed > 0) {
+      // Deselect the not-yet-submitted rows so the selection reflects exactly
+      // what the modal will act on.
+      setSelectedIds(new Set(eligible.map((r) => r.id)));
+      toast.info(
+        `${removed} not-yet-submitted ${removed === 1 ? 'hire' : 'hires'} deselected - only submitted hires can be assigned a work email.`,
+      );
+    }
+    setBulkWorkEmail(eligible);
+  }
 
   function toggleAllVisible() {
     setSelectedIds((prev) => {
@@ -407,6 +432,7 @@ export default function HrOnboardingForm() {
       {/* Filter + search */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-1">
+          <FilterPill label="Awaiting submission" count={counts.pending} active={filter === 'pending'} onClick={() => setFilter('pending')} />
           <FilterPill label="Submitted" count={counts.submitted} active={filter === 'submitted'} onClick={() => setFilter('submitted')} />
           <FilterPill label="Archived" count={counts.archived} active={filter === 'archived'} onClick={() => setFilter('archived')} />
           <FilterPill label="All" count={rows.length} active={filter === 'all'} onClick={() => setFilter('all')} />
@@ -468,6 +494,18 @@ export default function HrOnboardingForm() {
               >
                 <Send className="h-3 w-3" />
                 Send ({selSendable.length})
+              </Button>
+            )}
+            {selWorkEmailable.length > 0 && (
+              <Button
+                size="sm"
+                className="h-7 gap-1 bg-gradient-to-r from-emerald-500 to-teal-700 px-2.5 text-xs text-white shadow-sm shadow-emerald-600/25 hover:opacity-90"
+                onClick={openBulkWorkEmail}
+                disabled={bulkBusy}
+                title="Mint @simple.biz addresses for the submitted hires, grouped by department"
+              >
+                <Mail className="h-3 w-3" />
+                Set work email ({selWorkEmailable.length})
               </Button>
             )}
             {selArchivable.length > 0 && (
@@ -756,6 +794,12 @@ export default function HrOnboardingForm() {
           setWorkEmailFor(null);
           void load();
         }}
+      />
+
+      <BulkSetWorkEmailDialog
+        rows={bulkWorkEmail}
+        onClose={() => setBulkWorkEmail(null)}
+        reload={() => void load()}
       />
 
       <Dialog open={!!archiveTarget} onOpenChange={(o) => !o && setArchiveTarget(null)}>
@@ -1714,6 +1758,721 @@ function SetOnboardingWorkEmailDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// --- Bulk set-work-email dialog (grouped by department) -------------------
+
+type BulkDeptRate = { regular_rate: string | null; ot_rate: string | null };
+
+/**
+ * Mints @simple.biz addresses for a batch of SUBMITTED hires at once. The
+ * batch is grouped by department; each department is set on its own (shared
+ * rate + projects for the group, a unique auto-suggested address per person),
+ * so there is never a single action spanning every department. Reuses the
+ * per-submission set-work-email route once per hire.
+ */
+function BulkSetWorkEmailDialog({
+  rows,
+  onClose,
+  reload,
+}: {
+  rows: SubmissionRow[] | null;
+  onClose: () => void;
+  reload: () => void;
+}) {
+  const open = !!rows && rows.length > 0;
+
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [deptRates, setDeptRates] = useState<Map<string, BulkDeptRate>>(new Map());
+  const [projectOptions, setProjectOptions] = useState<string[]>([]);
+  const [metaLoading, setMetaLoading] = useState(false);
+
+  // Email state lives at the parent so duplicate detection spans the whole
+  // batch (across departments), not just one group.
+  const [emails, setEmails] = useState<Record<string, string>>({});
+  const [avail, setAvail] = useState<Record<string, boolean | null>>({});
+  const [suggesting, setSuggesting] = useState(false);
+  const [doneIds, setDoneIds] = useState<Set<string>>(new Set());
+  const [results, setResults] = useState<Record<string, { ok: boolean; error?: string }>>({});
+  const [groupBusy, setGroupBusy] = useState<Record<string, boolean>>({});
+  const [groupProgress, setGroupProgress] = useState<
+    Record<string, { done: number; total: number } | null>
+  >({});
+
+  // Group rows by submission department; blank departments fall into a single
+  // bucket that forces HR to pick one before that group can be set.
+  const groups = useMemo(() => {
+    const m = new Map<string, { dept: string; rows: SubmissionRow[] }>();
+    for (const r of rows ?? []) {
+      const dept = (r.invite_department ?? '').trim();
+      const key = dept.toLowerCase() || '__none__';
+      const g = m.get(key) ?? { dept, rows: [] };
+      g.rows.push(r);
+      m.set(key, g);
+    }
+    return [...m.entries()].map(([key, v]) => ({ key, dept: v.dept, rows: v.rows }));
+  }, [rows]);
+
+  // Load shared setup data (departments, typical rates, Hubstaff projects).
+  useEffect(() => {
+    if (!open) return;
+    setMetaLoading(true);
+    Promise.all([
+      fetch('/api/departments', { cache: 'no-store' }).then((r) => r.json()),
+      fetch('/api/hr/department-rates', { cache: 'no-store' }).then((r) => r.json()),
+      fetch('/api/secondary/hubstaff-projects', { cache: 'no-store' }).then((r) => r.json()),
+    ])
+      .then(
+        ([dj, rj, pj]: [
+          { departments?: string[]; error?: string },
+          {
+            departments?: Array<{ department: string; regular_rate: string | null; ot_rate: string | null }>;
+            error?: string;
+          },
+          { projects?: Array<{ name?: string | null }>; error?: string },
+        ]) => {
+          setDepartments(dj.departments ?? []);
+          const m = new Map<string, BulkDeptRate>();
+          for (const d of rj.departments ?? []) {
+            m.set(d.department.trim().toLowerCase(), {
+              regular_rate: d.regular_rate,
+              ot_rate: d.ot_rate,
+            });
+          }
+          setDeptRates(m);
+          const names = (pj.projects ?? [])
+            .map((p) => (p?.name ?? '').trim())
+            .filter(Boolean);
+          setProjectOptions(Array.from(new Set(names)));
+        },
+      )
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not load setup data'))
+      .finally(() => setMetaLoading(false));
+  }, [open]);
+
+  // Auto-suggest a UNIQUE @simple.biz address for every hire when the modal
+  // opens. Runs sequentially, threading the addresses already assigned earlier
+  // in the batch through `also_taken`, so two same-named hires never collide on
+  // the same suggestion. A hire who already has a work email keeps it and
+  // starts "done" (we never re-provision them here).
+  useEffect(() => {
+    if (!open || !rows) return;
+    let cancelled = false;
+    (async () => {
+      setSuggesting(true);
+      setResults({});
+      setGroupBusy({});
+      setGroupProgress({});
+      const assigned: string[] = [];
+      const nextEmails: Record<string, string> = {};
+      const nextAvail: Record<string, boolean | null> = {};
+      const initialDone = new Set<string>();
+      for (const r of rows) {
+        if (cancelled) return;
+        if (r.work_email) {
+          nextEmails[r.id] = r.work_email;
+          nextAvail[r.id] = true;
+          initialDone.add(r.id);
+          assigned.push(r.work_email.toLowerCase());
+          continue;
+        }
+        const fullName = r.full_name?.trim() || r.invite_name?.trim() || '';
+        if (!fullName) {
+          nextEmails[r.id] = '';
+          nextAvail[r.id] = null;
+          continue;
+        }
+        try {
+          const res = await fetch('/api/hr/work-email/suggest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fullName, also_taken: assigned }),
+          });
+          const j = (await res.json()) as { suggestion?: { email: string } | null };
+          const email = j.suggestion?.email ?? '';
+          nextEmails[r.id] = email;
+          nextAvail[r.id] = email ? true : null;
+          if (email) assigned.push(email.toLowerCase());
+        } catch {
+          nextEmails[r.id] = '';
+          nextAvail[r.id] = null;
+        }
+      }
+      if (!cancelled) {
+        setEmails(nextEmails);
+        setAvail(nextAvail);
+        setDoneIds(initialDone);
+        setSuggesting(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, rows]);
+
+  // Duplicate detection across the WHOLE batch (every department).
+  const dupIds = useMemo(() => {
+    const byEmail = new Map<string, string[]>();
+    for (const [id, raw] of Object.entries(emails)) {
+      const e = raw.trim().toLowerCase();
+      if (!e) continue;
+      const arr = byEmail.get(e) ?? [];
+      arr.push(id);
+      byEmail.set(e, arr);
+    }
+    const dups = new Set<string>();
+    for (const arr of byEmail.values()) {
+      if (arr.length > 1) for (const id of arr) dups.add(id);
+    }
+    return dups;
+  }, [emails]);
+
+  const setEmail = useCallback((id: string, v: string) => {
+    setEmails((p) => ({ ...p, [id]: v }));
+  }, []);
+  const setAvailOne = useCallback((id: string, v: boolean | null) => {
+    setAvail((p) => (p[id] === v ? p : { ...p, [id]: v }));
+  }, []);
+
+  async function runGroup(
+    groupKey: string,
+    args: {
+      rows: SubmissionRow[];
+      department: string;
+      regularRate: string;
+      otRate: string;
+      projects: string[];
+    },
+  ) {
+    const { rows: targets, department, regularRate, otRate, projects } = args;
+    if (targets.length === 0) return;
+    setGroupBusy((p) => ({ ...p, [groupKey]: true }));
+    setGroupProgress((p) => ({ ...p, [groupKey]: { done: 0, total: targets.length } }));
+    const newResults: Record<string, { ok: boolean; error?: string }> = {};
+    const succeeded: string[] = [];
+    let done = 0;
+    await Promise.all(
+      targets.map(async (r) => {
+        try {
+          const res = await fetch(`/api/hr/onboarding-submissions/${r.id}/set-work-email`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              work_email: (emails[r.id] ?? '').trim().toLowerCase(),
+              department,
+              project_names: projects,
+              regular_rate: regularRate.trim(),
+              ot_rate: otRate.trim() || null,
+            }),
+          });
+          const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+          if (!res.ok || j.error) throw new Error(j.error ?? 'Failed to set work email');
+          newResults[r.id] = { ok: true };
+          succeeded.push(r.id);
+        } catch (e) {
+          newResults[r.id] = { ok: false, error: e instanceof Error ? e.message : String(e) };
+        } finally {
+          done += 1;
+          setGroupProgress((p) => ({ ...p, [groupKey]: { done, total: targets.length } }));
+        }
+      }),
+    );
+    setResults((p) => ({ ...p, ...newResults }));
+    setGroupBusy((p) => ({ ...p, [groupKey]: false }));
+    setGroupProgress((p) => ({ ...p, [groupKey]: null }));
+    if (succeeded.length > 0) {
+      setDoneIds((p) => {
+        const n = new Set(p);
+        for (const id of succeeded) n.add(id);
+        return n;
+      });
+      reload();
+    }
+    const ok = succeeded.length;
+    const failed = targets.length - ok;
+    const label = department || 'department';
+    if (ok > 0 && failed === 0) {
+      toast.success(`${ok} work email${ok === 1 ? '' : 's'} set for ${label}`);
+    } else if (ok > 0) {
+      toast.warning(`${label}: ${ok} set, ${failed} failed`);
+    } else {
+      toast.error(`${label}: ${failed} failed - check and retry`);
+    }
+  }
+
+  const totalRows = rows?.length ?? 0;
+  const allDone = totalRows > 0 && doneIds.size >= totalRows;
+
+  if (!open) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
+        <div className="-mx-6 -mt-6 mb-4 overflow-hidden rounded-t-lg border-b border-emerald-100/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 px-6 py-5 dark:border-emerald-950/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25">
+                <Mail className="h-4 w-4" />
+              </span>
+              Set work emails
+            </DialogTitle>
+            <p className="mt-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+              {totalRows} submitted {totalRows === 1 ? 'hire' : 'hires'}, grouped by department.
+              Each address is auto-suggested and unique - review them, then set each department on
+              its own.
+            </p>
+          </DialogHeader>
+        </div>
+
+        {suggesting && (
+          <div className="mb-4 flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50/70 px-3.5 py-2.5 text-[12px] text-sky-800 dark:border-sky-900/50 dark:bg-sky-950/25 dark:text-sky-200">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+            <span>
+              Please wait while we check for duplicate addresses and suggest a unique
+              @simple.biz email for each hire...
+            </span>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-4">
+          {groups.map((g) => (
+            <BulkDeptGroup
+              key={g.key}
+              groupKey={g.key}
+              initialDept={g.dept}
+              rows={g.rows}
+              departments={departments}
+              deptRates={deptRates}
+              projectOptions={projectOptions}
+              metaLoading={metaLoading}
+              emails={emails}
+              avail={avail}
+              dupIds={dupIds}
+              doneIds={doneIds}
+              results={results}
+              suggesting={suggesting}
+              onEmailChange={setEmail}
+              onAvail={setAvailOne}
+              onSubmitGroup={(args) => void runGroup(g.key, args)}
+              busy={!!groupBusy[g.key]}
+              progress={groupProgress[g.key] ?? null}
+            />
+          ))}
+        </div>
+
+        <DialogFooter className="mt-4 gap-2 border-t border-zinc-100 pt-4 sm:gap-0 dark:border-zinc-800">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            {allDone ? (
+              <>
+                <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                Done
+              </>
+            ) : (
+              'Close'
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BulkDeptGroup({
+  groupKey,
+  initialDept,
+  rows,
+  departments,
+  deptRates,
+  projectOptions,
+  metaLoading,
+  emails,
+  avail,
+  dupIds,
+  doneIds,
+  results,
+  suggesting,
+  onEmailChange,
+  onAvail,
+  onSubmitGroup,
+  busy,
+  progress,
+}: {
+  groupKey: string;
+  initialDept: string;
+  rows: SubmissionRow[];
+  departments: string[];
+  deptRates: Map<string, BulkDeptRate>;
+  projectOptions: string[];
+  metaLoading: boolean;
+  emails: Record<string, string>;
+  avail: Record<string, boolean | null>;
+  dupIds: Set<string>;
+  doneIds: Set<string>;
+  results: Record<string, { ok: boolean; error?: string }>;
+  suggesting: boolean;
+  onEmailChange: (id: string, v: string) => void;
+  onAvail: (id: string, v: boolean | null) => void;
+  onSubmitGroup: (args: {
+    rows: SubmissionRow[];
+    department: string;
+    regularRate: string;
+    otRate: string;
+    projects: string[];
+  }) => void;
+  busy: boolean;
+  progress: { done: number; total: number } | null;
+}) {
+  const needsDept = groupKey === '__none__';
+  const [dept, setDept] = useState(initialDept);
+  const [regularRate, setRegularRate] = useState('');
+  const [otRate, setOtRate] = useState('');
+  const [projects, setProjects] = useState<string[]>([]);
+  const lastPrefillDept = useRef('');
+
+  // Prefill the shared rates from the department's typical rates — only on a
+  // real dept change, not when deptRates finishes loading.
+  useEffect(() => {
+    const key = dept.trim().toLowerCase();
+    if (!key || key === lastPrefillDept.current) return;
+    const r = deptRates.get(key);
+    if (!r) return;
+    lastPrefillDept.current = key;
+    if (r.regular_rate) setRegularRate(r.regular_rate);
+    if (r.ot_rate) setOtRate(r.ot_rate);
+    else setOtRate('');
+  }, [dept, deptRates]);
+
+  const deptKey = dept.trim().toLowerCase();
+  const typical = deptKey ? deptRates.get(deptKey) : undefined;
+
+  const regularNum = Number(regularRate);
+  const regularValid =
+    regularRate.trim() !== '' && Number.isFinite(regularNum) && regularNum > 0;
+  const otNum = Number(otRate);
+  const otValid = otRate.trim() === '' || (Number.isFinite(otNum) && otNum >= 0);
+  const configValid =
+    dept.trim().length > 0 && regularValid && otValid && projects.length > 0;
+
+  const usableRows = rows.filter((r) => {
+    if (doneIds.has(r.id)) return false;
+    const e = (emails[r.id] ?? '').trim().toLowerCase();
+    if (!isPlausibleEmail(e) || !e.endsWith('@simple.biz')) return false;
+    if (dupIds.has(r.id)) return false;
+    return avail[r.id] === true;
+  });
+  const pendingCount = rows.filter((r) => !doneIds.has(r.id)).length;
+  const allDone = pendingCount === 0;
+  const canSubmit = configValid && usableRows.length > 0 && !busy;
+
+  return (
+    <div className="rounded-xl border border-emerald-100/80 bg-white p-4 shadow-sm ring-1 ring-emerald-500/5 dark:border-emerald-950/40 dark:bg-zinc-950">
+      {/* Group header */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25">
+            <Users className="h-3.5 w-3.5" />
+          </span>
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              {needsDept ? 'No department on file' : dept}
+            </h3>
+            <p className="text-[11px] text-zinc-500">
+              {rows.length} {rows.length === 1 ? 'hire' : 'hires'}
+              {allDone ? ' - all set' : ''}
+            </p>
+          </div>
+        </div>
+        {needsDept && (
+          <div className="w-full sm:w-60">
+            <DepartmentSelect
+              value={dept}
+              onChange={setDept}
+              departments={departments}
+              loading={metaLoading}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Shared config: one rate + project set for everyone in this department */}
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+            Regular rate (USD/hr)
+          </label>
+          <Input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            value={regularRate}
+            onChange={(e) => setRegularRate(e.target.value)}
+            placeholder="35.50"
+            className="h-8 text-xs"
+            aria-invalid={regularRate.trim() !== '' && !regularValid ? true : undefined}
+          />
+          <p className="text-[10.5px] text-zinc-400">
+            {typical?.regular_rate ? `Dept. typical: $${typical.regular_rate}` : 'Required'}
+          </p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+            OT rate (USD/hr)
+          </label>
+          <Input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            value={otRate}
+            onChange={(e) => setOtRate(e.target.value)}
+            placeholder="53.25"
+            className="h-8 text-xs"
+            aria-invalid={otRate.trim() !== '' && !otValid ? true : undefined}
+          />
+          <p className="text-[10.5px] text-zinc-400">
+            {typical?.ot_rate ? `Dept. typical: $${typical.ot_rate}` : 'Optional'}
+          </p>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+            Hubstaff project(s)
+          </label>
+          <ProjectMultiSelect
+            selected={projects}
+            onChange={setProjects}
+            options={projectOptions}
+            loading={metaLoading}
+          />
+          <p className="text-[10.5px] text-zinc-400">Required for everyone here.</p>
+        </div>
+      </div>
+
+      {/* Per-person rows */}
+      <div className="mt-3 overflow-hidden rounded-lg border border-zinc-200/80 dark:border-zinc-800">
+        {rows.map((r, i) => {
+          const done = doneIds.has(r.id);
+          const res = results[r.id];
+          const name = r.full_name?.trim() || r.invite_name?.trim() || '(no name)';
+          const personal = r.email ?? r.invite_personal_email ?? '';
+          const preExisting = done && !res?.ok && !!r.work_email;
+          return (
+            <div
+              key={r.id}
+              className={cn(
+                'grid grid-cols-1 gap-2 px-3 py-2.5 sm:grid-cols-2 sm:items-start',
+                i > 0 && 'border-t border-zinc-100 dark:border-zinc-800/70',
+                done && 'bg-emerald-50/40 dark:bg-emerald-950/20',
+              )}
+            >
+              <div className="min-w-0">
+                <p className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
+                  {name}
+                </p>
+                {personal && (
+                  <p className="truncate font-mono text-[10.5px] text-zinc-500">{personal}</p>
+                )}
+                {done && (
+                  <span className="mt-0.5 inline-flex items-center gap-1 text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="h-3 w-3" />
+                    {preExisting ? 'Already had a work email' : 'Work email set'}
+                  </span>
+                )}
+                {res && !res.ok && (
+                  <span className="mt-0.5 block text-[10.5px] text-rose-600 dark:text-rose-400">
+                    {res.error}
+                  </span>
+                )}
+              </div>
+              <BulkWorkEmailField
+                value={emails[r.id] ?? ''}
+                onChange={(v) => onEmailChange(r.id, v)}
+                onAvail={(v) => onAvail(r.id, v)}
+                isDup={dupIds.has(r.id)}
+                done={done}
+                suggesting={suggesting}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Per-department submit — never a single action across all departments */}
+      {busy && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-[11px] text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/25 dark:text-emerald-200">
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+          <span>
+            Creating Google Workspace accounts + Hubstaff invites
+            {progress ? ` (${progress.done}/${progress.total})` : ''}... this can take a moment
+            per hire - please keep this window open.
+          </span>
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+        {!configValid && pendingCount > 0 && (
+          <span className="text-[11px] text-amber-600 dark:text-amber-400">
+            Set a department, rate, and project first.
+          </span>
+        )}
+        <Button
+          size="sm"
+          className="h-8 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white shadow-sm shadow-emerald-600/25 hover:opacity-90 disabled:opacity-60"
+          onClick={() =>
+            onSubmitGroup({
+              rows: usableRows,
+              department: dept.trim(),
+              regularRate,
+              otRate,
+              projects,
+            })
+          }
+          disabled={!canSubmit}
+        >
+          {busy ? (
+            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <UserCheck className="mr-1 h-3.5 w-3.5" />
+          )}
+          {busy && progress
+            ? `Setting ${progress.done}/${progress.total}...`
+            : allDone
+              ? 'All set'
+              : `Set ${usableRows.length} work email${usableRows.length === 1 ? '' : 's'}`}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One editable work-email cell. Debounces an availability check against the
+ * live roster and reports the result up via `onAvail`. Duplicate-within-batch
+ * is detected by the parent and passed in as `isDup`.
+ */
+function BulkWorkEmailField({
+  value,
+  onChange,
+  onAvail,
+  isDup,
+  done,
+  suggesting,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onAvail: (v: boolean | null) => void;
+  isDup: boolean;
+  done: boolean;
+  suggesting: boolean;
+}) {
+  const [checking, setChecking] = useState(false);
+  const [serverAvail, setServerAvail] = useState<boolean | null>(null);
+  // Hold the latest onAvail in a ref so a fresh inline callback from the parent
+  // each render doesn't re-trigger the debounced fetch.
+  const onAvailRef = useRef(onAvail);
+  onAvailRef.current = onAvail;
+
+  const norm = value.trim().toLowerCase();
+  const validFormat = isPlausibleEmail(norm) && norm.endsWith('@simple.biz');
+
+  useEffect(() => {
+    if (done) return;
+    if (!norm || !validFormat) {
+      setServerAvail(null);
+      onAvailRef.current(null);
+      setChecking(false);
+      return;
+    }
+    let active = true;
+    setChecking(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/hr/work-email/suggest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ candidate: norm }),
+        });
+        const j = (await res.json()) as { candidate?: { available: boolean } | null };
+        const a = j.candidate ? j.candidate.available : null;
+        if (active) {
+          setServerAvail(a);
+          onAvailRef.current(a);
+        }
+      } catch {
+        if (active) {
+          setServerAvail(null);
+          onAvailRef.current(null);
+        }
+      } finally {
+        if (active) setChecking(false);
+      }
+    }, 350);
+    return () => {
+      active = false;
+      clearTimeout(t);
+    };
+  }, [norm, validFormat, done]);
+
+  const showSpinner = !done && (checking || (suggesting && !norm));
+  const state: 'ok' | 'bad' | 'none' =
+    done || (validFormat && !isDup && serverAvail === true)
+      ? 'ok'
+      : (!!norm && !validFormat) || isDup || serverAvail === false
+        ? 'bad'
+        : 'none';
+
+  const message = done
+    ? 'Set'
+    : suggesting && !norm
+      ? 'Suggesting address'
+      : checking
+        ? 'Checking availability'
+        : norm && !validFormat
+          ? 'Must be a valid @simple.biz address.'
+          : isDup
+            ? 'Duplicate address in this batch.'
+            : serverAvail === false
+              ? 'Already in use - try another.'
+              : serverAvail === true
+                ? 'Available.'
+                : 'Enter an @simple.biz address.';
+
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <div className="relative">
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={done}
+          placeholder="namel@simple.biz"
+          className="h-8 pr-8 font-mono text-xs disabled:opacity-70"
+          spellCheck={false}
+          autoCapitalize="none"
+        />
+        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2">
+          {showSpinner ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
+          ) : state === 'ok' ? (
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+          ) : state === 'bad' ? (
+            <XCircle className="h-3.5 w-3.5 text-rose-500" />
+          ) : null}
+        </span>
+      </div>
+      <p
+        className={cn(
+          'text-[10.5px] leading-tight',
+          state === 'bad'
+            ? 'text-rose-600 dark:text-rose-400'
+            : state === 'ok'
+              ? 'text-emerald-600 dark:text-emerald-400'
+              : 'text-zinc-400',
+        )}
+      >
+        {message}
+      </p>
+    </div>
   );
 }
 

@@ -266,9 +266,31 @@ export default function HrOnboarding() {
       const res = await fetch(`/api/hr/pending-employees/${row.id}`, {
         method: 'DELETE',
       });
-      const json = (await res.json()) as { error?: string };
+      const json = (await res.json()) as {
+        error?: string;
+        webhook?: { fired: boolean; status: number | null; error: string | null } | null;
+        onboarding_archived?: boolean;
+      };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to cancel');
-      toast.success(`Cancelled ${row.name}`);
+
+      const hadAccount = !!row.work_email;
+      const webhookFailed =
+        hadAccount && (!json.webhook || !json.webhook.fired || json.webhook.error != null);
+
+      if (webhookFailed) {
+        // Row is cancelled, but the Workspace deletion didn't fire — HR must
+        // tear the account down by hand so it doesn't linger.
+        toast.warning(`Cancelled ${row.name} - Workspace account may NOT have been deleted`, {
+          description: `${json.webhook?.error ?? 'The deletion webhook did not fire'}. Delete ${row.work_email} in Google Workspace + Hubstaff manually.`,
+        });
+      } else {
+        const bits: string[] = [];
+        if (hadAccount) bits.push('Workspace account + Hubstaff deleted');
+        if (json.onboarding_archived) bits.push('onboarding form archived');
+        toast.success(`Cancelled ${row.name}`, {
+          description: bits.length ? `${bits.join(' and ')}.` : undefined,
+        });
+      }
       await fetchPending();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to cancel');
@@ -698,7 +720,7 @@ export default function HrOnboarding() {
                                   className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
                                   onClick={() => setConfirmCancel(row)}
                                   disabled={isBusy}
-                                  title="Cancel hire"
+                                  title="Cancel hire - deletes their Workspace account + Hubstaff and archives their onboarding form"
                                 >
                                   <XCircle className="h-3 w-3" />
                                 </Button>
@@ -744,9 +766,19 @@ export default function HrOnboarding() {
           <DialogHeader>
             <DialogTitle className="text-base">Cancel pending hire?</DialogTitle>
             <DialogDescription className="text-xs">
-              {confirmCancel?.name} ({confirmCancel?.personal_email}) will be marked
-              cancelled. The row stays in the audit log but won't appear in the
-              ready/awaiting buckets anymore.
+              <strong>{confirmCancel?.name}</strong> ({confirmCancel?.personal_email}) will
+              move to the Cancelled tab.
+              {confirmCancel?.work_email ? (
+                <>
+                  {' '}Their Workspace account{' '}
+                  <span className="font-mono">{confirmCancel.work_email}</span> and Hubstaff
+                  access will be permanently deleted.
+                </>
+              ) : null}
+              {confirmCancel?.onboarding_submission_id
+                ? ' Their onboarding form will be archived.'
+                : null}
+              {' '}This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">

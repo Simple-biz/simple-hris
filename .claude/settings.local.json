@@ -211,7 +211,9 @@
       "Read(//c/Users/Itachi/.claude/projects/c--Users-Itachi-Desktop-simple-hris/**)",
       "PowerShell(npx tsc --noEmit)",
       "PowerShell(if \\($?\\) { \"TSC OK\" } else { \"TSC FAILED\" })",
-      "Bash(start \"\" \"c:\\\\tmp\\\\chime-preview.html\")"
+      "Bash(start \"\" \"c:\\\\tmp\\\\chime-preview.html\")",
+      "Bash(git --no-pager diff)",
+      "Bash(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" ls-files \"app/api/hr/**\" \"src/lib/supabase/hr-onboarding-submissions*\" \"src/components/hr/**\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

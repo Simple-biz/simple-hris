@@ -268,14 +268,25 @@ export async function updateHrPendingEmployee(
   return { row: data as HrPendingEmployeeRow, error: null };
 }
 
+/**
+ * Soft-cancels a staged hire: flips status to 'cancelled' so it drops out of the
+ * active buckets but stays visible in the Cancelled tab. The cancel route also
+ * tears down the Workspace account + archives the linked onboarding submission;
+ * pass `deletionProcessedAt` (now()) when an account teardown was fired so the
+ * row records the deletion as handled (and never gets re-picked by the
+ * scheduled-deletion cron).
+ */
 export async function cancelHrPendingEmployee(
   id: number,
+  opts: { deletionProcessedAt?: string | null } = {},
 ): Promise<{ error: string | null }> {
   const sb = client();
-  const { error } = await sb
-    .from(TABLE)
-    .update({ status: "cancelled" })
-    .eq("id", id);
+  const payload: Record<string, unknown> = { status: "cancelled" };
+  if (opts.deletionProcessedAt !== undefined) {
+    payload["deletion_processed_at"] = opts.deletionProcessedAt;
+    payload["scheduled_deletion_at"] = null;
+  }
+  const { error } = await sb.from(TABLE).update(payload).eq("id", id);
   return { error: error?.message ?? null };
 }
 
@@ -284,8 +295,8 @@ export async function cancelHrPendingEmployee(
  * re-promote (e.g. after fixing details). Clears `promoted_at` +
  * `promoted_to_master_id`. Does NOT remove the `global_master_list` row the
  * original promote created — the person stays in the master list, and a later
- * re-promote reuses that row (idempotent, by personal email + department). Only
- * a `promoted` row can be reverted.
+ * re-promote reuses that row (idempotent, by work email — the canonical key).
+ * Only a `promoted` row can be reverted.
  */
 export async function revertHrPendingEmployeeToReady(
   id: number,
@@ -386,16 +397,30 @@ export async function promoteHrPendingEmployee(
     };
   }
 
-  // Idempotency: global_master_list has a unique index on
-  // (LOWER("Personal Email"), LOWER("Department")). A row for this person+dept
-  // may already exist — e.g. an earlier promote inserted the master row but a
-  // later step failed (pending row still 'ready'), or the person was added from
-  // another source. Reuse that row instead of failing on the duplicate key.
+  // Idempotency keyed on Work Email — the canonical, globally-unique identity
+  // join key (minted by Payroll; required above). We deliberately DO NOT match
+  // on (Personal Email, Department): a personal email is NOT unique — the same
+  // address can belong to multiple distinct work accounts (a person re-onboarded
+  // under a new @simple.biz address, a shared personal inbox, an admin testing
+  // with a second account). Matching on it would reattach THIS hire to a
+  // DIFFERENT person's master row and overwrite their Work Email — hijacking
+  // their entire identity, since name/department/start date/profile photo/
+  // commendations all resolve through this one row.
+  //
+  // A row for this exact work email may legitimately already exist (an earlier
+  // promote inserted the master row but a later step failed and left the pending
+  // row 'ready', or a master-list CSV already listed them). Reuse THAT row; never
+  // reassign someone else's. Work Email is the match key, so it's already
+  // correct — we don't rewrite it.
+  // Keyed on (Work Email, Department): a person can hold one master row per
+  // department, so the work email alone isn't the row key — the department
+  // disambiguates. This mirrors the (Work Email, Department) uniqueness the
+  // schema now enforces.
   let masterId: string;
   const { data: existingMaster, error: existingErr } = await sb
     .from(MASTER_TABLE)
     .select("id")
-    .ilike("Personal Email", row.personal_email)
+    .ilike("Work Email", row.work_email)
     .ilike("Department", row.department)
     .limit(1)
     .maybeSingle();
@@ -404,11 +429,10 @@ export async function promoteHrPendingEmployee(
 
   if (existingMaster) {
     masterId = (existingMaster as { id: string }).id;
-    // Make sure the reused row is attached to the current upload so it shows in
-    // active_employees, and refresh the work email in case it was just minted.
+    // Attach the reused row to the current upload so it shows in active_employees.
     await sb
       .from(MASTER_TABLE)
-      .update({ last_seen_upload_id: uploadId, "Work Email": row.work_email })
+      .update({ last_seen_upload_id: uploadId })
       .eq("id", masterId);
   } else {
     // Master-list columns use mixed-case quoted identifiers ("Personal Email", etc.)
