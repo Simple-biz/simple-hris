@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, Copy, Download, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
+import { ChevronDown, Copy, Download, Eye, RefreshCw, Search, SearchX, Send, Sparkles, X } from 'lucide-react';
 import QueuePagination from './QueuePagination';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
@@ -17,14 +17,27 @@ import {
   pendingRowsToCsv,
 } from '@/lib/payroll/dispatch-client-csv';
 
+/** Sibling context lets the dispatch dialog navigate the queue with arrow keys. */
+export interface QueueRowContext {
+  siblings: QueueRow[];
+  index: number;
+}
+
 interface ProcessorQueueProps {
   /** `null` means "All pending". */
   processor: ProcessorId | null;
   rows: QueueRow[];
-  onMarkPaid: (row: QueueRow) => void;
+  /**
+   * Opens the dispatch dialog for `row`. The optional context carries the
+   * current (search-filtered) sibling list + the row's index so the dialog
+   * can slide left/right between payments.
+   */
+  onMarkPaid: (row: QueueRow, ctx?: QueueRowContext) => void;
   /** Period info from the parent — used for CSV filename. */
   periodStart?: string | null;
   periodEnd?: string | null;
+  /** Silent re-pull of the queue (e.g. to surface a row sent back from Done). */
+  onRefresh?: () => void | Promise<void>;
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -130,10 +143,21 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, onRefresh }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    if (!onRefresh || refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [onRefresh, refreshing]);
 
   // Stable toggle so memoized rows aren't invalidated on every parent render.
   const handleToggleExpand = useCallback((id: string) => {
@@ -162,6 +186,20 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd }:
         (r.bankPreferredRaw ?? '').toLowerCase().includes(q),
     );
   }, [rows, debouncedQuery]);
+
+  // Keep the live filtered list in a ref so `handleOpenRow` stays referentially
+  // stable — otherwise every keystroke would invalidate the memoized rows and
+  // re-render all ~1000 of them. The ref is read lazily, only on click.
+  const filteredRef = useRef(filtered);
+  filteredRef.current = filtered;
+  const handleOpenRow = useCallback(
+    (row: QueueRow) => {
+      const list = filteredRef.current;
+      const index = list.findIndex((r) => r.id === row.id);
+      onMarkPaid(row, { siblings: list, index: index < 0 ? 0 : index });
+    },
+    [onMarkPaid],
+  );
 
   const totalUSD = filtered.reduce((sum, r) => sum + (r.amountUSD ?? 0), 0);
   const totalPHP = filtered.reduce((sum, r) => sum + (r.amountPHP ?? 0), 0);
@@ -222,6 +260,18 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd }:
                 Amounts pending pay calc
               </span>
             )}
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 text-[11px] font-semibold text-zinc-600 shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                title="Refresh this queue — surfaces rows sent back from Done"
+              >
+                <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} />
+                Refresh
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -274,7 +324,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd }:
             {isAllView && <span>Bank Preferred</span>}
             <span className="text-right">Current pay</span>
             <span className="text-right">Hours</span>
-            <span className="w-[7.5rem] text-right">Action</span>
+            <span className="w-[9.875rem] text-right">Action</span>
           </div>
         )}
 
@@ -305,7 +355,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd }:
                     isAllView={isAllView}
                     rowGrid={rowGrid}
                     onToggleExpand={handleToggleExpand}
-                    onMarkPaid={onMarkPaid}
+                    onMarkPaid={handleOpenRow}
                   />
                 ))}
               </AnimatePresence>
@@ -448,14 +498,25 @@ const QueueRowItem = React.memo(function QueueRowItem({
               </>
             )}
           </div>
-          <Button
-            size="sm"
-            onClick={() => onMarkPaid(row)}
-            className="h-8 gap-1.5 bg-gradient-to-br from-emerald-500 to-teal-600 px-3 text-[11px] font-medium text-white shadow-sm shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700 active:scale-95"
-          >
-            <Send className="h-3 w-3" />
-            Mark paid
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onMarkPaid(row)}
+              title="View payment details"
+              aria-label="View payment details"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </button>
+            <Button
+              size="sm"
+              onClick={() => onMarkPaid(row)}
+              className="h-8 gap-1.5 bg-gradient-to-br from-emerald-500 to-teal-600 px-3 text-[11px] font-medium text-white shadow-sm shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700 active:scale-95"
+            >
+              <Send className="h-3 w-3" />
+              Mark paid
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -548,14 +609,25 @@ const QueueRowItem = React.memo(function QueueRowItem({
           </div>
         </div>
 
-        <Button
-          size="sm"
-          onClick={() => onMarkPaid(row)}
-          className="h-8 w-[7.5rem] justify-self-end gap-1.5 bg-gradient-to-br from-emerald-500 to-teal-600 px-3 text-[11px] font-medium text-white shadow-sm shadow-emerald-500/30 transition-transform hover:from-emerald-600 hover:to-teal-700 active:scale-95"
-        >
-          <Send className="h-3 w-3" />
-          Mark paid
-        </Button>
+        <div className="flex items-center justify-self-end gap-1.5">
+          <button
+            type="button"
+            onClick={() => onMarkPaid(row)}
+            title="View payment details"
+            aria-label="View payment details"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-white text-zinc-500 shadow-sm transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-700 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-orange-300"
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </button>
+          <Button
+            size="sm"
+            onClick={() => onMarkPaid(row)}
+            className="h-8 w-[7.5rem] gap-1.5 bg-gradient-to-br from-emerald-500 to-teal-600 px-3 text-[11px] font-medium text-white shadow-sm shadow-emerald-500/30 transition-transform hover:from-emerald-600 hover:to-teal-700 active:scale-95"
+          >
+            <Send className="h-3 w-3" />
+            Mark paid
+          </Button>
+        </div>
       </div>
 
       <AnimatePresence initial={false}>

@@ -1,0 +1,59 @@
+import { NextRequest, NextResponse } from "next/server";
+import { deletePaymentDispatches } from "@/lib/supabase/payment-dispatches";
+import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { getSessionActor } from "@/lib/auth/session-actor";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+interface Body {
+  ids?: unknown;
+}
+
+/**
+ * "Send back to the pay processor" — undo one or more logged payments by
+ * deleting their payment_dispatches rows. The recipient drops out of paid and
+ * reappears in the pending queue; the disbursement_records sync trigger flips
+ * the matching record back to pending.
+ */
+export async function POST(req: NextRequest) {
+  let body: Body;
+  try {
+    body = (await req.json()) as Body;
+  } catch {
+    return NextResponse.json({ deleted: 0, error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const ids = Array.isArray(body.ids)
+    ? body.ids.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    : [];
+  if (ids.length === 0) {
+    return NextResponse.json({ deleted: 0, error: "No dispatch ids provided" }, { status: 400 });
+  }
+
+  let actor: string | null = null;
+  let actorRole = "user";
+  try {
+    const sessionActor = await getSessionActor();
+    actor = sessionActor.user_name !== "anonymous" ? sessionActor.user_name : null;
+    actorRole = sessionActor.user_role;
+  } catch {
+    /* ignore - audit trail is best-effort */
+  }
+
+  const { deleted, error } = await deletePaymentDispatches(ids);
+  if (error) {
+    return NextResponse.json({ deleted: 0, error }, { status: 500 });
+  }
+
+  void insertAuditLog({
+    user_name: actor ?? "unknown",
+    user_role: actorRole,
+    action: "payment.undone",
+    resource: "payment_dispatches",
+    resource_id: ids.join(","),
+    details: { count: deleted, ids },
+  });
+
+  return NextResponse.json({ deleted, error: null });
+}

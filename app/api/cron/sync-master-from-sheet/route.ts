@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { fetchMasterSheetAsCsv } from '@/lib/google-sheets/fetch-master-sheet';
-import { replaceGlobalMasterListFromCsvText } from '@/lib/supabase/global-master-list-db';
+import { replaceGlobalMasterListFromCsvText, restampActiveNonSheetRows } from '@/lib/supabase/global-master-list-db';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
 import { cronSessionElevated } from '@/lib/auth/cron-auth';
@@ -68,12 +68,21 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
 
     const result = await replaceGlobalMasterListFromCsvText(csvText, sourceLabel, { clearOffboarded });
 
-    // Count active (non-offboarded) employees so the UI shows a number matching the HR/Accounting overview.
+    // Re-stamp any active employees that are not in the Google sheet (e.g. manually-seeded
+    // US employees) onto the new current upload so they stay visible in active_employees.
+    // Without this, every sync would knock them out of the roster until someone ran a
+    // manual recovery SQL. See global-master-list-db.ts: restampActiveNonSheetRows.
     const sb = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!.trim(),
       process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(),
       { auth: { persistSession: false, autoRefreshToken: false } },
     );
+    const restamped = await restampActiveNonSheetRows(sb, result.uploadId);
+    if (restamped > 0) {
+      console.log(`[sync-master-from-sheet] re-stamped ${restamped} active non-sheet rows onto upload ${result.uploadId}`);
+    }
+
+    // Count active (non-offboarded) employees so the UI shows a number matching the HR/Accounting overview.
     const { count: activeCount, error: countError } = await sb
       .from('active_employees')
       .select('*', { count: 'exact', head: true });
@@ -88,6 +97,7 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
         inserted: result.inserted,
         updated: result.updated,
         rowsMissingPersonalEmail: result.rowsMissingPersonalEmail,
+        restampedNonSheetRows: restamped,
         uploadId: result.uploadId,
       },
       gap: {
@@ -124,6 +134,7 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
         duplicates_in_csv: result.duplicatesInCsv,
         reconciled_via_work_email: result.reconciledViaWorkEmail,
         skipped_work_dept_collisions: result.skippedWorkDeptCollisions,
+        restamped_non_sheet_rows: restamped,
         upload_id: result.uploadId,
         clear_offboarded: clearOffboarded,
       },

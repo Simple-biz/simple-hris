@@ -177,7 +177,7 @@ export function downloadCsv(filename: string, csv: string): void {
  * with safe slug substitution so the user always gets a deterministic name.
  */
 export function dispatchClientFilename(opts: {
-  prefix: 'pending' | 'sent';
+  prefix: 'pending' | 'sent' | 'done';
   processor?: string | null;
   periodStart?: string | null;
   periodEnd?: string | null;

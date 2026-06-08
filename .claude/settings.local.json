@@ -213,7 +213,9 @@
       "PowerShell(if \\($?\\) { \"TSC OK\" } else { \"TSC FAILED\" })",
       "Bash(start \"\" \"c:\\\\tmp\\\\chime-preview.html\")",
       "Bash(git --no-pager diff)",
-      "Bash(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" ls-files \"app/api/hr/**\" \"src/lib/supabase/hr-onboarding-submissions*\" \"src/components/hr/**\")"
+      "Bash(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" ls-files \"app/api/hr/**\" \"src/lib/supabase/hr-onboarding-submissions*\" \"src/components/hr/**\")",
+      "Bash(dir \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\docs\\\\meetings\\\\\")",
+      "Bash(dir \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\docs\\\\notes\\\\\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

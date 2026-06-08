@@ -1,17 +1,23 @@
 -- ============================================================================
--- RECOVERY: re-stamp the 12 manually-seeded US employees onto whatever
---           master_list_uploads row is CURRENT, so they reappear in the
---           active_employees view after a master-sheet sync.
+-- RECOVERY (one-time only): re-stamp the 12 manually-seeded US employees onto
+--           whatever master_list_uploads row is CURRENT.
 --
--- WHY THIS IS NEEDED
+-- AS OF 2026-06-08 THIS IS NO LONGER NEEDED FOR ONGOING SYNCS.
+--   The sync route (/api/cron/sync-master-from-sheet) now calls
+--   `restampActiveNonSheetRows()` automatically at the end of every successful
+--   sync. That function re-stamps ALL non-offboarded rows — including the US
+--   employees — onto the new current upload before the active_employees count is
+--   read. You only need this SQL if you are recovering from a sync that ran
+--   BEFORE the fix was deployed (i.e. if active_employees is currently missing
+--   the US employees after a past sync).
+--
+-- WHY THE ISSUE EXISTED
 --   The US employees (seed_us_global_master_list.sql) are NOT in the Google
 --   MASTERLIST sheet -- they were seeded directly and tagged with the upload
---   that was current at seed time. The master-sheet sync only ever touches rows
---   it finds in the sheet, then promotes a brand-new upload to is_current.
---   `active_employees` filters to last_seen_upload_id = (current upload), so the
---   moment a new upload is promoted the US rows (still pointing at the old
---   upload) drop out of the roster. Run this AFTER each successful sheet sync,
---   or add the US employees to the Google sheet so the sync maintains them.
+--   that was current at seed time. The master-sheet sync promotes a brand-new
+--   upload to is_current; `active_employees` filters to last_seen_upload_id =
+--   (current upload), so the US rows (still on the old upload) dropped out of
+--   the roster after every sync.
 --
 -- IDEMPOTENT: re-stamping to the already-current upload is a no-op.
 -- Only active (non-off-boarded) rows are touched.

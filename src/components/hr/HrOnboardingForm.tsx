@@ -58,6 +58,23 @@ function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
 
+// Runs `fn` over `items` with at most `limit` in-flight at once.
+// Callers that previously used Promise.all/allSettled with no cap use this
+// instead so bursts of bulk actions don't saturate the n8n webhook endpoints.
+async function runPooled<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = [];
+  for (let i = 0; i < items.length; i += limit) {
+    const chunk = items.slice(i, i + limit);
+    const chunkResults = await Promise.allSettled(chunk.map(fn));
+    results.push(...chunkResults);
+  }
+  return results;
+}
+
 type HrOnboardingStatus = 'pending' | 'submitted' | 'archived';
 type PaymentMethod = 'hurupay' | 'wires';
 
@@ -322,26 +339,25 @@ export default function HrOnboardingForm() {
     const { type, rows: targets } = bulkAction;
     setBulkBusy(true);
     try {
-      const results = await Promise.allSettled(
-        targets.map(async (r) => {
-          let res: Response;
-          if (type === 'archive') {
-            res = await fetch(`/api/hr/onboarding-submissions/${r.id}`, { method: 'DELETE' });
-          } else if (type === 'delete') {
-            res = await fetch(`/api/hr/onboarding-submissions/${r.id}?hard=true`, {
-              method: 'DELETE',
-            });
-          } else {
-            res = await fetch(`/api/hr/onboarding-submissions/${r.id}/send`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({}),
-            });
-          }
-          const json = (await res.json().catch(() => ({}))) as { error?: string };
-          if (!res.ok || json.error) throw new Error(json.error ?? 'Request failed');
-        }),
-      );
+      // 5 concurrent max — resend hits the n8n webhook; uncapped bursts saturate it.
+      const results = await runPooled(targets, 5, async (r) => {
+        let res: Response;
+        if (type === 'archive') {
+          res = await fetch(`/api/hr/onboarding-submissions/${r.id}`, { method: 'DELETE' });
+        } else if (type === 'delete') {
+          res = await fetch(`/api/hr/onboarding-submissions/${r.id}?hard=true`, {
+            method: 'DELETE',
+          });
+        } else {
+          res = await fetch(`/api/hr/onboarding-submissions/${r.id}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+        }
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok || json.error) throw new Error(json.error ?? 'Request failed');
+      });
       const ok = results.filter((r) => r.status === 'fulfilled').length;
       const failed = results.length - ok;
       const verb = type === 'archive' ? 'archived' : type === 'delete' ? 'deleted' : 'sent';
@@ -1952,32 +1968,31 @@ function BulkSetWorkEmailDialog({
     const newResults: Record<string, { ok: boolean; error?: string }> = {};
     const succeeded: string[] = [];
     let done = 0;
-    await Promise.all(
-      targets.map(async (r) => {
-        try {
-          const res = await fetch(`/api/hr/onboarding-submissions/${r.id}/set-work-email`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              work_email: (emails[r.id] ?? '').trim().toLowerCase(),
-              department,
-              project_names: projects,
-              regular_rate: regularRate.trim(),
-              ot_rate: otRate.trim() || null,
-            }),
-          });
-          const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-          if (!res.ok || j.error) throw new Error(j.error ?? 'Failed to set work email');
-          newResults[r.id] = { ok: true };
-          succeeded.push(r.id);
-        } catch (e) {
-          newResults[r.id] = { ok: false, error: e instanceof Error ? e.message : String(e) };
-        } finally {
-          done += 1;
-          setGroupProgress((p) => ({ ...p, [groupKey]: { done, total: targets.length } }));
-        }
-      }),
-    );
+    // 5 concurrent max — each hire fires the workspace-account creation webhook.
+    await runPooled(targets, 5, async (r) => {
+      try {
+        const res = await fetch(`/api/hr/onboarding-submissions/${r.id}/set-work-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            work_email: (emails[r.id] ?? '').trim().toLowerCase(),
+            department,
+            project_names: projects,
+            regular_rate: regularRate.trim(),
+            ot_rate: otRate.trim() || null,
+          }),
+        });
+        const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || j.error) throw new Error(j.error ?? 'Failed to set work email');
+        newResults[r.id] = { ok: true };
+        succeeded.push(r.id);
+      } catch (e) {
+        newResults[r.id] = { ok: false, error: e instanceof Error ? e.message : String(e) };
+      } finally {
+        done += 1;
+        setGroupProgress((p) => ({ ...p, [groupKey]: { done, total: targets.length } }));
+      }
+    });
     setResults((p) => ({ ...p, ...newResults }));
     setGroupBusy((p) => ({ ...p, [groupKey]: false }));
     setGroupProgress((p) => ({ ...p, [groupKey]: null }));

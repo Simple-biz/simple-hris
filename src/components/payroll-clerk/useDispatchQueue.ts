@@ -161,8 +161,10 @@ export function useDispatchQueue(): DispatchQueueState {
     error: null,
   });
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setState((s) => ({ ...s, loading: true }));
+  const load = useCallback(async (signal?: AbortSignal, opts?: { silent?: boolean }) => {
+    // Silent refreshes (post-action reconciliation) skip the loading flag so the
+    // table isn't torn down to a skeleton and re-mounted — no visible reload.
+    if (!opts?.silent) setState((s) => ({ ...s, loading: true }));
     try {
       const result = await loadAll(signal);
       if (signal?.aborted) return;
@@ -197,7 +199,7 @@ export function useDispatchQueue(): DispatchQueueState {
   }, [load]);
 
   const refresh = useCallback(async () => {
-    await load();
+    await load(undefined, { silent: true });
   }, [load]);
 
   return { ...state, refresh };

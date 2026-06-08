@@ -118,3 +118,26 @@ export async function listPaymentDispatches(params: {
   if (error) return { rows: [], error: error.message };
   return { rows: (data ?? []) as PaymentDispatchRow[], error: null };
 }
+
+/**
+ * Deletes dispatch rows by id ("send back to the pay processor" — undo a
+ * payment so the recipient drops out of paid and reappears in the pending
+ * queue). The disbursement_records sync trigger reverts the matching record to
+ * status='pending' on delete. Returns how many rows were removed.
+ */
+export async function deletePaymentDispatches(
+  ids: string[],
+): Promise<{ deleted: number; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { deleted: 0, error: "Supabase client unavailable" };
+  if (ids.length === 0) return { deleted: 0, error: null };
+
+  const { data, error } = await supabase
+    .from("payment_dispatches")
+    .delete()
+    .in("id", ids)
+    .select("id");
+
+  if (error) return { deleted: 0, error: error.message };
+  return { deleted: (data ?? []).length, error: null };
+}

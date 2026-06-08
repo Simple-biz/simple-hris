@@ -8,12 +8,12 @@ import {
   Banknote,
   CalendarRange,
   CheckCircle2,
+  ClipboardCheck,
   ClipboardList,
   Coins,
   FileSpreadsheet,
   Globe2,
   Heart,
-  History,
   Loader2,
   Lock,
   Play,
@@ -31,7 +31,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import ProcessorQueue from './ProcessorQueue';
 import ExcludedQueue from './ExcludedQueue';
-import SentPaymentsHistory from './SentPaymentsHistory';
+import DoneQueue from './DoneQueue';
 import DispatchReports from './DispatchReports';
 import OrphanageQueue from './OrphanageQueue';
 import UrgentPaymentsQueue from './UrgentPaymentsQueue';
@@ -52,7 +52,7 @@ import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
-type TabId = 'all' | 'urgent' | 'history' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
+type TabId = 'all' | 'urgent' | 'done' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
 
 interface ProcessorVisual {
   Icon: React.ComponentType<{ className?: string }>;
@@ -109,11 +109,11 @@ const ALL_VISUAL: ProcessorVisual = {
   blurb: 'Everything pending',
 };
 
-const HISTORY_VISUAL: ProcessorVisual = {
-  Icon: History,
+const DONE_VISUAL: ProcessorVisual = {
+  Icon: ClipboardCheck,
   accent: 'from-emerald-500 to-green-600',
   glow: 'from-emerald-100/80 via-green-50/60 to-white dark:from-emerald-950/40 dark:via-green-950/30 dark:to-zinc-900',
-  blurb: 'Sent this cycle',
+  blurb: 'Paid this cycle',
 };
 
 const REPORTS_VISUAL: ProcessorVisual = {
@@ -164,7 +164,11 @@ export default function PayrollDispatch() {
   const { rows: fetched, excluded, paid, period, loading, error, refresh } = useDispatchQueue();
   const { state: lockState, setLocked } = useDispatchLock();
   const [pending, setPending] = useState<QueueRow[]>([]);
-  const [markPaidRow, setMarkPaidRow] = useState<QueueRow | null>(null);
+  // Gallery state for the dispatch dialog: a snapshot of the sibling rows taken
+  // at open time + the active index, so the user can slide ←/→ between payments.
+  const [gallerySiblings, setGallerySiblings] = useState<QueueRow[]>([]);
+  const [galleryIdx, setGalleryIdx] = useState<number | null>(null);
+  const markPaidRow = galleryIdx != null ? gallerySiblings[galleryIdx] ?? null : null;
   const [urgentCount, setUrgentCount] = useState(0);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
   const [togglingLock, setTogglingLock] = useState(false);
@@ -225,12 +229,29 @@ export default function PayrollDispatch() {
   // skips re-renders when only sibling state changes (e.g. opening Mark Paid
   // dialog). Without these the inline arrows force a full re-render of all
   // ~1000 rows on every dialog open.
-  const handleOpenMarkPaid = useCallback((row: QueueRow) => {
-    setMarkPaidRow(row);
-  }, []);
+  const handleOpenMarkPaid = useCallback(
+    (row: QueueRow, ctx?: { siblings: QueueRow[]; index: number }) => {
+      if (ctx && ctx.siblings.length > 0) {
+        setGallerySiblings(ctx.siblings);
+        setGalleryIdx(ctx.index);
+      } else {
+        setGallerySiblings([row]);
+        setGalleryIdx(0);
+      }
+    },
+    [],
+  );
   const handleCloseMarkPaid = useCallback(() => {
-    setMarkPaidRow(null);
+    setGalleryIdx(null);
   }, []);
+  const handleGalleryPrev = useCallback(() => {
+    setGalleryIdx((i) => (i == null ? i : Math.max(0, i - 1)));
+  }, []);
+  const handleGalleryNext = useCallback(() => {
+    setGalleryIdx((i) =>
+      i == null ? i : Math.min(gallerySiblings.length - 1, i + 1),
+    );
+  }, [gallerySiblings.length]);
 
   const handleConfirmPaid = async (payload: MarkPaidPayload) => {
     const row = pending.find((r) => r.id === payload.rowId);
@@ -239,7 +260,7 @@ export default function PayrollDispatch() {
     // Optimistically drop the row so the UI feels instant. If the POST fails
     // we put it back and surface the error.
     setPending((prev) => prev.filter((r) => r.id !== payload.rowId));
-    setMarkPaidRow(null);
+    setGalleryIdx(null);
 
     try {
       const res = await fetch('/api/payment-dispatches', {
@@ -297,9 +318,14 @@ export default function PayrollDispatch() {
     if (error) return <ErrorState message={error} />;
     if (loading || !hydrated) return <DispatchLoader />;
     if (!cycleReady) return <NoCycleState />;
-    if (activeTab === 'history') {
+    if (activeTab === 'done') {
       return (
-        <SentPaymentsHistory records={paid} periodStart={period.start} periodEnd={period.end} />
+        <DoneQueue
+          records={paid}
+          periodStart={period.start}
+          periodEnd={period.end}
+          onRefresh={refresh}
+        />
       );
     }
     if (activeTab === 'excluded') {
@@ -312,6 +338,7 @@ export default function PayrollDispatch() {
         onMarkPaid={handleOpenMarkPaid}
         periodStart={period.start}
         periodEnd={period.end}
+        onRefresh={refresh}
       />
     );
   };
@@ -517,14 +544,14 @@ export default function PayrollDispatch() {
             })}
             <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
               <ProcessorCard
-                label="History"
-                subtitle={HISTORY_VISUAL.blurb}
+                label="Done"
+                subtitle={DONE_VISUAL.blurb}
                 count={totalSent}
-                Icon={HISTORY_VISUAL.Icon}
-                accent={HISTORY_VISUAL.accent}
-                glow={HISTORY_VISUAL.glow}
-                active={activeTab === 'history'}
-                onClick={() => setActiveTab('history')}
+                Icon={DONE_VISUAL.Icon}
+                accent={DONE_VISUAL.accent}
+                glow={DONE_VISUAL.glow}
+                active={activeTab === 'done'}
+                onClick={() => setActiveTab('done')}
                 iconOnlyFallback
               />
             </motion.div>
@@ -596,7 +623,18 @@ export default function PayrollDispatch() {
         </div>
       </div>
 
-      <MarkPaidDialog row={markPaidRow} onClose={handleCloseMarkPaid} onConfirm={handleConfirmPaid} />
+      <MarkPaidDialog
+        row={markPaidRow}
+        onClose={handleCloseMarkPaid}
+        onConfirm={handleConfirmPaid}
+        position={
+          galleryIdx != null
+            ? { index: galleryIdx, total: gallerySiblings.length }
+            : undefined
+        }
+        onPrev={handleGalleryPrev}
+        onNext={handleGalleryNext}
+      />
       <LockToggleConfirmDialog
         open={confirmingLockToggle}
         locked={lockState.locked}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Dialog,
@@ -8,7 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { AlertTriangle, CheckCircle2, CircleDashed, Gauge, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, CircleDashed, Gauge, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatPHP, formatUSD, type ProcessorId, type QueueRow } from './mock-queue';
 
@@ -105,7 +105,30 @@ interface MarkPaidDialogProps {
   row: QueueRow | null;
   onClose: () => void;
   onConfirm: (payload: MarkPaidPayload) => Promise<void> | void;
+  /**
+   * Gallery navigation. When provided (and `total > 1`), the dialog shows
+   * prev/next chevrons + a counter and responds to ←/→ arrow keys so the user
+   * can slide between payments without closing the modal.
+   */
+  position?: { index: number; total: number };
+  onPrev?: () => void;
+  onNext?: () => void;
 }
+
+/* ---- gallery slide animation ----------------------------------------- */
+
+/**
+ * Direction-aware slide used when navigating between payments. `dir` is +1 when
+ * moving to the next payment (content slides in from the right, out to the
+ * left) and -1 when moving to the previous one.
+ */
+const slideVariants = {
+  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 26 : -26 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -26 : 26 }),
+};
+
+const slideTransition = { duration: 0.2, ease: [0.16, 1, 0.3, 1] as const };
 
 /* ---- helpers ---------------------------------------------------------- */
 
@@ -212,7 +235,14 @@ function Field({
 
 /* ---- main component -------------------------------------------------- */
 
-export default function MarkPaidDialog({ row, onClose, onConfirm }: MarkPaidDialogProps) {
+export default function MarkPaidDialog({
+  row,
+  onClose,
+  onConfirm,
+  position,
+  onPrev,
+  onNext,
+}: MarkPaidDialogProps) {
   const defaults = useMemo(() => (row ? deriveDefaults(row) : null), [row]);
 
   const [transactionId,          setTransactionId]          = useState('');
@@ -246,6 +276,37 @@ export default function MarkPaidDialog({ row, onClose, onConfirm }: MarkPaidDial
   const valid   = transactionId.trim().length > 0 && bankUsed.trim().length > 0 && sentDate.length > 0;
   const isWires = row?.processor === 'wires';
   const cfg     = CFG[status];
+
+  const hasGallery = position != null && position.total > 1;
+  const canPrev    = hasGallery && position!.index > 0;
+  const canNext    = hasGallery && position!.index < position!.total - 1;
+
+  // Slide direction for the content animation: -1 = previous, +1 = next.
+  const [dir, setDir] = useState(0);
+  const goPrev = useCallback(() => { setDir(-1); onPrev?.(); }, [onPrev]);
+  const goNext = useCallback(() => { setDir(1);  onNext?.(); }, [onNext]);
+
+  // ←/→ slide between payments — but only when the user isn't typing in a
+  // field (otherwise we'd hijack cursor movement inside the inputs).
+  useEffect(() => {
+    if (!open || !hasGallery) return;
+    const handler = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable) return;
+      if (e.key === 'ArrowLeft' && canPrev) {
+        e.preventDefault();
+        goPrev();
+      } else if (e.key === 'ArrowRight' && canNext) {
+        e.preventDefault();
+        goNext();
+      }
+    };
+    // Capture phase: Base UI's dialog manages keyboard/focus and can stop the
+    // event from bubbling to window, so we intercept it before that happens.
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [open, hasGallery, canPrev, canNext, goPrev, goNext]);
 
   const handleConfirm = async () => {
     if (!row || !valid) return;
@@ -298,8 +359,50 @@ export default function MarkPaidDialog({ row, onClose, onConfirm }: MarkPaidDial
           <div aria-hidden className="pointer-events-none absolute -right-8 -top-8 h-44 w-44 rounded-full bg-white/10 blur-3xl" />
           <div aria-hidden className="pointer-events-none absolute -bottom-6 left-6 h-28 w-28 rounded-full bg-white/6 blur-2xl" />
 
-          {/* Content */}
-          <div className="relative z-10 flex items-start justify-between gap-4">
+          {/* Gallery navigation — prev / counter / next. Hidden for single rows. */}
+          {hasGallery && (
+            <div className="relative z-10 mb-3 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => canPrev && goPrev()}
+                onMouseDown={(e) => e.preventDefault()}
+                disabled={!canPrev}
+                aria-label="Previous payment"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/15 text-white outline-none backdrop-blur-sm transition-[background,opacity] hover:bg-white/25 focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="min-w-[3.5rem] text-center font-mono text-[11px] font-semibold tabular-nums text-white/85">
+                {position!.index + 1} / {position!.total}
+              </span>
+              <button
+                type="button"
+                onClick={() => canNext && goNext()}
+                onMouseDown={(e) => e.preventDefault()}
+                disabled={!canNext}
+                aria-label="Next payment"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/15 text-white outline-none backdrop-blur-sm transition-[background,opacity] hover:bg-white/25 focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+              <span className="ml-1.5 hidden text-[9.5px] font-medium uppercase tracking-[0.14em] text-white/45 sm:inline">
+                ← / → to navigate
+              </span>
+            </div>
+          )}
+
+          {/* Content — slides left/right when navigating between payments */}
+          <AnimatePresence mode="wait" custom={dir} initial={false}>
+            <motion.div
+              key={row?.id ?? 'none'}
+              custom={dir}
+              variants={slideVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={slideTransition}
+              className="relative z-10 flex items-start justify-between gap-4"
+            >
             {/* Left: amount */}
             <div>
               <AnimatePresence mode="wait">
@@ -339,7 +442,8 @@ export default function MarkPaidDialog({ row, onClose, onConfirm }: MarkPaidDial
                 {row?.processor ?? ''}
               </p>
             </div>
-          </div>
+            </motion.div>
+          </AnimatePresence>
         </div>
 
         {/* ── Status selector ───────────────────────────────────────── */}
@@ -374,7 +478,17 @@ export default function MarkPaidDialog({ row, onClose, onConfirm }: MarkPaidDial
         </div>
 
         {/* ── Form fields ───────────────────────────────────────────── */}
-        <div className="grid max-h-[44vh] gap-4 overflow-y-auto bg-white px-6 py-5 dark:bg-zinc-950">
+        <AnimatePresence mode="wait" custom={dir} initial={false}>
+        <motion.div
+          key={row?.id ?? 'none'}
+          custom={dir}
+          variants={slideVariants}
+          initial="enter"
+          animate="center"
+          exit="exit"
+          transition={slideTransition}
+          className="grid max-h-[44vh] gap-4 overflow-y-auto overflow-x-hidden bg-white px-6 py-5 dark:bg-zinc-950"
+        >
 
           <Field id="txn" label="Transaction ID" cfg={cfg}>
             <FieldInput
@@ -513,7 +627,8 @@ export default function MarkPaidDialog({ row, onClose, onConfirm }: MarkPaidDial
               placeholder="e.g. Bank rejected, will retry tomorrow morning."
             />
           </Field>
-        </div>
+        </motion.div>
+        </AnimatePresence>
 
         {/* ── Footer ────────────────────────────────────────────────── */}
         <div className="flex items-center justify-end gap-2.5 border-t border-zinc-100 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-950">

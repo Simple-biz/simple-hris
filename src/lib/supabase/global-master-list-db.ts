@@ -804,6 +804,49 @@ export async function replaceGlobalMasterListFromCsvText(
   };
 }
 
+/**
+ * After a master-sheet sync, `active_employees` filters to rows where
+ * `last_seen_upload_id = (current upload)`. Employees that are legitimately
+ * active but NOT in the Google sheet (e.g. manually-seeded US employees) still
+ * point at the prior upload and drop out of the roster the moment the new upload
+ * is promoted — even though they have never been offboarded.
+ *
+ * This function re-stamps every non-offboarded row onto `uploadId`, making them
+ * visible in `active_employees` again. It MUST be called immediately after
+ * `replaceGlobalMasterListFromCsvText` / `promoteMasterListUploadToCurrent`
+ * so the current upload is already set before the count is read.
+ *
+ * Why UPDATE rather than changing the view:
+ *   The `active_employees` view contract (last_seen = current AND not offboarded)
+ *   is correct for PH employees — a row that vanishes from the sheet should stop
+ *   being active unless explicitly re-onboarded. US employees are the exception:
+ *   they are managed outside the sheet and should always stay active until HR
+ *   explicitly offboards them. Re-stamping is the lightest fix with no schema change.
+ *
+ * Returns the number of rows re-stamped (0 on a clean sync where the sheet
+ * covered everyone, > 0 when manual-seed employees exist outside the sheet).
+ */
+export async function restampActiveNonSheetRows(
+  supabase: SupabaseClient,
+  uploadId: string,
+): Promise<number> {
+  const table = getMasterTableName();
+  // Re-stamp every active row that was NOT touched by the current sync.
+  // Supabase-js requires at least one filter — we combine the two conditions.
+  const { data, error } = await supabase
+    .from(table)
+    .update({ last_seen_upload_id: uploadId })
+    .is("off_boarded_at", null)
+    .neq("last_seen_upload_id", uploadId)
+    .select("id");
+  if (error) {
+    // Non-fatal: the sync already succeeded; log and continue.
+    console.warn(`[restampActiveNonSheetRows] update failed: ${error.message}`);
+    return 0;
+  }
+  return (data ?? []).length;
+}
+
 export async function countMasterAndRatesRows(): Promise<{
   masterCount: number | null;
   ratesCount: number | null;
