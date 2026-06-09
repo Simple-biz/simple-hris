@@ -218,6 +218,15 @@ export async function POST(req: Request) {
     } catch (e) {
       console.error("[offboard] Google Sheet Offboarded append failed:", e);
     }
+    try {
+      await supabase
+        .from("hr_pending_employees")
+        .update({ status: "cancelled" })
+        .ilike("work_email", work_email)
+        .in("status", ["pending_work_email", "ready"]);
+    } catch (e) {
+      console.error("[offboard] cancel pending hires failed:", e);
+    }
   })();
 
   // Fire the immediate teardown webhook. Lead Gen -> delete now; others ->

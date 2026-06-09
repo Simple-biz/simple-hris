@@ -691,12 +691,35 @@ export async function replaceGlobalMasterListFromCsvText(
   //   • else if another candidate this run already claimed it → drop (last one loses);
   //   • else claim it and insert.
   const claimedWorkDept = new Set<string>();
+  // Track which update-op row id already claimed each new (work email, dept) key
+  // so we can detect intra-batch UPDATE collisions as well as conflicts with
+  // active rows not touched by this sync.
+  const updateKeyClaimedBy = new Map<string, string | number>();
   for (const op of updateOps) {
     const we = normalizeEmail(op.payload["Work Email"]);
     const dep = normalizeDepartment(op.payload["Department"]);
     if (we && dep) {
       const wk = composeWorkDeptKey(we, dep);
+      const opIdStr = String(op.id);
+      // Guard: updating this row's work email to `we` would violate
+      // global_master_list_work_email_dept_uniq if another active DB row
+      // (not this one) already owns that (work email, department) key, OR
+      // if an earlier UPDATE op in this batch already claimed that key.
+      const existingRep = activeWorkDeptReps.get(wk);
+      const priorClaim = updateKeyClaimedBy.get(wk);
+      if (
+        (existingRep && String(existingRep.id) !== opIdStr) ||
+        (priorClaim !== undefined && String(priorClaim) !== opIdStr)
+      ) {
+        // Strip only the Work Email — every other field (name, personal email,
+        // department, etc.) still syncs correctly. HR must fix the duplicate
+        // work email in the sheet to get the assignment to move.
+        delete op.payload["Work Email"];
+        skippedWorkDeptCollisions += 1;
+        continue;
+      }
       claimedWorkDept.add(wk);
+      updateKeyClaimedBy.set(wk, op.id);
       activeWorkDeptReps.delete(wk);
     }
   }

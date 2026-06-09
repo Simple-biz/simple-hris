@@ -9,8 +9,9 @@ export const runtime = "nodejs";
  * POST /api/hr/pending-employees/[id]/unpromote
  *
  * Sends a `promoted` staged hire back to `ready` (clears promoted_at +
- * promoted_to_master_id) so HR can re-promote. The global_master_list row from
- * the original promote is left intact — re-promoting reuses it.
+ * promoted_to_master_id) so HR can re-promote. Also removes them from the master
+ * list — the global_master_list row AND the master Google Sheet row — so they
+ * drop out of active rosters until re-promoted (re-promote re-adds them).
  */
 export async function POST(
   _req: Request,

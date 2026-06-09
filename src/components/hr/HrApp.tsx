@@ -350,6 +350,8 @@ type TenureCohort = {
 
 type AttritionDeptRow = { dept: string; separations: number; active: number; ratePct: number };
 
+type TenureMonthBin = { label: string; count: number; cohortKey: TenureCohort['key'] };
+
 const TENURE_COHORT_DEFS: { key: TenureCohort['key']; label: string; range: string; max: number }[] = [
   { key: 'new',         label: 'Newcomers',   range: '0–30 days',   max: 30 },
   { key: 'settling',    label: 'Settling',    range: '1–12 months', max: 365 },
@@ -383,7 +385,7 @@ function initialsFromName(name: string | null | undefined): string {
   return ((parts[0][0] ?? '') + (parts[parts.length - 1][0] ?? '')).toUpperCase() || '··';
 }
 
-type OverviewTab = 'arrivals' | 'map' | 'departments' | 'roster' | 'tenure';
+type OverviewTab = 'arrivals' | 'map' | 'departments' | 'roster' | 'tenure' | 'offboard-reasons';
 
 const OVERVIEW_TABS: { id: OverviewTab; label: string }[] = [
   { id: 'tenure', label: 'Tenure' },
@@ -391,6 +393,7 @@ const OVERVIEW_TABS: { id: OverviewTab; label: string }[] = [
   { id: 'map', label: 'Province Map' },
   { id: 'departments', label: 'Departments' },
   { id: 'roster', label: 'Active Roster' },
+  { id: 'offboard-reasons', label: 'Exit Reasons' },
 ];
 
 interface OverviewEditorialSectionProps {
@@ -399,8 +402,10 @@ interface OverviewEditorialSectionProps {
   deptStats: DeptStat[];
   headcountSeries: { points: { label: string; value: number; year: number; month: number }[]; netDelta: number };
   tenureCohorts: TenureCohort[];
+  tenureMonthBins: TenureMonthBin[];
   recentHires: { row: EmployeeRow; days: number; t: number }[];
   attritionByDept: AttritionDeptRow[] | null;
+  offboardRawRows: { off_boarded_reason: string | null; Department: string | null; off_boarded_at: string | null }[] | null;
 }
 
 function OverviewEditorialSection({
@@ -409,8 +414,10 @@ function OverviewEditorialSection({
   deptStats,
   headcountSeries,
   tenureCohorts,
+  tenureMonthBins,
   recentHires,
   attritionByDept,
+  offboardRawRows,
 }: OverviewEditorialSectionProps) {
   const [activeTab, setActiveTab] = useState<OverviewTab>('tenure');
   const totalActive = roster.length;
@@ -524,15 +531,391 @@ function OverviewEditorialSection({
                     />
                   </div>
                   <div className="lg:col-span-2">
-                    <TenureCohortCard loading={loading} cohorts={tenureCohorts} totalActive={totalActive} />
+                    <TenureCohortCard loading={loading} cohorts={tenureCohorts} monthBins={tenureMonthBins} totalActive={totalActive} />
                   </div>
                 </div>
               </div>
+            )}
+            {activeTab === 'offboard-reasons' && (
+              <OffboardReasonsCard loading={loading} rows={offboardRawRows} />
             )}
           </motion.div>
         </AnimatePresence>
       </div>
     </section>
+  );
+}
+
+// ─── Exit Reasons donut chart ────────────────────────────────────────────────
+
+type OffboardRawRow = {
+  off_boarded_reason: string | null;
+  Department: string | null;
+  off_boarded_at: string | null;
+};
+
+const REASON_DISPLAY: Record<string, string> = {
+  resigned: 'Resigned',
+  end_of_contract: 'End of contract',
+  performance: 'Performance',
+  attendance: 'Attendance',
+  time_manipulation: 'Time manipulation',
+  other: 'Other',
+  Resigned: 'Resigned',
+  Attendance: 'Attendance',
+  Productivity: 'Productivity',
+  'Policy Violation': 'Policy violation',
+  'Declined Offer': 'Declined offer',
+  NCNS: 'No call, no show',
+  'Need to Rescind': 'Need to rescind',
+  'Need to Reschedule': 'Need to reschedule',
+  sheet_sync: 'From sheet',
+};
+
+const PIE_COLORS = [
+  '#10b981', '#f97316', '#ef4444', '#8b5cf6', '#0ea5e9',
+  '#f59e0b', '#ec4899', '#6366f1', '#14b8a6', '#78716c',
+];
+
+function labelForReason(r: string | null): string {
+  if (!r) return 'Unknown';
+  return REASON_DISPLAY[r] ?? r;
+}
+
+function donutSlicePath(
+  cx: number, cy: number, R: number, ri: number,
+  startDeg: number, endDeg: number,
+): string {
+  function pt(angle: number, radius: number): [number, number] {
+    const rad = ((angle - 90) * Math.PI) / 180;
+    return [cx + radius * Math.cos(rad), cy + radius * Math.sin(rad)];
+  }
+  const [sx, sy] = pt(startDeg, R);
+  const [ex, ey] = pt(endDeg, R);
+  const [ix, iy] = pt(endDeg, ri);
+  const [jx, jy] = pt(startDeg, ri);
+  const large = endDeg - startDeg > 180 ? 1 : 0;
+  return [
+    `M ${sx.toFixed(2)} ${sy.toFixed(2)}`,
+    `A ${R} ${R} 0 ${large} 1 ${ex.toFixed(2)} ${ey.toFixed(2)}`,
+    `L ${ix.toFixed(2)} ${iy.toFixed(2)}`,
+    `A ${ri} ${ri} 0 ${large} 0 ${jx.toFixed(2)} ${jy.toFixed(2)}`,
+    'Z',
+  ].join(' ');
+}
+
+const DONUT_GAP_DEG = 3;
+const REASONS_PAGE_SIZE = 10;
+// Donut geometry — 280 × 280 canvas, CX/CY = 140
+const D_CX = 140, D_CY = 140, D_R = 116, D_INNER = 72;
+
+function OffboardReasonsCard({
+  loading,
+  rows,
+}: {
+  loading: boolean;
+  rows: OffboardRawRow[] | null;
+}) {
+  const [dept, setDept] = useState('');
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const pageDir = useRef<1 | -1>(1);
+
+  const filtered = useMemo(() => {
+    setPage(0);
+    if (!rows) return [];
+    if (!dept) return rows;
+    return rows.filter((r) => (r.Department ?? '').trim() === dept);
+  }, [rows, dept]);
+
+  const slices = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of filtered) {
+      const label = labelForReason(r.off_boarded_reason);
+      map.set(label, (map.get(label) ?? 0) + 1);
+    }
+    const tot = Array.from(map.values()).reduce((s, v) => s + v, 0);
+    return Array.from(map.entries())
+      .map(([label, count]) => ({ label, count, pct: tot > 0 ? (count / tot) * 100 : 0 }))
+      .sort((a, b) => b.count - a.count);
+  }, [filtered]);
+
+  const total = slices.reduce((s, sl) => s + sl.count, 0);
+
+  // All slices with gap spacing (used for donut + segmented bar)
+  const paths = useMemo(() => {
+    if (total === 0) return [];
+    const n = slices.length;
+    const totalGap = n > 1 ? n * DONUT_GAP_DEG : 0;
+    const sweepPool = 360 - totalGap;
+    let angle = n > 1 ? DONUT_GAP_DEG / 2 : 0;
+    return slices.map((s, i) => {
+      const sweep = (s.count / total) * sweepPool;
+      const path = donutSlicePath(D_CX, D_CY, D_R, D_INNER, angle, angle + sweep);
+      angle += sweep + DONUT_GAP_DEG;
+      return { ...s, path, color: PIE_COLORS[i % PIE_COLORS.length]! };
+    });
+  }, [slices, total]);
+
+  // Paginated view of the ranked rows
+  const totalPages = Math.max(1, Math.ceil(paths.length / REASONS_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = paths.slice(safePage * REASONS_PAGE_SIZE, (safePage + 1) * REASONS_PAGE_SIZE);
+
+  const isLoading = loading || rows === null;
+  const hov = hovered ? paths.find((p) => p.label === hovered) : null;
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      {/* ── Header ─────────────────────────────────────────────────── */}
+      <div className="flex items-start justify-between gap-4 border-b border-zinc-100 px-6 py-5 dark:border-zinc-900">
+        <div>
+          <p className="text-[9px] font-bold uppercase tracking-[0.45em] text-zinc-400 dark:text-zinc-500">
+            Workforce &middot; Exit Analysis
+          </p>
+          <div className="mt-1.5 flex items-baseline gap-2.5">
+            {isLoading ? (
+              <span className="inline-block h-8 w-16 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-800" />
+            ) : (
+              <span className="text-4xl font-black tabular-nums leading-none tracking-tight text-zinc-900 dark:text-zinc-50">
+                {total}
+              </span>
+            )}
+            <span className="text-sm text-zinc-400 dark:text-zinc-500">
+              separation{total !== 1 ? 's' : ''} on record
+              {dept ? ` · ${dept}` : ''}
+            </span>
+          </div>
+        </div>
+        <DeptFilter
+          rows={rows ?? []}
+          getDept={(r) => r.Department}
+          value={dept}
+          onChange={setDept}
+        />
+      </div>
+
+      {/* ── Segmented proportion bar ─────────────────────────────── */}
+      {!isLoading && total > 0 && (
+        <div className="flex h-[5px] w-full overflow-hidden bg-zinc-100 dark:bg-zinc-900">
+          {paths.map((s) => (
+            <div
+              key={s.label}
+              className="h-full transition-all duration-500"
+              style={{
+                width: `${s.pct}%`,
+                backgroundColor: s.color,
+                opacity: hovered === null || hovered === s.label ? 1 : 0.2,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* ── Body ─────────────────────────────────────────────────── */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-14 text-zinc-400 dark:text-zinc-600">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
+        </div>
+      ) : total === 0 ? (
+        <p className="py-12 text-center text-sm text-zinc-400 dark:text-zinc-600">
+          No off-boarding records found.
+        </p>
+      ) : (
+        <div className="flex flex-col lg:flex-row">
+
+          {/* ── LEFT: ranked + paginated rows ──────────────────────── */}
+          <div className="min-w-0 flex-1 lg:border-r lg:border-zinc-100 dark:lg:border-zinc-900">
+            {/* Clip the slide so it doesn't overflow the card */}
+            <div className="overflow-hidden">
+              <AnimatePresence mode="wait" initial={false} custom={pageDir.current}>
+                <motion.div
+                  key={safePage}
+                  custom={pageDir.current}
+                  variants={{
+                    enter: (dir: number) => ({ opacity: 0, x: dir * 28 }),
+                    center: { opacity: 1, x: 0 },
+                    exit: (dir: number) => ({ opacity: 0, x: dir * -28 }),
+                  }}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  className="divide-y divide-zinc-50 dark:divide-zinc-900/60"
+                >
+                  {pageRows.map((s, idx) => {
+                    const globalRank = safePage * REASONS_PAGE_SIZE + idx + 1;
+                    return (
+                      <div
+                        key={s.label}
+                        onMouseEnter={() => setHovered(s.label)}
+                        onMouseLeave={() => setHovered(null)}
+                        className={cn(
+                          'group relative flex cursor-default items-center gap-3 px-5 py-3.5 transition-colors duration-100',
+                          hovered === s.label ? 'bg-zinc-50 dark:bg-zinc-900/50' : '',
+                        )}
+                      >
+                        {/* Left accent */}
+                        <div
+                          className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full transition-opacity duration-150"
+                          style={{ backgroundColor: s.color, opacity: hovered === s.label ? 1 : 0 }}
+                        />
+
+                        {/* Rank badge */}
+                        <div
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold text-white transition-opacity duration-150"
+                          style={{
+                            backgroundColor: s.color,
+                            opacity: hovered === null || hovered === s.label ? 1 : 0.3,
+                          }}
+                        >
+                          {globalRank}
+                        </div>
+
+                        {/* Label + bar */}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[12.5px] font-medium text-zinc-700 dark:text-zinc-300">
+                            {s.label}
+                          </p>
+                          <div className="mt-1.5 h-[3px] w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `${s.pct}%`,
+                                backgroundColor: s.color,
+                                opacity: hovered === null || hovered === s.label ? 1 : 0.25,
+                                transition: 'width 0.65s cubic-bezier(0.4,0,0.2,1), opacity 0.15s',
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Count + share */}
+                        <div className="shrink-0 text-right">
+                          <p
+                            className="font-mono text-lg font-black tabular-nums leading-none text-zinc-900 dark:text-zinc-50"
+                            style={{
+                              opacity: hovered === null || hovered === s.label ? 1 : 0.35,
+                              transition: 'opacity 0.15s',
+                            }}
+                          >
+                            {s.count}
+                          </p>
+                          <p className="mt-0.5 text-[10px] tabular-nums text-zinc-400 dark:text-zinc-500">
+                            {s.pct.toFixed(1)}%
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+
+            {/* Pagination footer */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between border-t border-zinc-100 px-5 py-2.5 dark:border-zinc-900">
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                  {safePage * REASONS_PAGE_SIZE + 1}&ndash;
+                  {Math.min((safePage + 1) * REASONS_PAGE_SIZE, paths.length)} of {paths.length}
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={safePage === 0}
+                    onClick={() => { pageDir.current = -1; setPage((p) => Math.max(0, p - 1)); }}
+                  >
+                    <ChevronLeft className="h-3 w-3" />
+                  </Button>
+                  <span className="min-w-[3.5rem] text-center text-[11px] text-zinc-500">
+                    {safePage + 1} / {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={safePage >= totalPages - 1}
+                    onClick={() => { pageDir.current = 1; setPage((p) => Math.min(totalPages - 1, p + 1)); }}
+                  >
+                    <ChevronRight className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── RIGHT: big donut chart ──────────────────────────────── */}
+          <div className="flex shrink-0 items-center justify-center p-6 lg:p-8">
+            <svg
+              width={D_CX * 2}
+              height={D_CY * 2}
+              viewBox={`0 0 ${D_CX * 2} ${D_CY * 2}`}
+              role="img"
+              aria-label="Exit reasons distribution"
+            >
+              {paths.map((s) => (
+                <path
+                  key={s.label}
+                  d={s.path}
+                  fill={s.color}
+                  onMouseEnter={() => setHovered(s.label)}
+                  onMouseLeave={() => setHovered(null)}
+                  className="cursor-pointer"
+                  style={{
+                    opacity: hovered === null || hovered === s.label ? 1 : 0.18,
+                    transform: hovered === s.label ? 'scale(1.04)' : 'scale(1)',
+                    transformOrigin: `${D_CX}px ${D_CY}px`,
+                    transition: 'opacity 0.15s ease, transform 0.15s ease',
+                  }}
+                />
+              ))}
+              {/* Center readout */}
+              <text
+                x={D_CX}
+                y={D_CY - 10}
+                textAnchor="middle"
+                fontSize={hov ? 46 : 40}
+                fontWeight={800}
+                fill="currentColor"
+                className="tabular-nums text-zinc-900 dark:text-zinc-50"
+                style={{ transition: 'font-size 0.1s' }}
+              >
+                {hov ? hov.count : total}
+              </text>
+              <text
+                x={D_CX}
+                y={D_CY + 12}
+                textAnchor="middle"
+                fontSize={10}
+                letterSpacing="0.16em"
+                fontWeight={700}
+                fill="#a1a1aa"
+                style={{ textTransform: 'uppercase' }}
+              >
+                {hov
+                  ? (hov.label.length > 14 ? hov.label.slice(0, 13) + '...' : hov.label)
+                  : 'Total'}
+              </text>
+              {hov && (
+                <text
+                  x={D_CX}
+                  y={D_CY + 32}
+                  textAnchor="middle"
+                  fontSize={14}
+                  fill="#a1a1aa"
+                  fontWeight={500}
+                >
+                  {hov.pct.toFixed(1)}%
+                </text>
+              )}
+            </svg>
+          </div>
+
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1394,13 +1777,17 @@ function HeadcountStoryCard({
 function TenureCohortCard({
   loading,
   cohorts,
+  monthBins,
   totalActive,
 }: {
   loading: boolean;
   cohorts: TenureCohort[];
+  monthBins: TenureMonthBin[];
   totalActive: number;
 }) {
   const totalKnown = cohorts.reduce((s, c) => s + c.count, 0);
+  const maxBinCount = Math.max(...monthBins.map((b) => b.count), 1);
+  const LABEL_INDICES = new Set([0, 2, 5, 8, 11, 12, 13, 14]);
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200/70 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950">
       <div className="flex items-start justify-between gap-3">
@@ -1417,7 +1804,7 @@ function TenureCohortCard({
 
       {/* Stacked bar */}
       <div className="mt-5">
-        <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-zinc-100 ring-1 ring-inset ring-zinc-200/60 dark:bg-zinc-900 dark:ring-zinc-800/80">
+        <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 ring-1 ring-inset ring-zinc-200/60 dark:bg-zinc-900 dark:ring-zinc-800/80">
           {cohorts.map((c) => (
             <div
               key={c.key}
@@ -1425,6 +1812,41 @@ function TenureCohortCard({
               style={{ width: `${c.pct}%` }}
               title={`${c.label}: ${c.count}`}
             />
+          ))}
+        </div>
+      </div>
+
+      {/* Per-month histogram */}
+      <div className="mt-4">
+        <p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500">
+          Distribution by tenure length
+        </p>
+        <div className="flex h-10 items-end gap-px">
+          {monthBins.map((bin, i) => (
+            <div
+              key={i}
+              className="group relative flex h-full flex-1 flex-col items-center justify-end"
+              title={`${bin.label}: ${bin.count}`}
+            >
+              <div
+                className={cn(
+                  'w-full rounded-sm transition-all',
+                  TENURE_PALETTE[bin.cohortKey].bg,
+                  bin.count === 0 && 'opacity-20',
+                )}
+                style={{ height: `${bin.count > 0 ? Math.max((bin.count / maxBinCount) * 100, 8) : 3}%` }}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="mt-0.5 flex gap-px">
+          {monthBins.map((bin, i) => (
+            <p
+              key={i}
+              className="flex-1 text-center text-[6.5px] leading-none text-zinc-400 dark:text-zinc-500"
+            >
+              {LABEL_INDICES.has(i) ? bin.label : ''}
+            </p>
           ))}
         </div>
       </div>
@@ -2071,6 +2493,8 @@ function OverviewBody() {
   const [mesaCount, setMesaCount] = useState<number | null>(null);
   /** Total FPU enrollment submissions, plus a "this month" slice for sub-line. */
   const [fpuStats, setFpuStats] = useState<{ total: number; thisMonth: number } | null>(null);
+  /** Raw offboard rows for the Exit Reasons tab. */
+  const [offboardRawRows, setOffboardRawRows] = useState<{ off_boarded_reason: string | null; Department: string | null; off_boarded_at: string | null }[] | null>(null);
 
   const fetchRoster = useCallback(async () => {
     setLoading(true);
@@ -2093,7 +2517,8 @@ function OverviewBody() {
     (async () => {
       try {
         const res = await fetch('/api/hr/offboard-history', { cache: 'no-store' });
-        const json = (await res.json()) as { rows?: { off_boarded_at: string | null; Department?: string | null }[] };
+        const json = (await res.json()) as { rows?: { off_boarded_at: string | null; Department?: string | null; off_boarded_reason?: string | null }[] };
+        if (!cancelled) setOffboardRawRows((json.rows ?? []).map((r) => ({ off_boarded_reason: r.off_boarded_reason ?? null, Department: r.Department ?? null, off_boarded_at: r.off_boarded_at ?? null })));
         const cutoff = Date.now() - 365 * 24 * 3600 * 1000;
         const recentRows = (json.rows ?? []).filter((r) => {
           const t = r.off_boarded_at ? new Date(r.off_boarded_at).getTime() : NaN;
@@ -2261,6 +2686,33 @@ function OverviewBody() {
     }));
   }, [roster]);
 
+  // Per-month tenure histogram — 12 monthly buckets (0–12 months) + Yr2/Yr3/Yr4+.
+  const tenureMonthBins: TenureMonthBin[] = useMemo(() => {
+    const MONTH_MS = 30.4375 * 86400000;
+    const bins: TenureMonthBin[] = [
+      ...Array.from({ length: 12 }, (_, i) => ({
+        label: `${i + 1}m`,
+        count: 0,
+        cohortKey: (i < 1 ? 'new' : 'settling') as TenureCohort['key'],
+      })),
+      { label: '2yr', count: 0, cohortKey: 'established' as TenureCohort['key'] },
+      { label: '3yr', count: 0, cohortKey: 'established' as TenureCohort['key'] },
+      { label: '4yr+', count: 0, cohortKey: 'veteran' as TenureCohort['key'] },
+    ];
+    const now = Date.now();
+    for (const r of roster) {
+      if (!r.start_date) continue;
+      const t = new Date(r.start_date).getTime();
+      if (!Number.isFinite(t)) continue;
+      const months = (now - t) / MONTH_MS;
+      if (months < 12) bins[Math.max(0, Math.min(11, Math.floor(months)))].count++;
+      else if (months < 24) bins[12].count++;
+      else if (months < 36) bins[13].count++;
+      else bins[14].count++;
+    }
+    return bins;
+  }, [roster]);
+
   return (
     <>
       {/* KPI row */}
@@ -2329,8 +2781,10 @@ function OverviewBody() {
         deptStats={deptStats}
         headcountSeries={headcountSeries}
         tenureCohorts={tenureCohorts}
+        tenureMonthBins={tenureMonthBins}
         recentHires={recentHires}
         attritionByDept={attritionByDept}
+        offboardRawRows={offboardRawRows}
       />
     </>
   );

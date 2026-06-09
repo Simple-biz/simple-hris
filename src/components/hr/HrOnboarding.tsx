@@ -99,6 +99,8 @@ export default function HrOnboarding() {
   // Multi-select promote (Ready tab). Holds the ids ticked in the table.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [promotingSelected, setPromotingSelected] = useState(false);
+  // Progress across the chunked bulk-promote requests (null when idle).
+  const [selectProgress, setSelectProgress] = useState<{ done: number; total: number } | null>(null);
 
   const fetchPending = useCallback(async () => {
     setPendingLoading(true);
@@ -285,26 +287,50 @@ export default function HrOnboarding() {
     const ids = [...selected];
     if (ids.length === 0) return;
     setPromotingSelected(true);
+    setSelectProgress({ done: 0, total: ids.length });
+
+    // Send the selection in chunks so a large batch never lands in a single
+    // long request (the server batches each chunk's Sheet write into one call,
+    // but chunking on the client keeps every request comfortably under the
+    // function time limit and lets us show progress as it goes).
+    const CHUNK = 15;
+    let promoted = 0;
+    let failed = 0;
+    let sheetMisses = 0;
+    let firstErr: { name: string; error: string } | null = null;
+
     try {
-      const res = await fetch('/api/hr/pending-employees/bulk-promote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids }),
-      });
-      const json = (await res.json()) as {
-        promoted?: number; failed?: number; total?: number;
-        results?: Array<{ name: string; ok: boolean; error: string | null }>;
-        error?: string;
-      };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Bulk promote failed');
-      const promoted = json.promoted ?? 0;
-      const failed = json.failed ?? 0;
-      if (failed === 0) {
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const chunk = ids.slice(i, i + CHUNK);
+        const res = await fetch('/api/hr/pending-employees/bulk-promote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: chunk }),
+        });
+        const json = (await res.json()) as {
+          promoted?: number; failed?: number; total?: number;
+          results?: Array<{ name: string; ok: boolean; error: string | null; sheetAppended: boolean | null }>;
+          error?: string;
+        };
+        if (!res.ok || json.error) throw new Error(json.error ?? 'Bulk promote failed');
+        promoted += json.promoted ?? 0;
+        failed += json.failed ?? 0;
+        for (const r of json.results ?? []) {
+          if (!r.ok && r.error && !firstErr) firstErr = { name: r.name, error: r.error };
+          if (r.ok && r.sheetAppended === false) sheetMisses += 1;
+        }
+        setSelectProgress({ done: Math.min(i + CHUNK, ids.length), total: ids.length });
+      }
+
+      if (failed === 0 && sheetMisses === 0) {
         toast.success(`${promoted} hire${promoted !== 1 ? 's' : ''} promoted`, {
           description: 'All added to the master list and written to the Google Sheet.',
         });
+      } else if (failed === 0) {
+        toast.warning(`${promoted} promoted, ${sheetMisses} not written to the Sheet`, {
+          description: 'They are in the master list, but add them to the Google Sheet manually or they may drop out on the next sheet sync.',
+        });
       } else {
-        const firstErr = json.results?.find((r) => !r.ok && r.error);
         toast.warning(`${promoted} promoted, ${failed} failed`, {
           description: firstErr
             ? `${firstErr.name}: ${firstErr.error}`
@@ -317,6 +343,7 @@ export default function HrOnboarding() {
       toast.error(e instanceof Error ? e.message : 'Bulk promote failed');
     } finally {
       setPromotingSelected(false);
+      setSelectProgress(null);
     }
   }
 
@@ -329,7 +356,7 @@ export default function HrOnboarding() {
       const json = (await res.json()) as { error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to send back to Ready');
       toast.success(`${row.name} sent back to Ready`, {
-        description: 'Their master-list record was kept; you can promote again after any fixes.',
+        description: 'Removed from the master list + Google Sheet; promote again after any fixes.',
       });
       await fetchPending();
     } catch (e) {
@@ -624,7 +651,9 @@ export default function HrOnboarding() {
                   ) : (
                     <CheckCircle2 className="h-3 w-3" />
                   )}
-                  Promote selected ({selected.size})
+                  {promotingSelected && selectProgress
+                    ? `Promoting ${selectProgress.done}/${selectProgress.total}`
+                    : `Promote selected (${selected.size})`}
                 </Button>
               </div>
             </div>
@@ -676,6 +705,12 @@ export default function HrOnboarding() {
                   <AnimatePresence initial={false}>
                     {filteredPending.map((row) => {
                       const isBusy = busyId === row.id;
+                      // On the Ready tab, a promotable row (orientation confirmed)
+                      // can be ticked by clicking anywhere on the row, not just the
+                      // tiny checkbox.
+                      const rowSelectable =
+                        tab === 'ready' && row.status === 'ready' && !!row.orientation_attended_at;
+                      const isSelected = selected.has(row.id);
                       return (
                         <motion.tr
                           key={row.id}
@@ -683,7 +718,21 @@ export default function HrOnboarding() {
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -4 }}
                           transition={{ duration: 0.18 }}
-                          className="align-top transition-colors hover:bg-emerald-50/35 dark:hover:bg-emerald-950/25"
+                          onClick={
+                            rowSelectable
+                              ? (e) => {
+                                  // Ignore clicks that land on a button/link/input
+                                  // (Promote, Set work email, the checkbox itself).
+                                  if ((e.target as HTMLElement).closest('button, a, input, label')) return;
+                                  toggleOne(row.id);
+                                }
+                              : undefined
+                          }
+                          className={cn(
+                            'align-top transition-colors hover:bg-emerald-50/35 dark:hover:bg-emerald-950/25',
+                            rowSelectable && 'cursor-pointer',
+                            isSelected && 'bg-emerald-50/70 dark:bg-emerald-950/40',
+                          )}
                         >
                           {tab === 'ready' && (
                             <td data-label="Select" className="px-4 py-3">
@@ -845,7 +894,7 @@ export default function HrOnboarding() {
                                   className="h-7 px-2 text-xs text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/30"
                                   onClick={() => void sendBackToReady(row)}
                                   disabled={isBusy}
-                                  title="Send back to Ready (keeps the master-list record; lets you re-promote)"
+                                  title="Send back to Ready (removes them from the master list + Google Sheet; re-promote to re-add)"
                                 >
                                   {isBusy ? (
                                     <Loader2 className="mr-1 h-3 w-3 animate-spin" />

@@ -218,7 +218,14 @@
       "Bash(dir \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\docs\\\\notes\\\\\")",
       "Bash(cat scripts/../app/api/employee-hourly-rates/route.ts 2>/dev/null | head -120; echo \"----OFFBOARD----\"; cat app/api/hr/offboard/route.ts 2>/dev/null)",
       "Read(//c/Users/Itachi/Desktop/simple-hris/app/api/employee-hourly-rates/**)",
-      "Bash(cat > *)"
+      "Bash(cat > *)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(ls -la \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\\" | head -30)",
+      "Read(//c/Users/Itachi/Desktop/**)",
+      "Bash(Get-Content \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\PayrollWizard.tsx\")",
+      "Bash(Measure-Object -Line)",
+      "PowerShell(\\(Get-Content \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\PayrollWizard.tsx\"\\).Count)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

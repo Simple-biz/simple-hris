@@ -169,6 +169,7 @@ export async function POST(
       work_email: workEmail,
       department,
       phone: row.phone,
+      location: row.location,
       regular_rate: regularRateStr,
       ot_rate: otRateStr,
       project_names: projectNames,

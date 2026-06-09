@@ -328,15 +328,26 @@ export async function cancelHrPendingEmployee(
 /**
  * Reverses a promotion: flips a `promoted` staging row back to `ready` so HR can
  * re-promote (e.g. after fixing details). Clears `promoted_at` +
- * `promoted_to_master_id`. Does NOT remove the `global_master_list` row the
- * original promote created — the person stays in the master list, and a later
- * re-promote reuses that row (idempotent, by work email — the canonical key).
- * Only a `promoted` row can be reverted.
+ * `promoted_to_master_id` AND removes the hire from the master list — both the
+ * `global_master_list` row the promote created and the master Google Sheet row —
+ * so a hire sent back to Ready stops showing as an active employee until they're
+ * re-promoted (re-promote re-inserts + re-appends them fresh). Only a `promoted`
+ * row can be reverted.
  */
 export async function revertHrPendingEmployeeToReady(
   id: number,
 ): Promise<{ row: HrPendingEmployeeRow | null; error: string | null }> {
   const sb = client();
+
+  // Capture the master link + identity BEFORE the update nulls promoted_to_master_id.
+  const { data: before, error: beforeErr } = await sb
+    .from(TABLE)
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (beforeErr) return { row: null, error: beforeErr.message };
+  const prev = (before ?? null) as HrPendingEmployeeRow | null;
+
   const { data, error } = await sb
     .from(TABLE)
     .update({ status: "ready", promoted_at: null, promoted_to_master_id: null })
@@ -347,7 +358,57 @@ export async function revertHrPendingEmployeeToReady(
   if (error) return { row: null, error: error.message };
   if (!data)
     return { row: null, error: "Only a promoted hire can be sent back to Ready." };
+
+  // Pull them out of the master list (DB + Sheet). Best-effort: the status flip
+  // already succeeded, so a cleanup failure shouldn't fail the whole revert —
+  // it's logged and the row can be removed manually / on the next reconcile.
+  if (prev) await removeFromMasterList(sb, prev);
+
   return { row: data as HrPendingEmployeeRow, error: null };
+}
+
+/**
+ * Deletes a hire's master-list footprint: the `global_master_list` row (matched
+ * by the promote link, falling back to the canonical (Work Email, Department))
+ * and the master Google Sheet row(s) (matched by email). Used by "Back to Ready".
+ * Best-effort and self-contained — never throws; failures are logged.
+ */
+async function removeFromMasterList(
+  sb: ReturnType<typeof client>,
+  row: HrPendingEmployeeRow,
+): Promise<void> {
+  try {
+    if (row.promoted_to_master_id) {
+      await sb.from(MASTER_TABLE).delete().eq("id", row.promoted_to_master_id);
+    } else if (row.work_email) {
+      // No stored link (e.g. an earlier promote reused a CSV row): match the
+      // canonical key. (Work Email, Department) is unique, so this is precise.
+      await sb
+        .from(MASTER_TABLE)
+        .delete()
+        .ilike("Work Email", row.work_email)
+        .ilike("Department", row.department);
+    }
+  } catch (e) {
+    console.warn(
+      `[removeFromMasterList] master DB delete skipped: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
+
+  try {
+    const { deleteMasterSheetRowsByEmail } = await import(
+      "../google-sheets/delete-master-sheet-rows"
+    );
+    await deleteMasterSheetRowsByEmail(row.personal_email, row.work_email ?? undefined);
+  } catch (e) {
+    console.warn(
+      `[removeFromMasterList] master-sheet delete skipped: ${
+        e instanceof Error ? e.message : String(e)
+      }`,
+    );
+  }
 }
 
 export async function deleteHrPendingEmployee(
@@ -368,7 +429,7 @@ export async function deleteHrPendingEmployee(
  */
 export async function promoteHrPendingEmployee(
   id: number,
-  opts: { skipBackfill?: boolean } = {},
+  opts: { skipBackfill?: boolean; skipSheet?: boolean } = {},
 ): Promise<{
   row: HrPendingEmployeeRow | null;
   /** UUID of the new global_master_list row, or null when promotion failed. */
@@ -376,6 +437,10 @@ export async function promoteHrPendingEmployee(
   error: string | null;
   /** Outcome of the best-effort master Google Sheet append (null until reached). */
   sheet?: { appended: boolean; reason?: string } | null;
+  /** Manila Start Date stamped on the master row. Returned so the bulk-promote
+   *  path can append all hires to the Google Sheet in one batched call instead
+   *  of one-read-per-hire (see opts.skipSheet). Null only on early failures. */
+  startDate?: string | null;
 }> {
   const sb = client();
 
@@ -483,7 +548,7 @@ export async function promoteHrPendingEmployee(
   } else {
     // Master-list columns use mixed-case quoted identifiers ("Personal Email", etc.)
     // — see references/supabase_global_master_list.sql.
-    const masterPayload = {
+    const masterPayload: Record<string, unknown> = {
       "Department": row.department,
       "Name": row.name,
       "Personal Email": row.personal_email,
@@ -493,6 +558,8 @@ export async function promoteHrPendingEmployee(
       last_seen_upload_id: uploadId,
       source_file: "hr_dashboard_add_person",
     };
+    if (row.phone) masterPayload["Phone Number"] = row.phone;
+    if (row.location) masterPayload["Location"] = row.location;
 
     const { data: inserted, error: insertErr } = await sb
       .from(MASTER_TABLE)
@@ -656,34 +723,41 @@ export async function promoteHrPendingEmployee(
   // skips if the hire's work/personal email is already on the Sheet) — a
   // failure here (e.g. service account lacks Editor access) never unwinds the
   // promotion.
+  // The bulk-promote path passes skipSheet:true and appends every hire to the
+  // Sheet in ONE batched call after its loop (appendMasterSheetRows), so it
+  // doesn't re-read the whole sheet once per hire.
   let sheet: { appended: boolean; reason?: string } | null = null;
-  try {
-    const { appendMasterSheetRow } = await import(
-      "../google-sheets/append-master-sheet"
-    );
-    sheet = await appendMasterSheetRow({
-      name: row.name,
-      personalEmail: row.personal_email,
-      workEmail: row.work_email,
-      department: row.department,
-      startDate,
-    });
-    if (!sheet.appended) {
-      console.warn(
-        `[promoteHrPendingEmployee] master-sheet append skipped: ${sheet.reason ?? "unknown"}`,
+  if (!opts.skipSheet) {
+    try {
+      const { appendMasterSheetRow } = await import(
+        "../google-sheets/append-master-sheet"
       );
+      sheet = await appendMasterSheetRow({
+        name: row.name,
+        personalEmail: row.personal_email,
+        workEmail: row.work_email,
+        department: row.department,
+        startDate,
+        phoneNumber: row.phone ?? undefined,
+        location: row.location ?? undefined,
+      });
+      if (!sheet.appended) {
+        console.warn(
+          `[promoteHrPendingEmployee] master-sheet append skipped: ${sheet.reason ?? "unknown"}`,
+        );
+      }
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      sheet = { appended: false, reason };
+      console.warn(`[promoteHrPendingEmployee] master-sheet append skipped: ${reason}`);
     }
-  } catch (e) {
-    const reason = e instanceof Error ? e.message : String(e);
-    sheet = { appended: false, reason };
-    console.warn(`[promoteHrPendingEmployee] master-sheet append skipped: ${reason}`);
   }
 
   // NOTE: The Hubstaff invite + Roboform emails are now fired by the combined
   // create-workspace-account webhook at work-email-set time, NOT at promote
   // time. Promote is master-list-only. See src/lib/hr/workspace-account.ts.
 
-  return { row: promoted as HrPendingEmployeeRow, masterId, error: null, sheet };
+  return { row: promoted as HrPendingEmployeeRow, masterId, error: null, sheet, startDate };
 }
 
 /**

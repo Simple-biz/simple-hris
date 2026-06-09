@@ -27,6 +27,7 @@ export type HrOnboardingSubmissionRow = {
   full_name: string | null;
   phone: string | null;
   email: string | null;
+  location: string | null;
 
   non_solicitation_signature: string | null;
   privacy_signature: string | null;
@@ -64,6 +65,7 @@ export type SubmitOnboardingInput = {
   full_name: string;
   phone: string;
   email: string;
+  location?: string | null;
 
   non_solicitation_signature: string;
   privacy_signature: string;
@@ -220,6 +222,7 @@ export async function submitHrOnboarding(
     full_name: input.full_name.trim(),
     phone: input.phone.trim(),
     email: input.email.trim().toLowerCase(),
+    location: input.location?.trim() || null,
     non_solicitation_signature: input.non_solicitation_signature,
     privacy_signature: input.privacy_signature,
     w8ben_applicable: input.w8ben_applicable,

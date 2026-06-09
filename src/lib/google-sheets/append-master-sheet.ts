@@ -27,6 +27,8 @@ export type AppendMasterRowInput = {
   workEmail: string;
   department: string;
   startDate?: string | null;
+  phoneNumber?: string | null;
+  location?: string | null;
 };
 
 export type AppendMasterRowResult = {
@@ -67,18 +69,49 @@ function valueForHeader(header: string, input: AppendMasterRowInput): string {
     case 'start date':
     case 'startdate':
       return toSheetDate(input.startDate);
+    case 'phone number':
+    case 'phonenumber':
+    case 'phone':
+    case 'contact number':
+    case 'contactnumber':
+    case 'contact':
+      return input.phoneNumber ?? '';
+    case 'location':
+      return input.location ?? '';
     default:
       return '';
   }
 }
 
-export async function appendMasterSheetRow(
-  input: AppendMasterRowInput,
-): Promise<AppendMasterRowResult> {
+function colByHeader(headers: string[], ...names: string[]): number {
+  return headers.findIndex((h) => {
+    const n = h.trim().toLowerCase().replace(/\s+/g, ' ');
+    return names.includes(n);
+  });
+}
+
+/**
+ * Appends MANY new-hire rows to the master Sheet in a single round trip: one
+ * read (to locate the header + dedupe), one contiguous `values.update` write,
+ * and one batched cell-format call. This is what the bulk-promote path uses —
+ * appending one row at a time would re-read the whole sheet per hire (3-4
+ * network calls each), which serialized into the request that was timing out at
+ * the 60s function limit (504) for a dozen hires.
+ *
+ * Returns one result per input, index-aligned. Dedupes against rows already in
+ * the sheet AND against earlier inputs in the same batch (so two ready hires
+ * that share a personal email don't both get written). Best-effort by contract,
+ * same as the single-row helper: a thrown read/write error should be caught by
+ * the caller and treated as "none appended".
+ */
+export async function appendMasterSheetRows(
+  inputs: AppendMasterRowInput[],
+): Promise<AppendMasterRowResult[]> {
+  if (inputs.length === 0) return [];
   const sheetId = process.env.GOOGLE_SHEETS_MASTER_SHEET_ID?.trim();
   const tabName = process.env.GOOGLE_SHEETS_MASTER_TAB_NAME?.trim();
   if (!sheetId || !tabName) {
-    return { appended: false, reason: 'master sheet env not configured' };
+    return inputs.map(() => ({ appended: false, reason: 'master sheet env not configured' }));
   }
 
   const token = await getServiceAccountAccessToken(WRITE_SCOPE);
@@ -86,8 +119,7 @@ export async function appendMasterSheetRow(
   const range = encodeURIComponent(quotedTab);
   const authHeader = { Authorization: `Bearer ${token}` };
 
-  // Pull the tab once: lets us locate the header row, align columns, and check
-  // for an existing entry so we don't append a duplicate.
+  // Pull the tab ONCE for the whole batch.
   const getUrl =
     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}` +
     `?valueRenderOption=FORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`;
@@ -108,47 +140,69 @@ export async function appendMasterSheetRow(
   }
 
   const headers = (values[headerIdx] ?? []).map((c) => String(c ?? ''));
-  const workCol = headers.findIndex((h) => {
-    const n = h.trim().toLowerCase().replace(/\s+/g, ' ');
-    return n === 'work email' || n === 'workemail';
-  });
-  const personalCol = headers.findIndex((h) => {
-    const n = h.trim().toLowerCase().replace(/\s+/g, ' ');
-    return n === 'personal email' || n === 'personalemail';
-  });
+  const workCol = colByHeader(headers, 'work email', 'workemail');
+  const personalCol = colByHeader(headers, 'personal email', 'personalemail');
+  const startCol = colByHeader(headers, 'start date', 'startdate');
 
-  // Duplicate guard — scan data rows below the header.
-  const targetWork = norm(input.workEmail);
-  const targetPersonal = norm(input.personalEmail);
+  // Emails already in the sheet (dedupe target).
+  const existingWork = new Set<string>();
+  const existingPersonal = new Set<string>();
   for (let i = headerIdx + 1; i < values.length; i++) {
     const row = values[i] ?? [];
-    const rowWork = workCol >= 0 ? norm(row[workCol]) : '';
-    const rowPersonal = personalCol >= 0 ? norm(row[personalCol]) : '';
-    if ((targetWork && rowWork === targetWork) || (targetPersonal && rowPersonal === targetPersonal)) {
-      return { appended: false, reason: 'already present in sheet' };
+    if (workCol >= 0) {
+      const w = norm(row[workCol]);
+      if (w) existingWork.add(w);
+    }
+    if (personalCol >= 0) {
+      const p = norm(row[personalCol]);
+      if (p) existingPersonal.add(p);
     }
   }
 
-  // Build a row aligned to the sheet's column order; unknown columns stay blank.
-  // headers[0] is column A (the API returns rows from column A), so this array
-  // is A-aligned by construction.
-  const newRow = headers.map((h) => valueForHeader(h, input));
+  // `values` is contiguous from row 1, so the first empty sheet row (1-indexed)
+  // is values.length + 1. We write every new row contiguously from there.
+  const firstRow = values.length + 1;
+  const results: AppendMasterRowResult[] = new Array(inputs.length);
+  const newRows: string[][] = [];
+  const cellsToFormat: Array<{ row: number; col: number }> = [];
+  // Within-batch dedupe so we never write the same identity twice in one call.
+  const seenWork = new Set<string>();
+  const seenPersonal = new Set<string>();
 
-  // Write to the first empty row, anchored at column A via an explicit
-  // `values.update`. We deliberately do NOT use the `:append` endpoint with a
-  // whole-tab range: its "find the table and pick a start column" heuristic
-  // mis-detected this sheet's left edge and dropped rows starting at column H
-  // (shifting Department->H, Name->J, etc.). `values` is contiguous from row 1,
-  // so the next empty sheet row (1-indexed) is values.length + 1.
-  const targetRow = values.length + 1;
-  const writeRange = encodeURIComponent(`${quotedTab}!A${targetRow}`);
+  for (let i = 0; i < inputs.length; i++) {
+    const input = inputs[i];
+    const w = norm(input.workEmail);
+    const p = norm(input.personalEmail);
+    const dup =
+      (!!w && (existingWork.has(w) || seenWork.has(w))) ||
+      (!!p && (existingPersonal.has(p) || seenPersonal.has(p)));
+    if (dup) {
+      results[i] = { appended: false, reason: 'already present in sheet' };
+      continue;
+    }
+    if (w) seenWork.add(w);
+    if (p) seenPersonal.add(p);
+    // The new row's 0-based sheet row index = (firstRow - 1) + offset, where
+    // offset is how many rows we've already queued this batch.
+    const sheetRowIdx = firstRow - 1 + newRows.length;
+    newRows.push(headers.map((h) => valueForHeader(h, input)));
+    if (startCol >= 0) cellsToFormat.push({ row: sheetRowIdx, col: startCol });
+    results[i] = { appended: true };
+  }
+
+  if (newRows.length === 0) return results;
+
+  // ONE contiguous write, anchored at column A (see the long note that used to
+  // live on appendMasterSheetRow: the `:append` endpoint mis-detects this
+  // sheet's left edge, so we pin to A{firstRow} explicitly).
+  const writeRange = encodeURIComponent(`${quotedTab}!A${firstRow}`);
   const updateUrl =
     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${writeRange}` +
     `?valueInputOption=USER_ENTERED`;
   const updateRes = await fetch(updateUrl, {
     method: 'PUT',
     headers: { ...authHeader, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ majorDimension: 'ROWS', values: [newRow] }),
+    body: JSON.stringify({ majorDimension: 'ROWS', values: newRows }),
     cache: 'no-store',
   });
   if (!updateRes.ok) {
@@ -156,20 +210,26 @@ export async function appendMasterSheetRow(
     throw new Error(`Sheets write failed (${updateRes.status}): ${txt.slice(0, 200)}`);
   }
 
-  // Pin the new Start Date cell to mm/dd/yy so it displays like the rest of the
-  // column (a freshly appended row inherits no column format). Best-effort.
-  const startCol = headers.findIndex((h) => {
-    const n = h.trim().toLowerCase().replace(/\s+/g, ' ');
-    return n === 'start date' || n === 'startdate';
-  });
-  if (startCol >= 0) {
+  // Pin all the new Start Date cells to mm/dd/yy in ONE batched format call.
+  if (cellsToFormat.length > 0) {
     try {
       const { formatCellsAsShortDate } = await import('./format-date-cells');
-      await formatCellsAsShortDate([{ row: targetRow - 1, col: startCol }]);
+      await formatCellsAsShortDate(cellsToFormat);
     } catch {
-      // formatting is cosmetic — the value is already a valid date
+      // formatting is cosmetic - the values are already valid dates
     }
   }
 
-  return { appended: true };
+  return results;
+}
+
+/**
+ * Single-row convenience wrapper over `appendMasterSheetRows`. Kept so the
+ * single Promote button's code path is unchanged.
+ */
+export async function appendMasterSheetRow(
+  input: AppendMasterRowInput,
+): Promise<AppendMasterRowResult> {
+  const [res] = await appendMasterSheetRows([input]);
+  return res ?? { appended: false, reason: 'unknown' };
 }

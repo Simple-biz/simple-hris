@@ -99,6 +99,7 @@ export async function GET(
         full_name: row.full_name,
         phone: row.phone,
         email: row.email,
+        location: row.location,
         non_solicitation_signature: row.non_solicitation_signature,
         privacy_signature: row.privacy_signature,
         w8ben_applicable: row.w8ben_applicable,

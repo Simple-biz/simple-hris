@@ -120,6 +120,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { HSL_DEPT_KEYS, HSL_DEPTS } from '@/lib/hsl-bonus/schema';
+import WizardCursorOverlay, { type WizardCursorOverlayHandle } from '@/components/payroll/WizardCursorOverlay';
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -671,6 +672,8 @@ export default function PayrollWizard({
   const [masterListUploadLoading, setMasterListUploadLoading] = useState(false);
   const [ratesUploadLoading, setRatesUploadLoading] = useState(false);
   const { state: lockState, setLocked } = useDispatchLock();
+  const wizardContainerRef = useRef<HTMLDivElement>(null);
+  const cursorOverlayRef = useRef<WizardCursorOverlayHandle>(null);
   const [togglingLock, setTogglingLock] = useState(false);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
   const [hslSyncLoading, setHslSyncLoading] = useState(false);
@@ -4219,6 +4222,7 @@ export default function PayrollWizard({
       toast.success('Saved to hubstaff_hours', {
         description: `${json.rowCount ?? 0} rows appended to public.hubstaff_hours.`,
       });
+      cursorOverlayRef.current?.broadcastSave();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Upload failed';
       toast.error('Upload failed', { description: msg });
@@ -4249,6 +4253,7 @@ export default function PayrollWizard({
       toast.success('Master list replaced in Supabase', {
         description: `${(json.rowCount ?? 0).toLocaleString()} rows from ${file.name}`,
       });
+      cursorOverlayRef.current?.broadcastSave();
       if (json.ratesReconcile?.hint) {
         toast.warning('Hourly rates coverage', { description: json.ratesReconcile.hint });
       }
@@ -4295,6 +4300,7 @@ export default function PayrollWizard({
           `${json.inserted ?? 0} new`,
         ].join(' · '),
       });
+      cursorOverlayRef.current?.broadcastSave();
       if ((json.skippedNoWorkEmail ?? 0) > 0 || (json.skippedNoRate ?? 0) > 0) {
         toast.warning('Some rows skipped', {
           description: `No work email: ${json.skippedNoWorkEmail ?? 0} · No rate: ${json.skippedNoRate ?? 0}`,
@@ -5456,6 +5462,7 @@ export default function PayrollWizard({
                               const json = (await res.json()) as { error: string | null };
                               if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
                               toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
+                              cursorOverlayRef.current?.broadcastSave();
                               setUsdToPhpEditing(false);
                             })
                             .catch((err: unknown) =>
@@ -9904,6 +9911,7 @@ export default function PayrollWizard({
                     toast.success('Payroll Dispatched', {
                       description: `Sent ${employees.length} paystub request${employees.length === 1 ? '' : 's'} to n8n.`,
                     });
+                    cursorOverlayRef.current?.broadcastSave();
                     setReportSnapshot({
                       startedAt: wizardStartedAt,
                       dispatchedAt: new Date(),
@@ -10306,7 +10314,8 @@ export default function PayrollWizard({
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-zinc-50 p-2 sm:p-4 md:p-8 dark:bg-zinc-950">
+    <div ref={wizardContainerRef} className="relative flex h-full flex-col overflow-hidden bg-zinc-50 p-2 sm:p-4 md:p-8 dark:bg-zinc-950">
+      <WizardCursorOverlay ref={cursorOverlayRef} selfEmail={sessionEmail} containerRef={wizardContainerRef} />
       <Dialog
         open={deleteSourceFilePending !== null}
         onOpenChange={(open) => {

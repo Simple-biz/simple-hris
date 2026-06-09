@@ -97,6 +97,10 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   const [dateDraft, setDateDraft] = useState<Record<number, string>>({});
   const [confirmNoShow, setConfirmNoShow] = useState<PendingHireRow | null>(null);
   const [noShowNote, setNoShowNote] = useState('');
+  // Multi-select: tick hires, pick one date, mark/update orientation for all.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkDate, setBulkDate] = useState<string>(manilaToday());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -229,6 +233,62 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
   const activeRows = rows.filter((r) => r.status !== 'no_show');
   const noShowRows = rows.filter((r) => r.status === 'no_show');
 
+  const selectedActiveCount = activeRows.filter((r) => selected.has(r.id)).length;
+  const allActiveSelected = activeRows.length > 0 && selectedActiveCount === activeRows.length;
+  const someActiveSelected = selectedActiveCount > 0 && !allActiveSelected;
+
+  function toggleOne(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAllActive() {
+    setSelected((prev) => {
+      const everything = activeRows.every((r) => prev.has(r.id));
+      return everything ? new Set() : new Set(activeRows.map((r) => r.id));
+    });
+  }
+
+  // Apply the chosen date to every selected hire: marks orientation for those
+  // not yet attended and updates the date for those already marked (the POST is
+  // idempotent). Runs sequentially so a partial failure is reportable.
+  async function bulkApply() {
+    const ids = activeRows.filter((r) => selected.has(r.id)).map((r) => r.id);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    let ok = 0;
+    let fail = 0;
+    let firstErr = '';
+    for (const id of ids) {
+      try {
+        const res = await fetch(`/api/manager/pending-hires/${id}/orientation`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ attendedOn: bulkDate }),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+        ok += 1;
+      } catch (e) {
+        fail += 1;
+        if (!firstErr) firstErr = e instanceof Error ? e.message : String(e);
+      }
+    }
+    if (fail === 0) {
+      toast.success(`Orientation set for ${ok} hire${ok !== 1 ? 's' : ''}`, {
+        description: 'Start Date syncs for any already promoted.',
+      });
+    } else {
+      toast.warning(`${ok} updated, ${fail} failed`, { description: firstErr || undefined });
+    }
+    setSelected(new Set());
+    setBulkBusy(false);
+    void refresh();
+  }
+
   function HireCard({ r }: { r: PendingHireRow }) {
     const attended = !!r.orientation_attended_at;
     const isBusy = busyId === r.id;
@@ -283,7 +343,16 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
         )}
       >
         <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <input
+              type="checkbox"
+              aria-label={`Select ${r.name}`}
+              className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-blue-600"
+              checked={selected.has(r.id)}
+              onChange={() => toggleOne(r.id)}
+              disabled={isBusy || bulkBusy}
+            />
+            <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-semibold text-zinc-900 dark:text-white">{r.name}</span>
               <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
@@ -317,6 +386,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
                 ) : null}
               </div>
             )}
+            </div>
           </div>
 
           <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
@@ -420,6 +490,59 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
 
       {activeRows.length > 0 && (
         <div className="flex flex-col gap-2">
+          {/* Multi-select toolbar: pick one date, mark/update orientation for all ticked hires. */}
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-200/70 bg-blue-50/60 px-3 py-2 dark:border-blue-900/50 dark:bg-blue-950/20">
+            <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-zinc-700 dark:text-zinc-200">
+              <input
+                type="checkbox"
+                aria-label="Select all hires"
+                className="h-4 w-4 cursor-pointer accent-blue-600"
+                checked={allActiveSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someActiveSelected;
+                }}
+                onChange={toggleAllActive}
+                disabled={bulkBusy}
+              />
+              {selected.size > 0 ? `${selectedActiveCount} selected` : `Select all (${activeRows.length})`}
+            </label>
+            {selected.size > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
+                  Orientation date
+                  <input
+                    type="date"
+                    value={bulkDate}
+                    max={manilaToday()}
+                    onChange={(e) => setBulkDate(e.target.value)}
+                    className="h-7 rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200"
+                    disabled={bulkBusy}
+                  />
+                </label>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 gap-1.5 bg-gradient-to-r from-blue-600 to-blue-800 px-3 text-xs text-white hover:from-blue-700 hover:to-blue-900"
+                  onClick={() => void bulkApply()}
+                  disabled={bulkBusy}
+                  title="Mark/update orientation for all selected hires to this date"
+                >
+                  {bulkBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ClipboardCheck className="h-3 w-3" />}
+                  Mark / update selected ({selectedActiveCount})
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setSelected(new Set())}
+                  disabled={bulkBusy}
+                >
+                  Clear
+                </Button>
+              </div>
+            )}
+          </div>
           {activeRows.map((r) => <HireCard key={r.id} r={r} />)}
         </div>
       )}

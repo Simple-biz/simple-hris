@@ -32,6 +32,7 @@ type PriorData = {
   full_name: string | null;
   phone: string | null;
   email: string | null;
+  location: string | null;
   non_solicitation_signature: string | null;
   privacy_signature: string | null;
   w8ben_applicable: boolean | null;
@@ -67,6 +68,7 @@ type FormState = {
   last_name: string;
   phone: string;
   email: string;
+  location: string;
   non_solicitation_signature: string;
   privacy_signature: string;
   w8ben_applicable: boolean | null; // null = not chosen yet
@@ -92,6 +94,7 @@ const emptyForm: FormState = {
   last_name: '',
   phone: '',
   email: '',
+  location: '',
   non_solicitation_signature: '',
   privacy_signature: '',
   w8ben_applicable: null,
@@ -155,6 +158,7 @@ export default function OnboardingFormPage() {
             last_name: nameTokens.slice(1).join(' '),
             phone: prior.phone ?? '',
             email: prior.email ?? '',
+            location: prior.location ?? '',
             non_solicitation_signature: prior.non_solicitation_signature ?? '',
             privacy_signature: prior.privacy_signature ?? '',
             w8ben_applicable: prior.w8ben_applicable ?? null,
@@ -290,6 +294,7 @@ export default function OnboardingFormPage() {
           full_name: [form.first_name.trim(), form.last_name.trim()].filter(Boolean).join(' '),
           phone: form.phone.trim(),
           email: form.email.trim(),
+          location: form.location.trim() || null,
           non_solicitation_signature: form.non_solicitation_signature,
           privacy_signature: form.privacy_signature,
           w8ben_applicable: form.w8ben_applicable,
@@ -526,6 +531,14 @@ function Step1Welcome({
             onChange={(e) => update('email', e.target.value)}
             placeholder="you@example.com"
             autoComplete="email"
+          />
+        </Field>
+        <Field label="Location" className="sm:col-span-2">
+          <Input
+            value={form.location ?? ''}
+            onChange={(e) => update('location', e.target.value)}
+            placeholder="City, Country (e.g. Manila, Philippines)"
+            autoComplete="address-level2"
           />
         </Field>
       </div>
