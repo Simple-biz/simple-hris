@@ -25,6 +25,15 @@ import { getForceLogoutEpochFor } from './force-logout';
 const ALLOWED_HD = 'simple.biz';
 
 /**
+ * How often (seconds) to re-resolve a live session's roles from the DB inside the jwt
+ * callback. Without this the roles baked in at sign-in go stale: a freshly GRANTED role
+ * (which, unlike a revoke, does NOT trigger force-logout) stays invisible to API
+ * authorization until the user signs out and back in. 60s keeps grants/revokes
+ * propagating quickly while adding at most one throttled query per active session.
+ */
+const ROLE_REFRESH_THROTTLE_SECONDS = 60;
+
+/**
  * Look up active role assignments for `email`. Uses service-role when available so RLS
  * can stay strict on the `employee_roles` table. Returns [] on any error — callers should
  * treat that as "no elevated access."
@@ -104,14 +113,15 @@ export const authOptions: NextAuthOptions = {
     },
     async jwt({ token, account, profile }) {
       // On first sign-in stash the Google hd claim + active Supabase roles so the middleware
-      // and API routes can authorize from the JWT alone. Roles are re-fetched only on sign-in;
-      // users need to sign out/in to pick up role changes (standard JWT tradeoff).
+      // and API routes can authorize from the JWT alone. Roles are then kept fresh by the
+      // throttled refresh further down, so role changes propagate without a sign-out.
       if (account && profile) {
         token.hd = (profile as { hd?: string }).hd;
         const emailLower = (token.email ?? '').toString().trim().toLowerCase();
         const roles = emailLower ? await fetchRolesForEmail(emailLower) : [];
         (token as { roles?: string[] }).roles = roles;
         (token as { elevated?: boolean }).elevated = hasElevatedRole(roles);
+        (token as { rolesRefreshedAt?: number }).rolesRefreshedAt = Math.floor(Date.now() / 1000);
         // NOTE: feature permissions are intentionally NOT stashed on the token.
         // Encoding a per-tab access map into the JWT pushes the session cookie
         // past Node's default 8 KB header limit once a user has 20+ entries
@@ -141,6 +151,29 @@ export const authOptions: NextAuthOptions = {
           }
         } catch {
           /* never fail auth on force-logout lookup failure */
+        }
+      }
+
+      // Throttled role refresh. Roles are otherwise frozen at sign-in (see the
+      // `account && profile` block above), so a role grant -- which does NOT force a
+      // logout the way a revoke does -- never reaches an already-active session. That
+      // left managers like a freshly-promoted user hitting 403s on role-gated APIs
+      // (e.g. /api/manager/time-adjustments) until they signed out and back in. Here we
+      // re-resolve live roles at most once per ROLE_REFRESH_THROTTLE_SECONDS so grants
+      // and revokes both propagate on their own. Sessions minted before this change have
+      // no `rolesRefreshedAt`, so they self-heal on their next request.
+      if (emailLower) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const lastRefresh = (token as { rolesRefreshedAt?: number }).rolesRefreshedAt ?? 0;
+        if (nowSec - lastRefresh >= ROLE_REFRESH_THROTTLE_SECONDS) {
+          try {
+            const roles = await fetchRolesForEmail(emailLower);
+            (token as { roles?: string[] }).roles = roles;
+            (token as { elevated?: boolean }).elevated = hasElevatedRole(roles);
+            (token as { rolesRefreshedAt?: number }).rolesRefreshedAt = nowSec;
+          } catch {
+            /* keep the prior roles on a refresh hiccup -- never fail auth */
+          }
         }
       }
 
