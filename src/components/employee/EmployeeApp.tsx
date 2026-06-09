@@ -81,7 +81,7 @@ export default function EmployeeApp() {
   // Google SSO profile photo — falls back through Supabase upload → Gravatar in EmployeeAvatar.
   // Only honored when the NextAuth session email matches the employee being viewed, so
   // impersonation paths (?email=other.user@simple.biz) don't show the wrong person's photo.
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const googlePhotoUrl = useMemo(() => {
     const sessionEmail = session?.user?.email?.trim().toLowerCase();
     const sessionImage = session?.user?.image?.trim();
@@ -143,26 +143,42 @@ export default function EmployeeApp() {
 
   const emailFromQuery = searchParams?.get('email') ?? null;
 
+  // Resolve the portal's viewer identity from the AUTHENTICATED session, not from
+  // a client-supplied ?email= / sessionStorage value. A ?email= override is
+  // honored ONLY for elevated users (admin/payroll/finance/hr/viewer) so they can
+  // preview another employee's portal; for everyone else it is ignored, so a
+  // stale or spoofed email (e.g. left over after switching Google accounts in the
+  // same tab) can never surface another person's data. The server endpoints
+  // enforce the same self-or-elevated rule — this keeps the client in sync.
   useEffect(() => {
     setMounted(true);
+    if (sessionStatus === 'loading') return;
     try {
+      const sessionEmail =
+        (normEmail(session?.user?.email ?? '') ?? session?.user?.email?.trim().toLowerCase()) || null;
+      const elevated = !!(session?.user as { elevated?: boolean } | undefined)?.elevated;
       const q = emailFromQuery?.trim() ?? '';
-      if (q && isPlausibleEmail(q)) {
-        const normalized = normEmail(q) ?? q.toLowerCase();
-        sessionStorage.setItem(SESSION_KEY, normalized);
-        setEmployeeEmail(normalized);
+      const queryEmail = q && isPlausibleEmail(q) ? (normEmail(q) ?? q.toLowerCase()) : null;
+
+      let identity: string | null = null;
+      if (queryEmail && elevated && queryEmail !== sessionEmail) {
+        identity = queryEmail; // elevated preview / impersonation
+      } else if (sessionEmail) {
+        identity = sessionEmail; // normal self — ignore any stale ?email=
+      } else {
+        identity = sessionStorage.getItem(SESSION_KEY); // unauthenticated fallback
+      }
+
+      if (!identity) {
+        router.replace('/login');
         return;
       }
-      const stored = sessionStorage.getItem(SESSION_KEY);
-      if (stored) {
-        setEmployeeEmail(stored);
-      } else {
-        router.replace('/login');
-      }
+      sessionStorage.setItem(SESSION_KEY, identity);
+      setEmployeeEmail(identity);
     } catch {
       router.replace('/login');
     }
-  }, [router, emailFromQuery]);
+  }, [router, emailFromQuery, session?.user, sessionStatus]);
 
   // Fetch profile photo, name, department, and employee ID
   useEffect(() => {

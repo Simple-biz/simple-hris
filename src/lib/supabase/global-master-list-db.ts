@@ -1161,3 +1161,47 @@ export async function deleteOffboardedSheetByWorkEmail(workEmail: string): Promi
   if (error) throw new Error(`Could not delete from offboarded_sheet: ${error.message}`);
   return (data ?? []).length;
 }
+
+/**
+ * Delete from offboarded_sheet matching EITHER work_email OR personal_email.
+ * The snapshot's only guaranteed key is personal_email (work_email may be blank
+ * for rows that came from the Offboarded sheet tab), so matching on both is
+ * needed to fully purge a person from the HR Offboarded list immediately,
+ * without waiting for the next sync.
+ */
+export async function deleteOffboardedSheetByEmails(
+  workEmail: string,
+  personalEmail: string,
+): Promise<number> {
+  const supabase = requireServiceRole();
+  const work = workEmail.trim().toLowerCase();
+  const personal = personalEmail.trim().toLowerCase();
+
+  // Two sequential deletes rather than a single `.or(...)`: PostgREST's
+  // logical-filter string parses `column.op.value`, and our email values
+  // contain dots (e.g. "simple.biz"), which the parser mis-splits and reports
+  // as a bogus "column ... does not exist". The two-argument `.ilike()` form
+  // takes the value as a parameter and handles emails correctly. Deleting by
+  // work_email first means the personal_email pass can't re-hit (and double
+  // count) the same rows.
+  let total = 0;
+  if (work) {
+    const { data, error } = await supabase
+      .from("offboarded_sheet")
+      .delete()
+      .ilike("work_email", work)
+      .select("id");
+    if (error) throw new Error(`Could not delete from offboarded_sheet: ${error.message}`);
+    total += (data ?? []).length;
+  }
+  if (personal) {
+    const { data, error } = await supabase
+      .from("offboarded_sheet")
+      .delete()
+      .ilike("personal_email", personal)
+      .select("id");
+    if (error) throw new Error(`Could not delete from offboarded_sheet: ${error.message}`);
+    total += (data ?? []).length;
+  }
+  return total;
+}

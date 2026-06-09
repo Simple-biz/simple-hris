@@ -46,6 +46,41 @@ function onboardingPayoutPatch(sub: {
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
+/**
+ * Renders a full timestamptz as a YYYY-MM-DD calendar date in the company
+ * timezone (Asia/Manila). Used to derive a hire's Start Date from the moment
+ * their manager marked orientation: a UTC timestamp like 23:30 the night before
+ * would otherwise roll the date back a day. Returns null for empty/invalid input.
+ */
+function manilaDateFromIso(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  // en-CA formats as YYYY-MM-DD, which matches the master list's Start Date.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+/**
+ * Inverse of `manilaDateFromIso`: takes a YYYY-MM-DD calendar date and returns
+ * the UTC ISO timestamp for the start of that day in Manila (fixed UTC+8, no
+ * DST). Storing this in `orientation_attended_at` makes the date round-trip
+ * cleanly back through `manilaDateFromIso` at promote time. Returns null for
+ * empty or malformed input.
+ */
+function manilaDateStartToIso(date: string | null | undefined): string | null {
+  if (!date) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.trim());
+  if (!m) return null;
+  const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00+08:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
 const TABLE = "hr_pending_employees";
 const MASTER_TABLE =
   process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEES_TABLE?.trim() || "global_master_list";
@@ -387,6 +422,15 @@ export async function promoteHrPendingEmployee(
     };
   }
 
+  // The hire's official Start Date is the day they actually attended
+  // orientation (stamped by the manager when they marked it above — guaranteed
+  // non-null here by the orientation guard), NOT the tentative start_date typed
+  // at staging. Rendered as a Manila calendar date so an evening-UTC mark keeps
+  // the right day. Falls back to the staged start_date only if the timestamp is
+  // somehow unparseable.
+  const startDate =
+    manilaDateFromIso(row.orientation_attended_at) ?? row.start_date;
+
   const uploadId = await getCurrentMasterListUploadId(sb);
   if (!uploadId) {
     return {
@@ -429,10 +473,12 @@ export async function promoteHrPendingEmployee(
 
   if (existingMaster) {
     masterId = (existingMaster as { id: string }).id;
-    // Attach the reused row to the current upload so it shows in active_employees.
+    // Attach the reused row to the current upload so it shows in active_employees,
+    // and (re)stamp Start Date to the orientation date in case this is a
+    // re-promote after a fix. Never rewrites identity fields (Work Email etc.).
     await sb
       .from(MASTER_TABLE)
-      .update({ last_seen_upload_id: uploadId })
+      .update({ last_seen_upload_id: uploadId, "Start Date": startDate })
       .eq("id", masterId);
   } else {
     // Master-list columns use mixed-case quoted identifiers ("Personal Email", etc.)
@@ -442,7 +488,7 @@ export async function promoteHrPendingEmployee(
       "Name": row.name,
       "Personal Email": row.personal_email,
       "Work Email": row.work_email,
-      "Start Date": row.start_date,
+      "Start Date": startDate,
       first_seen_upload_id: uploadId,
       last_seen_upload_id: uploadId,
       source_file: "hr_dashboard_add_person",
@@ -620,7 +666,7 @@ export async function promoteHrPendingEmployee(
       personalEmail: row.personal_email,
       workEmail: row.work_email,
       department: row.department,
-      startDate: row.start_date,
+      startDate,
     });
     if (!sheet.appended) {
       console.warn(
@@ -674,16 +720,23 @@ export async function listManagerPendingHires(
  * (at the route layer) that `markedBy` actually manages the hire's department
  * — this function only writes the row. Idempotent: re-marking just updates
  * the timestamp + note.
+ *
+ * `attendedOn` is the calendar date the manager picked (YYYY-MM-DD). It's
+ * anchored at the start of that day in Manila (the company tz, fixed UTC+8) so
+ * that when promote later renders it back to a Manila date for the master
+ * list's Start Date, it round-trips to the exact day chosen. Omitted/invalid
+ * input falls back to now() (the legacy "marked just now" behaviour).
  */
 export async function markPendingHireOrientation(
   id: number,
-  args: { markedBy: string; note?: string | null },
+  args: { markedBy: string; note?: string | null; attendedOn?: string | null },
 ): Promise<{ row: HrPendingEmployeeRow | null; error: string | null }> {
   const sb = client();
+  const attendedAt = manilaDateStartToIso(args.attendedOn) ?? new Date().toISOString();
   const { data, error } = await sb
     .from(TABLE)
     .update({
-      orientation_attended_at: new Date().toISOString(),
+      orientation_attended_at: attendedAt,
       orientation_attended_by: args.markedBy.trim().toLowerCase(),
       orientation_note: args.note?.trim() || null,
     })
@@ -691,7 +744,63 @@ export async function markPendingHireOrientation(
     .select("*")
     .single();
   if (error) return { row: null, error: error.message };
-  return { row: data as HrPendingEmployeeRow, error: null };
+
+  // The orientation date IS the hire's Start Date. If they've already been
+  // promoted into the master list, propagate the (possibly edited) date to both
+  // the master DB row and the source Google Sheet so the next sync doesn't
+  // overwrite it. Best-effort: a hire still in staging simply has no master row
+  // yet, and any failure here never fails the orientation mark itself.
+  const updated = data as HrPendingEmployeeRow;
+  await syncStartDateToMaster(sb, updated, manilaDateFromIso(attendedAt));
+
+  return { row: updated, error: null };
+}
+
+/**
+ * Pushes a hire's Start Date (their orientation date) to the master DB row and
+ * the master Google Sheet, but only when a master row already exists for them
+ * (i.e. they've been promoted). No-op + swallow-on-error by design — this is a
+ * convenience sync, never a gate.
+ */
+async function syncStartDateToMaster(
+  sb: ReturnType<typeof client>,
+  row: HrPendingEmployeeRow,
+  startDate: string | null,
+): Promise<void> {
+  if (!row.work_email || !startDate) return;
+  try {
+    const { data: master } = await sb
+      .from(MASTER_TABLE)
+      .select("id")
+      .ilike("Work Email", row.work_email)
+      .ilike("Department", row.department)
+      .limit(1)
+      .maybeSingle();
+    if (!master) return; // not promoted yet — nothing in the master list/sheet
+
+    await sb
+      .from(MASTER_TABLE)
+      .update({ "Start Date": startDate })
+      .eq("id", (master as { id: string }).id);
+
+    const { updateMasterSheetStartDate } = await import(
+      "../google-sheets/update-master-sheet-start-date"
+    );
+    const res = await updateMasterSheetStartDate({
+      workEmail: row.work_email,
+      personalEmail: row.personal_email,
+      startDate,
+    });
+    if (!res.updated) {
+      console.warn(
+        `[syncStartDateToMaster] sheet Start Date not updated: ${res.reason ?? "unknown"}`,
+      );
+    }
+  } catch (e) {
+    console.warn(
+      `[syncStartDateToMaster] skipped: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 }
 
 /**

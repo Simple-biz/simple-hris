@@ -47,12 +47,54 @@ function fmtLongDate(raw: string | null): string {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+/**
+ * Formats a full timestamp as a long date in Manila (company tz). Used for the
+ * orientation-attended date, which the manager now picks explicitly — slicing
+ * the UTC portion (as fmtLongDate does) could show the day before for an early
+ * Manila morning. Date-only fields keep using fmtLongDate.
+ */
+function fmtManilaDate(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-US', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+/** Today's calendar date (YYYY-MM-DD) in Manila — the default orientation date. */
+function manilaToday(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+/** A stored orientation timestamp -> YYYY-MM-DD (Manila) for the date input. */
+function manilaInputDate(iso: string | null): string {
+  if (!iso) return manilaToday();
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return manilaToday();
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
 export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPanelProps) {
   const [rows, setRows] = useState<PendingHireRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState<Record<number, string>>({});
+  const [dateDraft, setDateDraft] = useState<Record<number, string>>({});
   const [confirmNoShow, setConfirmNoShow] = useState<PendingHireRow | null>(null);
   const [noShowNote, setNoShowNote] = useState('');
 
@@ -83,18 +125,22 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     void refresh();
   }, [teamGate.kind, refresh]);
 
-  async function markAttended(id: number) {
+  async function markAttended(id: number, attendedOn: string, isEdit = false) {
     setBusyId(id);
     try {
       const note = (noteDraft[id] ?? '').trim();
       const res = await fetch(`/api/manager/pending-hires/${id}/orientation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: note || null }),
+        body: JSON.stringify({ note: note || null, attendedOn }),
       });
       const json = (await res.json()) as { row?: PendingHireRow; error?: string };
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      toast.success('Orientation marked as attended');
+      toast.success(
+        isEdit
+          ? 'Orientation date updated (Start Date synced)'
+          : 'Orientation marked as attended',
+      );
       void refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to mark orientation');
@@ -187,6 +233,12 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
     const attended = !!r.orientation_attended_at;
     const isBusy = busyId === r.id;
     const isNoShow = r.status === 'no_show';
+    // Date input value: the manager's in-progress edit, else the saved
+    // orientation date (when attended), else today. `dateChanged` gates the
+    // "Update date" button so we only re-POST when the date actually moved.
+    const savedDate = attended ? manilaInputDate(r.orientation_attended_at) : manilaToday();
+    const draftDate = dateDraft[r.id] ?? savedDate;
+    const dateChanged = draftDate !== savedDate;
 
     if (isNoShow) {
       return (
@@ -258,7 +310,7 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
             </div>
             {attended && (
               <div className="text-[11px] text-emerald-700 dark:text-emerald-300">
-                Marked {fmtLongDate(r.orientation_attended_at)} by{' '}
+                Attended {fmtManilaDate(r.orientation_attended_at)} · marked by{' '}
                 <span className="font-mono">{r.orientation_attended_by ?? '—'}</span>
                 {r.orientation_note ? (
                   <> — <span className="italic text-zinc-600 dark:text-zinc-400">&ldquo;{r.orientation_note}&rdquo;</span></>
@@ -268,6 +320,17 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
           </div>
 
           <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
+            <label className="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 sm:w-[200px] sm:items-end">
+              Orientation date
+              <input
+                type="date"
+                value={draftDate}
+                max={manilaToday()}
+                onChange={(e) => setDateDraft((s) => ({ ...s, [r.id]: e.target.value }))}
+                className="h-7 w-full rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200"
+                disabled={isBusy}
+              />
+            </label>
             {!attended && (
               <input
                 type="text"
@@ -279,23 +342,36 @@ export default function NewlyHiredPanel({ viewerEmail, teamGate }: NewlyHiredPan
               />
             )}
             {attended ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
-                onClick={() => unmarkAttended(r.id)}
-                disabled={isBusy}
-              >
-                {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
-                Clear
-              </Button>
+              <div className="flex items-center gap-2 sm:justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 gap-1.5 bg-gradient-to-r from-blue-600 to-blue-800 text-white hover:from-blue-700 hover:to-blue-900 disabled:opacity-50"
+                  onClick={() => markAttended(r.id, draftDate, true)}
+                  disabled={isBusy || !dateChanged}
+                  title={dateChanged ? 'Save the new orientation date' : 'Pick a different date to update'}
+                >
+                  {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ClipboardCheck className="h-3 w-3" />}
+                  Update date
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+                  onClick={() => unmarkAttended(r.id)}
+                  disabled={isBusy}
+                >
+                  {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                  Clear
+                </Button>
+              </div>
             ) : (
               <Button
                 type="button"
                 size="sm"
                 className="h-7 gap-1.5 bg-gradient-to-r from-blue-600 to-blue-800 text-white hover:from-blue-700 hover:to-blue-900"
-                onClick={() => markAttended(r.id)}
+                onClick={() => markAttended(r.id, draftDate)}
                 disabled={isBusy}
               >
                 {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <ClipboardCheck className="h-3 w-3" />}

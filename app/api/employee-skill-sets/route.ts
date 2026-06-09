@@ -6,6 +6,7 @@ import {
   type UpsertSkillSetInput,
 } from '@/lib/supabase/employee-skill-sets';
 import { SKILL_SET_TITLES } from '@/lib/skill-set-titles';
+import { authorizeEmailAccess, deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -35,7 +36,11 @@ export async function GET(req: NextRequest) {
   if (!single) {
     return NextResponse.json({ row: null, error: 'email or emails is required' }, { status: 400 });
   }
-  const { row, error } = await getSkillSet(single);
+  // Self-or-elevated for the single-row lookup; the requested ?email= is resolved
+  // against the session so a non-elevated caller can't read another person's row.
+  const authz = await authorizeEmailAccess(single);
+  if (!authz.ok) return deniedResponse(authz);
+  const { row, error } = await getSkillSet(authz.effectiveEmail);
   if (error) return NextResponse.json({ row: null, error }, { status: 500 });
   return NextResponse.json({ row, error: null });
 }

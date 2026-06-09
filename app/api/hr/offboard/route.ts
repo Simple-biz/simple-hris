@@ -16,6 +16,8 @@ import {
   scheduledDeletionFrom,
 } from "@/lib/hr/offboard-webhooks";
 import { appendOffboardedSheetRow } from "@/lib/google-sheets/append-offboarded-sheet";
+import { snapshotAndRevokeRbacGrants } from "@/lib/hr/offboard-rbac";
+import { bumpForceLogoutFor } from "@/lib/auth/force-logout";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -241,6 +243,14 @@ export async function POST(req: Request) {
     rows_updated: rows.length,
   });
 
+  // Strip every RBAC grant this person holds -- role assignments, managed
+  // departments, and per-feature permissions -- so neither a stale JWT nor a
+  // leftover row in Admin -> Roles can keep them privileged. The grants are
+  // snapshotted into app_settings first so re-onboarding restores exactly what
+  // they had. Then force-logout to invalidate any live session immediately.
+  const rbacRevoked = await snapshotAndRevokeRbacGrants(work_email);
+  void bumpForceLogoutFor(work_email);
+
   void insertAuditLog({
     user_name: authz.sessionEmail,
     user_role: "hr",
@@ -254,6 +264,7 @@ export async function POST(req: Request) {
       rows_updated: rows.length,
       deletion_mode: deletionMode,
       scheduled_deletion_at: scheduledDeletionAt,
+      rbac_revoked: rbacRevoked,
       webhook_slug: slug,
       webhook_fired: webhook.fired && webhook.error == null,
       webhook_status: webhook.status,
@@ -266,6 +277,7 @@ export async function POST(req: Request) {
     rows_updated: rows.length,
     deletion_mode: deletionMode,
     scheduled_deletion_at: scheduledDeletionAt,
+    rbac_revoked: rbacRevoked,
     webhook,
   });
 }

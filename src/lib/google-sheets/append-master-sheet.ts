@@ -1,4 +1,5 @@
 import { getServiceAccountAccessToken } from './auth';
+import { toSheetDate } from './sheet-date';
 
 /**
  * Appends a single new-hire row to the master-list Google Sheet so a hire
@@ -65,7 +66,7 @@ function valueForHeader(header: string, input: AppendMasterRowInput): string {
       return input.workEmail ?? '';
     case 'start date':
     case 'startdate':
-      return input.startDate ?? '';
+      return toSheetDate(input.startDate);
     default:
       return '';
   }
@@ -129,20 +130,45 @@ export async function appendMasterSheetRow(
   }
 
   // Build a row aligned to the sheet's column order; unknown columns stay blank.
+  // headers[0] is column A (the API returns rows from column A), so this array
+  // is A-aligned by construction.
   const newRow = headers.map((h) => valueForHeader(h, input));
 
-  const appendUrl =
-    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}:append` +
-    `?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-  const appendRes = await fetch(appendUrl, {
-    method: 'POST',
+  // Write to the first empty row, anchored at column A via an explicit
+  // `values.update`. We deliberately do NOT use the `:append` endpoint with a
+  // whole-tab range: its "find the table and pick a start column" heuristic
+  // mis-detected this sheet's left edge and dropped rows starting at column H
+  // (shifting Department->H, Name->J, etc.). `values` is contiguous from row 1,
+  // so the next empty sheet row (1-indexed) is values.length + 1.
+  const targetRow = values.length + 1;
+  const writeRange = encodeURIComponent(`${quotedTab}!A${targetRow}`);
+  const updateUrl =
+    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${writeRange}` +
+    `?valueInputOption=USER_ENTERED`;
+  const updateRes = await fetch(updateUrl, {
+    method: 'PUT',
     headers: { ...authHeader, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [newRow] }),
+    body: JSON.stringify({ majorDimension: 'ROWS', values: [newRow] }),
     cache: 'no-store',
   });
-  if (!appendRes.ok) {
-    const txt = await appendRes.text().catch(() => '');
-    throw new Error(`Sheets append failed (${appendRes.status}): ${txt.slice(0, 200)}`);
+  if (!updateRes.ok) {
+    const txt = await updateRes.text().catch(() => '');
+    throw new Error(`Sheets write failed (${updateRes.status}): ${txt.slice(0, 200)}`);
+  }
+
+  // Pin the new Start Date cell to mm/dd/yy so it displays like the rest of the
+  // column (a freshly appended row inherits no column format). Best-effort.
+  const startCol = headers.findIndex((h) => {
+    const n = h.trim().toLowerCase().replace(/\s+/g, ' ');
+    return n === 'start date' || n === 'startdate';
+  });
+  if (startCol >= 0) {
+    try {
+      const { formatCellsAsShortDate } = await import('./format-date-cells');
+      await formatCellsAsShortDate([{ row: targetRow - 1, col: startCol }]);
+    } catch {
+      // formatting is cosmetic — the value is already a valid date
+    }
   }
 
   return { appended: true };

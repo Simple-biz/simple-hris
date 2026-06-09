@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import AppFooter from '@/components/AppFooter';
 import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
@@ -50,6 +51,7 @@ function isPlausibleEmail(s: string): boolean {
 export default function HrApp() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { data: session, status: sessionStatus } = useSession();
   const emailFromQuery = searchParams?.get('email') ?? null;
 
   const [activeTab, setActiveTab] = useState<HrTab>('overview');
@@ -62,20 +64,34 @@ export default function HrApp() {
   useNotificationChime(viewerEmail);
   const unreadNotifications = useEmployeeNotificationsUnread(viewerEmail);
 
+  // Identity comes from the AUTHENTICATED session, not a client-supplied
+  // ?email= / sessionStorage value. ?email= is honored only for elevated users
+  // (preview); for everyone else a stale or spoofed email is ignored so the
+  // role gate + notifications below always reflect the real signed-in user.
   useEffect(() => {
+    if (sessionStatus === 'loading') return;
     try {
+      const sessionEmail =
+        (normEmail(session?.user?.email ?? '') ?? session?.user?.email?.trim().toLowerCase()) || null;
+      const elevated = !!(session?.user as { elevated?: boolean } | undefined)?.elevated;
       const q = emailFromQuery?.trim() ?? '';
-      if (q && isPlausibleEmail(q)) {
-        const normalized = normEmail(q) ?? q.toLowerCase();
-        sessionStorage.setItem(SESSION_EMAIL_KEY, normalized);
-        setViewerEmail(normalized);
-        return;
+      const queryEmail = q && isPlausibleEmail(q) ? (normEmail(q) ?? q.toLowerCase()) : null;
+
+      let identity: string | null = null;
+      if (queryEmail && elevated && queryEmail !== sessionEmail) {
+        identity = queryEmail; // elevated preview / impersonation
+      } else if (sessionEmail) {
+        identity = sessionEmail;
+      } else {
+        identity = sessionStorage.getItem(SESSION_EMAIL_KEY);
       }
-      setViewerEmail(sessionStorage.getItem(SESSION_EMAIL_KEY));
+
+      if (identity) sessionStorage.setItem(SESSION_EMAIL_KEY, identity);
+      setViewerEmail(identity);
     } catch {
       setViewerEmail(null);
     }
-  }, [emailFromQuery]);
+  }, [emailFromQuery, session?.user, sessionStatus]);
 
   useEffect(() => {
     if (!viewerEmail) return;
@@ -1581,20 +1597,36 @@ function RecentHiresCard({
                   >
                     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" /></svg>
                   </button>
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-                    <button
-                      key={p}
-                      onClick={() => setPage(p)}
-                      className={cn(
-                        'flex h-7 min-w-[28px] items-center justify-center rounded-lg border px-1.5 text-[11px] font-medium transition',
-                        p === safePage
-                          ? 'border-zinc-800 bg-zinc-800 text-white dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900'
-                          : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800',
-                      )}
-                    >
-                      {p}
-                    </button>
-                  ))}
+                  {(() => {
+                    const items: (number | '...')[] = [];
+                    if (totalPages <= 7) {
+                      for (let i = 1; i <= totalPages; i++) items.push(i);
+                    } else {
+                      items.push(1);
+                      if (safePage > 3) items.push('...');
+                      for (let i = Math.max(2, safePage - 1); i <= Math.min(totalPages - 1, safePage + 1); i++) items.push(i);
+                      if (safePage < totalPages - 2) items.push('...');
+                      items.push(totalPages);
+                    }
+                    return items.map((p, i) =>
+                      p === '...' ? (
+                        <span key={`ellipsis-${i}`} className="flex h-7 w-7 items-center justify-center text-[11px] text-zinc-400 dark:text-zinc-600">…</span>
+                      ) : (
+                        <button
+                          key={p}
+                          onClick={() => setPage(p)}
+                          className={cn(
+                            'flex h-7 min-w-[28px] items-center justify-center rounded-lg border px-1.5 text-[11px] font-medium transition',
+                            p === safePage
+                              ? 'border-zinc-800 bg-zinc-800 text-white dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900'
+                              : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800',
+                          )}
+                        >
+                          {p}
+                        </button>
+                      )
+                    );
+                  })()}
                   <button
                     onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                     disabled={safePage === totalPages}

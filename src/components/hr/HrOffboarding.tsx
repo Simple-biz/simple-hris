@@ -188,9 +188,20 @@ export default function HrOffboarding() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ work_email: email }),
       });
-      const json = (await res.json()) as { success?: boolean; error?: string };
+      const json = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        rbac_restored?: { roles: number; departments: number; features: number };
+      };
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Failed to restore');
-      toast.success(`${row.Name ?? email} restored to active roster`);
+      const rb = json.rbac_restored;
+      const restoredCount = rb ? rb.roles + rb.departments + rb.features : 0;
+      toast.success(`${row.Name ?? email} restored to active roster`, {
+        description:
+          restoredCount > 0
+            ? `Re-granted ${rb!.roles} role${rb!.roles === 1 ? '' : 's'}, ${rb!.departments} managed dept${rb!.departments === 1 ? '' : 's'}, ${rb!.features} feature permission${rb!.features === 1 ? '' : 's'}.`
+            : undefined,
+      });
       await Promise.all([fetchRoster(), fetchHistory()]);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to restore');
@@ -215,25 +226,30 @@ export default function HrOffboarding() {
       const json = (await res.json()) as {
         success?: boolean;
         deleted?: number;
+        snapshotDeleted?: number;
         reason?: string;
         error?: string;
       };
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Failed to remove from sheet');
-      if ((json.deleted ?? 0) > 0) {
-        toast.success(`${row.Name ?? email} removed from Master List sheet`, {
-          description: `${json.deleted} row${json.deleted === 1 ? '' : 's'} deleted. They won't be re-added on the next sync.`,
+      const removedFromList = (json.snapshotDeleted ?? 0) > 0 || (json.deleted ?? 0) > 0;
+      if (removedFromList) {
+        toast.success(`${row.Name ?? email} removed from the Offboarded sheet`, {
+          description: "They won't reappear in this list on the next sync.",
         });
       } else {
-        toast.info(`${row.Name ?? email} was not found in the Master List sheet`, {
+        toast.info(`${row.Name ?? email} was not found in the sheet`, {
           description: json.reason ?? 'They may have already been removed manually.',
         });
       }
+      // Refresh so the row drops from the list immediately (we already deleted
+      // the snapshot row server-side — no need to wait for the next sync).
+      await fetchHistory();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to remove from sheet');
     } finally {
       setRemovingFromSheet(null);
     }
-  }, []);
+  }, [fetchHistory]);
 
   const handleFireWebhook = useCallback(async (
     employee: { workEmail: string; name?: string | null },
@@ -621,7 +637,7 @@ export default function HrOffboarding() {
                                 Restore
                               </Button>
                               <Button size="sm" variant="outline" onClick={() => void handleRemoveFromSheet(r)} disabled={anyBusy || !email}
-                                title="Delete from Google Sheet Master List so the next sync won't re-add them"
+                                title="Delete from the Google Sheet Offboarded tab so the next sync won't re-add them to this list"
                                 className="h-7 gap-1 border-orange-300 text-orange-700 hover:bg-orange-50 hover:text-orange-800 disabled:opacity-50 dark:border-orange-700/50 dark:text-orange-300 dark:hover:bg-orange-950/30">
                                 {isRemovingFromSheet ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileX className="h-3 w-3" />}
                                 Remove from Sheet
@@ -696,15 +712,22 @@ function OffboardConfirmDialog({
         success?: boolean;
         error?: string;
         webhook?: { fired: boolean; status: number | null; error: string | null };
+        rbac_revoked?: { roles: number; departments: number; features: number };
       };
       if (!res.ok || !json.success) {
         throw new Error(json.error ?? 'Failed to off-board');
       }
+      const rb = json.rbac_revoked;
+      const revokedTotal = rb ? rb.roles + rb.departments + rb.features : 0;
+      const rbacNote =
+        revokedTotal > 0
+          ? ` Revoked ${revokedTotal} access grant${revokedTotal === 1 ? '' : 's'} (restorable on re-onboard).`
+          : '';
       const webhookOk = json.webhook?.error == null && json.webhook?.fired;
       if (webhookOk) {
         toast.success(`${target.name ?? target.work_email} off-boarded`, {
           description:
-            'Removed from active rosters. Account-deactivation workflow triggered.',
+            `Removed from active rosters. Account-deactivation workflow triggered.${rbacNote}`,
         });
       } else {
         // DB update committed; only the n8n webhook hiccupped. Surface that

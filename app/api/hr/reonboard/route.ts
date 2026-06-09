@@ -7,6 +7,7 @@ import { deleteOffboardedSheetByWorkEmail } from "@/lib/supabase/global-master-l
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
 import { appendMasterSheetRow } from "@/lib/google-sheets/append-master-sheet";
+import { restoreRbacGrants } from "@/lib/hr/offboard-rbac";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -107,6 +108,11 @@ export async function POST(req: Request) {
     );
   }
 
+  // 4. Restore the RBAC grants (roles, managed departments, per-feature
+  //    permissions) that off-boarding stripped, from the snapshot stored in
+  //    app_settings. No-op (all zeros) when there was no snapshot to restore.
+  const rbacRestored = await restoreRbacGrants(work_email, authz.sessionEmail);
+
   void insertAuditLog({
     user_name: authz.sessionEmail,
     user_role: "hr",
@@ -117,6 +123,7 @@ export async function POST(req: Request) {
       target_email: work_email,
       rows_updated: rows.length,
       sheet_rows_deleted: sheetRowsDeleted,
+      rbac_restored: rbacRestored,
     },
   });
 
@@ -124,5 +131,6 @@ export async function POST(req: Request) {
     success: true,
     rows_updated: rows.length,
     sheet_rows_deleted: sheetRowsDeleted,
+    rbac_restored: rbacRestored,
   });
 }

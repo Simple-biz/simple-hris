@@ -215,7 +215,10 @@
       "Bash(git --no-pager diff)",
       "Bash(git -C \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" ls-files \"app/api/hr/**\" \"src/lib/supabase/hr-onboarding-submissions*\" \"src/components/hr/**\")",
       "Bash(dir \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\docs\\\\meetings\\\\\")",
-      "Bash(dir \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\docs\\\\notes\\\\\")"
+      "Bash(dir \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\docs\\\\notes\\\\\")",
+      "Bash(cat scripts/../app/api/employee-hourly-rates/route.ts 2>/dev/null | head -120; echo \"----OFFBOARD----\"; cat app/api/hr/offboard/route.ts 2>/dev/null)",
+      "Read(//c/Users/Itachi/Desktop/simple-hris/app/api/employee-hourly-rates/**)",
+      "Bash(cat > *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

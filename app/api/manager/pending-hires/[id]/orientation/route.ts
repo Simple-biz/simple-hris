@@ -87,9 +87,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const authz = await authorizeForHire(id);
   if (!authz.ok) return authz.res;
 
-  let body: { note?: string | null } = {};
+  let body: { note?: string | null; attendedOn?: string | null } = {};
   try {
-    body = (await req.json()) as { note?: string | null };
+    body = (await req.json()) as { note?: string | null; attendedOn?: string | null };
   } catch {
     // empty body is fine
   }
@@ -97,6 +97,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const { row, error } = await markPendingHireOrientation(id, {
     markedBy: authz.sessionEmail,
     note: body.note ?? null,
+    attendedOn: body.attendedOn ?? null,
   });
   if (error) return NextResponse.json({ error }, { status: 500 });
   return NextResponse.json({ row });
