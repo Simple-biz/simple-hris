@@ -190,9 +190,9 @@ const WizardCursorOverlay = forwardRef<WizardCursorOverlayHandle, Props>(
         {Array.from(cursors.entries()).map(([email, c]) => (
           <motion.div
             key={email}
-            className="absolute will-change-transform"
-            style={{ left: 0, top: 0 }}
-            animate={{ x: `calc(${c.x}% - 2px)`, y: `calc(${c.y}% - 2px)` }}
+            className="absolute"
+            initial={{ left: `${c.x}%`, top: `${c.y}%` }}
+            animate={{ left: `${c.x}%`, top: `${c.y}%` }}
             transition={{ type: 'spring', stiffness: 600, damping: 40, mass: 0.08 }}
           >
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
