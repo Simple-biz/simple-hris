@@ -225,7 +225,10 @@
       "Read(//c/Users/Itachi/Desktop/**)",
       "Bash(Get-Content \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\PayrollWizard.tsx\")",
       "Bash(Measure-Object -Line)",
-      "PowerShell(\\(Get-Content \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\PayrollWizard.tsx\"\\).Count)"
+      "PowerShell(\\(Get-Content \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\PayrollWizard.tsx\"\\).Count)",
+      "Bash(sed -E 's/\\(KEY=\\).*/\\\\1<redacted>/')",
+      "Bash(cp /tmp/diag-chag.mjs \"c:/Users/Itachi/Desktop/simple-hris/diag-chag.mjs\")",
+      "Bash(rm -f \"c:/Users/Itachi/Desktop/simple-hris/diag-chag.mjs\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

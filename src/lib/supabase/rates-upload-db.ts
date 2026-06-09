@@ -1,7 +1,17 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parseCsv } from "@/lib/csv/parse-csv";
+import {
+  fetchAllRateHistory,
+  resolveRateAsOfDate,
+} from "@/lib/payroll/rate-history";
 
 const RATES_UPLOADS_TABLE = "rates_uploads";
+
+/** created_by tag for rate-history rows authored by the rates sync. We only
+ *  ever supersede rows carrying this tag, so a manual rate change (which uses
+ *  the actor's name) — including a scheduled future-dated raise — is never
+ *  clobbered by a sync. */
+const SYNC_HISTORY_AUTHOR = "GSheets Sync";
 
 function getRatesTableName(): string {
   return (
@@ -66,6 +76,123 @@ function parseRate(v: unknown): string | null {
   if (!cleaned) return null;
   if (Number.isNaN(Number(cleaned))) return null;
   return cleaned;
+}
+
+function numEq(a: number | null, b: number | null): boolean {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return Math.abs(a - b) < 0.005;
+}
+
+function rateToNum(v: string | null): number | null {
+  if (v == null) return null;
+  const n = parseFloat(String(v).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function todayMidnight(): Date {
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+
+function fmtIsoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Resolve the start date (YYYY-MM-DD) of the pay cycle currently being processed
+ * — the period of the `is_current` Hubstaff upload. `hubstaff_hours` stores
+ * canonical weekday columns, so the date range lives in the upload's
+ * `source_file` filename (e.g. `..._2026-05-31_to_2026-06-07.csv`). Returns null
+ * when no current upload exists or the filename has no parseable range; callers
+ * fall back to today.
+ */
+async function getCurrentPayCycleStartIso(supabase: SupabaseClient): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("hubstaff_uploads")
+    .select("source_file")
+    .eq("is_current", true)
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  const src = (data as { source_file?: string | null }).source_file;
+  if (typeof src !== "string") return null;
+  const m = /(\d{4})-(\d{2})-(\d{2})\s*_?to_?\s*\d{4}-\d{2}-\d{2}/i.exec(src);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+
+/**
+ * Mirror sheet-driven rate changes into `employee_rate_history` — the
+ * authoritative source the Payroll Wizard prorates from. The rates cache the
+ * sync writes (`employee_hourly_rates`) is NOT read for pay math, so without
+ * this a raise in the Google Sheet never reaches the wizard.
+ *
+ * Semantics:
+ *   - effective_from = start of the current pay cycle (so the raise applies to
+ *     the whole paycheck being built). Falls back to today when the cycle can't
+ *     be resolved.
+ *   - Idempotent: only writes when the incoming rate differs from the rate
+ *     history currently resolves to as-of today, so re-running the sync with
+ *     unchanged rates is a no-op (no row churn).
+ *   - Only ever deletes prior sync-authored rows (created_by = SYNC_HISTORY_AUTHOR)
+ *     at/after the cycle start — manual edits and scheduled future raises survive.
+ */
+async function reconcileRateHistory(
+  supabase: SupabaseClient,
+  rows: { workEmail: string; personalEmail: string | null; regularRate: string; otRate: string | null }[],
+): Promise<number> {
+  const cycleStartIso =
+    (await getCurrentPayCycleStartIso(supabase)) ?? fmtIsoDate(todayMidnight());
+  const today = todayMidnight();
+  const history = await fetchAllRateHistory();
+
+  const changed: { email: string; reg: number | null; ot: number | null }[] = [];
+  for (const c of rows) {
+    const incomingReg = rateToNum(c.regularRate);
+    const incomingOt = rateToNum(c.otRate);
+    const cur =
+      resolveRateAsOfDate(history.get(c.workEmail), today) ??
+      (c.personalEmail ? resolveRateAsOfDate(history.get(c.personalEmail), today) : null);
+    if (cur && numEq(cur.regularRate, incomingReg) && numEq(cur.otRate, incomingOt)) {
+      continue;
+    }
+    changed.push({ email: c.workEmail, reg: incomingReg, ot: incomingOt });
+  }
+
+  if (changed.length === 0) return 0;
+
+  const emails = changed.map((c) => c.email);
+  const CHUNK = 200;
+  for (let i = 0; i < emails.length; i += CHUNK) {
+    const slice = emails.slice(i, i + CHUNK);
+    const { error } = await supabase
+      .from("employee_rate_history")
+      .delete()
+      .in("employee_email", slice)
+      .gte("effective_from", cycleStartIso)
+      .eq("created_by", SYNC_HISTORY_AUTHOR);
+    if (error) {
+      console.warn("[rates-upload] reconcileRateHistory supersede failed:", error.message);
+    }
+  }
+
+  const note = `sheet rate sync; effective ${cycleStartIso} (current pay-cycle start)`;
+  const inserts = changed.map((c) => ({
+    employee_email: c.email,
+    regular_rate: c.reg == null ? null : String(c.reg),
+    ot_rate: c.ot == null ? null : String(c.ot),
+    effective_from: cycleStartIso,
+    created_by: SYNC_HISTORY_AUTHOR,
+    note,
+  }));
+  for (let i = 0; i < inserts.length; i += CHUNK) {
+    const batch = inserts.slice(i, i + CHUNK);
+    const { error } = await supabase.from("employee_rate_history").insert(batch);
+    if (error) {
+      console.warn("[rates-upload] reconcileRateHistory insert failed:", error.message);
+    }
+  }
+  return changed.length;
 }
 
 /**
@@ -204,6 +331,9 @@ export async function replaceEmployeeHourlyRatesFromCsv(
   /** Rows skipped because the employee is in HSL / Hogan Smith Law — their
    *  rates are owned by the Hogan sheet sync. */
   skippedHsl: number;
+  /** Number of employees whose rate changed and got a new `employee_rate_history`
+   *  row (effective the current pay-cycle start). 0 when nothing changed. */
+  rateHistoryWritten: number;
 }> {
   const supabase = requireServiceRole();
   const table = getRatesTableName();
@@ -449,6 +579,28 @@ export async function replaceEmployeeHourlyRatesFromCsv(
 
   await promoteRatesUploadToCurrent(supabase, uploadId);
 
+  // Mirror any rate CHANGES into employee_rate_history — the authoritative
+  // source the Payroll Wizard prorates from. Without this, a raise reaches the
+  // rates cache (and Rates & Profiles) but never the wizard. Non-fatal: a
+  // failure here is logged inside the helper but doesn't fail the cache sync.
+  let rateHistoryWritten = 0;
+  try {
+    rateHistoryWritten = await reconcileRateHistory(
+      supabase,
+      finalRows.map((c) => ({
+        workEmail: c.workEmail,
+        personalEmail: c.personalEmail,
+        regularRate: c.regularRate,
+        otRate: c.otRate,
+      })),
+    );
+  } catch (e) {
+    console.warn(
+      "[rates-upload] reconcileRateHistory threw:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+
   return {
     rowCount: inserted + updated,
     uploadId,
@@ -458,5 +610,6 @@ export async function replaceEmployeeHourlyRatesFromCsv(
     skippedNoWorkEmail,
     skippedNoRate,
     skippedHsl,
+    rateHistoryWritten,
   };
 }

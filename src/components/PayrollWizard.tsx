@@ -910,6 +910,9 @@ export default function PayrollWizard({
   >(null);
   const [isRecalcPending, startRecalc] = useTransition();
   const [additionsSearch, setAdditionsSearch] = useState('');
+  const [additionsSaving, setAdditionsSaving] = useState(false);
+  const [additionsSavedAt, setAdditionsSavedAt] = useState<Date | null>(null);
+  const [lockedPabSnapshot, setLockedPabSnapshot] = useState<Record<string, 'eligible' | 'ineligible' | 'in_progress'> | null>(null);
   const [validationSearch, setValidationSearch] = useState('');
   const [pendingDisputeRows, setPendingDisputeRows] = useState<Array<{
     id: string;
@@ -1143,6 +1146,28 @@ export default function PayrollWizard({
     });
     const json = (await res.json()) as { error: string | null };
     if (json.error) throw new Error(json.error);
+  }, []);
+
+  const loadAdditionsProgress = React.useCallback(async (sourceFile: string) => {
+    try {
+      const res = await fetch(`/api/app-settings?key=payroll.wizard.additions.${sourceFile}`);
+      const json = await res.json();
+      if (json.value) {
+        const data = JSON.parse(json.value);
+        if (data.bonusOverrides) setBonusOverrides(data.bonusOverrides);
+        if (data.employeeMetrics) setEmployeeMetrics(data.employeeMetrics);
+        if (data.deptMetrics) setDeptMetrics(data.deptMetrics);
+        if (data.employeeDepts) setEmployeeDepts(data.employeeDepts);
+        if (data.employeeBonuses) setEmployeeBonuses(data.employeeBonuses);
+        if (data.techBonusManualGrants) setTechBonusManualGrants(new Set(data.techBonusManualGrants));
+        if (data.techBonusManualRevokes) setTechBonusManualRevokes(new Set(data.techBonusManualRevokes));
+        if (data.pabStatusSnapshot) setLockedPabSnapshot(data.pabStatusSnapshot as Record<string, 'eligible' | 'ineligible' | 'in_progress'>);
+        setAdditionsSavedAt(new Date()); // Mark as having a saved state
+        toast.info('Restored locked-in additions progress');
+      }
+    } catch (e) {
+      console.error('Failed to load additions progress', e);
+    }
   }, []);
 
   /**
@@ -1528,6 +1553,12 @@ export default function PayrollWizard({
     }
     setCalcSourceFile(uploadedSourceFiles[0]);
   }, [uploadedSourceFiles]);
+
+  // Load locked additions progress on mount / source-file change
+  useEffect(() => {
+    if (!calcSourceFile) return;
+    void loadAdditionsProgress(calcSourceFile);
+  }, [calcSourceFile, loadAdditionsProgress]);
 
   // Fallback: if source files loaded but none exist, load all data unfiltered
   useEffect(() => {
@@ -2655,6 +2686,40 @@ export default function PayrollWizard({
     }
     return map;
   }, [pabMonthRange, employeeWeekdayHours, perfectAttendanceEligible, employeeDepts]);
+
+  // When a locked snapshot exists, use it so values don't change on refresh.
+  const effectivePabStatus = useMemo<Map<string, 'eligible' | 'ineligible' | 'in_progress'>>(() => {
+    if (lockedPabSnapshot) return new Map(Object.entries(lockedPabSnapshot)) as Map<string, 'eligible' | 'ineligible' | 'in_progress'>;
+    return pabStatusByEmail;
+  }, [lockedPabSnapshot, pabStatusByEmail]);
+
+  const saveAdditionsProgress = React.useCallback(async () => {
+    if (!calcSourceFile) {
+      toast.error('No source file selected to lock progress against.');
+      return;
+    }
+    setAdditionsSaving(true);
+    try {
+      const payload = {
+        bonusOverrides,
+        employeeMetrics,
+        deptMetrics,
+        employeeDepts,
+        employeeBonuses,
+        techBonusManualGrants: Array.from(techBonusManualGrants),
+        techBonusManualRevokes: Array.from(techBonusManualRevokes),
+        pabStatusSnapshot: Object.fromEntries(pabStatusByEmail),
+      };
+      await savePabSetting(`payroll.wizard.additions.${calcSourceFile}`, JSON.stringify(payload));
+      setAdditionsSavedAt(new Date());
+      setLockedPabSnapshot(Object.fromEntries(pabStatusByEmail) as Record<string, 'eligible' | 'ineligible' | 'in_progress'>);
+      toast.success('Additions progress locked in');
+    } catch (e) {
+      toast.error('Failed to lock in additions', { description: e instanceof Error ? e.message : 'Unknown error' });
+    } finally {
+      setAdditionsSaving(false);
+    }
+  }, [calcSourceFile, bonusOverrides, employeeMetrics, deptMetrics, employeeDepts, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
 
   /**
    * US-holiday forgiveness summary scoped to the current PAB month: for each holiday
@@ -6101,6 +6166,33 @@ export default function PayrollWizard({
                     </div>
                   </div>
                 )}
+
+                <Button
+                  onClick={saveAdditionsProgress}
+                  disabled={additionsSaving || !calcSourceFile}
+                  variant="outline"
+                  className={cn(
+                    "gap-2 h-auto py-2 self-start",
+                    additionsSavedAt ? "border-emerald-500/50 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "border-indigo-500/30 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400"
+                  )}
+                >
+                  {additionsSaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : additionsSavedAt ? (
+                    <ShieldCheck className="h-4 w-4" />
+                  ) : (
+                    <Lock className="h-4 w-4" />
+                  )}
+                  <div className="text-left">
+                    <div className="text-[10px] uppercase font-bold leading-tight">Persistence</div>
+                    <div className="text-xs font-semibold">{additionsSaving ? 'Locking in...' : additionsSavedAt ? 'Locked In' : 'Lock In Progress'}</div>
+                    {additionsSavedAt && (
+                      <div className="text-[9px] opacity-70">
+                        {additionsSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    )}
+                  </div>
+                </Button>
               </div>
               </div>
 
@@ -7420,7 +7512,7 @@ export default function PayrollWizard({
                                 {/* PAB — tri-state pill (Eligible / Ineligible / In Progress); click to open calendar modal */}
                                 {(() => {
                                   const normEmpEmail = normEmail(emp.email) ?? emp.email.toLowerCase();
-                                  const status = pabStatusByEmail.get(normEmpEmail) ?? 'in_progress';
+                                  const status = effectivePabStatus.get(normEmpEmail) ?? 'in_progress';
                                   const label =
                                     status === 'eligible' ? '✓ Eligible'
                                     : status === 'ineligible' ? '✗ Ineligible'
@@ -8878,7 +8970,7 @@ export default function PayrollWizard({
                             const kpiBonus = hslStepBonusByEmail[em] ?? 0;
                             const override = bonusOverrides[r.email] ?? null;
                             const effectiveBonus = override !== null ? override : kpiBonus;
-                            const paStatus = pabStatusByEmail.get(em) ?? 'in_progress';
+                            const paStatus = effectivePabStatus.get(em) ?? 'in_progress';
                             const pabAmt = paStatus === 'eligible' ? 5000 : 0;
                             const techOn = techBonusEligible.has(r.email);
                             const techAmt = techOn ? 1850 : 0;
@@ -9018,7 +9110,7 @@ export default function PayrollWizard({
                               const ov = bonusOverrides[r.email] ?? null;
                               const kpi = hslStepBonusByEmail[em] ?? 0;
                               totalEffective += ov !== null ? ov : kpi;
-                              const st = pabStatusByEmail.get(em) ?? 'in_progress';
+                              const st = effectivePabStatus.get(em) ?? 'in_progress';
                               if (st === 'eligible') totalPab += 5000;
                               if (techBonusEligible.has(r.email)) totalTech += 1850;
                               const wp = weekendPremiumByEmail.get(em);
@@ -12536,7 +12628,7 @@ export default function PayrollWizard({
           const emp = calcResults.find((e) => e.email === pabCalendarModalEmail);
           const normEmpEmail = normEmail(pabCalendarModalEmail) ?? pabCalendarModalEmail.toLowerCase();
           const paEligible = perfectAttendanceEligible.has(normEmpEmail);
-          const paStatus = pabStatusByEmail.get(normEmpEmail) ?? (paEligible ? 'eligible' : 'ineligible');
+          const paStatus = effectivePabStatus.get(normEmpEmail) ?? (paEligible ? 'eligible' : 'ineligible');
           const isHsl =
             employeeDepts[pabCalendarModalEmail] === 'hogan_smith_law' ||
             employeeDepts[pabCalendarModalEmail.toLowerCase()] === 'hogan_smith_law';
