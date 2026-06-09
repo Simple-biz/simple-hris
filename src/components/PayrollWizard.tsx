@@ -949,6 +949,16 @@ export default function PayrollWizard({
   } | null>(null);
   const [ssdKpiLoading, setSsdKpiLoading] = useState(true);
 
+  /** ISO week-start (YYYY-MM-DD) of the active Hubstaff source file.
+   *  Both KPI load effects pin to this week when it is known. */
+  const hubstaffWeekStart = useMemo(() => {
+    if (!calcSourceFile) return null;
+    const r = parseDateRangeFromFilename(calcSourceFile);
+    if (!r) return null;
+    const d = r.start;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, [calcSourceFile]);
+
   /**
    * Manager-submitted department bonuses (KPI Calculator → Additions bridge).
    * For each manager-bonus department, pulls the latest `ready`/`locked` weekly
@@ -969,18 +979,27 @@ export default function PayrollWizard({
           rows?: { department: string; period_start: string; period_end: string; status: string }[];
         };
         const managerKeys = new Set(MANAGER_BONUS_DEPT_KEYS);
-        // Latest ready/locked period per manager-bonus department (locked beats ready on a tie).
+        // When the Hubstaff week is known, pin to that week.
+        // Otherwise take the latest ready/locked per department (locked beats ready).
         const chosen = new Map<string, { period_start: string; status: string }>();
         for (const row of statusJson.rows ?? []) {
           if (!managerKeys.has(row.department)) continue;
           if (row.status !== 'ready' && row.status !== 'locked') continue;
-          const cur = chosen.get(row.department);
-          if (
-            !cur ||
-            row.period_start > cur.period_start ||
-            (row.period_start === cur.period_start && row.status === 'locked')
-          ) {
-            chosen.set(row.department, { period_start: row.period_start, status: row.status });
+          if (hubstaffWeekStart) {
+            if (row.period_start !== hubstaffWeekStart) continue;
+            const cur = chosen.get(row.department);
+            if (!cur || (cur.status !== 'locked' && row.status === 'locked')) {
+              chosen.set(row.department, { period_start: row.period_start, status: row.status });
+            }
+          } else {
+            const cur = chosen.get(row.department);
+            if (
+              !cur ||
+              row.period_start > cur.period_start ||
+              (row.period_start === cur.period_start && row.status === 'locked')
+            ) {
+              chosen.set(row.department, { period_start: row.period_start, status: row.status });
+            }
           }
         }
         if (cancelled) return;
@@ -1011,7 +1030,7 @@ export default function PayrollWizard({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hubstaffWeekStart]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1036,32 +1055,36 @@ export default function PayrollWizard({
         }
         setSsdMemberEmails(memberSet);
 
-        // Pick the latest ready/locked period — prefer locked over ready when
-        // they tie on date (locked is the harder commit).
+        // When the Hubstaff week is known, pin to that exact week.
+        // Fall back to latest ready/locked only if no source file is loaded yet.
         const periods = (statusJson.rows ?? []).filter(
           (p) => p.status === 'ready' || p.status === 'locked',
         );
-        if (periods.length === 0) {
+        let pick: { period_start: string; period_end: string; status: string } | null = null;
+        if (hubstaffWeekStart) {
+          pick = periods.find((p) => p.period_start === hubstaffWeekStart) ?? null;
+        } else if (periods.length > 0) {
+          periods.sort((a, b) => {
+            if (a.period_start !== b.period_start) {
+              return b.period_start.localeCompare(a.period_start);
+            }
+            return a.status === 'locked' ? -1 : b.status === 'locked' ? 1 : 0;
+          });
+          pick = periods[0]!;
+        }
+        if (!pick) {
           setSsdKpiPeriod(null);
           setSsdKpiAmounts({});
           return;
         }
-        periods.sort((a, b) => {
-          if (a.period_start !== b.period_start) {
-            return b.period_start.localeCompare(a.period_start);
-          }
-          // Same date: locked beats ready
-          return a.status === 'locked' ? -1 : b.status === 'locked' ? 1 : 0;
-        });
-        const latest = periods[0]!;
         setSsdKpiPeriod({
-          period_start: latest.period_start,
-          period_end: latest.period_end,
-          status: latest.status as 'ready' | 'locked',
+          period_start: pick.period_start,
+          period_end: pick.period_end,
+          status: pick.status as 'ready' | 'locked',
         });
 
         const entriesRes = await fetch(
-          `/api/hsl-bonus/entries?dept=ssd_medical_records&period_start=${latest.period_start}`,
+          `/api/hsl-bonus/entries?dept=ssd_medical_records&period_start=${pick.period_start}`,
           { cache: 'no-store' },
         );
         const entriesJson = (await entriesRes.json()) as {
@@ -1084,7 +1107,7 @@ export default function PayrollWizard({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hubstaffWeekStart]);
 
   // ── Overtime settings from System Settings ──────────────────────────────────
   const [otGlobalSuspended, setOtGlobalSuspended] = useState(false);

@@ -18,6 +18,7 @@ import {
   MANAGER_BONUS_DEPT_KEYS,
   calculateDepartmentBonus,
 } from '@/lib/payroll/department-bonus';
+import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -143,7 +144,7 @@ export default function DeptBonusCalculator({
   managedDepts,
   isElevated,
 }: DeptBonusCalculatorProps) {
-  const [weekStart] = useState(() => isoWeekStart(new Date()));
+  const [weekStart, setWeekStart] = useState(() => isoWeekStart(new Date()));
   const weekEnd = useMemo(() => weekEndFromStart(weekStart), [weekStart]);
 
   // Roster grouped by normalized department key, limited to manager-bonus depts.
@@ -275,6 +276,28 @@ export default function DeptBonusCalculator({
     visibleDeptKeys.forEach((k) => void loadDept(k));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleDeptKeys, loadDept]);
+
+  // Pin the KPI week to the latest Hubstaff upload so managers always enter
+  // data for the same week accounting is processing in the Payroll Wizard.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
+        const json = (await res.json()) as { files?: string[] };
+        const latest = json.files?.[0];
+        if (latest) {
+          const range = parseDateRangeFromFilename(latest);
+          if (range) {
+            const d = range.start;
+            const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            setWeekStart((cur) => (iso !== cur ? iso : cur));
+          }
+        }
+      } catch {
+        // keep today's week on any error
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch each department's team wallpaper (best-effort; falls back to a mesh).
   useEffect(() => {

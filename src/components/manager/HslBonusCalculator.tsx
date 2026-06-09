@@ -16,6 +16,7 @@ import {
   KpiData, SubTeamName, TeamSplitRule, TieredRule,
   calcBonus, calcTeamSplitShare, canAccessHslDept, formatPeso,
 } from '@/lib/hsl-bonus/schema';
+import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 import HslBonusReadyPreview from './HslBonusReadyPreview';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
@@ -222,7 +223,7 @@ export default function HslBonusCalculator({
   isElevated,
 }: HslBonusCalculatorProps) {
   const today = new Date();
-  const [weekStart]  = useState(() => isoWeekStart(today));
+  const [weekStart, setWeekStart] = useState(() => isoWeekStart(today));
   const [monthStart] = useState(() => isoMonthStart(today));
 
   const visibleDepts = useMemo<HslDeptKey[]>(
@@ -357,6 +358,28 @@ export default function HslBonusCalculator({
   useEffect(() => {
     visibleDepts.forEach((k) => void loadDept(k));
   }, [visibleDepts, loadDept]);
+
+  // Pin the KPI week to the latest Hubstaff upload so managers always enter
+  // data for the same week accounting is processing in the Payroll Wizard.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
+        const json = (await res.json()) as { files?: string[] };
+        const latest = json.files?.[0];
+        if (latest) {
+          const range = parseDateRangeFromFilename(latest);
+          if (range) {
+            const d = range.start;
+            const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            setWeekStart(iso);
+          }
+        }
+      } catch {
+        // keep today's week on any error
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Save entries to DB ─────────────────────────────────────────────────────
 
@@ -559,7 +582,7 @@ export default function HslBonusCalculator({
             <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
               {isElevated ? 'All Departments' : visibleDepts.length === 1 ? HSL_DEPTS[visibleDepts[0]!].name : 'My Departments'}
               <span className="ml-2 font-mono text-xs font-normal text-zinc-500">
-                week of {isoWeekStart(today)}
+                week of {weekStart}
               </span>
             </h2>
           </div>
