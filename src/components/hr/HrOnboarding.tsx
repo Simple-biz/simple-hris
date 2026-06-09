@@ -96,6 +96,9 @@ export default function HrOnboarding() {
   const [bulkResult, setBulkResult] = useState<{
     promoted: number; failed: number; total: number;
   } | null>(null);
+  // Multi-select promote (Ready tab). Holds the ids ticked in the table.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [promotingSelected, setPromotingSelected] = useState(false);
 
   const fetchPending = useCallback(async () => {
     setPendingLoading(true);
@@ -143,6 +146,12 @@ export default function HrOnboarding() {
     return () => { void supabase.removeChannel(channel); };
   }, []);
 
+  // Drop any selection when leaving the Ready tab so the bulk bar can't act on
+  // rows the user can no longer see.
+  useEffect(() => {
+    if (tab !== 'ready') setSelected(new Set());
+  }, [tab]);
+
   const filteredPending = useMemo(() => {
     const q = search.trim().toLowerCase();
     return pending.filter((r) => {
@@ -178,6 +187,37 @@ export default function HrOnboarding() {
     }
     return c;
   }, [pending]);
+
+  // Ready rows in the current filter that can actually be promoted (orientation
+  // confirmed; a 'ready' row always has a work email). These are the only rows
+  // that get a tick box.
+  const selectableIds = useMemo(
+    () =>
+      filteredPending
+        .filter((r) => r.status === 'ready' && !!r.orientation_attended_at)
+        .map((r) => r.id),
+    [filteredPending],
+  );
+  const selectedCount = selectableIds.filter((id) => selected.has(id)).length;
+  const allSelected = selectableIds.length > 0 && selectedCount === selectableIds.length;
+  const someSelected = selectedCount > 0 && !allSelected;
+  const showSelect = tab === 'ready' && selectableIds.length > 0;
+
+  function toggleOne(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelected((prev) => {
+      // If everything selectable is already ticked, clear; otherwise select all.
+      const everything = selectableIds.every((id) => prev.has(id));
+      return everything ? new Set() : new Set(selectableIds);
+    });
+  }
 
   async function promote(row: HrPendingEmployeeRow) {
     setBusyId(row.id);
@@ -238,6 +278,45 @@ export default function HrOnboarding() {
       toast.error(e instanceof Error ? e.message : 'Bulk promote failed');
     } finally {
       setBulkPromoting(false);
+    }
+  }
+
+  async function promoteSelected() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setPromotingSelected(true);
+    try {
+      const res = await fetch('/api/hr/pending-employees/bulk-promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const json = (await res.json()) as {
+        promoted?: number; failed?: number; total?: number;
+        results?: Array<{ name: string; ok: boolean; error: string | null }>;
+        error?: string;
+      };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Bulk promote failed');
+      const promoted = json.promoted ?? 0;
+      const failed = json.failed ?? 0;
+      if (failed === 0) {
+        toast.success(`${promoted} hire${promoted !== 1 ? 's' : ''} promoted`, {
+          description: 'All added to the master list and written to the Google Sheet.',
+        });
+      } else {
+        const firstErr = json.results?.find((r) => !r.ok && r.error);
+        toast.warning(`${promoted} promoted, ${failed} failed`, {
+          description: firstErr
+            ? `${firstErr.name}: ${firstErr.error}`
+            : 'Some hires could not be promoted (orientation not confirmed?).',
+        });
+      }
+      setSelected(new Set());
+      await fetchPending();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Bulk promote failed');
+    } finally {
+      setPromotingSelected(false);
     }
   }
 
@@ -518,6 +597,38 @@ export default function HrOnboarding() {
         </CardHeader>
 
         <CardContent className="pt-4">
+          {tab === 'ready' && selected.size > 0 && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 dark:border-emerald-800/60 dark:bg-emerald-950/30">
+              <span className="text-xs font-medium text-emerald-900 dark:text-emerald-100">
+                {selected.size} selected
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setSelected(new Set())}
+                  disabled={promotingSelected}
+                >
+                  Clear
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-7 gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white hover:opacity-90"
+                  onClick={() => void promoteSelected()}
+                  disabled={promotingSelected}
+                  title="Promote all selected hires to the master list"
+                >
+                  {promotingSelected ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3 w-3" />
+                  )}
+                  Promote selected ({selected.size})
+                </Button>
+              </div>
+            </div>
+          )}
           {pendingLoading ? (
             <div className="flex items-center justify-center py-10 text-zinc-500">
               <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading pending hires…
@@ -536,6 +647,21 @@ export default function HrOnboarding() {
               <table className="w-full text-left text-sm sm:min-w-[860px]">
                 <thead className="sticky top-0 z-[1] bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
                   <tr>
+                    {tab === 'ready' && (
+                      <th className="w-10 px-4 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all ready hires"
+                          className="h-4 w-4 cursor-pointer accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                          checked={allSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someSelected;
+                          }}
+                          onChange={toggleAll}
+                          disabled={!showSelect}
+                        />
+                      </th>
+                    )}
                     <th className="px-4 py-3 font-semibold">Name</th>
                     <th className="px-4 py-3 font-semibold">Department</th>
                     <th className="px-4 py-3 font-semibold">Personal</th>
@@ -559,6 +685,23 @@ export default function HrOnboarding() {
                           transition={{ duration: 0.18 }}
                           className="align-top transition-colors hover:bg-emerald-50/35 dark:hover:bg-emerald-950/25"
                         >
+                          {tab === 'ready' && (
+                            <td data-label="Select" className="px-4 py-3">
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${row.name}`}
+                                className="h-4 w-4 cursor-pointer accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+                                checked={selected.has(row.id)}
+                                onChange={() => toggleOne(row.id)}
+                                disabled={!row.orientation_attended_at}
+                                title={
+                                  row.orientation_attended_at
+                                    ? undefined
+                                    : 'Orientation must be confirmed before this hire can be promoted.'
+                                }
+                              />
+                            </td>
+                          )}
                           <td data-label="Name" className="px-4 py-3">
                             <div className="font-medium text-zinc-900 dark:text-zinc-100">
                               {row.name}
