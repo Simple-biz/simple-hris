@@ -1450,7 +1450,28 @@ function RecentHiresCard({
   hires: { row: EmployeeRow; days: number; t: number }[];
   fullGrid?: boolean;
 }) {
-  const shown = fullGrid ? hires : hires.slice(0, 8);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 15;
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return hires;
+    const q = search.trim().toLowerCase();
+    return hires.filter(({ row }) =>
+      (row.name ?? '').toLowerCase().includes(q) ||
+      (row.department ?? '').toLowerCase().includes(q) ||
+      (row.work_email ?? '').toLowerCase().includes(q) ||
+      (row.personal_email ?? '').toLowerCase().includes(q),
+    );
+  }, [hires, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageSlice = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  useEffect(() => { setPage(1); }, [search]);
+
+  const shown = fullGrid ? pageSlice : hires.slice(0, 8);
 
   const header = (
     <div className="flex items-start justify-between gap-3">
@@ -1472,6 +1493,25 @@ function RecentHiresCard({
     return (
       <div>
         {header}
+        <div className="mt-4 flex items-center gap-2">
+          <div className="relative flex-1">
+            <svg className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <circle cx={11} cy={11} r={8} /><path d="m21 21-4.35-4.35" />
+            </svg>
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search by name, dept, or email…"
+              className="w-full rounded-lg border border-zinc-200 bg-white py-1.5 pl-8 pr-3 text-[13px] text-zinc-800 placeholder-zinc-400 outline-none ring-0 transition focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder-zinc-500 dark:focus:border-zinc-500"
+            />
+          </div>
+          {search && (
+            <span className="text-[11px] text-zinc-400 dark:text-zinc-500 shrink-0">
+              {filtered.length} result{filtered.length !== 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
         {loading ? (
           <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 9 }).map((_, i) => (
@@ -1485,46 +1525,87 @@ function RecentHiresCard({
             ))}
           </div>
         ) : shown.length === 0 ? (
-          <p className="mt-8 text-center text-sm text-zinc-400 dark:text-zinc-500">No new hires in the last 90 days.</p>
+          <p className="mt-8 text-center text-sm text-zinc-400 dark:text-zinc-500">
+            {search ? 'No matches found.' : 'No new hires in the last 90 days.'}
+          </p>
         ) : (
-          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {shown.map(({ row, days }, i) => (
-              <div
-                key={`${i}-${row.work_email ?? row.personal_email ?? ''}`}
-                className="group relative flex items-start gap-3 rounded-xl border border-zinc-100 bg-zinc-50/50 p-3.5 transition-colors hover:border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800/60 dark:bg-zinc-900/30 dark:hover:border-zinc-700/60 dark:hover:bg-zinc-900/60"
-              >
-                <div className="relative shrink-0">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-emerald-100 to-teal-200 text-sm font-bold text-emerald-900 ring-2 ring-white dark:from-emerald-900/50 dark:to-teal-900/50 dark:text-emerald-200 dark:ring-zinc-950">
-                    {initialsFromName(row.name)}
+          <>
+            <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {shown.map(({ row, days }, i) => (
+                <div
+                  key={`${i}-${row.work_email ?? row.personal_email ?? ''}`}
+                  className="group relative flex items-start gap-3 rounded-xl border border-zinc-100 bg-zinc-50/50 p-3.5 transition-colors hover:border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800/60 dark:bg-zinc-900/30 dark:hover:border-zinc-700/60 dark:hover:bg-zinc-900/60"
+                >
+                  <div className="relative shrink-0">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-emerald-100 to-teal-200 text-sm font-bold text-emerald-900 ring-2 ring-white dark:from-emerald-900/50 dark:to-teal-900/50 dark:text-emerald-200 dark:ring-zinc-950">
+                      {initialsFromName(row.name)}
+                    </div>
+                    {days <= 7 && (
+                      <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950" />
+                    )}
                   </div>
-                  {days <= 7 && (
-                    <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950" />
-                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
+                      {row.name ?? row.work_email ?? '—'}
+                    </p>
+                    <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                      {row.department ?? 'Unassigned'}
+                    </p>
+                    <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
+                      {row.work_email ?? row.personal_email ?? '—'}
+                    </p>
+                  </div>
+                  <span className={cn(
+                    'shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
+                    days === 0
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                      : days <= 7
+                        ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400'
+                        : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+                  )}>
+                    {days === 0 ? 'Today' : `${days}d`}
+                  </span>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
-                    {row.name ?? row.work_email ?? '—'}
-                  </p>
-                  <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-                    {row.department ?? 'Unassigned'}
-                  </p>
-                  <p className="mt-0.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500">
-                    {row.work_email ?? row.personal_email ?? '—'}
-                  </p>
+              ))}
+            </div>
+            {totalPages > 1 && (
+              <div className="mt-5 flex items-center justify-between gap-2">
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                  {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length}
+                </p>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={safePage === 1}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-500 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" /></svg>
+                  </button>
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={cn(
+                        'flex h-7 min-w-[28px] items-center justify-center rounded-lg border px-1.5 text-[11px] font-medium transition',
+                        p === safePage
+                          ? 'border-zinc-800 bg-zinc-800 text-white dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900'
+                          : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800',
+                      )}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={safePage === totalPages}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-500 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg>
+                  </button>
                 </div>
-                <span className={cn(
-                  'shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
-                  days === 0
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                    : days <= 7
-                      ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400'
-                      : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
-                )}>
-                  {days === 0 ? 'Today' : `${days}d`}
-                </span>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
     );
