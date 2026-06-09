@@ -99,6 +99,27 @@ function normalizeName(s: string | null | undefined): string | null {
   return t || null;
 }
 
+/**
+ * Identity key for collapsing multiple master rows into ONE Rates & Profiles
+ * card. A person listed under several departments (e.g. moved teams but the old
+ * department row was never removed) has multiple `global_master_list` rows that
+ * share a Work Email AND Name — those collapse to one card. A RECYCLED work
+ * email (one person left, another inherited the seat address) has the same Work
+ * Email but a DIFFERENT Name, so it keeps a distinct key and stays a separate
+ * card. Falls back to personal email, then name, when no work email exists.
+ */
+function personCardKey(
+  workEmail: string | null,
+  personalEmail: string | null,
+  name: string | null,
+): string {
+  const w = normEmail(workEmail);
+  const p = normEmail(personalEmail);
+  const n = normalizeName(name);
+  const base = w || p || n || "";
+  return `${base}|${n ?? ""}`;
+}
+
 /** DB column names for the alternate work emails synced from the master sheet
  *  (added 2026-05-21). gsuite aliases a promoted employee — most often a PM —
  *  presents to customers; mail still routes to their primary work inbox. */
@@ -919,6 +940,9 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
 
   const profiles: EmployeeRateProfile[] = [];
   const matchedMasters = new Set<RawRow>();
+  // One card per person: collapse duplicate master rows (same Work Email + Name
+  // listed under several departments). See personCardKey.
+  const cardedPersonKeys = new Set<string>();
   const usedIds = new Set<string>();
   const uniqueId = (base: string): string => {
     if (!usedIds.has(base)) {
@@ -945,6 +969,13 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
     if (!master) continue;
     if (!toStr(getField(master, ["Name", "name"]))) continue;
     matchedMasters.add(master);
+    cardedPersonKeys.add(
+      personCardKey(
+        toStr(getField(master, ["Work Email", "work_email", "Work_Email"])) || null,
+        toStr(getField(master, ["Personal Email", "personal_email", "Personal_Email"])) || null,
+        toStr(getField(master, ["Name", "name"])) || null,
+      ),
+    );
     const identity = buildIdentity(mergedRates, master);
 
     // HSL override for hourly + OT rates: when this employee appears in
@@ -1062,6 +1093,16 @@ export async function getEmployeeRateProfiles(): Promise<GetEmployeeRateProfiles
     // Skip placeholder master rows (no Name set) — these are work-email-only
     // stubs that bloated the Rates & Profiles list with junk entries.
     if (!toStr(getField(masterRow, ["Name", "name"]))) continue;
+
+    // One card per person: if this master row is the same human (Work Email +
+    // Name) as a card we already built — a duplicate department row — skip it.
+    const personKey = personCardKey(
+      toStr(getField(masterRow, ["Work Email", "work_email", "Work_Email"])) || null,
+      toStr(getField(masterRow, ["Personal Email", "personal_email", "Personal_Email"])) || null,
+      toStr(getField(masterRow, ["Name", "name"])) || null,
+    );
+    if (cardedPersonKeys.has(personKey)) continue;
+    cardedPersonKeys.add(personKey);
 
     const mPersonal = normEmail(
       toStr(getField(masterRow, ["Personal Email", "personal_email", "Personal_Email"])),
@@ -1446,6 +1487,9 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
 
   const profiles: EmployeeRateProfileSummary[] = [];
   const matchedMasters = new Set<RawRow>();
+  // One card per person: collapse multiple master rows that share Work Email +
+  // Name (same human listed under several departments). See personCardKey.
+  const cardedPersonKeys = new Set<string>();
   const usedIds = new Set<string>();
   const uniqueId = (base: string): string => {
     if (!usedIds.has(base)) {
@@ -1473,6 +1517,13 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
     if (!master) continue;
     if (!toStr(getField(master, ["Name", "name"]))) continue;
     matchedMasters.add(master);
+    cardedPersonKeys.add(
+      personCardKey(
+        toStr(getField(master, ["Work Email", "work_email", "Work_Email"])) || null,
+        toStr(getField(master, ["Personal Email", "personal_email", "Personal_Email"])) || null,
+        toStr(getField(master, ["Name", "name"])) || null,
+      ),
+    );
 
     const rawFields = mergeSourcesDeduped([mergedRates, master]);
     const finalized = finalizeProfileFields(rawFields);
@@ -1565,6 +1616,16 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
     // Skip placeholder master rows (no Name set) — these are work-email-only
     // stubs that bloated the Rates & Profiles list with junk entries.
     if (!toStr(getField(masterRow, ["Name", "name"]))) continue;
+
+    // One card per person: if this master row is the same human (Work Email +
+    // Name) as a card we already built — a duplicate department row — skip it.
+    const personKey = personCardKey(
+      toStr(getField(masterRow, ["Work Email", "work_email", "Work_Email"])) || null,
+      toStr(getField(masterRow, ["Personal Email", "personal_email", "Personal_Email"])) || null,
+      toStr(getField(masterRow, ["Name", "name"])) || null,
+    );
+    if (cardedPersonKeys.has(personKey)) continue;
+    cardedPersonKeys.add(personKey);
 
     const mPersonal = normEmail(
       toStr(getField(masterRow, ["Personal Email", "personal_email", "Personal_Email"])),
