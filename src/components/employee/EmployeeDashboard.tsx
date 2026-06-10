@@ -49,9 +49,11 @@ import {
   filterColumnGroupsByPabRange,
   parseColDate,
   parseDateRangeFromFilename,
+  payWeekFromUploadStart,
   buildPabCalendarWeeks,
   pabDateKey,
   resolveCanonicalColumnsToIso,
+  resolveCanonicalColumnsToPayWeek,
   columnsAreAllCanonical,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { PabCalendarDay } from '@/lib/hubstaff/calendar-column-dedupe';
@@ -760,25 +762,67 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     return () => { cancelled = true; };
   }, [sourceFiles, email, aliasEmails]);
 
+  // Hogan (HSL) keeps Mon–Sun weeks; all other departments use Sun–Sat.
+  const isHsl = (profileForShipping.department ?? '').trim().toLowerCase() === 'hsl';
+
+  const isAllTime = selectedFile === '__all__';
+
   // Compute daily hours breakdown (one bar per calendar day — dedupe ISO vs Mon 3/24 vs monday…)
+  //
+  // A single Hubstaff upload runs Sun→Sun (8 days) when consecutive weeks overlap.
+  // The pay week kept depends on department: HSL = Mon→Sun (drops the leading Sunday),
+  // everyone else = Sun→Sat (drops the trailing Sunday). For a single-file view we:
+  //   1. determine that 7-day window,
+  //   2. resolve canonical weekday columns (sunday/monday/…) to the window's ISO dates so
+  //      the lone "sunday" slot lands on THIS department's Sunday (leading for non-HSL,
+  //      trailing for HSL) instead of the generic last-wins trailing Sunday,
+  //   3. clamp ISO-dated days to the window.
+  // All-time view is a multi-week rollup, so it is never clamped or re-resolved.
   const dailyHours = useMemo<DayHours[]>(() => {
     if (!row) return [];
-    const dateCols = columns.filter(isDateCol);
-    const groups = groupDateColumnsByCalendarDay(dateCols, columns);
-    return groups
-      .map((group) => {
+
+    // 1. Department pay-week window for this upload.
+    let payWindow: { start: Date; end: Date } | null = null;
+    if (!isAllTime) {
+      const isoDates = columns
+        .map((c) => parseColDate(c))
+        .filter((d): d is Date => d !== null);
+      if (isoDates.length > 0) {
+        const uploadStart = isoDates.reduce((m, d) => (d.getTime() < m.getTime() ? d : m), isoDates[0]);
+        payWindow = payWeekFromUploadStart(uploadStart, isHsl);
+      } else if (selectedFile && selectedFile !== '__all__') {
+        const range = parseDateRangeFromFilename(selectedFile);
+        if (range) payWindow = payWeekFromUploadStart(range.start, isHsl);
+      }
+    }
+
+    // 2. Resolve canonical-only columns onto the window's ISO dates.
+    let effRow: Record<string, unknown> = row;
+    let effCols = columns;
+    if (payWindow && columnsAreAllCanonical(columns)) {
+      effRow = resolveCanonicalColumnsToPayWeek(row, payWindow);
+      effCols = Object.keys(effRow);
+    }
+
+    const dateCols = effCols.filter(isDateCol);
+    const groups = groupDateColumnsByCalendarDay(dateCols, effCols);
+    const mapped = groups
+      .map((group): { day: DayHours; date: Date | null } | null => {
         const col = pickPreferredHubstaffColumn(group);
         const seconds = Math.max(
           ...group.map((c) => {
             const raw =
-              getFieldFromRow(row, [c]) ??
-              (Object.prototype.hasOwnProperty.call(row, c) ? row[c] : undefined);
+              getFieldFromRow(effRow, [c]) ??
+              (Object.prototype.hasOwnProperty.call(effRow, c) ? effRow[c] : undefined);
             return parseHMS(raw);
           }),
         );
         const prefix = colDayPrefix(col);
         if (prefix) {
-          return { col, label: prefix.label, seconds, weekday: prefix.weekday, order: prefix.order };
+          return {
+            day: { col, label: prefix.label, seconds, weekday: prefix.weekday, order: prefix.order },
+            date: parseColDate(col),
+          };
         }
         const iso = col.trim();
         if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
@@ -786,28 +830,41 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           if (dow === null) return null;
           const labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
           return {
-            col,
-            label: labels[dow],
-            seconds,
-            weekday: dow >= 1 && dow <= 5,
-            order: dow,
+            day: { col, label: labels[dow], seconds, weekday: dow >= 1 && dow <= 5, order: dow },
+            date: parseColDate(col),
           };
         }
         return null;
       })
-      .filter((x): x is DayHours => x !== null)
-      .sort((a, b) => a.order - b.order);
-  }, [row, columns]);
+      .filter((x): x is { day: DayHours; date: Date | null } => x !== null);
 
-  const isAllTime = selectedFile === '__all__';
+    // 3. Clamp dated days to the pay week. Undated days (unresolved canonical) are kept.
+    let kept = mapped;
+    if (payWindow) {
+      const lo = payWindow.start.getTime();
+      const hi = payWindow.end.getTime();
+      kept = mapped.filter((m) => {
+        if (!m.date) return true;
+        const t = new Date(m.date.getFullYear(), m.date.getMonth(), m.date.getDate()).getTime();
+        return t >= lo && t <= hi;
+      });
+    }
 
-  // Compute pay — per-file values
+    return kept.map((m) => m.day).sort((a, b) => a.order - b.order);
+  }, [row, columns, isAllTime, isHsl, selectedFile]);
+
+  // Compute pay — per-file values.
+  // Single-file view: sum the (pay-week-clamped) per-day hours so the total
+  // matches the breakdown and excludes the overlap day dropped per department.
+  // The file's "Total worked" aggregate covers the full Sun→Sun span, so it's
+  // only trusted for the all-time rollup where no clamp applies.
   const fileSeconds = useMemo(() => {
     if (!row) return 0;
+    if (!isAllTime) return dailyHours.reduce((s, d) => s + d.seconds, 0);
     const tw = getTotalWorkedRaw(row);
     if (tw != null && String(tw).trim() !== '') return parseHMS(tw);
     return dailyHours.reduce((s, d) => s + d.seconds, 0);
-  }, [row, dailyHours]);
+  }, [row, dailyHours, isAllTime]);
 
   const parseRate = (v: string | null | undefined): number | null => {
     if (v == null) return null;
@@ -851,12 +908,17 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     const manualPab = pabPeriodSettings.validManualRange;
     if (manualPab) {
       groups = filterColumnGroupsByPabRange(groups, pabCols, manualPab.start, manualPab.end);
+    } else if (!useSelected) {
+      // Default view: use the EXACT PAB period the Payroll Wizard is evaluating
+      // (its active month + saved start/end), so the employee's calendar always
+      // matches Accounting.
+      const { start, end } = pabPeriodSettings.activeRange;
+      groups = filterColumnGroupsByPabRange(groups, pabCols, start, end);
     } else {
-      // PAB period: manual file selection → that file's inferred month;
-      // otherwise → PAB month containing the latest date in merged uploads.
-      const pabMonth = useSelected
-        ? (getLatestPabMonthFromColumns(pabCols) ?? inferPabMonthFromColumns(pabCols))
-        : (getLatestPabMonthFromColumns(pabCols) ?? getCurrentPabMonth());
+      // Manual file browse: PAB month inferred from the selected file, honoring
+      // that month's saved override if present.
+      const pabMonth =
+        getLatestPabMonthFromColumns(pabCols) ?? inferPabMonthFromColumns(pabCols);
       if (pabMonth) {
         const mKey = `${pabMonth.year}-${String(pabMonth.month + 1).padStart(2, '0')}`;
         const ov = pabPeriodSettings.overrides.get(mKey);
@@ -896,16 +958,16 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         if (da && db) return da.getTime() - db.getTime();
         return a.order - b.order;
       });
-  }, [pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides]);
+  }, [pabMergedRow, pabMergedColumns, row, columns, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides, pabPeriodSettings.activeRange]);
 
   /** PAB month + date range for display.
    * Default: latest PAB period in merged CSV data (or today if none).
    * When user manually picks a CSV: use that file's inferred period. */
   const pabMonthRange = useMemo(() => {
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const manual = pabPeriodSettings.validManualRange;
     if (manual) {
       const { start, end } = manual;
-      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
       return {
         year: start.getFullYear(),
         month: start.getMonth(),
@@ -915,30 +977,33 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       };
     }
     const useSelected = !!selectedFile && selectedFile !== '__all__';
-    // Selected file may have canonical day columns — resolve to ISO via filename
-    // so we can derive a real date-based PAB month.
+    if (!useSelected) {
+      // Default view: mirror the EXACT PAB period the Payroll Wizard is evaluating
+      // (active month + its saved start/end). This is the authoritative source — the
+      // employee's calendar must match Accounting, not a locally re-derived month.
+      const { year, month } = pabPeriodSettings.activeMonthResolved;
+      const { start, end } = pabPeriodSettings.activeRange;
+      return { year, month, start, end, monthName: monthNames[month] ?? '' };
+    }
+    // Manual file browse: derive the PAB month from the selected file (resolving
+    // canonical columns to ISO when needed), honoring that month's saved override.
     let selCols = columns;
-    if (useSelected && row && columns.length > 0 && columnsAreAllCanonical(columns)) {
+    if (row && columns.length > 0 && columnsAreAllCanonical(columns)) {
       const resolved = resolveCanonicalColumnsToIso(row, selectedFile!);
       selCols = Object.keys(resolved);
     }
     const mergedCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
-    // In manual mode, prefer the selected file's columns but fall back to merged
-    // (or today) if the selected file is still loading so we never stall on null.
-    const pabMonth = useSelected
-      ? (selCols?.length
-          ? (getLatestPabMonthFromColumns(selCols)
-              ?? inferPabMonthFromColumns(selCols)
-              ?? getCurrentPabMonth())
-          : (getLatestPabMonthFromColumns(mergedCols) ?? getCurrentPabMonth()))
-      : (getLatestPabMonthFromColumns(mergedCols ?? []) ?? getCurrentPabMonth());
+    const pabMonth = selCols?.length
+      ? (getLatestPabMonthFromColumns(selCols)
+          ?? inferPabMonthFromColumns(selCols)
+          ?? getCurrentPabMonth())
+      : (getLatestPabMonthFromColumns(mergedCols) ?? getCurrentPabMonth());
     if (!pabMonth) return null;
     const mKey = `${pabMonth.year}-${String(pabMonth.month + 1).padStart(2, '0')}`;
     const ov = pabPeriodSettings.overrides.get(mKey);
     const { start, end } = ov ?? getPabMonthRange(pabMonth.year, pabMonth.month);
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
-  }, [pabMergedColumns, columns, row, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides]);
+  }, [pabMergedColumns, columns, row, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides, pabPeriodSettings.activeMonthResolved, pabPeriodSettings.activeRange]);
 
   const fetchMyDisputes = useCallback(() => {
     if (!pabMonthRange || !email) return;

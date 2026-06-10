@@ -43,6 +43,7 @@ import {
   checkHslPabEligibility,
   columnsAreAllCanonical,
   getPabMonthRange,
+  sundayOfWeekContaining,
   parseColDate,
   resolveCanonicalColumnsToIso,
   pabDateKey,
@@ -437,17 +438,25 @@ export async function computeMemberMonthlyPay(args: {
   // below to compute pay.
   const hoursByDateKey = buildHoursByDateKey(hsRes.rows);
 
-  // ── Enumerate pay weeks (Mon-Sun) overlapping the viewed month.
-  const firstWeekMon = mondayOfWeekContaining(monthStart);
-  const lastWeekMon = mondayOfWeekContaining(monthEnd);
-  const weekMondays: Date[] = [];
+  // ── Enumerate pay weeks overlapping the viewed month.
+  // HSL (Hogan) keeps Mon–Sun weeks; all other departments use Sun–Sat.
+  const isHslEmployee = hslEmails.has(emailNorm);
+  const firstWeekStart = isHslEmployee
+    ? mondayOfWeekContaining(monthStart)
+    : sundayOfWeekContaining(monthStart);
+  const lastWeekStart = isHslEmployee
+    ? mondayOfWeekContaining(monthEnd)
+    : sundayOfWeekContaining(monthEnd);
+  const weekStarts: Date[] = [];
   for (
-    let cur = new Date(firstWeekMon);
-    cur.getTime() <= lastWeekMon.getTime();
+    let cur = new Date(firstWeekStart);
+    cur.getTime() <= lastWeekStart.getTime();
     cur.setDate(cur.getDate() + 7)
   ) {
-    weekMondays.push(new Date(cur));
+    weekStarts.push(new Date(cur));
   }
+  // Keep legacy alias so the loop body below compiles without rename.
+  const weekMondays = weekStarts;
 
   // For PAB eligibility checks: any week is `isFinalPabWeek` based on its
   // weekEnd vs the PAB month's adjusted end. We pre-compute eligibility for
@@ -460,15 +469,12 @@ export async function computeMemberMonthlyPay(args: {
     const key = yearMonthKey(year, month);
     if (pabEligByMonthKey.has(key)) return pabEligByMonthKey.get(key)!;
     const overrideEntry = overrides.get(key);
+    const isHsl = hslEmails.has(emailNorm);
     const pabRange = overrideEntry
       ? { start: overrideEntry.start, end: overrideEntry.end }
       : getPabMonthRange(year, month);
     const hslAdjustedEnd = getHslAdjustedEnd(pabRange.end);
 
-    // Use the same hoursByDateKey that powers the calendar (max-per-day across
-    // all uploads). This guarantees the PAB check is consistent with what the
-    // manager can see — a red day on the calendar always fails PAB here too.
-    const isHsl = hslEmails.has(emailNorm);
     let passes: boolean;
     if (isHsl) {
       passes = checkHslPabEligibility(pabRange.start, hslAdjustedEnd, hoursByDateKey);
@@ -501,9 +507,18 @@ export async function computeMemberMonthlyPay(args: {
   let totalTechPHP = 0;
   let totalMesaPHP = 0;
 
+  // 40 h cap is tracked per Mon–Sun cap week (keyed by that week's Monday).
+  // This is intentionally separate from the Sun–Sat display-week boundaries used
+  // for non-HSL employees: Sunday is the first display-column but still belongs
+  // to the *previous* Monday's cap window, so a heavy Mon–Sat week can't be
+  // gamed by having Sunday start a fresh cap.
+  const capWeekUsed = new Map<string, number>(); // pabDateKey(monday) → seconds used
+
   for (const weekMon of weekMondays) {
+    // weekEnd = Sunday for HSL (Mon–Sun); Saturday for non-HSL (Sun–Sat).
     const weekSun = new Date(weekMon);
     weekSun.setDate(weekSun.getDate() + 6);
+    const weekEnd = weekSun; // alias — weekEnd is Sunday (HSL) or Saturday (non-HSL)
 
     // Only count seconds from days that fall in the viewed month — this is
     // what makes the month roll-up answer "what did we pay for work in this
@@ -525,7 +540,6 @@ export async function computeMemberMonthlyPay(args: {
     let weekWeekendTotal = 0;
     let weekWeekendReg = 0;
     let weekWeekendOt = 0;
-    let usedThisWeek = 0;
     // Per-day prorating accumulators. When `empHist` covers this employee,
     // each day's hours are paid at the rate effective on that calendar date —
     // mirrors `current-pay.ts → computeProratedRowPay`. Without history (or
@@ -537,17 +551,23 @@ export async function computeMemberMonthlyPay(args: {
     let anyRegRateThisWeek = false;
     let anyOtRateThisWeek = false;
     // Only process in-month days — adjacent-month days in straddling weeks must NOT
-    // consume the 40h regular cap for this month (matches My Hours behaviour).
+    // contribute to this month's totals (but they ARE tracked in capWeekUsed so the
+    // 40 h cap is shared across all display weeks that fall within the same Mon–Sun
+    // cap window — see the capWeekUsed comment above the loop).
     for (const cell of dayCells) {
       if (!cell.inMonth || cell.seconds <= 0) continue;
-      const remaining = Math.max(0, REGULAR_WEEK_CAP_SEC - usedThisWeek);
+      // Determine how many seconds are already used in this day's Mon–Sun cap week.
+      const capMon = mondayOfWeekContaining(cell.date);
+      const capKey = pabDateKey(capMon);
+      const usedInCapWeek = capWeekUsed.get(capKey) ?? 0;
+      const remaining = Math.max(0, REGULAR_WEEK_CAP_SEC - usedInCapWeek);
       const dayReg = Math.min(cell.seconds, remaining);
       const dayOt = cell.seconds - dayReg;
       const isWeekend = cell.date.getDay() === 0 || cell.date.getDay() === 6;
       weekTotalSec += cell.seconds;
       regSec += dayReg;
       weekOtSec += dayOt;
-      usedThisWeek += cell.seconds;
+      capWeekUsed.set(capKey, usedInCapWeek + cell.seconds);
       if (isWeekend) {
         weekWeekendTotal += cell.seconds;
         weekWeekendReg += dayReg;
@@ -582,10 +602,14 @@ export async function computeMemberMonthlyPay(args: {
           : null;
 
     // Bonus gates.
-    const pabMonth = pabMonthFromWeekStart(weekMon);
+    // PAB month = month of the Monday inside the pay week.
+    // For HSL (Mon-Sun): weekMon IS the Monday.
+    // For non-HSL (Sun-Sat): weekMon is the Sunday; Monday = weekMon + 1 day.
+    const weekMonForPab = isHslEmployee
+      ? weekMon
+      : new Date(weekMon.getFullYear(), weekMon.getMonth(), weekMon.getDate() + 1);
+    const pabMonth = pabMonthFromWeekStart(weekMonForPab);
     // Only count PAB for weeks that belong to the viewed month's PAB period.
-    // A straddling week like March 30–April 5 belongs to March's PAB (its Monday
-    // is in March) and must not fire March's bonus inside the April view.
     const pabBelongsToViewedMonth =
       pabMonth.year === args.year && pabMonth.month === args.month;
     const overrideEntry = overrides.get(yearMonthKey(pabMonth.year, pabMonth.month));
@@ -599,15 +623,16 @@ export async function computeMemberMonthlyPay(args: {
       pabRange.end.getDate(),
     );
     const pabMonthComplete = todayMid.getTime() > pabEndMid.getTime();
-    const isFinalPab = pabBelongsToViewedMonth && gateIsFinalPabWeek(weekSun, pabRange.end);
-    const isTechWeek = gateIsTechBonusWeek(weekMon);
-    // Tech bonus only counts once the salary date (period Monday + 8 days) has arrived.
-    const salaryDate = new Date(weekMon.getFullYear(), weekMon.getMonth(), weekMon.getDate() + 8);
+    const isFinalPab = pabBelongsToViewedMonth && gateIsFinalPabWeek(weekEnd, pabRange.end);
+    // Tech bonus timing uses the Monday of the week regardless of Sun-Sat vs Mon-Sun.
+    const isTechWeek = gateIsTechBonusWeek(weekMonForPab);
+    // Salary date = week's Monday + 8 days.
+    const salaryDate = new Date(weekMonForPab.getFullYear(), weekMonForPab.getMonth(), weekMonForPab.getDate() + 8);
     const techSalaryReached = todayMid.getTime() >= salaryDate.getTime();
     const isPabElig = isFinalPab && pabMonthComplete
       ? computeEligibilityForPabMonth(pabMonth.year, pabMonth.month)
       : false;
-    const has30 = startDate ? hasThirtyDaysFromStart(weekMon, startDate) : false;
+    const has30 = startDate ? hasThirtyDaysFromStart(weekMonForPab, startDate) : false;
 
     const bonus = computeEmployeeBonus({
       hasRates,

@@ -66,6 +66,8 @@ import {
   filterColumnGroupsByPabRange,
   countMonFriInclusiveInRange,
   resolveCanonicalColumnsToIso,
+  resolveCanonicalColumnsToPayWeek,
+  payWeekFromUploadStart,
   columnsAreAllCanonical,
   parseDateRangeFromFilename,
   checkHslPabEligibility,
@@ -3049,45 +3051,94 @@ export default function PayrollWizard({
   }, []);
 
   /**
-   * HSL weekend pay premium: +15 PHP/h for all Saturday and Sunday hours.
-   * Splits the premium between the regular and OT buckets using chronological
-   * per-day ordering (same logic as computeProratedRowPay in current-pay.ts).
-   * Non-HSL employees get an empty entry so lookups are O(1) no-ops.
+   * Single source of truth for which calendar days each employee is paid for in
+   * this cycle. Hogan (HSL) is paid Monday→Sunday; every other department is paid
+   * Sunday→Saturday. Hubstaff exports a Sunday→Sunday span (one overlap day), so we
+   * read the daily columns and keep only the dates that fall inside the employee's
+   * own week — the leading Sunday belongs to HSL's week, the trailing Sunday to the
+   * next non-HSL week. Days are returned chronologically.
    */
-  const weekendPremiumByEmail = useMemo<Map<string, { regPremiumPHP: number; otPremiumPHP: number }>>(() => {
-    const map = new Map<string, { regPremiumPHP: number; otPremiumPHP: number }>();
+  const payDaysByEmail = useMemo<Map<string, { isHsl: boolean; days: Array<{ date: Date; seconds: number }> }>>(() => {
+    const map = new Map<string, { isHsl: boolean; days: Array<{ date: Date; seconds: number }> }>();
     const rows = hubstaffDisplayRows;
     if (!rows || rows.length === 0) return map;
-
-    const REG_CAP_SEC = 40 * 3600;
+    const fileRange = calcSourceFile ? parseDateRangeFromFilename(calcSourceFile) : null;
 
     for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const em = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!em) continue;
-
       const deptKey = employeeDepts[rawEmail] ?? employeeDepts[rawEmail.toLowerCase()];
-      if (deptKey !== 'hogan_smith_law') continue;
+      const isHsl = deptKey === 'hogan_smith_law';
 
-      const resolvedRow = calcSourceFile && columnsAreAllCanonical(Object.keys(row))
-        ? resolveCanonicalColumnsToIso(row, calcSourceFile)
-        : row;
+      // Resolve canonical weekday columns (sunday/monday/…) onto the ISO dates of
+      // THIS employee's week so the lone Sunday slot lands on the right Sunday.
+      const anchor = fileRange?.start ?? null;
+      let resolvedRow: Record<string, unknown> = row;
+      if (anchor && columnsAreAllCanonical(Object.keys(row))) {
+        resolvedRow = resolveCanonicalColumnsToPayWeek(row, payWeekFromUploadStart(anchor, isHsl));
+      }
 
-      const days: Array<{ date: Date; seconds: number }> = [];
+      const allDays: Array<{ date: Date; seconds: number }> = [];
       for (const [k, v] of Object.entries(resolvedRow)) {
         const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(k.trim());
         if (!m) continue;
         const hrs = parseHoursToDecimal(v);
         if (hrs <= 0) continue;
-        days.push({ date: new Date(+m[1], +m[2] - 1, +m[3]), seconds: Math.round(hrs * 3600) });
+        allDays.push({ date: new Date(+m[1], +m[2] - 1, +m[3]), seconds: Math.round(hrs * 3600) });
       }
-      if (days.length === 0) continue;
-      days.sort((a, b) => a.date.getTime() - b.date.getTime());
+      if (allDays.length === 0) continue;
 
-      let usedRegSec = 0;
-      let wkndRegSec = 0;
-      let wkndOtSec = 0;
+      // The employee's pay week, anchored on the upload's start date.
+      const start = anchor ?? allDays.reduce((min, d) => (d.date < min ? d.date : min), allDays[0].date);
+      const week = payWeekFromUploadStart(start, isHsl);
+      const lo = week.start.getTime();
+      const hi = week.end.getTime();
+      const days = allDays
+        .filter((d) => {
+          const t = new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate()).getTime();
+          return t >= lo && t <= hi;
+        })
+        .sort((a, b) => a.date.getTime() - b.date.getTime());
+      if (days.length > 0) map.set(em, { isHsl, days });
+    }
+    return map;
+  }, [hubstaffDisplayRows, calcSourceFile, employeeDepts]);
 
+  /**
+   * Paid hours per employee = sum of their pay-week days, with the 40 h/week
+   * regular cap applied chronologically (the rest is OT). Used as the authoritative
+   * hours for the dispatch when daily columns are available; rows with no daily
+   * columns fall back to the CSV "Total worked" aggregate in calcResults.
+   */
+  const payHoursByEmail = useMemo<Map<string, { totalSec: number; regularSec: number; otSec: number }>>(() => {
+    const map = new Map<string, { totalSec: number; regularSec: number; otSec: number }>();
+    const REG_CAP_SEC = 40 * 3600;
+    for (const [em, { days }] of payDaysByEmail) {
+      let usedReg = 0, totalSec = 0, regularSec = 0, otSec = 0;
+      for (const d of days) {
+        const remaining = Math.max(0, REG_CAP_SEC - usedReg);
+        const dayReg = Math.min(d.seconds, remaining);
+        usedReg += dayReg;
+        totalSec += d.seconds;
+        regularSec += dayReg;
+        otSec += d.seconds - dayReg;
+      }
+      map.set(em, { totalSec, regularSec, otSec });
+    }
+    return map;
+  }, [payDaysByEmail]);
+
+  /**
+   * HSL weekend pay premium: +15 PHP/h for Saturday and Sunday hours within the
+   * HSL (Mon→Sun) pay week, split between the regular and OT buckets chronologically.
+   */
+  const weekendPremiumByEmail = useMemo<Map<string, { regPremiumPHP: number; otPremiumPHP: number }>>(() => {
+    const map = new Map<string, { regPremiumPHP: number; otPremiumPHP: number }>();
+    const REG_CAP_SEC = 40 * 3600;
+    for (const [em, { isHsl, days }] of payDaysByEmail) {
+      if (!isHsl) continue;
+      let usedRegSec = 0, wkndRegSec = 0, wkndOtSec = 0;
       for (const d of days) {
         const remaining = Math.max(0, REG_CAP_SEC - usedRegSec);
         const dayRegSec = Math.min(d.seconds, remaining);
@@ -3099,7 +3150,6 @@ export default function PayrollWizard({
           wkndOtSec += dayOtSec;
         }
       }
-
       const regPremiumPHP = phpHourlyPayFromSeconds(15, wkndRegSec);
       const otPremiumPHP = phpHourlyPayFromSeconds(15, wkndOtSec);
       if (regPremiumPHP !== 0 || otPremiumPHP !== 0) {
@@ -3107,7 +3157,7 @@ export default function PayrollWizard({
       }
     }
     return map;
-  }, [hubstaffDisplayRows, calcSourceFile, employeeDepts]);
+  }, [payDaysByEmail]);
 
   /**
    * Match Hubstaff Email to employee_hourly_rates Work Email (or Personal Email).
@@ -3117,12 +3167,26 @@ export default function PayrollWizard({
    */
   const calcResults = useMemo<CalcRow[]>(() => {
     return hubstaffData.map((row) => {
-      const totalH = roundWorkedHoursForPay(row.decimalHours);
-      const { regularSec, otSec } = splitRegularOvertimeSeconds(totalH);
+      const em = normEmail(row.email);
+
+      // Authoritative hours = the employee's pay-week days (Mon→Sun for HSL,
+      // Sun→Sat for everyone else). Falls back to the CSV "Total worked" aggregate
+      // only when the row has no daily columns to read.
+      const paid = em ? payHoursByEmail.get(em) : undefined;
+      let totalH: number;
+      let regularSec: number;
+      let otSec: number;
+      if (paid) {
+        totalH = roundWorkedHoursForPay(paid.totalSec / 3600);
+        regularSec = paid.regularSec;
+        otSec = paid.otSec;
+      } else {
+        totalH = roundWorkedHoursForPay(row.decimalHours);
+        ({ regularSec, otSec } = splitRegularOvertimeSeconds(totalH));
+      }
       const regularHours = regularSec / 3600;
       const otHours = otSec / 3600;
 
-      const em = normEmail(row.email);
       let rateRow = em ? ratesByEmail.get(em) : undefined;
 
       // Fallback: match via masterIndex when direct email lookup fails.
@@ -3179,7 +3243,7 @@ export default function PayrollWizard({
         initialPay,
       };
     });
-  }, [hubstaffData, ratesByEmail, masterIndex, weekendPremiumByEmail]);
+  }, [hubstaffData, ratesByEmail, masterIndex, weekendPremiumByEmail, payHoursByEmail]);
 
   /**
    * Applies per-department and global OT suspension from System Settings.

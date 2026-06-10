@@ -31,9 +31,12 @@ import { listGiftPayments } from "@/lib/supabase/gift-payments";
 import { effectiveUsdToPhpRateFromStored } from "@/lib/fx/usd-php";
 import { normEmail } from "@/lib/email/norm-email";
 import {
+  columnsAreAllCanonical,
   getPabMonthRange,
   parseDateRangeFromFilename,
+  payWeekFromUploadStart,
   resolveCanonicalColumnsToIso,
+  resolveCanonicalColumnsToPayWeek,
 } from "@/lib/hubstaff/calendar-column-dedupe";
 import {
   PAB_PERIOD_OVERRIDES_KEY,
@@ -272,7 +275,24 @@ function computeProratedRowPay(
   email: string,
   fallbackRate: { reg: number | null; ot: number | null } | undefined,
   isHsl?: boolean,
-): { regularPayPHP: number | null; otPayPHP: number | null } | null {
+  /** When given, only days within [start, end] (inclusive, local) are counted —
+   *  the department's 7-day pay week, so an 8-day Sun→Sun upload contributes
+   *  exactly one week. */
+  payWindow?: { start: Date; end: Date } | null,
+): {
+  regularPayPHP: number | null;
+  otPayPHP: number | null;
+  totalSec: number;
+  regularSec: number;
+  otSec: number;
+} | null {
+  const winLo = payWindow
+    ? new Date(payWindow.start.getFullYear(), payWindow.start.getMonth(), payWindow.start.getDate()).getTime()
+    : null;
+  const winHi = payWindow
+    ? new Date(payWindow.end.getFullYear(), payWindow.end.getMonth(), payWindow.end.getDate()).getTime()
+    : null;
+
   const days: Array<{ date: Date; seconds: number }> = [];
   for (const [k, v] of Object.entries(rowResolved)) {
     if (!isPerDayCol(k)) continue;
@@ -280,7 +300,12 @@ function computeProratedRowPay(
     if (!m) continue;
     const sec = parseHmsToSec(v);
     if (sec <= 0) continue;
-    days.push({ date: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])), seconds: sec });
+    const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (winLo != null && winHi != null) {
+      const t = date.getTime();
+      if (t < winLo || t > winHi) continue; // outside this department's pay week
+    }
+    days.push({ date, seconds: sec });
   }
   if (days.length === 0) return null;
   days.sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -290,6 +315,9 @@ function computeProratedRowPay(
   let usedRegSec = 0;
   let regularPayPHP = 0;
   let otPayPHP = 0;
+  let totalSec = 0;
+  let regularSec = 0;
+  let otSec = 0;
   let anyRegRate = false;
   let anyOtRate = false;
 
@@ -304,6 +332,9 @@ function computeProratedRowPay(
     const dayRegSec = Math.min(d.seconds, remaining);
     const dayOtSec = d.seconds - dayRegSec;
     usedRegSec += dayRegSec;
+    totalSec += d.seconds;
+    regularSec += dayRegSec;
+    otSec += dayOtSec;
 
     // HSL weekend premium: all hours on Saturday (6) or Sunday (0) earn +15 PHP/h
     const dow = d.date.getDay();
@@ -316,6 +347,9 @@ function computeProratedRowPay(
   return {
     regularPayPHP: anyRegRate ? Math.round(regularPayPHP * 100) / 100 : null,
     otPayPHP: anyOtRate ? Math.round(otPayPHP * 100) / 100 : null,
+    totalSec,
+    regularSec,
+    otSec,
   };
 }
 
@@ -427,25 +461,25 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
   let weekIsTechBonus = false;
   let weekMonday: Date | null = null;
 
+  // Per-department pay-week windows derived from the upload's start date.
+  // An 8-day Sun→Sun upload yields two different 7-day weeks: HSL keeps Mon→Sun
+  // (drops the leading Sunday), everyone else keeps Sun→Sat (drops the trailing
+  // Sunday). Per-employee hours/pay are clamped to the matching window below.
+  const payWeekHsl = periodStart ? payWeekFromUploadStart(periodStart, true) : null;
+  const payWeekNonHsl = periodStart ? payWeekFromUploadStart(periodStart, false) : null;
+
   if (periodStart) {
-    const pabMonth = pabMonthFromWeekStart(periodStart);
-    // Honor any manual override the wizard may have saved for this month;
-    // fall back to the canonical Mon-week-on-or-after-the-1st range.
+    // Both pay weeks share the same Monday (HSL's Mon→Sun start = the Monday
+    // inside the non-HSL Sun→Sat week), so it anchors PAB month + bonus timing
+    // for the whole dispatch regardless of whether the upload starts on Sunday.
+    weekMonday = payWeekHsl!.start;
+    const pabMonth = pabMonthFromWeekStart(weekMonday);
     const overrides = parsePabPeriodOverrides(pabOverridesValue);
     const overrideEntry = overrides.get(yearMonthKey(pabMonth.year, pabMonth.month));
     pabRange = overrideEntry
       ? { start: overrideEntry.start, end: overrideEntry.end }
       : getPabMonthRange(pabMonth.year, pabMonth.month);
     hslAdjustedEnd = getHslAdjustedEnd(pabRange.end);
-
-    // The pay-period Monday is what the wizard checks against (not Sunday).
-    const dow = periodStart.getDay();
-    const daysBackToMon = dow === 0 ? 6 : dow - 1;
-    weekMonday = new Date(
-      periodStart.getFullYear(),
-      periodStart.getMonth(),
-      periodStart.getDate() - daysBackToMon,
-    );
 
     if (periodEnd) {
       weekIsFinalPab = gateIsFinalPabWeek(periodEnd, pabRange.end);
@@ -546,9 +580,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     if (!em) continue;
 
     const rate = rateByEmail.get(em);
-    const totalHours = mapped.hoursDecimal;
-    const otHours = mapped.overtimeDecimal;
-    const regularHours = Math.max(0, totalHours - otHours);
+    const isHslEmp = hslEmails.has(em);
     const reg = rate?.reg ?? null;
     const ot = rate?.ot ?? null;
 
@@ -557,12 +589,35 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     // weekday. Falls back to the legacy single-rate formula when this row
     // has no per-day ISO columns (canonical weekday CSV that couldn't be
     // resolved to dates).
+    const payWindow = isHslEmp ? payWeekHsl : payWeekNonHsl;
     const sourceFileForRow =
       typeof raw['source_file'] === 'string' ? (raw['source_file'] as string) : '';
+    // Canonical-only rows: resolve the lone weekday slots onto THIS department's
+    // 7-day pay week (so non-HSL "sunday" lands on the leading Sunday, HSL on the
+    // trailing one). ISO rows fall through the generic resolver (a no-op for them)
+    // and rely on computeProratedRowPay's window clamp instead.
     const rowResolved = sourceFileForRow
-      ? resolveCanonicalColumnsToIso(raw, sourceFileForRow)
+      ? payWindow && columnsAreAllCanonical(Object.keys(raw))
+        ? resolveCanonicalColumnsToPayWeek(raw, payWindow)
+        : resolveCanonicalColumnsToIso(raw, sourceFileForRow)
       : raw;
-    const prorated = computeProratedRowPay(rowResolved, rateHistory, em, rate, hslEmails.has(em));
+    const prorated = computeProratedRowPay(rowResolved, rateHistory, em, rate, isHslEmp, payWindow);
+
+    // Hours: when per-day ISO columns exist, report the pay-week-clamped totals
+    // (so an 8-day Sun→Sun upload counts only this department's 7 days). Fall
+    // back to the row aggregate when the row has no resolvable per-day columns.
+    let totalHours: number;
+    let otHours: number;
+    let regularHours: number;
+    if (prorated) {
+      totalHours = Math.round((prorated.totalSec / 3600) * 100) / 100;
+      otHours = Math.round((prorated.otSec / 3600) * 100) / 100;
+      regularHours = Math.round((prorated.regularSec / 3600) * 100) / 100;
+    } else {
+      totalHours = mapped.hoursDecimal;
+      otHours = mapped.overtimeDecimal;
+      regularHours = Math.max(0, totalHours - otHours);
+    }
 
     let regularPayPHP: number | null;
     let otPayPHP: number | null;
@@ -579,6 +634,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     // Bonus computation — gated by week + per-employee eligibility + has-rates.
     const hasRates = reg != null || ot != null;
     const startDate = startDateByEmail.get(em) ?? null;
+    // 30-days check uses the Monday of the pay week for both HSL and non-HSL.
     const empHasThirtyDays =
       weekMonday && startDate ? hasThirtyDaysFromStart(weekMonday, startDate) : false;
 

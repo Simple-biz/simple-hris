@@ -58,6 +58,7 @@ import {
   getCurrentPabMonth,
   getLatestPabMonthFromColumns,
   getPabMonthRange,
+  getPabMonthRangeSunSat,
   resolveCanonicalColumnsToIso,
   columnsAreAllCanonical,
   buildPabCalendarWeeks,
@@ -2546,6 +2547,8 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
 
         let start: Date;
         let end: Date;
+        let startSunSat: Date;
+        let endSunSat: Date;
         let monthLabel: string;
         let pabMonth: { year: number; month: number } | null = null;
 
@@ -2554,6 +2557,9 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
           end = pabCfg.end;
           monthLabel = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
           pabMonth = { year: end.getFullYear(), month: end.getMonth() };
+          const rSunSat = getPabMonthRangeSunSat(pabMonth.year, pabMonth.month);
+          startSunSat = rSunSat.start;
+          endSunSat = rSunSat.end;
         } else {
           // Anchor priority:
           //   1. monthFilter (explicit "Month" dropdown pick)
@@ -2579,6 +2585,9 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
           const r = getPabMonthRange(pabMonth.year, pabMonth.month);
           start = r.start;
           end = r.end;
+          const rSunSat = getPabMonthRangeSunSat(pabMonth.year, pabMonth.month);
+          startSunSat = rSunSat.start;
+          endSunSat = rSunSat.end;
           const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
           monthLabel = `${monthNames[pabMonth.month]} ${pabMonth.year}`;
         }
@@ -2616,6 +2625,9 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
 
         const evalCeiling = Math.min(todayMid.getTime(), latestHubstaffDay.getTime(), end.getTime());
         const standardEvalEnd = new Date(evalCeiling);
+        // Sun–Sat eval ceiling for non-HSL employees.
+        const evalCeilingSunSat = Math.min(todayMid.getTime(), latestHubstaffDay.getTime(), endSunSat.getTime());
+        const standardEvalEndSunSat = new Date(evalCeilingSunSat);
 
         // For HSL we need WHOLE Mon–Sun weeks (the rule is per-week). Clamp to
         // the last completed Sunday at or before the standard evaluation
@@ -2713,14 +2725,10 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
             // Evaluate only fully-completed weeks during in-progress months.
             isEligible = checkHslPabEligibility(start, hslEvalEnd, hoursByDateKey);
           } else {
-            // Standard rule: all Mon–Fri days must be ≥7 h. During in-progress
-            // months only days through today count — an employee stays eligible
-            // until they actually miss a past workday.
-            const weeks = buildPabCalendarWeeks(start, standardEvalEnd, hoursByDateKey);
+            // Non-HSL rule (Sun–Sat weeks): all Mon–Fri days must be ≥7 h.
+            // Use the Sun–Sat PAB range and its evaluation ceiling.
+            const weeks = buildPabCalendarWeeks(startSunSat, standardEvalEndSunSat, hoursByDateKey);
             const allDays = weeks.flat();
-            // No days to evaluate yet (period hasn't started any weekdays) →
-            // treat as still eligible. Once at least one weekday has happened
-            // they need to have hit the 7-hour bar on every past one.
             isEligible = allDays.length === 0 || allDays.every(d => d.passes);
           }
 

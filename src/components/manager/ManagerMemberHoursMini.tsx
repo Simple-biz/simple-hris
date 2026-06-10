@@ -471,6 +471,8 @@ export default function ManagerMemberHoursMini({
     [viewYear, viewMonth],
   );
 
+  const isHslMember = (serverPay?.department ?? '').trim().toLowerCase() === 'hsl';
+
   const calendarWeeks = useMemo<PabCalendarDay[][] | null>(() => {
     const w = buildCalendarMonthWeeksIncludingWeekends(monthStart, monthEnd, hoursByDateKey);
     return w.length > 0 ? w : null;
@@ -680,7 +682,7 @@ export default function ManagerMemberHoursMini({
                 rateHistory={rateHistory}
                 ratesHidden={ratesHidden}
                 usHolidayDates={usHolidayDates}
-                isHsl={(serverPay?.department ?? '').trim().toLowerCase() === 'hsl'}
+                isHsl={isHslMember}
                 hoursByDateKey={hoursByDateKey}
               />
             )}

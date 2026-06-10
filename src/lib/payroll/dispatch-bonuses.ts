@@ -172,6 +172,11 @@ export function computePabEligibleEmails(args: {
   /** Lowercased emails for HSL employees, derived from master list. */
   hslEmails: Set<string>;
   /**
+   * Sun–Sat PAB range for non-HSL employees. When omitted, falls back to
+   * `pabRange` (legacy callers that pre-date the Sun–Sat split).
+   */
+  pabRangeSunSat?: { start: Date; end: Date };
+  /**
    * Approved PAB disputes for the period, keyed by lowercased work email then
    * by ISO dispute_date. Value is override_hours (null = no explicit override;
    * effective hours fall back to the raw Hubstaff value for that day).
@@ -184,6 +189,7 @@ export function computePabEligibleEmails(args: {
   usHolidayDates?: Set<string>;
 }): Set<string> {
   const { rows, pabRange, hslAdjustedEnd, hslEmails } = args;
+  const nonHslRange = args.pabRangeSunSat ?? pabRange;
   const eligible = new Set<string>();
   if (rows.length === 0) return eligible;
 
@@ -206,7 +212,7 @@ export function computePabEligibleEmails(args: {
     if (isHsl) {
       passes = checkHslPabEligibility(pabRange.start, hslAdjustedEnd, hoursByDateKey);
     } else {
-      const weeks = buildPabCalendarWeeks(pabRange.start, pabRange.end, hoursByDateKey);
+      const weeks = buildPabCalendarWeeks(nonHslRange.start, nonHslRange.end, hoursByDateKey);
       const flat = weeks.flat();
       passes = flat.length > 0 && flat.every((d) => d.passes);
     }
@@ -265,6 +271,7 @@ export function isFinalPabWeek(weekEnd: Date, pabPeriodEnd: Date): boolean {
  * 1st. So week 1 starts on the first Monday ≥ the 1st; week 3 = +14 days.
  * This places tech bonus two weeks out from PAB. Strict equality: only the
  * 3rd week, not 4th+.
+ * Used by HSL (Hogan) employees whose weeks run Mon–Sun.
  */
 export function isTechBonusWeek(weekMonday: Date): boolean {
   const salary = new Date(
@@ -293,6 +300,40 @@ export function isTechBonusWeek(weekMonday: Date): boolean {
   );
   const t = salary.getTime();
   return t >= thirdMon.getTime() && t < fourthMon.getTime();
+}
+
+/**
+ * Sun–Sat variant of isTechBonusWeek for non-HSL employees.
+ * Salary date = weekSunday + 8 days; fires when that date lands in the
+ * 3rd full Sun–Sat week of its month.
+ */
+export function isTechBonusWeekSunSat(weekSunday: Date): boolean {
+  const salary = new Date(
+    weekSunday.getFullYear(),
+    weekSunday.getMonth(),
+    weekSunday.getDate() + 8,
+  );
+  const first = new Date(salary.getFullYear(), salary.getMonth(), 1);
+  const dow = first.getDay();
+  // Days forward to first Sunday >= the 1st: Sun(0)→0, Mon(1)→6, …, Sat(6)→1
+  const daysForward = dow === 0 ? 0 : 7 - dow;
+  const firstSun = new Date(
+    first.getFullYear(),
+    first.getMonth(),
+    first.getDate() + daysForward,
+  );
+  const thirdSun = new Date(
+    firstSun.getFullYear(),
+    firstSun.getMonth(),
+    firstSun.getDate() + 14,
+  );
+  const fourthSun = new Date(
+    firstSun.getFullYear(),
+    firstSun.getMonth(),
+    firstSun.getDate() + 21,
+  );
+  const t = salary.getTime();
+  return t >= thirdSun.getTime() && t < fourthSun.getTime();
 }
 
 /**

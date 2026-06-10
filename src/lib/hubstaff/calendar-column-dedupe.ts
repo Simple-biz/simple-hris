@@ -192,6 +192,80 @@ export function getPabMonthRange(year: number, month: number): { start: Date; en
   return { start, end };
 }
 
+/**
+ * PAB month range for Sun–Sat weeks (all departments except HSL/Hogan).
+ * Period starts on the first Sunday on or after the 1st and ends on the
+ * Saturday that closes the last Sun–Sat week whose Sunday falls in the month.
+ */
+export function getPabMonthRangeSunSat(year: number, month: number): { start: Date; end: Date } {
+  /* ---------- START ---------- */
+  const first = new Date(year, month, 1);
+  const firstDow = first.getDay(); // 0=Sun … 6=Sat
+  // Days forward to reach Sunday: Sun(0)→0, Mon(1)→6, Tue(2)→5, …, Sat(6)→1
+  const daysToSun = firstDow === 0 ? 0 : 7 - firstDow;
+  const start = new Date(year, month, 1 + daysToSun);
+
+  /* ---------- END ---------- */
+  const lastDay = new Date(year, month + 1, 0); // last calendar day
+  const lastDow = lastDay.getDay(); // Sun=0 … Sat=6
+  // Last Sunday on or before lastDay: Sun(0)→0, Mon(1)→1, …, Sat(6)→6 days back
+  const lastSunday = new Date(year, month, lastDay.getDate() - lastDow);
+  // Saturday of that Sun–Sat week (may spill into the next calendar month)
+  const end = new Date(lastSunday.getFullYear(), lastSunday.getMonth(), lastSunday.getDate() + 6);
+
+  return { start, end };
+}
+
+/**
+ * Sunday of the Sun–Sat week containing d. Used to determine pay-week start
+ * for non-HSL employees.
+ */
+export function sundayOfWeekContaining(d: Date): Date {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - x.getDay()); // Sun=0→0, Mon=1→1, …, Sat=6→6 days back
+  return x;
+}
+
+/**
+ * Current PAB period based on today's local date for Sun–Sat weeks.
+ * A Sun–Sat week is "owned" by the month containing its Sunday.
+ */
+export function getCurrentPabMonthSunSat(today: Date = new Date()): { year: number; month: number } {
+  const x = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  x.setDate(x.getDate() - x.getDay()); // back to Sunday
+  return { year: x.getFullYear(), month: x.getMonth() };
+}
+
+/**
+ * The single 7-day pay week contained in a Hubstaff upload, given the upload's
+ * start date and the employee's department.
+ *
+ * Hubstaff exports run Sunday→Sunday (8 days) when consecutive weeks overlap,
+ * so the SAME file yields two different pay weeks depending on department:
+ *  - HSL (Hogan): Mon→Sun — keeps the trailing Sunday, drops the leading Sunday.
+ *  - all others:  Sun→Sat — keeps the leading Sunday, drops the trailing Sunday.
+ *
+ * Example — upload "2026-05-31 (Sun) → 2026-06-07 (Sun)":
+ *   HSL      → Jun 1 (Mon) … Jun 7 (Sun)
+ *   non-HSL  → May 31 (Sun) … Jun 6 (Sat)
+ */
+export function payWeekFromUploadStart(
+  uploadStart: Date,
+  isHsl: boolean,
+): { start: Date; end: Date } {
+  const s = new Date(uploadStart.getFullYear(), uploadStart.getMonth(), uploadStart.getDate());
+  const dow = s.getDay(); // Sun=0 … Sat=6
+  if (isHsl) {
+    // First Monday on or after the upload start. Sun(0)→+1, Mon(1)→0, Tue(2)→+6, …
+    const toMon = dow === 1 ? 0 : dow === 0 ? 1 : 8 - dow;
+    const mon = new Date(s.getFullYear(), s.getMonth(), s.getDate() + toMon);
+    return { start: mon, end: new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6) };
+  }
+  // Sunday on or before the upload start (upload start is usually Sunday already).
+  const sun = new Date(s.getFullYear(), s.getMonth(), s.getDate() - dow);
+  return { start: sun, end: new Date(sun.getFullYear(), sun.getMonth(), sun.getDate() + 6) };
+}
+
 /** Count Monday–Friday calendar days inclusive between two dates (local calendar). */
 export function countMonFriInclusiveInRange(start: Date, end: Date): number {
   const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
@@ -357,6 +431,8 @@ export function buildCalendarMonthWeeksIncludingWeekends(
   monthStart: Date,
   monthEnd: Date,
   hoursByDateKey: Map<string, number>,
+  /** When true, weeks run Sun–Sat (non-HSL). Default false = Mon–Sun (HSL). */
+  startOnSunday = false,
 ): PabCalendarDay[][] {
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const ms = new Date(monthStart.getFullYear(), monthStart.getMonth(), monthStart.getDate());
@@ -364,24 +440,33 @@ export function buildCalendarMonthWeeksIncludingWeekends(
   const msTime = ms.getTime();
   const meTime = me.getTime();
 
-  const firstMonday = new Date(ms);
-  {
-    const dow = firstMonday.getDay();
-    const back = dow === 0 ? 6 : dow - 1;
-    firstMonday.setDate(firstMonday.getDate() - back);
+  const gridStart = new Date(ms);
+  if (startOnSunday) {
+    // Back to Sunday: Sun=0→0, Mon=1→1, …, Sat=6→6 days back
+    gridStart.setDate(gridStart.getDate() - gridStart.getDay());
+  } else {
+    // Back to Monday: Sun=0→6, Mon=1→0, Tue=2→1, …, Sat=6→5 days back
+    const dow = gridStart.getDay();
+    gridStart.setDate(gridStart.getDate() - (dow === 0 ? 6 : dow - 1));
   }
 
-  const lastSunday = new Date(me);
-  {
-    const dow = lastSunday.getDay();
-    const forward = dow === 0 ? 0 : 7 - dow;
-    lastSunday.setDate(lastSunday.getDate() + forward);
+  const gridEnd = new Date(me);
+  if (startOnSunday) {
+    // Forward to Saturday: Sat=6→0, Sun=0→6, Mon=1→5, …, Fri=5→1 days forward
+    const dow = gridEnd.getDay();
+    gridEnd.setDate(gridEnd.getDate() + (dow === 6 ? 0 : 6 - dow));
+  } else {
+    // Forward to Sunday: Sun=0→0, Mon=1→6, …, Sat=6→1 days forward
+    const dow = gridEnd.getDay();
+    gridEnd.setDate(gridEnd.getDate() + (dow === 0 ? 0 : 7 - dow));
   }
+
+  const weekEndDow = startOnSunday ? 6 : 0; // Saturday or Sunday ends the row
 
   const weeks: PabCalendarDay[][] = [];
   let currentWeek: PabCalendarDay[] = [];
-  const cur = new Date(firstMonday.getFullYear(), firstMonday.getMonth(), firstMonday.getDate());
-  const endT = lastSunday.getTime();
+  const cur = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate());
+  const endT = gridEnd.getTime();
 
   while (cur.getTime() <= endT) {
     const t = cur.getTime();
@@ -401,7 +486,7 @@ export function buildCalendarMonthWeeksIncludingWeekends(
       passes,
       hasData,
     });
-    if (dow === 0) {
+    if (dow === weekEndDow) {
       weeks.push(currentWeek);
       currentWeek = [];
     }
@@ -537,6 +622,38 @@ export function resolveCanonicalColumnsToIso(
       const iso = datesByDow[dow];
       if (iso) { mapped[iso] = value; continue; }
     }
+    mapped[key] = value;
+  }
+  return mapped;
+}
+
+/**
+ * Resolve canonical weekday columns (`sunday`, `monday`, …) to the ISO dates of a
+ * specific 7-day pay week. Unlike {@link resolveCanonicalColumnsToIso} — which maps
+ * by day-of-week across the (possibly 8-day Sun→Sun) filename range and lets the
+ * trailing Sunday win — this maps each weekday to its single date inside `payWeek`,
+ * so the lone `sunday` slot lands on THIS department's Sunday:
+ *   - non-HSL (Sun→Sat) "May 24–31" file → sunday = May 24 (leading)
+ *   - HSL (Mon→Sun)      "May 24–31" file → sunday = May 31 (trailing)
+ *
+ * A 7-day window has exactly one date per weekday, so there is no overlap ambiguity.
+ */
+export function resolveCanonicalColumnsToPayWeek(
+  row: Record<string, unknown>,
+  payWeek: { start: Date; end: Date },
+): Record<string, unknown> {
+  const datesByDow: Record<number, string> = {};
+  const cur = new Date(payWeek.start.getFullYear(), payWeek.start.getMonth(), payWeek.start.getDate());
+  const endT = new Date(payWeek.end.getFullYear(), payWeek.end.getMonth(), payWeek.end.getDate()).getTime();
+  while (cur.getTime() <= endT) {
+    datesByDow[cur.getDay()] = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  const mapped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    const dow = CANONICAL_DOW_MAP[key.toLowerCase()];
+    if (dow !== undefined && datesByDow[dow]) { mapped[datesByDow[dow]] = value; continue; }
     mapped[key] = value;
   }
   return mapped;
