@@ -3653,9 +3653,14 @@ export default function PayrollWizard({
     return result;
   }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, ssdKpiAmounts, resolvedManagerBonus]);
 
-  /** Effective bonus per employee: accounting override wins over the auto-computed total. */
+  /**
+   * Effective bonus per employee: the auto-computed subtotal (PAB + Tech + KPI +
+   * dept bonuses) PLUS the accounting Adj. delta. The Adj. value is a signed
+   * adjustment added on top — it never replaces the auto subtotal, so KPI/PAB/Tech
+   * always remain in the final figure.
+   */
   const getEffectiveBonus = useCallback(
-    (email: string): number => bonusOverrides[email] ?? bonusTotals[email] ?? 0,
+    (email: string): number => (bonusTotals[email] ?? 0) + (bonusOverrides[email] ?? 0),
     [bonusOverrides, bonusTotals],
   );
 
@@ -3850,17 +3855,18 @@ export default function PayrollWizard({
         hasRates && hasThirtyDays && (isTechBonusWeek || toggles.tech_bonus)
           ? commonBonusPhp('tech_bonus')
           : 0;
-      const hasAccountingOverride = bonusOverrides[r.email] !== undefined;
       const rawBonusTotal = hasRates ? (bonusTotals[r.email] ?? 0) : 0;
       // Strip out the month-wide PAB/tech amounts that `bonusTotals` may include,
       // then re-add the week-gated versions so weekly paystubs get the right total.
       const toggledPab = toggles.perfect_attendance ? commonBonusPhp('perfect_attendance') : 0;
       const toggledTech = toggles.tech_bonus ? commonBonusPhp('tech_bonus') : 0;
       const autoOtherBonuses = hasRates ? Math.max(0, rawBonusTotal - toggledPab - toggledTech) : 0;
-      // Accounting override replaces the whole bonus total: treat it as "other_bonuses"
-      // and skip PAB/tech gating for this row.
-      const otherBonuses = hasAccountingOverride ? (bonusOverrides[r.email] ?? 0) : autoOtherBonuses;
-      const bonusTotal = hasAccountingOverride ? otherBonuses : (pabBonus + techBonus + otherBonuses);
+      // Accounting Adj. is a signed delta added on top — it never replaces the auto
+      // bonuses, so PAB/Tech/KPI/dept amounts remain. Fold it into other_bonuses so
+      // bonuses_total stays equal to pab + tech + other.
+      const accountingAdj = hasRates ? (bonusOverrides[r.email] ?? 0) : 0;
+      const otherBonuses = autoOtherBonuses + accountingAdj;
+      const bonusTotal = pabBonus + techBonus + otherBonuses;
 
       // MESA Program deduction — ₱100 per paycheck for enrolled members.
       const em = normEmail(r.email);
@@ -7551,7 +7557,10 @@ export default function PayrollWizard({
                           ) : filteredDeptEmployees.map((emp) => {
                             const autoBonus = bonusTotals[emp.email] ?? 0;
                             const hasOverride = bonusOverrides[emp.email] !== undefined;
-                            const bonusTotal = hasOverride ? (bonusOverrides[emp.email] ?? 0) : autoBonus;
+                            // Adj. is a signed delta added on top of the auto subtotal
+                            // (PAB + Tech + KPI + dept bonuses), never a replacement.
+                            const adj = bonusOverrides[emp.email] ?? 0;
+                            const bonusTotal = autoBonus + adj;
                             const empRateRow = ratesByEmail.get(normEmail(emp.email) ?? '');
                             const empMesaDeduction = (emp.initialPay != null && empRateRow?.mesa_member) ? 100 : 0;
                             const finalPay = (emp.initialPay ?? 0) + bonusTotal - empMesaDeduction;
@@ -8131,13 +8140,13 @@ export default function PayrollWizard({
                                           if (!Number.isFinite(next)) return;
                                           updateBonusOverride(emp.email, next);
                                         }}
-                                        title={`Overriding auto-computed: ${formatPHP(autoBonus)}`}
+                                        title={`Signed adjustment added on top of auto-computed bonuses (${formatPHP(autoBonus)}). Use a negative value to deduct.`}
                                         className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
                                       />
                                       <button
                                         type="button"
                                         onClick={() => updateBonusOverride(emp.email, null)}
-                                        title={`Revert to auto: ${formatPHP(autoBonus)}`}
+                                        title={`Clear adjustment (auto bonuses: ${formatPHP(autoBonus)})`}
                                         className="text-zinc-400 hover:text-red-500"
                                       >
                                         <X className="h-3 w-3" />
@@ -8146,7 +8155,7 @@ export default function PayrollWizard({
                                   ) : (
                                     <button
                                       type="button"
-                                      title={`Auto-computed: ${formatPHP(autoBonus)} — click to set an adjustment`}
+                                      title={`Auto bonuses: ${formatPHP(autoBonus)} — click to add a signed adjustment`}
                                       onClick={() => updateBonusOverride(emp.email, 0)}
                                       className="text-zinc-300 hover:text-amber-600 dark:text-zinc-700 dark:hover:text-amber-400"
                                     >
@@ -9033,7 +9042,8 @@ export default function PayrollWizard({
                             const em = (r.email ?? '').toLowerCase();
                             const kpiBonus = hslStepBonusByEmail[em] ?? 0;
                             const override = bonusOverrides[r.email] ?? null;
-                            const effectiveBonus = override !== null ? override : kpiBonus;
+                            // Adj. is a signed delta added on top of the KPI bonus, never a replacement.
+                            const effectiveBonus = kpiBonus + (override ?? 0);
                             const paStatus = effectivePabStatus.get(em) ?? 'in_progress';
                             const pabAmt = paStatus === 'eligible' ? 5000 : 0;
                             const techOn = techBonusEligible.has(r.email);
@@ -9126,21 +9136,20 @@ export default function PayrollWizard({
                                         type="number"
                                         inputMode="decimal"
                                         step="0.01"
-                                        min={0}
                                         value={override}
                                         onChange={e => {
                                           const raw = e.target.value;
                                           const next = raw === '' ? 0 : Number(raw);
-                                          if (!Number.isFinite(next) || next < 0) return;
+                                          if (!Number.isFinite(next)) return;
                                           updateBonusOverride(r.email, next);
                                         }}
-                                        title={`Overriding KPI bonus: ${formatPHP(kpiBonus)}`}
+                                        title={`Signed adjustment added on top of the KPI bonus (${formatPHP(kpiBonus)}). Use a negative value to deduct.`}
                                         className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
                                       />
                                       <button
                                         type="button"
                                         onClick={() => updateBonusOverride(r.email, null)}
-                                        title={`Revert to KPI bonus: ${formatPHP(kpiBonus)}`}
+                                        title={`Clear adjustment (KPI bonus: ${formatPHP(kpiBonus)})`}
                                         className="text-zinc-400 hover:text-red-500"
                                       >
                                         <X className="h-3 w-3" />
@@ -9149,7 +9158,7 @@ export default function PayrollWizard({
                                   ) : (
                                     <button
                                       type="button"
-                                      title={`KPI bonus: ${formatPHP(kpiBonus)} — click to set an adjustment`}
+                                      title={`KPI bonus: ${formatPHP(kpiBonus)} — click to add a signed adjustment`}
                                       onClick={() => updateBonusOverride(r.email, 0)}
                                       className="text-zinc-300 hover:text-amber-600 dark:text-zinc-700 dark:hover:text-amber-400"
                                     >
@@ -9168,12 +9177,11 @@ export default function PayrollWizard({
                         </tbody>
                         <tfoot className="border-t-2 border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/40">
                           {(() => {
-                            let totalPab = 0, totalTech = 0, totalEffective = 0, totalWkndPremium = 0;
+                            let totalPab = 0, totalTech = 0, totalKpi = 0, totalAdj = 0, totalWkndPremium = 0;
                             for (const r of hslCalcRows) {
                               const em = (r.email ?? '').toLowerCase();
-                              const ov = bonusOverrides[r.email] ?? null;
-                              const kpi = hslStepBonusByEmail[em] ?? 0;
-                              totalEffective += ov !== null ? ov : kpi;
+                              totalKpi += hslStepBonusByEmail[em] ?? 0;
+                              totalAdj += bonusOverrides[r.email] ?? 0;
                               const st = effectivePabStatus.get(em) ?? 'in_progress';
                               if (st === 'eligible') totalPab += 5000;
                               if (techBonusEligible.has(r.email)) totalTech += 1850;
@@ -9192,7 +9200,7 @@ export default function PayrollWizard({
                                   {formatPHP(totalHslInitialPay)}
                                 </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                                  +{formatPHP(totalEffective)}
+                                  {totalKpi > 0 ? `+${formatPHP(totalKpi)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
                                 <td className="px-3 py-2.5 text-center font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                                   {totalPab > 0 ? `+${formatPHP(totalPab)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
@@ -9200,9 +9208,11 @@ export default function PayrollWizard({
                                 <td className="px-3 py-2.5 text-center font-mono text-sm font-bold tabular-nums text-sky-700 dark:text-sky-400">
                                   {totalTech > 0 ? `+${formatPHP(totalTech)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
-                                <td className="px-3 py-2.5" />
+                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                                  {totalAdj !== 0 ? `${totalAdj > 0 ? '+' : ''}${formatPHP(totalAdj)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                                </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-                                  {formatPHP(totalHslInitialPay + totalEffective + totalPab + totalTech)}
+                                  {formatPHP(totalHslInitialPay + totalKpi + totalAdj + totalPab + totalTech)}
                                 </td>
                               </tr>
                             );

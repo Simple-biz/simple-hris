@@ -41,7 +41,8 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const email = searchParams.get('email') ?? undefined;
     const status = searchParams.get('status') ?? undefined;
-    const requestType = searchParams.get('request_type') ?? undefined;
+    // Accept multiple request_type params (?request_type=a&request_type=b) as an IN filter.
+    const requestTypes = searchParams.getAll('request_type').filter(Boolean);
     const limit = parseInt(searchParams.get('limit') ?? '200', 10);
 
     const authz = email
@@ -62,7 +63,8 @@ export async function GET(request: Request) {
       q = q.eq('work_email', authz.effectiveEmail);
     }
     if (status) q = q.eq('status', status);
-    if (requestType) q = q.eq('request_type', requestType);
+    if (requestTypes.length === 1) q = q.eq('request_type', requestTypes[0]);
+    else if (requestTypes.length > 1) q = q.in('request_type', requestTypes);
 
     const { data, error } = await q;
     if (error) return NextResponse.json({ rows: [], error: error.message }, { status: 500 });
