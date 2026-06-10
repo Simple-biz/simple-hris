@@ -17,7 +17,8 @@ For every employee the wizard computes:
 Final = Initial Pay
         + PAB bonus            (Perfect Attendance, ₱5,000, final PAB week only)
         + Tech bonus           (₱1,850, 3rd-paycheck week, 30-day tenure)
-        + KPI / dept bonuses   (per department; SSD KPI, manager KPI submissions, etc.)
+        + KPI / dept bonuses   (manager KPI Calculator submission → "KPI Sub." column;
+                                 SSD "KPI Bonus" toggle; US-manager toggles)
         − MESA deduction       (₱100/paycheck for enrolled members)
         + MESA disbursement    (approved payout being released this run, if any)
         + Adj.                 (accounting signed adjustment — see §2)
@@ -32,6 +33,13 @@ The same formula is used in three places and they must agree:
 - the **Additions** table row Final (step 3, non-HSL),
 - the **HSL** table Total Pay (step 5),
 - the **dispatch payload** (`dispatchData`) `pay_php.final`, which is what actually gets paid.
+
+> **Per-department performance bonuses moved to the KPI Calculator (2026-06-10).** The old violet
+> in-wizard calculators (Tix ×₱50, Sites, Lead-Gen appts, Units, Sales, HR pool, Accounting weekly
+> collections, QC) were removed from the Additions tab. `bonusTotals` no longer calls
+> `calculateDepartmentBonus`; for formula departments the dept bonus now comes **only** from the
+> manager's KPI Calculator submission (`resolvedManagerBonus` → "KPI Sub." column). So a department
+> bonus requires a manager KPI submission — there is no auto-computed fallback in the wizard.
 
 ---
 
@@ -107,25 +115,29 @@ last-wins collapse and the validated `ruthg@simple.biz` example (May 31–Jun 6 
 
 ---
 
-## 5. Employee Dashboard sync (Estimated Take-Home)
+## 5. Final-pay snapshot → Employee Dashboard + Payment Dispatch
 
-The Employee Dashboard's **Estimated Take-Home** normally computes a rough client-side estimate
-(`INIT + PAB + Tech − MESA`) and has no access to KPI/dept bonuses or accounting's Adj./Orphanage
-entries. To make it match the wizard exactly, the wizard **publishes a per-employee final-pay
-snapshot**:
+Other surfaces don't know the wizard's accounting layer (KPI/dept, Adj., Orphanage, MESA
+disbursement), so the wizard **publishes a per-employee snapshot** they read.
 
 - `publishFinalPaySnapshot()` writes `app_settings` key `payroll.wizard.final_pay.<sourceFile>` =
-  `{ source_file, finals: { [email]: pay_php } }`, built from `dispatchData.rows` (the authoritative
-  dispatched amount), keyed by **both** work and personal email (lowercased).
-- **Triggers:** when accounting clicks **Lock in additions** (`saveAdditionsProgress`) and on
-  **Confirm & Dispatch**.
-- The dashboard ([EmployeeDashboard.tsx](../../src/components/employee/EmployeeDashboard.tsx))
-  fetches that key for the currently-selected file and, if its email (or an alias) is present, shows
-  the wizard's exact `final` as the take-home (with an "Includes payroll-confirmed bonuses &
-  adjustments" note). **Fallback:** if no snapshot exists for that file (or in All-time view), it
-  shows the original client-side auto-estimate.
+  `{ source_file, finals: { [email]: { final, regularPay, otPay, regularHours, otHours, totalHours, initial } } }`,
+  built from `dispatchData.rows`, keyed by **both** work and personal email (lowercased). The
+  Regular/OT split + hours are included (not just `final`) so the dashboard's Regular + Overtime
+  tiles reconcile exactly with the take-home.
+- **Published LIVE** — a 1.5s-debounced effect on `dispatchData` writes it as accounting edits, plus
+  immediate writes on **Lock in additions** and **Confirm & Dispatch**.
+- **Dashboard** ([EmployeeDashboard.tsx](../../src/components/employee/EmployeeDashboard.tsx)) —
+  `fetchPayrollFinal` refetches on mount, window focus, and a 30s interval. When the viewer's
+  email/alias is present, the hero take-home **and** the Regular/OT/Initial stats come from the
+  snapshot (note: "Includes payroll-confirmed bonuses & adjustments"). **Fallback:** client-side
+  auto-estimate (`INIT + PAB + Tech − MESA`) when no snapshot / All-time view.
+- **Payment Dispatch** ([useDispatchQueue.ts](../../src/components/payroll-clerk/useDispatchQueue.ts)) —
+  `loadAll` overlays each queue row's `amountPHP`/`amountUSD` from the snapshot (by email). Without
+  this it shows `/api/payroll-current-pay` which recomputes net pay WITHOUT the accounting layer.
 
-So the dashboard reflects the wizard's number **once accounting locks/dispatches** — not before.
+Reg + OT = the wizard's Initial; take-home = `final`. When the employee has no bonus/MESA/Orphanage/
+Adj, Reg + OT equals take-home exactly; otherwise take-home is higher by those (separate lines).
 
 ## 6. MESA membership
 

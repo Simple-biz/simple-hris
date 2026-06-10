@@ -234,7 +234,10 @@
       "Bash(grep -rn \"resolveCanonicalColumnsToPayWeek\" src/ app/)",
       "Bash(grep -rn \"resolveCanonicalColumnsToIso\" src/ app/)",
       "Bash(grep -rn \"payrollFinalPhp\" src/)",
-      "Bash(echo \"exit grep: $?\")"
+      "Bash(echo \"exit grep: $?\")",
+      "Bash(cp src/components/PayrollWizard.tsx /c/tmp/PayrollWizard.bak.tsx)",
+      "Bash(sed -i '7625,7703d;7902,8259d' src/components/PayrollWizard.tsx)",
+      "Bash(sed -n '7265,7285p' src/components/PayrollWizard.tsx)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
