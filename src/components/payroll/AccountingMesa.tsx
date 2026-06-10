@@ -155,6 +155,24 @@ export default function AccountingMesa() {
         const j = (await res.json()) as { error?: string };
         throw new Error(j.error ?? `HTTP ${res.status}`);
       }
+      // On an approved opt-out, unenroll the member so the Payroll Wizard MESA
+      // column stops applying the -PHP100 deduction. (Disbursement/return keep
+      // the member enrolled — those withdraw/return funds, not membership.)
+      if (status === 'approved' && reviewTarget.request_type === 'opt_out') {
+        try {
+          await fetch('/api/toggle-mesa-member', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              workEmail: reviewTarget.work_email,
+              mesaMember: false,
+              name: reviewTarget.full_name,
+            }),
+          });
+        } catch {
+          toast.error('Approved, but could not auto-unenroll from MESA — please toggle manually in Rates.');
+        }
+      }
       toast.success(`Request ${status}`);
       setReviewTarget(null);
       cachedRequests = null;

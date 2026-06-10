@@ -39,8 +39,11 @@ import {
   Sparkles,
   CheckCircle2,
   Search,
+  Eye,
+  Radio,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { useWizardFollow } from '@/hooks/useWizardFollow';
 import { cn } from '@/lib/utils';
 import { formatMoney, normalizeCurrency, sumByCurrency } from '@/lib/contractor-currency';
 import { KPI_BONUS_ID, DEPARTMENTS, FORMULA_DEPT_KEYS, MANAGER_BONUS_DEPT_KEYS, ACCOUNTING_WEEKDAY_METRICS, calcLeadGenBonus, isDevsDelivery, isDevsChecking, isJeromeRosero, isTeal, calculateDepartmentBonus } from '@/lib/payroll/department-bonus';
@@ -423,6 +426,7 @@ type DispatchEmployee = {
     tech_bonus: number;
     other_bonuses: number;
     mesa_deduction: number;
+    mesa_disbursement: number;
     final: number;
   };
 };
@@ -678,6 +682,45 @@ export default function PayrollWizard({
   const cursorOverlayRef = useRef<WizardCursorOverlayHandle>(null);
   const [togglingLock, setTogglingLock] = useState(false);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
+
+  // ── Collaborative "oversee" / follow mode ─────────────────────────────────
+  // When processing is started, the operator who toggled it is the "driver".
+  // Everyone else viewing the wizard follows along in a read-only, third-person
+  // view that mirrors the driver's active step — so the accounting head can
+  // watch how the operator works. You are never a spectator of your own lock.
+  const driverEmail = lockState.lockedBy ?? null;
+  const selfKey = (sessionEmail ?? '').trim().toLowerCase();
+  const driverKey = (driverEmail ?? '').trim().toLowerCase();
+  const isLockDriver =
+    lockState.locked && !!driverKey && !!selfKey && driverKey === selfKey;
+  const canSpectate =
+    lockState.locked && !!driverKey && !!selfKey && driverKey !== selfKey;
+  // Local opt-out so an overseer can drop follow mode and click around freely.
+  const [observing, setObserving] = useState(true);
+  // Reset the opt-out each time a new processing session starts (or ends).
+  useEffect(() => {
+    setObserving(true);
+  }, [driverEmail, lockState.locked]);
+  const isSpectator = canSpectate && observing;
+  const driverLabel = driverEmail ? driverEmail.split('@')[0] : 'operator';
+
+  useWizardFollow({
+    selfEmail: sessionEmail,
+    driverEmail,
+    isDriver: isLockDriver,
+    isSpectator,
+    currentStep,
+    onRemoteStep: setCurrentStep,
+  });
+
+  // While spectating, forward wheel scrolling to the step's ScrollArea viewport
+  // so the read-only overlay (which swallows clicks) doesn't trap the page.
+  const handleSpectatorWheel = useCallback((e: React.WheelEvent) => {
+    const viewport = wizardContainerRef.current?.querySelector(
+      '[data-slot="scroll-area-viewport"]',
+    ) as HTMLElement | null;
+    if (viewport) viewport.scrollTop += e.deltaY;
+  }, []);
   const [hslSyncLoading, setHslSyncLoading] = useState(false);
   const [hslSyncResult, setHslSyncResult] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [masterSyncPct, setMasterSyncPct] = useState<{ pct: number } | null>(null);
@@ -1281,6 +1324,13 @@ export default function PayrollWizard({
   const [approvedDisputeIds, setApprovedDisputeIds] = useState<Map<string, Map<string, string>>>(new Map());
   /** Approved time-adjustment overrides: normalized work_email -> (ISO date -> SET hours). */
   const [approvedTimeAdjustments, setApprovedTimeAdjustments] = useState<Map<string, Map<string, number>>>(new Map());
+  /**
+   * Approved, not-yet-dispatched MESA disbursements: normalized work_email -> total PHP.
+   * Surfaced in the Additions MESA column and added to Final pay. Excludes already
+   * dispatched payouts (dispatched_at set) so they aren't double-counted with the
+   * Urgent Payments queue that pays them out.
+   */
+  const [mesaDisbursements, setMesaDisbursements] = useState<Map<string, number>>(new Map());
   /** Pending + approved time-adjustment requests (for the Additions review panel). */
   const [timeAdjustmentRows, setTimeAdjustmentRows] = useState<TimeAdjustmentRow[]>([]);
   const [timeAdjustmentSignedUrls, setTimeAdjustmentSignedUrls] = useState<Record<string, string>>({});
@@ -2328,6 +2378,30 @@ export default function PayrollWizard({
     if (currentStep !== 3) return;
     fetchTimeAdjustmentReview();
   }, [currentStep, fetchTimeAdjustmentReview]);
+
+  // Approved MESA disbursements (accounting-approved, not yet paid out via the
+  // Urgent Payments queue) — folded into the Additions MESA column + Final pay.
+  const fetchMesaDisbursements = useCallback(() => {
+    fetch('/api/mesa-requests?request_type=disbursement&status=approved&limit=500', { cache: 'no-store' })
+      .then(r => r.json())
+      .then((json: { rows?: Array<{ work_email?: string; amount_needed?: number | null; dispatched_at?: string | null }> }) => {
+        const map = new Map<string, number>();
+        for (const row of json.rows ?? []) {
+          if (row.dispatched_at) continue; // already paid via Urgent Payments
+          const em = (row.work_email ?? '').trim().toLowerCase();
+          const amt = row.amount_needed ?? 0;
+          if (!em || amt <= 0) continue;
+          map.set(em, (map.get(em) ?? 0) + amt);
+        }
+        setMesaDisbursements(map);
+      })
+      .catch(() => setMesaDisbursements(new Map()));
+  }, []);
+
+  useEffect(() => {
+    if (currentStep !== 3) return;
+    fetchMesaDisbursements();
+  }, [currentStep, fetchMesaDisbursements]);
 
   /**
    * Override lookup the PAB memos consume: approved PAB disputes overlaid by approved
@@ -3871,9 +3945,12 @@ export default function PayrollWizard({
       // MESA Program deduction — ₱100 per paycheck for enrolled members.
       const em = normEmail(r.email);
       const rateRowForMesa = em ? ratesByEmail.get(em) : undefined;
-      const mesaDeduction = (hasRates && rateRowForMesa?.mesa_member) ? 100 : 0;
+      // Accounting-approved disbursement (not yet paid via Urgent Payments) — paid out this run.
+      const mesaDisbursement = em ? (mesaDisbursements.get(em) ?? 0) : 0;
+      // Always deduct the ₱100 contribution when enrolled OR when a disbursement is being paid out.
+      const mesaDeduction = (hasRates && (rateRowForMesa?.mesa_member || mesaDisbursement > 0)) ? 100 : 0;
 
-      const finalPay = (r.initialPay ?? 0) + bonusTotal - mesaDeduction;
+      const finalPay = (r.initialPay ?? 0) + bonusTotal - mesaDeduction + mesaDisbursement;
 
       rows.push({
         name: r.name,
@@ -3893,6 +3970,7 @@ export default function PayrollWizard({
           tech_bonus: techBonus,
           other_bonuses: otherBonuses,
           mesa_deduction: mesaDeduction,
+          mesa_disbursement: mesaDisbursement,
           final: finalPay,
         },
       });
@@ -3907,6 +3985,7 @@ export default function PayrollWizard({
     employeeBonuses,
     bonusTotals,
     bonusOverrides,
+    mesaDisbursements,
     pabMonthRange,
     calcSourceFile,
     hubstaffColsForPab,
@@ -7562,8 +7641,12 @@ export default function PayrollWizard({
                             const adj = bonusOverrides[emp.email] ?? 0;
                             const bonusTotal = autoBonus + adj;
                             const empRateRow = ratesByEmail.get(normEmail(emp.email) ?? '');
-                            const empMesaDeduction = (emp.initialPay != null && empRateRow?.mesa_member) ? 100 : 0;
-                            const finalPay = (emp.initialPay ?? 0) + bonusTotal - empMesaDeduction;
+                            // Accounting-approved disbursement (not yet paid via Urgent Payments) — paid out in this run.
+                            const empMesaDisbursement = mesaDisbursements.get(normEmail(emp.email) ?? '') ?? 0;
+                            // Always deduct the ₱100 contribution when enrolled OR when a disbursement is being
+                            // paid out this run (a disbursement implies an active MESA member).
+                            const empMesaDeduction = (emp.initialPay != null && (empRateRow?.mesa_member || empMesaDisbursement > 0)) ? 100 : 0;
+                            const finalPay = (emp.initialPay ?? 0) + bonusTotal - empMesaDeduction + empMesaDisbursement;
                             const empM = employeeMetrics[emp.email] ?? {};
                             const isJerome = isJeromeRosero(emp.name);
                             return (
@@ -8108,21 +8191,34 @@ export default function PayrollWizard({
                                     </TableCell>
                                   );
                                 })()}
-                                {/* MESA deduction — automatic -PHP100 for MESA members; shown so reviewers can see the deduction inline (it was previously only visible in the exported XLSX). */}
+                                {/* MESA — automatic -PHP100 contribution for members, plus any accounting-approved
+                                    disbursement (paid out this run). Both fold into Final pay. */}
                                 <TableCell
                                   className={cn(
                                     'px-1 py-1.5 text-right font-mono text-[11px] tabular-nums',
-                                    empMesaDeduction > 0
-                                      ? 'font-semibold text-rose-600 dark:text-rose-400'
-                                      : 'text-zinc-300 dark:text-zinc-700',
+                                    empMesaDisbursement > 0
+                                      ? 'font-semibold text-emerald-600 dark:text-emerald-400'
+                                      : empMesaDeduction > 0
+                                        ? 'font-semibold text-rose-600 dark:text-rose-400'
+                                        : 'text-zinc-300 dark:text-zinc-700',
                                   )}
-                                  title={
-                                    empMesaDeduction > 0
-                                      ? `MESA member — ${formatPHP(empMesaDeduction)} deducted from net pay`
-                                      : 'Not enrolled in MESA'
-                                  }
+                                  title={[
+                                    empMesaDisbursement > 0 ? `Approved disbursement +${formatPHP(empMesaDisbursement)} (added to Final pay)` : null,
+                                    empMesaDeduction > 0 ? `MESA member — ${formatPHP(empMesaDeduction)} contribution deducted` : null,
+                                  ].filter(Boolean).join(' · ') || 'Not enrolled in MESA'}
                                 >
-                                  {empMesaDeduction > 0 ? `-${formatPHP(empMesaDeduction)}` : '—'}
+                                  {empMesaDisbursement > 0 ? (
+                                    <div className="flex flex-col items-end leading-tight">
+                                      <span>+{formatPHP(empMesaDisbursement)}</span>
+                                      {empMesaDeduction > 0 && (
+                                        <span className="text-[9px] text-rose-500 dark:text-rose-400">-{formatPHP(empMesaDeduction)}</span>
+                                      )}
+                                    </div>
+                                  ) : empMesaDeduction > 0 ? (
+                                    `-${formatPHP(empMesaDeduction)}`
+                                  ) : (
+                                    '—'
+                                  )}
                                 </TableCell>
                                 <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-bold">
                                   {isRecalcPending ? (
@@ -10277,7 +10373,7 @@ export default function PayrollWizard({
                       e.pay_php.regular ?? null,
                       e.pay_php.ot ?? null,
                       e.pay_php.bonuses_total,
-                      e.pay_php.mesa_deduction,
+                      (e.pay_php.mesa_disbursement ?? 0) - e.pay_php.mesa_deduction,
                       e.pay_php.final,
                     ]),
                   ];
@@ -10374,7 +10470,14 @@ export default function PayrollWizard({
                           <td className="px-3 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{e.pay_php.regular != null ? formatPHP(e.pay_php.regular) : '—'}</td>
                           <td className="px-3 py-2 font-mono tabular-nums text-zinc-700 dark:text-zinc-300">{e.pay_php.ot != null ? formatPHP(e.pay_php.ot) : '—'}</td>
                           <td className="px-3 py-2 font-mono tabular-nums text-emerald-700 dark:text-emerald-400">{e.pay_php.bonuses_total > 0 ? `+${formatPHP(e.pay_php.bonuses_total)}` : '—'}</td>
-                          <td className="px-3 py-2 font-mono tabular-nums text-rose-600 dark:text-rose-400">{e.pay_php.mesa_deduction > 0 ? `-${formatPHP(e.pay_php.mesa_deduction)}` : '—'}</td>
+                          {(() => {
+                            const disb = e.pay_php.mesa_disbursement ?? 0;
+                            const ded = e.pay_php.mesa_deduction;
+                            const net = disb - ded;
+                            if (disb > 0) return <td className="px-3 py-2 font-mono tabular-nums text-emerald-600 dark:text-emerald-400">{net >= 0 ? '+' : ''}{formatPHP(net)}</td>;
+                            if (ded > 0) return <td className="px-3 py-2 font-mono tabular-nums text-rose-600 dark:text-rose-400">-{formatPHP(ded)}</td>;
+                            return <td className="px-3 py-2 font-mono tabular-nums text-zinc-400">—</td>;
+                          })()}
                           <td className="px-3 py-2 font-mono tabular-nums font-semibold text-zinc-900 dark:text-zinc-100">{formatPHP(e.pay_php.final)}</td>
                         </tr>
                       ))}
@@ -10505,6 +10608,74 @@ export default function PayrollWizard({
   return (
     <div ref={wizardContainerRef} className="relative flex h-full flex-col overflow-hidden bg-zinc-50 p-2 sm:p-4 md:p-8 dark:bg-zinc-950">
       <WizardCursorOverlay ref={cursorOverlayRef} selfEmail={sessionEmail} containerRef={wizardContainerRef} />
+
+      {/* ── Oversee / follow mode ──────────────────────────────────────────
+          When another operator is driving the locked processing session, this
+          client watches in a read-only, third-person view that mirrors their
+          step. The blocker swallows clicks (wheel is forwarded to the step's
+          scroll area); the banner names the driver and offers an opt-out. */}
+      {isSpectator && (
+        <>
+          <div
+            className="absolute inset-0 z-40 cursor-not-allowed bg-indigo-500/[0.03] ring-2 ring-inset ring-indigo-500/40"
+            onWheel={handleSpectatorWheel}
+            aria-hidden="true"
+          />
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-[60] flex justify-center px-3 pt-3">
+            <motion.div
+              initial={{ opacity: 0, y: -12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 30 }}
+              className="pointer-events-auto flex items-center gap-3 rounded-full border border-indigo-300/70 bg-white/95 px-4 py-2 shadow-lg shadow-indigo-500/10 backdrop-blur dark:border-indigo-500/40 dark:bg-zinc-900/95"
+            >
+              <span className="relative flex h-2.5 w-2.5 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-70" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-indigo-500" />
+              </span>
+              <Eye className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+              <div className="flex flex-col leading-tight">
+                <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-100">
+                  Observing <span className="font-mono text-indigo-600 dark:text-indigo-400">{driverLabel}</span>
+                </span>
+                <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                  Live view-only &middot; your screen follows their step
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setObserving(false)}
+                className="ml-1 shrink-0 rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-white"
+              >
+                Stop observing
+              </button>
+            </motion.div>
+          </div>
+        </>
+      )}
+
+      {/* When you are the driver, a quiet badge confirms others are watching. */}
+      {isLockDriver && (
+        <div className="pointer-events-none absolute right-3 top-3 z-[60]">
+          <div className="flex items-center gap-1.5 rounded-full border border-rose-300/70 bg-white/95 px-3 py-1.5 shadow-sm backdrop-blur dark:border-rose-500/40 dark:bg-zinc-900/95">
+            <Radio className="h-3.5 w-3.5 text-rose-500" />
+            <span className="text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+              You are driving &middot; others can watch
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Re-enter follow mode after opting out, while the session is still live. */}
+      {canSpectate && !observing && (
+        <button
+          type="button"
+          onClick={() => setObserving(true)}
+          className="absolute right-3 top-3 z-[60] flex items-center gap-1.5 rounded-full border border-indigo-300/70 bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-indigo-600 shadow-sm backdrop-blur transition-colors hover:bg-indigo-50 dark:border-indigo-500/40 dark:bg-zinc-900/95 dark:text-indigo-400 dark:hover:bg-zinc-800"
+        >
+          <Eye className="h-3.5 w-3.5" />
+          Resume observing {driverLabel}
+        </button>
+      )}
       <Dialog
         open={deleteSourceFilePending !== null}
         onOpenChange={(open) => {
