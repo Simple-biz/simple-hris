@@ -83,3 +83,36 @@ Script: [`scripts/backfill-may10-additive.mjs`](../../scripts/backfill-may10-add
    columns so two Sundays can coexist.
 3. **Retro check:** cross-reference the 44 full-day people against already-decided May PAB
    eligibility — some may have been marked short for the week of May 10 and could now pass.
+
+## Update 2026-06-10 — Payroll Wizard now resolves this correctly for pay
+
+Two changes to the **Initial Calculation** pay path largely resolve follow-up #1 *for payroll
+totals* (the additive backfill is still the fix for the **calendar/PAB display** of a dropped
+leading Sunday):
+
+1. **Resolve canonical columns to TRUE file dates, then window** — not onto the dept pay week.
+   `payDaysByEmail` (in [PayrollWizard.tsx](../../src/components/PayrollWizard.tsx)) and
+   `current-pay.ts` previously used `resolveCanonicalColumnsToPayWeek`, which forced the lone
+   `sunday` slot (= the file's **trailing** Sunday after last-wins) onto whatever Sunday sat in
+   the department window. For non-HSL (Sun→Sat) that **paid the trailing Sunday's hours** under
+   the leading Sunday's date. Now both use `resolveCanonicalColumnsToIso(row, sourceFile)` (true
+   dates) and let the pay-week window drop the out-of-week Sunday. See
+   [payroll-wizard-final-pay.md](../features/payroll-wizard-final-pay.md).
+
+2. **`payDaysByEmail` reads the cross-upload merged rows** (`hubstaffRowsForPab`), not the single
+   current file. The boundary Sunday is recovered from the **adjacent upload** where that date is
+   the trailing day — e.g. the non-HSL week **May 31–Jun 6** gets May 31's hours from the
+   `2026-05-24_to_2026-05-31` upload, while the current `2026-05-31_to_2026-06-07` upload supplies
+   Jun 1–6 and its `sunday` (= Jun 7) is correctly windowed out.
+
+**Validated** with `ruthg@simple.biz` (Accounting, ₱260/₱390) for the May 31–Jun 6 week:
+
+| Logic | Hours | Initial Pay | Note |
+|---|---|---|---|
+| Old (`resolveToPayWeek`) | 42.36h | ₱11,320.40 | paid Jun 7 mislabeled as May 31 |
+| Single-file ISO fix only | 40.86h | ₱10,735.40 | correct boundary, but lost May 31 |
+| **ISO + cross-upload merge** | **42.11h** | **₱11,222.90** | May 31 (1:15) recovered, Jun 7 excluded ✅ |
+
+This still depends on the prior week's upload being archived (it normally is). It does **not**
+recover a Sunday that no upload resolves to (the original May-10 case) — that still needs the
+additive backfill for the calendar.

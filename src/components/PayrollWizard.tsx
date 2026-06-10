@@ -4059,6 +4059,67 @@ export default function PayrollWizard({
     pabPeriodSettings.validManualRange,
   ]);
 
+  /**
+   * Publish the wizard's per-employee final pay so the Employee Dashboard's
+   * "Estimated Take-Home" matches exactly what payroll computed (incl. KPI/dept
+   * bonuses, the Adj. delta, Orphanage pay, MESA deduction + disbursement).
+   * Sourced from `dispatchData.rows` (the authoritative dispatched amount) and
+   * keyed by BOTH work and personal email (lowercased) so the dashboard can match
+   * on whichever it holds. Written to `payroll.wizard.final_pay.<sourceFile>` when
+   * accounting locks the Additions step and on dispatch. Best-effort — never blocks.
+   */
+  const publishFinalPaySnapshot = React.useCallback(async () => {
+    if (!calcSourceFile) return;
+    // email -> the wizard's authoritative figures. Includes the Regular/OT split +
+    // hours (not just `final`) so the Employee Dashboard's Regular + Overtime stats
+    // reconcile exactly with the Estimated Take-Home. Keyed by BOTH work and personal
+    // email (lowercased).
+    const finals: Record<string, {
+      final: number;
+      regularPay: number | null;
+      otPay: number | null;
+      regularHours: number;
+      otHours: number;
+      totalHours: number;
+      initial: number | null;
+    }> = {};
+    for (const r of dispatchData.rows) {
+      const entry = {
+        final: r.pay_php.final,
+        regularPay: r.pay_php.regular,
+        otPay: r.pay_php.ot,
+        regularHours: r.hours.regular,
+        otHours: r.hours.ot,
+        totalHours: r.hours.total,
+        initial: r.pay_php.initial,
+      };
+      const we = r.email?.trim().toLowerCase();
+      const pe = r.personal_email?.trim().toLowerCase();
+      if (we) finals[we] = entry;
+      if (pe) finals[pe] = entry;
+    }
+    try {
+      await savePabSetting(
+        `payroll.wizard.final_pay.${calcSourceFile}`,
+        JSON.stringify({ source_file: calcSourceFile, finals }),
+      );
+    } catch (e) {
+      console.warn('[publishFinalPaySnapshot]', e);
+    }
+  }, [calcSourceFile, dispatchData, savePabSetting]);
+
+  /**
+   * Live publish: while accounting edits the wizard (Adj./Orphanage/bonus/metric
+   * changes flow into `dispatchData`), debounce-write the final-pay snapshot so the
+   * Employee Dashboard and Payment Dispatch reflect the wizard's number in near
+   * real-time — not only on Lock/Dispatch. 1.5s debounce keeps DB writes bounded.
+   */
+  useEffect(() => {
+    if (!calcSourceFile || dispatchData.rows.length === 0) return;
+    const t = setTimeout(() => { void publishFinalPaySnapshot(); }, 1500);
+    return () => clearTimeout(t);
+  }, [calcSourceFile, dispatchData, publishFinalPaySnapshot]);
+
   const filteredCalcResults = useMemo(() => {
     const needle = initialCalcSearch.toLowerCase().trim();
     const nonHsl = effectiveCalcResults.filter(row => employeeDepts[row.email] !== 'hogan_smith_law');
@@ -6386,7 +6447,7 @@ export default function PayrollWizard({
                 )}
 
                 <Button
-                  onClick={saveAdditionsProgress}
+                  onClick={async () => { await saveAdditionsProgress(); void publishFinalPaySnapshot(); }}
                   disabled={additionsSaving || !calcSourceFile}
                   variant="outline"
                   className={cn(
@@ -10362,6 +10423,7 @@ export default function PayrollWizard({
                     toast.success('Payroll Dispatched', {
                       description: `Sent ${employees.length} paystub request${employees.length === 1 ? '' : 's'} to n8n.`,
                     });
+                    void publishFinalPaySnapshot();
                     cursorOverlayRef.current?.broadcastSave();
                     setReportSnapshot({
                       startedAt: wizardStartedAt,

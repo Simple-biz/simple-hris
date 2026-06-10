@@ -33,6 +33,7 @@ docs/
 | [payment-dispatch.md](./features/payment-dispatch.md) | Payment Dispatch feature: queues, processors, disbursement records |
 | [urgent-payments.md](./features/urgent-payments.md) | Urgent Payments tab: MESA disbursements + orphanage budget requests; per-recipient processor; weekly Sun–Sat report buckets |
 | [paystub-dispatch.md](./features/paystub-dispatch.md) | Paystub generation + dispatch |
+| [payroll-wizard-final-pay.md](./features/payroll-wizard-final-pay.md) | Initial Calculation → Final pay: formula, Adj. (signed delta) + Orphanage columns, Sun→Sat pay weeks + cross-upload merge, MESA flag |
 | [bonus-calculator.md](./features/bonus-calculator.md) | Department + HSL bonus calculators |
 | [csv-imports.md](./features/csv-imports.md) | CSV ingest + Google Sheet sync (Admin tab, endpoints, env, schema) |
 | [orphanage-dispute-flow.md](./features/orphanage-dispute-flow.md) | Orphanage-visit / PAB dispute flow |

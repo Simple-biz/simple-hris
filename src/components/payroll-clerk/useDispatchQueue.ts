@@ -116,6 +116,40 @@ async function loadAll(signal?: AbortSignal): Promise<{
 
   const period = payJson.period ?? EMPTY_PERIOD;
 
+  // Payroll Wizard's published final pay for this period's source file. When present
+  // it is authoritative — it includes the accounting layer (Adj., Orphanage, KPI/dept
+  // bonuses, MESA disbursement) that /api/payroll-current-pay recomputes without. We
+  // overlay it onto each queue row's amount so the clerk pays exactly what the wizard
+  // computed. Falls back silently to the current-pay amount when no snapshot exists.
+  let wizardFinalByEmail: Record<string, number> = {};
+  if (period.sourceFile) {
+    try {
+      const snapRes = await fetch(
+        `/api/app-settings?key=${encodeURIComponent(`payroll.wizard.final_pay.${period.sourceFile}`)}`,
+        { cache: 'no-store', signal },
+      );
+      const snapJson = (await snapRes.json()) as { value?: string | null };
+      if (snapJson?.value) {
+        const parsed = JSON.parse(snapJson.value) as { finals?: Record<string, { final?: number }> };
+        for (const [em, entry] of Object.entries(parsed.finals ?? {})) {
+          if (entry && typeof entry.final === 'number') wizardFinalByEmail[em] = entry.final;
+        }
+      }
+    } catch {
+      /* ignore — fall back to current-pay amounts */
+    }
+  }
+  const fx = payJson.fxRate ?? 0;
+  const applyWizardFinal = <T extends { id: string; amountPHP: number | null; amountUSD: number | null }>(r: T): T => {
+    const f = wizardFinalByEmail[r.id];
+    if (typeof f !== 'number') return r;
+    return {
+      ...r,
+      amountPHP: f,
+      amountUSD: fx > 0 ? Math.round((f / fx) * 100) / 100 : r.amountUSD,
+    };
+  };
+
   // Only `status='paid'` rows lock a recipient out of the pending queue —
   // Threshold and Problem rows leave the person available for retry, since
   // money never actually moved for those.
@@ -129,8 +163,8 @@ async function loadAll(signal?: AbortSignal): Promise<{
     payJson.byEmail ?? {},
     idsByEmail,
   );
-  const pendingQueue = active.filter((r) => !paidEmails.has(r.id));
-  const excludedQueue = excluded.filter((r) => !paidEmails.has(r.id));
+  const pendingQueue = active.filter((r) => !paidEmails.has(r.id)).map(applyWizardFinal);
+  const excludedQueue = excluded.filter((r) => !paidEmails.has(r.id)).map(applyWizardFinal);
 
   return {
     rows: pendingQueue,

@@ -232,7 +232,9 @@
       "Bash(cd /c/Users/Itachi/Desktop/simple-hris)",
       "Bash(sed -n '70,90p' src/components/PayrollWizard.tsx)",
       "Bash(grep -rn \"resolveCanonicalColumnsToPayWeek\" src/ app/)",
-      "Bash(grep -rn \"resolveCanonicalColumnsToIso\" src/ app/)"
+      "Bash(grep -rn \"resolveCanonicalColumnsToIso\" src/ app/)",
+      "Bash(grep -rn \"payrollFinalPhp\" src/)",
+      "Bash(echo \"exit grep: $?\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

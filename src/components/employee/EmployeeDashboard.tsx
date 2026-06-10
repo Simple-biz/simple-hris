@@ -198,6 +198,17 @@ interface DayHours {
   order: number;
 }
 
+/** The wizard's published per-employee figures (payroll.wizard.final_pay.<file>). */
+interface PayrollFinalEntry {
+  final: number;
+  regularPay: number | null;
+  otPay: number | null;
+  regularHours: number;
+  otHours: number;
+  totalHours: number;
+  initial: number | null;
+}
+
 interface EmployeeDashboardProps {
   employeeEmail: string;
   /** Drives the "finish your profile" nudge — true when no photo is on file. */
@@ -393,6 +404,52 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const pabPeriodSettings = usePabPeriodSettings();
 
   const email = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
+
+  /**
+   * Per-employee final pay published by the Payroll Wizard for the selected file
+   * (`payroll.wizard.final_pay.<file>`, written when accounting locks the Additions
+   * step / dispatches). When present, the hero "Estimated Take-Home" shows this exact
+   * figure — incl. KPI/dept bonuses, the accounting Adj. delta, Orphanage pay, and
+   * MESA deduction/disbursement — instead of the client-side auto-estimate.
+   */
+  const [payrollFinal, setPayrollFinal] = useState<PayrollFinalEntry | null>(null);
+  const fetchPayrollFinal = useCallback(async (signal?: AbortSignal) => {
+    if (!selectedFile || selectedFile === '__all__') { setPayrollFinal(null); return; }
+    try {
+      const res = await fetch(
+        `/api/app-settings?key=${encodeURIComponent(`payroll.wizard.final_pay.${selectedFile}`)}`,
+        { cache: 'no-store', signal },
+      );
+      const json = await res.json();
+      if (signal?.aborted) return;
+      if (!json?.value) { setPayrollFinal(null); return; }
+      const data = JSON.parse(json.value) as { finals?: Record<string, PayrollFinalEntry> };
+      const finals = data.finals ?? {};
+      const candidates = [email, ...aliasEmails]
+        .map((e) => e?.trim().toLowerCase())
+        .filter(Boolean) as string[];
+      let found: PayrollFinalEntry | null = null;
+      for (const c of candidates) {
+        const entry = finals[c];
+        if (entry && typeof entry.final === 'number') { found = entry; break; }
+      }
+      setPayrollFinal(found);
+    } catch {
+      if (!signal?.aborted) setPayrollFinal(null);
+    }
+  }, [selectedFile, email, aliasEmails]);
+
+  // Read the wizard's published final, and keep it current while accounting edits
+  // live (snapshot is debounce-written by the wizard): refetch on mount, on window
+  // focus, and on a light interval.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    void fetchPayrollFinal(ctrl.signal);
+    const onFocus = () => void fetchPayrollFinal();
+    window.addEventListener('focus', onFocus);
+    const id = window.setInterval(() => void fetchPayrollFinal(), 30_000);
+    return () => { ctrl.abort(); window.removeEventListener('focus', onFocus); window.clearInterval(id); };
+  }, [fetchPayrollFinal]);
 
   // Fetch the viewer's rate history once per email change. Powers the per-day
   // rate badge on the inline PAB Calendar in the Overview tab.
@@ -878,20 +935,28 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   // Switch between per-file and all-time totals.
   // All-time uses pre-split regular/OT (each file split independently at 40h).
   const totalSeconds = isAllTime ? allTimeTotalSeconds : fileSeconds;
-  const totalHours = roundWorkedHoursForPay(totalSeconds / 3600);
-  const regularSec = isAllTime ? allTimeRegularSec : splitRegularOvertimeSeconds(roundWorkedHoursForPay(fileSeconds / 3600)).regularSec;
-  const otSec = isAllTime ? allTimeOtSec : splitRegularOvertimeSeconds(roundWorkedHoursForPay(fileSeconds / 3600)).otSec;
-  const regularHours = regularSec / 3600;
-  const otHours = otSec / 3600;
+  const regularSecComputed = isAllTime ? allTimeRegularSec : splitRegularOvertimeSeconds(roundWorkedHoursForPay(fileSeconds / 3600)).regularSec;
+  const otSecComputed = isAllTime ? allTimeOtSec : splitRegularOvertimeSeconds(roundWorkedHoursForPay(fileSeconds / 3600)).otSec;
+  const regularPayComputed =
+    regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSecComputed) : null;
+  const otPayComputed =
+    otSecComputed > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSecComputed) : null) : 0;
 
-  const regularPay =
-    regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
-  const otPay =
-    otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
-  const totalPay =
-    regularPay != null && otPay != null
-      ? Math.round((regularPay + otPay) * 100) / 100
-      : null;
+  // For the current period, prefer the wizard's published Regular/OT/hours so the
+  // breakdown reconciles exactly with the Estimated Take-Home (same hour basis —
+  // incl. the cross-upload boundary Sunday the wizard merges in). All-time and the
+  // no-snapshot case fall back to the client-side computation.
+  const wizardSnap = (!isAllTime && payrollFinal) ? payrollFinal : null;
+  const totalHours = wizardSnap ? wizardSnap.totalHours : roundWorkedHoursForPay(totalSeconds / 3600);
+  const regularHours = wizardSnap ? wizardSnap.regularHours : regularSecComputed / 3600;
+  const otHours = wizardSnap ? wizardSnap.otHours : otSecComputed / 3600;
+  const regularPay = wizardSnap ? wizardSnap.regularPay : regularPayComputed;
+  const otPay = wizardSnap ? wizardSnap.otPay : otPayComputed;
+  const totalPay = wizardSnap
+    ? wizardSnap.initial
+    : (regularPayComputed != null && otPayComputed != null
+        ? Math.round((regularPayComputed + otPayComputed) * 100) / 100
+        : null);
 
   /**
    * Full-month daily hours for PAB: uses merged data from ALL uploaded CSVs.
@@ -1405,6 +1470,15 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const MESA_DEDUCTION_PHP = 100;
   const isMesaMember = !!rate?.mesa_member;
   const mesaDeductionAmount = isMesaMember && totalPay != null ? MESA_DEDUCTION_PHP : 0;
+
+  // Client-side auto-estimate (initial + PAB + Tech − MESA). Used as the fallback.
+  const autoTakeHomePhp =
+    totalPay != null ? totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount : null;
+  // When the Payroll Wizard has published a final for this employee + file, that
+  // exact figure is the take-home (matches what accounting will pay). All-time view
+  // has no single payroll final, so it always uses the auto-estimate.
+  const takeHomeFromPayroll = !isAllTime && payrollFinal != null;
+  const takeHomePhp = takeHomeFromPayroll ? payrollFinal!.final : autoTakeHomePhp;
 
   /** True when the NEXT pay-period week (refMonday + 7) is the tech bonus week. */
   const isTechBonusNextWeek = useMemo(() => {
@@ -2163,12 +2237,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                       <>
                         <span
                           className="break-words text-[2.25rem] font-bold tabular-nums leading-none tracking-tight text-zinc-900 sm:text-5xl lg:text-[3.5rem] xl:text-6xl dark:text-white"
-                          title={formatPHP(totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount)}
+                          title={takeHomeFromPayroll ? 'Final pay confirmed by payroll' : formatPHP(takeHomePhp ?? 0)}
                         >
-                          {formatPHP(totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount)}
+                          {formatPHP(takeHomePhp ?? 0)}
                         </span>
                         <span className="text-xs tabular-nums text-zinc-500 sm:text-sm dark:text-zinc-500">
-                          ≈ ${((totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount) / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                          ≈ ${(((takeHomePhp ?? 0)) / usdToPhpRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
                         </span>
                       </>
                     )}
@@ -3034,15 +3108,18 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                   <div className="flex justify-between gap-2">
                     <span className="font-medium text-zinc-900 dark:text-white">Total</span>
                     <span className="text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
-                      {totalPay != null
-                        ? formatPHP(totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount)
-                        : '—'}
+                      {takeHomePhp != null ? formatPHP(takeHomePhp) : '—'}
                     </span>
                   </div>
-                  {totalPay != null && (
+                  {takeHomeFromPayroll && (
+                    <p className="text-right text-[10px] text-zinc-500 dark:text-zinc-400">
+                      Includes payroll-confirmed bonuses &amp; adjustments
+                    </p>
+                  )}
+                  {takeHomePhp != null && (
                     <p className="text-right text-[10px] tabular-nums text-blue-600 dark:text-blue-400">
                       ≈{' '}
-                      {((totalPay + pabBonusAmount + technologyBonusAmount - mesaDeductionAmount) / usdToPhpRate).toLocaleString('en-US', {
+                      {(takeHomePhp / usdToPhpRate).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}{' '}
