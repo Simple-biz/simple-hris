@@ -11,6 +11,7 @@ import {
   Send,
   AlertCircle,
   Lock,
+  LockOpen,
   ArrowRight,
   ArrowLeft,
   Trash2,
@@ -6448,32 +6449,6 @@ export default function PayrollWizard({
                   </div>
                 )}
 
-                <Button
-                  onClick={async () => { await saveAdditionsProgress(); void publishFinalPaySnapshot(); }}
-                  disabled={additionsSaving || !calcSourceFile}
-                  variant="outline"
-                  className={cn(
-                    "gap-2 h-auto py-2 self-start",
-                    additionsSavedAt ? "border-emerald-500/50 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "border-indigo-500/30 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400"
-                  )}
-                >
-                  {additionsSaving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : additionsSavedAt ? (
-                    <ShieldCheck className="h-4 w-4" />
-                  ) : (
-                    <Lock className="h-4 w-4" />
-                  )}
-                  <div className="text-left">
-                    <div className="text-[10px] uppercase font-bold leading-tight">Persistence</div>
-                    <div className="text-xs font-semibold">{additionsSaving ? 'Locking in...' : additionsSavedAt ? 'Locked In' : 'Lock In Progress'}</div>
-                    {additionsSavedAt && (
-                      <div className="text-[9px] opacity-70">
-                        {additionsSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </div>
-                    )}
-                  </div>
-                </Button>
               </div>
               </div>
 
@@ -6509,6 +6484,40 @@ export default function PayrollWizard({
                       )}
                     </span>
                     <div className="ml-auto flex items-center gap-1.5 text-[11px]">
+                      <button
+                        key={additionsSavedAt ? 'locked' : 'unlocked'}
+                        type="button"
+                        onClick={async () => { await saveAdditionsProgress(); void publishFinalPaySnapshot(); }}
+                        disabled={additionsSaving || !calcSourceFile}
+                        title={additionsSavedAt
+                          ? `Locked in at ${additionsSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                          : 'Lock in your additions progress'}
+                        className={cn(
+                          'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 font-semibold transition-colors duration-300',
+                          'disabled:cursor-not-allowed disabled:opacity-60',
+                          additionsSaving
+                            ? 'border-zinc-300 bg-zinc-50 text-zinc-500'
+                            : additionsSavedAt
+                              ? 'border-emerald-400 bg-emerald-50 text-emerald-700 lock-btn-success hover:bg-emerald-100'
+                              : 'border-amber-400 bg-amber-50 text-amber-800 lock-btn-unglow hover:bg-amber-100',
+                        )}
+                      >
+                        {additionsSaving ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : additionsSavedAt ? (
+                          <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <LockOpen className="h-3.5 w-3.5 lock-icon-wobble" />
+                        )}
+                        <span>
+                          {additionsSaving ? 'Locking…' : additionsSavedAt ? 'Locked In' : 'Lock In Progress'}
+                        </span>
+                        {additionsSavedAt && (
+                          <span className="opacity-60">
+                            · {additionsSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                      </button>
                       <button
                         type="button"
                         onClick={() => void refreshPabInline()}
