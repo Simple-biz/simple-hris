@@ -69,7 +69,6 @@ import {
   filterColumnGroupsByPabRange,
   countMonFriInclusiveInRange,
   resolveCanonicalColumnsToIso,
-  resolveCanonicalColumnsToPayWeek,
   payWeekFromUploadStart,
   columnsAreAllCanonical,
   parseDateRangeFromFilename,
@@ -427,6 +426,7 @@ type DispatchEmployee = {
     other_bonuses: number;
     mesa_deduction: number;
     mesa_disbursement: number;
+    orphanage_pay: number;
     final: number;
   };
 };
@@ -688,13 +688,21 @@ export default function PayrollWizard({
   // Everyone else viewing the wizard follows along in a read-only, third-person
   // view that mirrors the driver's active step — so the accounting head can
   // watch how the operator works. You are never a spectator of your own lock.
-  const driverEmail = lockState.lockedBy ?? null;
+  // localDriver: optimistic override set when a lock_acquired broadcast arrives,
+  // before Postgres Realtime confirms lockState.lockedBy (~400ms later).
+  const [localDriver, setLocalDriver] = useState<string | null>(null);
+  // Clear the override once Realtime has confirmed the real value.
+  useEffect(() => {
+    if (lockState.lockedBy) setLocalDriver(null);
+  }, [lockState.lockedBy]);
+
+  const driverEmail = lockState.lockedBy ?? localDriver ?? null;
   const selfKey = (sessionEmail ?? '').trim().toLowerCase();
   const driverKey = (driverEmail ?? '').trim().toLowerCase();
   const isLockDriver =
     lockState.locked && !!driverKey && !!selfKey && driverKey === selfKey;
   const canSpectate =
-    lockState.locked && !!driverKey && !!selfKey && driverKey !== selfKey;
+    (lockState.locked || !!localDriver) && !!driverKey && !!selfKey && driverKey !== selfKey;
   // Local opt-out so an overseer can drop follow mode and click around freely.
   const [observing, setObserving] = useState(true);
   // Reset the opt-out each time a new processing session starts (or ends).
@@ -704,13 +712,17 @@ export default function PayrollWizard({
   const isSpectator = canSpectate && observing;
   const driverLabel = driverEmail ? driverEmail.split('@')[0] : 'operator';
 
-  useWizardFollow({
+  const { broadcastLockAcquired } = useWizardFollow({
     selfEmail: sessionEmail,
     driverEmail,
     isDriver: isLockDriver,
     isSpectator,
     currentStep,
     onRemoteStep: setCurrentStep,
+    onLockAcquired: (email, step) => {
+      setLocalDriver(email);
+      setCurrentStep(step);
+    },
   });
 
   // While spectating, forward wheel scrolling to the step's ScrollArea viewport
@@ -973,6 +985,9 @@ export default function PayrollWizard({
   const [employeeBonuses, setEmployeeBonuses] = useState<Record<string, Record<string, boolean>>>({});
   /** Accounting-side per-employee bonus overrides. When present, replaces the auto-computed total. */
   const [bonusOverrides, setBonusOverrides] = useState<Record<string, number>>({});
+  /** Accounting-side per-employee Orphanage pay (PHP). A positive amount added on top of final pay,
+   *  shown as its own "Orphanage" paystub line. Keyed by Hubstaff email like {@link bonusOverrides}. */
+  const [orphanageAmounts, setOrphanageAmounts] = useState<Record<string, number>>({});
   /** Session-only row deletes for the Orphanage step tables. */
   const [hiddenVisitIds, setHiddenVisitIds] = useState<Set<string>>(new Set());
   const [hiddenWageEmails, setHiddenWageEmails] = useState<Set<string>>(new Set());
@@ -1200,6 +1215,7 @@ export default function PayrollWizard({
       if (json.value) {
         const data = JSON.parse(json.value);
         if (data.bonusOverrides) setBonusOverrides(data.bonusOverrides);
+        if (data.orphanageAmounts) setOrphanageAmounts(data.orphanageAmounts);
         if (data.employeeMetrics) setEmployeeMetrics(data.employeeMetrics);
         if (data.deptMetrics) setDeptMetrics(data.deptMetrics);
         if (data.employeeDepts) setEmployeeDepts(data.employeeDepts);
@@ -2778,6 +2794,7 @@ export default function PayrollWizard({
     try {
       const payload = {
         bonusOverrides,
+        orphanageAmounts,
         employeeMetrics,
         deptMetrics,
         employeeDepts,
@@ -2795,7 +2812,7 @@ export default function PayrollWizard({
     } finally {
       setAdditionsSaving(false);
     }
-  }, [calcSourceFile, bonusOverrides, employeeMetrics, deptMetrics, employeeDepts, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
+  }, [calcSourceFile, bonusOverrides, orphanageAmounts, employeeMetrics, deptMetrics, employeeDepts, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
 
   /**
    * US-holiday forgiveness summary scoped to the current PAB month: for each holiday
@@ -2905,6 +2922,7 @@ export default function PayrollWizard({
     employeeBonuses,
     employeeDepts,
     bonusOverrides,
+    orphanageAmounts,
     employeeMetrics,
     deptMetrics,
   });
@@ -2915,6 +2933,7 @@ export default function PayrollWizard({
       employeeBonuses,
       employeeDepts,
       bonusOverrides,
+      orphanageAmounts,
       employeeMetrics,
       deptMetrics,
     };
@@ -2924,6 +2943,7 @@ export default function PayrollWizard({
     employeeBonuses,
     employeeDepts,
     bonusOverrides,
+    orphanageAmounts,
     employeeMetrics,
     deptMetrics,
   ]);
@@ -3124,6 +3144,35 @@ export default function PayrollWizard({
     }
   }, []);
 
+  /** Set/clear the per-employee Orphanage pay (PHP). A positive amount added on top of
+   *  final pay; `null` clears it. Mirrors {@link updateBonusOverride}. */
+  const updateOrphanageAmount = React.useCallback((email: string, value: number | null) => {
+    const ctx = auditCtxRef.current;
+    const prevValue = ctx.orphanageAmounts[email] ?? null;
+    setOrphanageAmounts(prev => {
+      const next = { ...prev };
+      if (value === null) delete next[email];
+      else next[email] = value;
+      return next;
+    });
+    if (valuesDiffer(prevValue, value)) {
+      void logAudit({
+        user_name: ctx.sessionEmail ?? 'anonymous',
+        user_role: sessionRole ?? 'user',
+        action: 'wizard.addition_edited',
+        resource: 'orphanage_pay',
+        resource_id: email,
+        cycle: ctx.auditCycle,
+        details: {
+          employee_email: email,
+          field: 'orphanage_pay_php',
+          previous_value: prevValue,
+          new_value: value,
+        },
+      });
+    }
+  }, []);
+
   /**
    * Single source of truth for which calendar days each employee is paid for in
    * this cycle. Hogan (HSL) is paid Monday→Sunday; every other department is paid
@@ -3134,7 +3183,14 @@ export default function PayrollWizard({
    */
   const payDaysByEmail = useMemo<Map<string, { isHsl: boolean; days: Array<{ date: Date; seconds: number }> }>>(() => {
     const map = new Map<string, { isHsl: boolean; days: Array<{ date: Date; seconds: number }> }>();
-    const rows = hubstaffDisplayRows;
+    // Prefer the cross-upload merged rows (one row per employee, every upload
+    // resolved to its TRUE ISO dates via its own filename) so a pay week's
+    // boundary Sunday is sourced from the adjacent upload — e.g. the non-HSL
+    // week May 31–Jun 6 gets May 31's hours from the "May 24→31" upload, since
+    // the current "May 31→Jun 7" upload's lone `sunday` column holds Jun 7 after
+    // the DB's last-wins collapse. Falls back to the single current file while
+    // the merge is still loading.
+    const rows = hubstaffRowsForPab ?? hubstaffDisplayRows;
     if (!rows || rows.length === 0) return map;
     const fileRange = calcSourceFile ? parseDateRangeFromFilename(calcSourceFile) : null;
 
@@ -3145,12 +3201,17 @@ export default function PayrollWizard({
       const deptKey = employeeDepts[rawEmail] ?? employeeDepts[rawEmail.toLowerCase()];
       const isHsl = deptKey === 'hogan_smith_law';
 
-      // Resolve canonical weekday columns (sunday/monday/…) onto the ISO dates of
-      // THIS employee's week so the lone Sunday slot lands on the right Sunday.
+      // Resolve canonical weekday columns (sunday/monday/…) onto the file's TRUE
+      // ISO dates, then let the pay-week window below clamp to this employee's
+      // 7 days. Resolving straight onto the dept pay week (the old approach) forced
+      // the lone `sunday` slot — which holds the file's TRAILING Sunday after the
+      // DB's last-wins collapse — onto whatever Sunday sat in the window, so a
+      // Mon→Sun upload leaked the trailing Sunday's hours into the non-HSL
+      // (Sun→Sat) week. Mapping to real dates lets the window exclude it instead.
       const anchor = fileRange?.start ?? null;
       let resolvedRow: Record<string, unknown> = row;
-      if (anchor && columnsAreAllCanonical(Object.keys(row))) {
-        resolvedRow = resolveCanonicalColumnsToPayWeek(row, payWeekFromUploadStart(anchor, isHsl));
+      if (anchor && calcSourceFile && columnsAreAllCanonical(Object.keys(row))) {
+        resolvedRow = resolveCanonicalColumnsToIso(row, calcSourceFile);
       }
 
       const allDays: Array<{ date: Date; seconds: number }> = [];
@@ -3177,7 +3238,7 @@ export default function PayrollWizard({
       if (days.length > 0) map.set(em, { isHsl, days });
     }
     return map;
-  }, [hubstaffDisplayRows, calcSourceFile, employeeDepts]);
+  }, [hubstaffRowsForPab, hubstaffDisplayRows, calcSourceFile, employeeDepts]);
 
   /**
    * Paid hours per employee = sum of their pay-week days, with the 40 h/week
@@ -3950,7 +4011,11 @@ export default function PayrollWizard({
       // Always deduct the ₱100 contribution when enrolled OR when a disbursement is being paid out.
       const mesaDeduction = (hasRates && (rateRowForMesa?.mesa_member || mesaDisbursement > 0)) ? 100 : 0;
 
-      const finalPay = (r.initialPay ?? 0) + bonusTotal - mesaDeduction + mesaDisbursement;
+      // Accounting Orphanage pay — a positive amount added on top of final pay,
+      // shown as its own paystub line (not folded into bonuses).
+      const orphanagePay = hasRates ? (orphanageAmounts[r.email] ?? 0) : 0;
+
+      const finalPay = (r.initialPay ?? 0) + bonusTotal - mesaDeduction + mesaDisbursement + orphanagePay;
 
       rows.push({
         name: r.name,
@@ -3971,6 +4036,7 @@ export default function PayrollWizard({
           other_bonuses: otherBonuses,
           mesa_deduction: mesaDeduction,
           mesa_disbursement: mesaDisbursement,
+          orphanage_pay: orphanagePay,
           final: finalPay,
         },
       });
@@ -3985,6 +4051,7 @@ export default function PayrollWizard({
     employeeBonuses,
     bonusTotals,
     bonusOverrides,
+    orphanageAmounts,
     mesaDisbursements,
     pabMonthRange,
     calcSourceFile,
@@ -4558,6 +4625,8 @@ export default function PayrollWizard({
     const goingLocked = !lockState.locked;
     try {
       await setLocked(goingLocked);
+      // Instantly notify peers via broadcast before Postgres Realtime catches up.
+      if (goingLocked) broadcastLockAcquired(currentStep);
       toast.success(
         goingLocked
           ? 'Processing started — employee disputes are paused'
@@ -6230,7 +6299,7 @@ export default function PayrollWizard({
         const assignedEmployees = effectiveCalcResults.filter(r => employeeDepts[r.email]);
         const totalBonusesAdded = assignedEmployees.reduce((sum, r) => sum + getEffectiveBonus(r.email), 0);
         const totalFinalPay = assignedEmployees.reduce(
-          (sum, r) => sum + (r.initialPay ?? 0) + getEffectiveBonus(r.email),
+          (sum, r) => sum + (r.initialPay ?? 0) + getEffectiveBonus(r.email) + (orphanageAmounts[r.email] ?? 0),
           0,
         );
         // QC derived values (used in both left panel and table)
@@ -7620,6 +7689,12 @@ export default function PayrollWizard({
                             <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-amber-600 dark:text-amber-400">
                               Adj.
                             </TableHead>
+                            <TableHead
+                              className="min-w-[80px] px-1 py-2 text-right text-[11px] font-medium text-pink-600 dark:text-pink-400"
+                              title="Orphanage pay — a manual amount added on top of final pay; appears as its own paystub line."
+                            >
+                              Orphanage
+                            </TableHead>
                             <TableHead className="min-w-[72px] px-1 py-2 text-right text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
                               Final
                             </TableHead>
@@ -7646,7 +7721,10 @@ export default function PayrollWizard({
                             // Always deduct the ₱100 contribution when enrolled OR when a disbursement is being
                             // paid out this run (a disbursement implies an active MESA member).
                             const empMesaDeduction = (emp.initialPay != null && (empRateRow?.mesa_member || empMesaDisbursement > 0)) ? 100 : 0;
-                            const finalPay = (emp.initialPay ?? 0) + bonusTotal - empMesaDeduction + empMesaDisbursement;
+                            // Orphanage pay — manual positive amount added on top of final pay.
+                            const hasOrphanage = orphanageAmounts[emp.email] !== undefined;
+                            const orphanagePay = orphanageAmounts[emp.email] ?? 0;
+                            const finalPay = (emp.initialPay ?? 0) + bonusTotal - empMesaDeduction + empMesaDisbursement + orphanagePay;
                             const empM = employeeMetrics[emp.email] ?? {};
                             const isJerome = isJeromeRosero(emp.name);
                             return (
@@ -8259,6 +8337,45 @@ export default function PayrollWizard({
                                     </button>
                                   )}
                                 </TableCell>
+                                {/* Orphanage pay — manual positive amount added to final pay; own paystub line */}
+                                <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-bold">
+                                  {hasOrphanage ? (
+                                    <div className="flex items-center justify-end gap-1">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        min={0}
+                                        value={orphanageAmounts[emp.email] ?? ''}
+                                        onChange={(e) => {
+                                          const raw = e.target.value;
+                                          const next = raw === '' ? 0 : Number(raw);
+                                          if (!Number.isFinite(next) || next < 0) return;
+                                          updateOrphanageAmount(emp.email, next);
+                                        }}
+                                        title="Orphanage pay (PHP) added on top of final pay"
+                                        className="h-6 w-[88px] rounded border border-pink-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-pink-700 focus:outline-none focus:ring-1 focus:ring-pink-400 dark:border-pink-700/60 dark:bg-zinc-900 dark:text-pink-300"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => updateOrphanageAmount(emp.email, null)}
+                                        title="Clear orphanage pay"
+                                        className="text-zinc-400 hover:text-red-500"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      title="Click to add orphanage pay"
+                                      onClick={() => updateOrphanageAmount(emp.email, 0)}
+                                      className="text-zinc-300 hover:text-pink-600 dark:text-zinc-700 dark:hover:text-pink-400"
+                                    >
+                                      —
+                                    </button>
+                                  )}
+                                </TableCell>
                                 <TableCell className="px-1 py-1.5 text-right font-mono text-[11px] font-semibold text-zinc-900 dark:text-white">
                                   {isRecalcPending ? (
                                     <span className="inline-block h-3 w-16 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800" />
@@ -8320,7 +8437,7 @@ export default function PayrollWizard({
                           0,
                         );
                         const deptFinalTotal = deptEmployees.reduce(
-                          (sum, e) => sum + (e.initialPay ?? 0) + getEffectiveBonus(e.email),
+                          (sum, e) => sum + (e.initialPay ?? 0) + getEffectiveBonus(e.email) + (orphanageAmounts[e.email] ?? 0),
                           0,
                         ) - deptMesaTotal;
                         return (
@@ -9130,6 +9247,7 @@ export default function PayrollWizard({
                             <th className="px-3 py-2.5 text-center">PAB</th>
                             <th className="px-3 py-2.5 text-center">Tech Bonus</th>
                             <th className="px-3 py-2.5 text-right">Adjustment</th>
+                            <th className="px-3 py-2.5 text-right" title="Orphanage pay — a manual amount added on top of total pay; appears as its own paystub line.">Orphanage</th>
                             <th className="px-3 py-2.5 text-right">Total Pay</th>
                           </tr>
                         </thead>
@@ -9144,7 +9262,10 @@ export default function PayrollWizard({
                             const pabAmt = paStatus === 'eligible' ? 5000 : 0;
                             const techOn = techBonusEligible.has(r.email);
                             const techAmt = techOn ? 1850 : 0;
-                            const totalPay = (r.initialPay ?? 0) + effectiveBonus + pabAmt + techAmt;
+                            // Orphanage pay — manual positive amount added on top of total pay.
+                            const hasOrphanage = orphanageAmounts[r.email] !== undefined;
+                            const orphanagePay = orphanageAmounts[r.email] ?? 0;
+                            const totalPay = (r.initialPay ?? 0) + effectiveBonus + pabAmt + techAmt + orphanagePay;
 
                             return (
                               <tr key={r.email} className="transition-colors hover:bg-violet-50/30 dark:hover:bg-violet-950/10">
@@ -9262,6 +9383,45 @@ export default function PayrollWizard({
                                     </button>
                                   )}
                                 </td>
+                                {/* Orphanage pay — manual positive amount added to total pay; own paystub line */}
+                                <td className="px-3 py-3 text-right">
+                                  {hasOrphanage ? (
+                                    <div className="flex items-center justify-end gap-1">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        min={0}
+                                        value={orphanageAmounts[r.email] ?? ''}
+                                        onChange={e => {
+                                          const raw = e.target.value;
+                                          const next = raw === '' ? 0 : Number(raw);
+                                          if (!Number.isFinite(next) || next < 0) return;
+                                          updateOrphanageAmount(r.email, next);
+                                        }}
+                                        title="Orphanage pay (PHP) added on top of total pay"
+                                        className="h-6 w-[88px] rounded border border-pink-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-pink-700 focus:outline-none focus:ring-1 focus:ring-pink-400 dark:border-pink-700/60 dark:bg-zinc-900 dark:text-pink-300"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => updateOrphanageAmount(r.email, null)}
+                                        title="Clear orphanage pay"
+                                        className="text-zinc-400 hover:text-red-500"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      title="Click to add orphanage pay"
+                                      onClick={() => updateOrphanageAmount(r.email, 0)}
+                                      className="text-zinc-300 hover:text-pink-600 dark:text-zinc-700 dark:hover:text-pink-400"
+                                    >
+                                      —
+                                    </button>
+                                  )}
+                                </td>
                                 <td className="px-3 py-3 text-right">
                                   <span className="font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
                                     {formatPHP(totalPay)}
@@ -9273,11 +9433,12 @@ export default function PayrollWizard({
                         </tbody>
                         <tfoot className="border-t-2 border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/40">
                           {(() => {
-                            let totalPab = 0, totalTech = 0, totalKpi = 0, totalAdj = 0, totalWkndPremium = 0;
+                            let totalPab = 0, totalTech = 0, totalKpi = 0, totalAdj = 0, totalOrphanage = 0, totalWkndPremium = 0;
                             for (const r of hslCalcRows) {
                               const em = (r.email ?? '').toLowerCase();
                               totalKpi += hslStepBonusByEmail[em] ?? 0;
                               totalAdj += bonusOverrides[r.email] ?? 0;
+                              totalOrphanage += orphanageAmounts[r.email] ?? 0;
                               const st = effectivePabStatus.get(em) ?? 'in_progress';
                               if (st === 'eligible') totalPab += 5000;
                               if (techBonusEligible.has(r.email)) totalTech += 1850;
@@ -9307,8 +9468,11 @@ export default function PayrollWizard({
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-amber-600 dark:text-amber-400">
                                   {totalAdj !== 0 ? `${totalAdj > 0 ? '+' : ''}${formatPHP(totalAdj)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
+                                <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-pink-600 dark:text-pink-400">
+                                  {totalOrphanage > 0 ? `+${formatPHP(totalOrphanage)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
+                                </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-                                  {formatPHP(totalHslInitialPay + totalKpi + totalAdj + totalPab + totalTech)}
+                                  {formatPHP(totalHslInitialPay + totalKpi + totalAdj + totalOrphanage + totalPab + totalTech)}
                                 </td>
                               </tr>
                             );
@@ -9570,13 +9734,15 @@ export default function PayrollWizard({
           .map(r => {
           const rr = ratesByEmail.get(normEmail(r.email) ?? '');
           const mesaDed = ((r.initialPay != null) && rr?.mesa_member) ? 100 : 0;
+          const orphanagePay = orphanageAmounts[r.email] ?? 0;
           return {
             ...r,
             deptKey: employeeDepts[r.email] ?? null,
             deptName: DEPARTMENTS.find(d => d.key === employeeDepts[r.email])?.name ?? '—',
             bonusTotal: getEffectiveBonus(r.email),
             mesaDeduction: mesaDed,
-            finalPay: (r.initialPay ?? 0) + getEffectiveBonus(r.email) - mesaDed,
+            orphanagePay,
+            finalPay: (r.initialPay ?? 0) + getEffectiveBonus(r.email) - mesaDed + orphanagePay,
           };
           })
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -10607,7 +10773,13 @@ export default function PayrollWizard({
 
   return (
     <div ref={wizardContainerRef} className="relative flex h-full flex-col overflow-hidden bg-zinc-50 p-2 sm:p-4 md:p-8 dark:bg-zinc-950">
-      <WizardCursorOverlay ref={cursorOverlayRef} selfEmail={sessionEmail} containerRef={wizardContainerRef} />
+      <WizardCursorOverlay
+        ref={cursorOverlayRef}
+        selfEmail={sessionEmail}
+        containerRef={wizardContainerRef}
+        isDriver={isLockDriver}
+        isSpectator={isSpectator}
+      />
 
       {/* ── Oversee / follow mode ──────────────────────────────────────────
           When another operator is driving the locked processing session, this
@@ -10669,7 +10841,10 @@ export default function PayrollWizard({
       {canSpectate && !observing && (
         <button
           type="button"
-          onClick={() => setObserving(true)}
+          onClick={() => {
+            setObserving(true);
+            if (driverEmail) cursorOverlayRef.current?.applyDriverScroll(driverEmail);
+          }}
           className="absolute right-3 top-3 z-[60] flex items-center gap-1.5 rounded-full border border-indigo-300/70 bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-indigo-600 shadow-sm backdrop-blur transition-colors hover:bg-indigo-50 dark:border-indigo-500/40 dark:bg-zinc-900/95 dark:text-indigo-400 dark:hover:bg-zinc-800"
         >
           <Eye className="h-3.5 w-3.5" />

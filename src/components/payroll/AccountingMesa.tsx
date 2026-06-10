@@ -13,6 +13,8 @@ import {
   ChevronRight,
   Filter,
   X,
+  Undo2,
+  Trash2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -39,6 +41,7 @@ interface MesaRequest {
   review_notes: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
+  dispatched_at: string | null;
   created_at: string;
 }
 
@@ -72,6 +75,8 @@ export default function AccountingMesa() {
   const [reviewTarget, setReviewTarget] = useState<MesaRequest | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [reviewing, setReviewing] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<MesaRequest | null>(null);
 
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
@@ -181,6 +186,61 @@ export default function AccountingMesa() {
       toast.error(e instanceof Error ? e.message : 'Review failed');
     } finally {
       setReviewing(false);
+    }
+  };
+
+  // Revoke a prior decision — reverts the request to pending. For a previously
+  // approved opt-out, re-enroll the member so the MESA -PHP100 deduction resumes.
+  const revokeRequest = async (r: MesaRequest) => {
+    setBusyId(r.id);
+    try {
+      const res = await fetch(`/api/mesa-requests/${r.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'pending' }),
+      });
+      if (!res.ok) {
+        const j = (await res.json()) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+      if (r.status === 'approved' && r.request_type === 'opt_out') {
+        try {
+          await fetch('/api/toggle-mesa-member', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workEmail: r.work_email, mesaMember: true, name: r.full_name }),
+          });
+        } catch {
+          toast.error('Revoked, but could not re-enroll in MESA — please toggle manually in Rates.');
+        }
+      }
+      toast.success('Decision revoked — request is pending again');
+      cachedRequests = null;
+      await load(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Revoke failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setBusyId(deleteTarget.id);
+    try {
+      const res = await fetch(`/api/mesa-requests/${deleteTarget.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const j = (await res.json()) as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+      toast.success('Request deleted');
+      setDeleteTarget(null);
+      cachedRequests = null;
+      await load(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -352,19 +412,50 @@ export default function AccountingMesa() {
                         </td>
                         <td className="px-4 py-3 text-right" data-label="Action">
                           {r.status === 'pending' ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => openReview(r)}
-                              className="h-7 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
-                            >
-                              Review
-                            </Button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openReview(r)}
+                                className="h-7 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
+                              >
+                                Review
+                              </Button>
+                              <button
+                                type="button"
+                                title="Delete request"
+                                disabled={busyId === r.id}
+                                onClick={() => setDeleteTarget(r)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40 dark:border-zinc-700 dark:hover:border-rose-700/50 dark:hover:bg-rose-950/30 dark:hover:text-rose-400"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           ) : (
-                            <span className="text-[11px] text-zinc-400">
-                              {r.reviewed_by ? `by ${r.reviewed_by.split('@')[0]}` : '—'}
-                            </span>
+                            <div className="flex items-center justify-end gap-2">
+                              <span className="text-[11px] text-zinc-400">
+                                {r.reviewed_by ? `by ${r.reviewed_by.split('@')[0]}` : '—'}
+                              </span>
+                              <button
+                                type="button"
+                                title={r.dispatched_at ? 'Already paid out — cannot revoke' : 'Revoke decision (back to pending)'}
+                                disabled={busyId === r.id || !!r.dispatched_at}
+                                onClick={() => revokeRequest(r)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600 disabled:cursor-not-allowed disabled:opacity-30 dark:border-zinc-700 dark:hover:border-amber-700/50 dark:hover:bg-amber-950/30 dark:hover:text-amber-400"
+                              >
+                                <Undo2 className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                title={r.dispatched_at ? 'Already paid out — cannot delete' : 'Delete request'}
+                                disabled={busyId === r.id || !!r.dispatched_at}
+                                onClick={() => setDeleteTarget(r)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30 dark:border-zinc-700 dark:hover:border-rose-700/50 dark:hover:bg-rose-950/30 dark:hover:text-rose-400"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -482,6 +573,48 @@ export default function AccountingMesa() {
               >
                 <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
                 Approve
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4 animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
+          <div className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out motion-reduce:animate-none">
+            <div className="flex items-start gap-3 px-5 py-5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-zinc-900 dark:text-white">Delete this request?</h3>
+                <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+                  {TYPE_LABELS[deleteTarget.request_type]} request from{' '}
+                  <span className="font-medium text-zinc-800 dark:text-zinc-200">{deleteTarget.full_name}</span>.
+                  This permanently removes it and cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setDeleteTarget(null)}
+                disabled={busyId === deleteTarget.id}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busyId === deleteTarget.id}
+                onClick={confirmDelete}
+                className="bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-600 dark:hover:bg-rose-500"
+              >
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                Delete
               </Button>
             </div>
           </div>

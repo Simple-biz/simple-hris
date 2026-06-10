@@ -31,12 +31,10 @@ import { listGiftPayments } from "@/lib/supabase/gift-payments";
 import { effectiveUsdToPhpRateFromStored } from "@/lib/fx/usd-php";
 import { normEmail } from "@/lib/email/norm-email";
 import {
-  columnsAreAllCanonical,
   getPabMonthRange,
   parseDateRangeFromFilename,
   payWeekFromUploadStart,
   resolveCanonicalColumnsToIso,
-  resolveCanonicalColumnsToPayWeek,
 } from "@/lib/hubstaff/calendar-column-dedupe";
 import {
   PAB_PERIOD_OVERRIDES_KEY,
@@ -592,14 +590,14 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     const payWindow = isHslEmp ? payWeekHsl : payWeekNonHsl;
     const sourceFileForRow =
       typeof raw['source_file'] === 'string' ? (raw['source_file'] as string) : '';
-    // Canonical-only rows: resolve the lone weekday slots onto THIS department's
-    // 7-day pay week (so non-HSL "sunday" lands on the leading Sunday, HSL on the
-    // trailing one). ISO rows fall through the generic resolver (a no-op for them)
-    // and rely on computeProratedRowPay's window clamp instead.
+    // Resolve canonical weekday slots onto the file's TRUE ISO dates (no-op for
+    // ISO rows), then let computeProratedRowPay's window clamp keep only this
+    // department's 7 days. Resolving straight onto the dept pay week relabeled the
+    // lone `sunday` column — which holds the file's TRAILING Sunday after the DB's
+    // last-wins collapse — as the leading Sunday, so a Mon→Sun upload leaked the
+    // trailing Sunday's hours into the non-HSL (Sun→Sat) week.
     const rowResolved = sourceFileForRow
-      ? payWindow && columnsAreAllCanonical(Object.keys(raw))
-        ? resolveCanonicalColumnsToPayWeek(raw, payWindow)
-        : resolveCanonicalColumnsToIso(raw, sourceFileForRow)
+      ? resolveCanonicalColumnsToIso(raw, sourceFileForRow)
       : raw;
     const prorated = computeProratedRowPay(rowResolved, rateHistory, em, rate, isHslEmp, payWindow);
 

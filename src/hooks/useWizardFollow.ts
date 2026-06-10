@@ -1,41 +1,29 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
-
-/**
- * Collaborative "oversee" / follow mode for the Payroll Wizard.
- *
- * When processing is started (dispatch lock acquired), the operator who toggled
- * it becomes the "driver". Everyone else viewing the wizard becomes a
- * "spectator" whose step view mirrors the driver in real time, so the
- * accounting head can watch — in third person — how the operator works through
- * the wizard. The driver themselves is never a spectator.
- *
- * This hook only synchronises the active wizard step over a Supabase broadcast
- * channel. Cursor/click/save visuals are handled separately by
- * WizardCursorOverlay. The read-only blocking + observe banner live in the
- * PayrollWizard render.
- */
 
 const CHANNEL = 'payroll-wizard-follow';
 
 type FollowMsg =
-  | { kind: 'step'; email: string; step: number }
-  | { kind: 'hello'; email: string };
+  | { kind: 'step';         email: string; step: number }
+  | { kind: 'hello';        email: string }
+  | { kind: 'lock_acquired'; email: string; step: number };
 
 interface Args {
   selfEmail: string | null | undefined;
-  /** Email of the operator who acquired the dispatch lock (the driver). */
   driverEmail: string | null | undefined;
-  /** This client is the driver — broadcasts its step to spectators. */
   isDriver: boolean;
-  /** This client is following the driver — mirrors the driver's step. */
   isSpectator: boolean;
-  /** Current wizard step on this client (only meaningful for the driver). */
   currentStep: number;
-  /** Called on spectators when the driver moves to a new step. */
   onRemoteStep: (step: number) => void;
+  /** Called immediately on spectators when lock_acquired is received,
+   *  before Postgres Realtime confirms the lock state (~400ms earlier). */
+  onLockAcquired?: (driverEmail: string, step: number) => void;
+}
+
+interface UseWizardFollowResult {
+  broadcastLockAcquired: (step: number) => void;
 }
 
 export function useWizardFollow({
@@ -45,19 +33,36 @@ export function useWizardFollow({
   isSpectator,
   currentStep,
   onRemoteStep,
-}: Args) {
+  onLockAcquired,
+}: Args): UseWizardFollowResult {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const channelRef = useRef<any>(null);
-  const stepRef = useRef(currentStep);
-  const onRemoteStepRef = useRef(onRemoteStep);
-  stepRef.current = currentStep;
-  onRemoteStepRef.current = onRemoteStep;
+  const channelRef           = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sendRef              = useRef<((msg: FollowMsg) => void) | null>(null);
+  const stepRef              = useRef(currentStep);
+  const isDriverRef          = useRef(isDriver);
+  const isSpectatorRef       = useRef(isSpectator);
+  const prevIsSpectatorRef   = useRef(isSpectator);
+  const driverEmailRef       = useRef(driverEmail);
+  const onRemoteStepRef      = useRef(onRemoteStep);
+  const onLockAcqRef         = useRef(onLockAcquired);
+  /** Last step received from the driver — cached even while observing=false
+   *  so resume is instant with no round-trip. */
+  const lastDriverStepRef    = useRef<number | null>(null);
 
-  // (Re)subscribe whenever the participant's role or the driver changes.
+  stepRef.current         = currentStep;
+  isDriverRef.current     = isDriver;
+  isSpectatorRef.current  = isSpectator;
+  driverEmailRef.current  = driverEmail;
+  onRemoteStepRef.current = onRemoteStep;
+  onLockAcqRef.current    = onLockAcquired;
+
+  // -- Subscribe once per selfEmail -- the channel stays open for the lifetime
+  //    of the wizard session. Role/driver changes are handled via refs above,
+  //    so there is no re-subscribe latency when the lock is acquired.
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase || !selfEmail) return;
-    if (!isDriver && !isSpectator) return;
 
     const ch = supabase.channel(CHANNEL, {
       config: { broadcast: { self: false } },
@@ -66,44 +71,77 @@ export function useWizardFollow({
 
     const send = (msg: FollowMsg) =>
       ch.send({ type: 'broadcast', event: 'wf', payload: msg });
+    sendRef.current = send;
 
     ch.on('broadcast', { event: 'wf' }, ({ payload }: { payload: FollowMsg }) => {
       if (!payload?.email) return;
 
-      // Spectators mirror only the driver they are locked onto.
-      const sameDriver =
-        !!driverEmail &&
-        payload.email.trim().toLowerCase() === driverEmail.trim().toLowerCase();
-      if (isSpectator && payload.kind === 'step' && sameDriver) {
+      const selfKey   = selfEmail.trim().toLowerCase();
+      const senderKey = payload.email.trim().toLowerCase();
+      if (senderKey === selfKey) return;
+
+      if (payload.kind === 'lock_acquired') {
+        lastDriverStepRef.current = payload.step;
+        onLockAcqRef.current?.(payload.email, payload.step);
         onRemoteStepRef.current(payload.step);
+        return;
       }
 
-      // Driver answers a freshly-joined spectator with its current step so the
-      // spectator snaps to the right place without waiting for the next move.
-      if (isDriver && payload.kind === 'hello') {
+      const driverKey  = (driverEmailRef.current ?? '').trim().toLowerCase();
+      const sameDriver = !!driverKey && senderKey === driverKey;
+
+      if (payload.kind === 'step' && sameDriver) {
+        // Always cache the driver's step, even while the spectator has opted out.
+        lastDriverStepRef.current = payload.step;
+        if (isSpectatorRef.current) {
+          onRemoteStepRef.current(payload.step);
+        }
+      }
+
+      // Driver answers a freshly-joined spectator (no cached step yet).
+      if (payload.kind === 'hello' && isDriverRef.current) {
         void send({ kind: 'step', email: selfEmail, step: stepRef.current });
       }
     }).subscribe((status: string) => {
       if (status !== 'SUBSCRIBED') return;
-      if (isSpectator) void send({ kind: 'hello', email: selfEmail });
-      if (isDriver) void send({ kind: 'step', email: selfEmail, step: stepRef.current });
+      if (isSpectatorRef.current) void send({ kind: 'hello', email: selfEmail });
+      if (isDriverRef.current)    void send({ kind: 'step',  email: selfEmail, step: stepRef.current });
     });
 
     return () => {
       void supabase.removeChannel(ch);
       channelRef.current = null;
+      sendRef.current    = null;
     };
-  }, [selfEmail, driverEmail, isDriver, isSpectator]);
+  }, [selfEmail]);
 
-  // Driver: push every step change to spectators.
+  // -- Detect isSpectator false->true transition (resume observing).
+  //    Apply the cached driver step immediately -- no hello/step round-trip.
   useEffect(() => {
-    if (!isDriver || !selfEmail) return;
-    const ch = channelRef.current;
-    if (!ch) return;
-    void ch.send({
-      type: 'broadcast',
-      event: 'wf',
-      payload: { kind: 'step', email: selfEmail, step: currentStep },
-    });
+    const wasSpectator = prevIsSpectatorRef.current;
+    prevIsSpectatorRef.current = isSpectator;
+
+    if (!wasSpectator && isSpectator) {
+      if (lastDriverStepRef.current !== null) {
+        // We have a cached step -- apply it instantly.
+        onRemoteStepRef.current(lastDriverStepRef.current);
+      } else if (selfEmail && sendRef.current) {
+        // Fresh join with no cache -- ask the driver.
+        void sendRef.current({ kind: 'hello', email: selfEmail });
+      }
+    }
+  }, [isSpectator, selfEmail]);
+
+  // -- Driver: push every step change to spectators --
+  useEffect(() => {
+    if (!isDriver || !selfEmail || !sendRef.current) return;
+    void sendRef.current({ kind: 'step', email: selfEmail, step: currentStep });
   }, [currentStep, isDriver, selfEmail]);
+
+  const broadcastLockAcquired = useCallback((step: number) => {
+    if (!selfEmail || !sendRef.current) return;
+    void sendRef.current({ kind: 'lock_acquired', email: selfEmail, step });
+  }, [selfEmail]);
+
+  return { broadcastLockAcquired };
 }

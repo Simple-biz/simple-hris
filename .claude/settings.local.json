@@ -228,7 +228,11 @@
       "PowerShell(\\(Get-Content \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\src\\\\components\\\\PayrollWizard.tsx\"\\).Count)",
       "Bash(sed -E 's/\\(KEY=\\).*/\\\\1<redacted>/')",
       "Bash(cp /tmp/diag-chag.mjs \"c:/Users/Itachi/Desktop/simple-hris/diag-chag.mjs\")",
-      "Bash(rm -f \"c:/Users/Itachi/Desktop/simple-hris/diag-chag.mjs\")"
+      "Bash(rm -f \"c:/Users/Itachi/Desktop/simple-hris/diag-chag.mjs\")",
+      "Bash(cd /c/Users/Itachi/Desktop/simple-hris)",
+      "Bash(sed -n '70,90p' src/components/PayrollWizard.tsx)",
+      "Bash(grep -rn \"resolveCanonicalColumnsToPayWeek\" src/ app/)",
+      "Bash(grep -rn \"resolveCanonicalColumnsToIso\" src/ app/)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
