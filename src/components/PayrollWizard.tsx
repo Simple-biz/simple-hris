@@ -20,6 +20,7 @@ import {
   FileText,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   CalendarDays,
   X,
   Info,
@@ -107,7 +108,7 @@ import {
 } from '@/lib/audit/client-format';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import { parseLocalDateFromIso } from '@/lib/pab-period-settings';
+import { parseLocalDateFromIso, yearMonthKey } from '@/lib/pab-period-settings';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -799,6 +800,16 @@ export default function PayrollWizard({
     return map;
   }, [hubstaffUploads]);
 
+  /** Human-readable pay-period label parsed from a Hubstaff filename's date range.
+   *  Falls back to the raw filename when the range can't be parsed. */
+  const formatPeriodLabel = React.useCallback((file: string | null | undefined): string => {
+    if (!file) return '—';
+    const r = parseDateRangeFromFilename(file);
+    if (!r) return file;
+    const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return `${fmt(r.start)} – ${fmt(r.end)}, ${r.end.getFullYear()}`;
+  }, []);
+
   /** Short human-readable timestamp. Returns null on invalid input. */
   const formatUploadStamp = React.useCallback((iso: string | null | undefined): string | null => {
     if (!iso) return null;
@@ -825,6 +836,25 @@ export default function PayrollWizard({
   /** Source file selected for Initial Calculation (step 2). Defaults to latest uploaded file. */
   const [calcSourceFile, setCalcSourceFile] = useState<string | null>(null);
   const [calcSourceFileLoading, setCalcSourceFileLoading] = useState(false);
+  /** The newest upload is the live payroll period. Selecting any older Hubstaff report
+   *  enters read-only "replay" mode: the wizard preloads everything saved for that period
+   *  (adjustments, notes, bonuses, final pay) for review, but blocks any save/dispatch so a
+   *  closed period's records can never be overwritten. */
+  const newestSourceFile = uploadedSourceFiles[0] ?? null;
+  const isReplay = calcSourceFile != null && newestSourceFile != null && calcSourceFile !== newestSourceFile;
+  /** Mirror of {@link isReplay} for use inside `[]`-dep handlers (matches the auditCtxRef pattern),
+   *  so every per-employee mutation can short-circuit in view-only replay without rebuilding callbacks. */
+  const isReplayRef = useRef(false);
+  isReplayRef.current = isReplay;
+  /** True when the replayed period already has a dispatched final-pay snapshot on file. */
+  const [replayDispatched, setReplayDispatched] = useState(false);
+  /** The dispatched per-employee finals saved for the replayed period (keyed by lowercased
+   *  work/personal email). Overlaid onto the recomputed Reports rows so salary figures match
+   *  exactly what was dispatched, even if rates have since changed. Null when none on file. */
+  const [replaySnapshotFinals, setReplaySnapshotFinals] = useState<Record<string, {
+    final: number; regularPay: number | null; otPay: number | null;
+    regularHours: number; otHours: number; totalHours: number; initial: number | null;
+  }> | null>(null);
   /** True while fetching unfiltered hubstaff_hours (no source_file column / replace-only uploads). */
   const [unfilteredHubstaffLoading, setUnfilteredHubstaffLoading] = useState(false);
 
@@ -986,6 +1016,10 @@ export default function PayrollWizard({
   const [employeeBonuses, setEmployeeBonuses] = useState<Record<string, Record<string, boolean>>>({});
   /** Accounting-side per-employee bonus overrides. When present, replaces the auto-computed total. */
   const [bonusOverrides, setBonusOverrides] = useState<Record<string, number>>({});
+  /** Free-text note explaining each adjustment, keyed by Hubstaff email like {@link bonusOverrides}. */
+  const [bonusOverrideNotes, setBonusOverrideNotes] = useState<Record<string, string>>({});
+  /** When on, reveals the per-adjustment note inputs in the Adj. column. */
+  const [showAdjNotes, setShowAdjNotes] = useState(false);
   /** Accounting-side per-employee Orphanage pay (PHP). A positive amount added on top of final pay,
    *  shown as its own "Orphanage" paystub line. Keyed by Hubstaff email like {@link bonusOverrides}. */
   const [orphanageAmounts, setOrphanageAmounts] = useState<Record<string, number>>({});
@@ -1181,6 +1215,37 @@ export default function PayrollWizard({
 
   const pabPeriodSettings = usePabPeriodSettings();
 
+  // ── Pay-period month — the selected Hubstaff report drives it ──
+  // PAB month = the month containing the Monday of the selected file's week (matches
+  // getPabMonthRange's week-ownership rule and the dispatch-week logic). The Hubstaff
+  // selector is the single source of truth for the period, so every month-scoped section
+  // (orphanage, budget requests, gifts, time adjustments), the PAB calendar, eligibility,
+  // and pay all follow the chosen report. Falls back to the PAB picker's active month only
+  // when no file is selected.
+  const fileMonth = useMemo(() => {
+    if (!calcSourceFile) return null;
+    const r = parseDateRangeFromFilename(calcSourceFile);
+    if (!r) return null;
+    const dow = r.start.getDay();
+    const daysBackToMon = dow === 0 ? 6 : dow - 1;
+    const mon = new Date(r.start.getFullYear(), r.start.getMonth(), r.start.getDate() - daysBackToMon);
+    return { year: mon.getFullYear(), month: mon.getMonth() };
+  }, [calcSourceFile]);
+
+  /** {year, month} actually in effect: the file's month when one is selected, else the picker's. */
+  const effectiveMonth = useMemo(
+    () => fileMonth ?? { year: pabPeriodSettings.activeMonthResolved.year, month: pabPeriodSettings.activeMonthResolved.month },
+    [fileMonth, pabPeriodSettings.activeMonthResolved.year, pabPeriodSettings.activeMonthResolved.month],
+  );
+  const effectiveMonthKey = yearMonthKey(effectiveMonth.year, effectiveMonth.month);
+  /** Resolved date window for the effective month: saved override if present, else the default rule. */
+  const effectiveMonthRange = useMemo(() => {
+    const override = pabPeriodSettings.overrides.get(effectiveMonthKey);
+    if (override) return { start: override.start, end: override.end };
+    if (!fileMonth) return { start: pabPeriodSettings.activeRange.start, end: pabPeriodSettings.activeRange.end };
+    return getPabMonthRange(effectiveMonth.year, effectiveMonth.month);
+  }, [pabPeriodSettings.overrides, pabPeriodSettings.activeRange.start, pabPeriodSettings.activeRange.end, effectiveMonthKey, effectiveMonth.year, effectiveMonth.month, fileMonth]);
+
   /**
    * Sync hook → local form state whenever the hook refreshes (initial load, save, refresh button).
    * Local inputs always reflect the active month's resolved range (override or default).
@@ -1189,14 +1254,14 @@ export default function PayrollWizard({
     if (pabPeriodSettings.loading) return;
     const toIso = (d: Date): string =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    setPabStartLocal(toIso(pabPeriodSettings.activeRange.start));
-    setPabEndLocal(toIso(pabPeriodSettings.activeRange.end));
-    setPabPickerYear(pabPeriodSettings.activeMonthResolved.year);
+    setPabStartLocal(toIso(effectiveMonthRange.start));
+    setPabEndLocal(toIso(effectiveMonthRange.end));
+    setPabPickerYear(effectiveMonth.year);
   }, [
     pabPeriodSettings.loading,
-    pabPeriodSettings.activeRange.start,
-    pabPeriodSettings.activeRange.end,
-    pabPeriodSettings.activeMonthResolved.year,
+    effectiveMonthRange.start,
+    effectiveMonthRange.end,
+    effectiveMonth.year,
   ]);
 
   const savePabSetting = React.useCallback(async (key: string, value: string) => {
@@ -1213,19 +1278,25 @@ export default function PayrollWizard({
     try {
       const res = await fetch(`/api/app-settings?key=payroll.wizard.additions.${sourceFile}`);
       const json = await res.json();
+      // Every Additions input is scoped to the Hubstaff file (= pay period). Reset each
+      // period-specific field to this file's saved value, or to empty if it has none, so
+      // adjustments/notes/bonuses never bleed from a previously-viewed pay period.
+      const data = json.value ? JSON.parse(json.value) : {};
+      setBonusOverrides(data.bonusOverrides ?? {});
+      setBonusOverrideNotes(data.bonusOverrideNotes ?? {});
+      setOrphanageAmounts(data.orphanageAmounts ?? {});
+      setEmployeeMetrics(data.employeeMetrics ?? {});
+      setDeptMetrics(data.deptMetrics ?? {});
+      setEmployeeBonuses(data.employeeBonuses ?? {});
+      setTechBonusManualGrants(new Set(data.techBonusManualGrants ?? []));
+      setTechBonusManualRevokes(new Set(data.techBonusManualRevokes ?? []));
+      setLockedPabSnapshot((data.pabStatusSnapshot ?? {}) as Record<string, 'eligible' | 'ineligible' | 'in_progress'>);
+      if (data.employeeDepts) setEmployeeDepts(data.employeeDepts);
       if (json.value) {
-        const data = JSON.parse(json.value);
-        if (data.bonusOverrides) setBonusOverrides(data.bonusOverrides);
-        if (data.orphanageAmounts) setOrphanageAmounts(data.orphanageAmounts);
-        if (data.employeeMetrics) setEmployeeMetrics(data.employeeMetrics);
-        if (data.deptMetrics) setDeptMetrics(data.deptMetrics);
-        if (data.employeeDepts) setEmployeeDepts(data.employeeDepts);
-        if (data.employeeBonuses) setEmployeeBonuses(data.employeeBonuses);
-        if (data.techBonusManualGrants) setTechBonusManualGrants(new Set(data.techBonusManualGrants));
-        if (data.techBonusManualRevokes) setTechBonusManualRevokes(new Set(data.techBonusManualRevokes));
-        if (data.pabStatusSnapshot) setLockedPabSnapshot(data.pabStatusSnapshot as Record<string, 'eligible' | 'ineligible' | 'in_progress'>);
         setAdditionsSavedAt(new Date()); // Mark as having a saved state
         toast.info('Restored locked-in additions progress');
+      } else {
+        setAdditionsSavedAt(null);
       }
     } catch (e) {
       console.error('Failed to load additions progress', e);
@@ -1255,6 +1326,7 @@ export default function PayrollWizard({
   /** Save a start/end override for the *active* month only. */
   const saveActiveMonthOverride = React.useCallback(
     async (start: string, end: string) => {
+      if (isReplay) { toast.error('Replaying a past period is view-only'); return; }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return;
       const sd = parseLocalDateFromIso(start);
       const ed = parseLocalDateFromIso(end);
@@ -1264,7 +1336,7 @@ export default function PayrollWizard({
       }
       setPabSaveState('saving');
       try {
-        await writeOverridesBlob(pabPeriodSettings.activeMonthResolved.key, { start, end });
+        await writeOverridesBlob(effectiveMonthKey, { start, end });
         await pabPeriodSettings.refresh();
         setPabSaveState('saved');
         toast.success('PAB override saved', { description: `${start} → ${end}` });
@@ -1275,7 +1347,7 @@ export default function PayrollWizard({
         setTimeout(() => setPabSaveState('idle'), 3000);
       }
     },
-    [writeOverridesBlob, pabPeriodSettings],
+    [writeOverridesBlob, pabPeriodSettings, effectiveMonthKey, isReplay],
   );
 
   /**
@@ -1284,13 +1356,14 @@ export default function PayrollWizard({
    * and save it as that month's override. Useful to explicitly re-anchor a drifted custom range.
    */
   const autoCalcActiveMonth = React.useCallback(async () => {
-    const { year, month } = pabPeriodSettings.activeMonthResolved;
+    if (isReplay) { toast.error('Replaying a past period is view-only'); return; }
+    const { year, month } = effectiveMonth;
     const r = getPabMonthRange(year, month);
     const startIso = `${r.start.getFullYear()}-${String(r.start.getMonth() + 1).padStart(2, '0')}-${String(r.start.getDate()).padStart(2, '0')}`;
     const endIso = `${r.end.getFullYear()}-${String(r.end.getMonth() + 1).padStart(2, '0')}-${String(r.end.getDate()).padStart(2, '0')}`;
     setPabSaveState('saving');
     try {
-      await writeOverridesBlob(pabPeriodSettings.activeMonthResolved.key, { start: startIso, end: endIso });
+      await writeOverridesBlob(effectiveMonthKey, { start: startIso, end: endIso });
       await pabPeriodSettings.refresh();
       setPabSaveState('saved');
       toast.success('PAB dates auto-calculated', { description: `${startIso} → ${endIso}` });
@@ -1300,13 +1373,14 @@ export default function PayrollWizard({
       toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
       setTimeout(() => setPabSaveState('idle'), 3000);
     }
-  }, [pabPeriodSettings, writeOverridesBlob]);
+  }, [pabPeriodSettings, writeOverridesBlob, effectiveMonth, effectiveMonthKey, isReplay]);
 
   /** Remove the override for the active month; the default `getPabMonthRange` takes over. */
   const resetActiveMonthOverride = React.useCallback(async () => {
+    if (isReplay) { toast.error('Replaying a past period is view-only'); return; }
     setPabSaveState('saving');
     try {
-      await writeOverridesBlob(pabPeriodSettings.activeMonthResolved.key, null);
+      await writeOverridesBlob(effectiveMonthKey, null);
       await pabPeriodSettings.refresh();
       setPabSaveState('saved');
       toast.success('Override removed', { description: 'Reverted to the default Mon–Fri window for this month.' });
@@ -1316,11 +1390,12 @@ export default function PayrollWizard({
       toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
       setTimeout(() => setPabSaveState('idle'), 3000);
     }
-  }, [writeOverridesBlob, pabPeriodSettings]);
+  }, [writeOverridesBlob, pabPeriodSettings, effectiveMonthKey, isReplay]);
 
   /** Switch which month the Additions tab evaluates. */
   const selectPabMonth = React.useCallback(
     async (year: number, month: number) => {
+      if (isReplay) { toast.error('Replaying a past period is view-only'); return; }
       const key = `${year}-${String(month + 1).padStart(2, '0')}`;
       setPabSaveState('saving');
       try {
@@ -1334,7 +1409,7 @@ export default function PayrollWizard({
         setTimeout(() => setPabSaveState('idle'), 3000);
       }
     },
-    [savePabSetting, pabPeriodSettings],
+    [savePabSetting, pabPeriodSettings, isReplay],
   );
 
   const [approvedDisputeDates, setApprovedDisputeDates] = useState<Map<string, Map<string, number | null>>>(new Map());
@@ -1620,7 +1695,9 @@ export default function PayrollWizard({
       setCalcSourceFile(null);
       return;
     }
-    setCalcSourceFile(uploadedSourceFiles[0]);
+    // Keep a user-chosen replay selection; only auto-pick the newest when nothing valid
+    // is selected yet (initial mount) or the selected file was deleted from the list.
+    setCalcSourceFile((cur) => (cur && uploadedSourceFiles.includes(cur) ? cur : uploadedSourceFiles[0]));
   }, [uploadedSourceFiles]);
 
   // Load locked additions progress on mount / source-file change
@@ -1628,6 +1705,31 @@ export default function PayrollWizard({
     if (!calcSourceFile) return;
     void loadAdditionsProgress(calcSourceFile);
   }, [calcSourceFile, loadAdditionsProgress]);
+
+  // When replaying a past period, surface whether it was already dispatched (its
+  // final-pay snapshot exists) so the replay banner can label it accordingly.
+  useEffect(() => {
+    if (!isReplay || !calcSourceFile) { setReplayDispatched(false); setReplaySnapshotFinals(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/app-settings?key=payroll.wizard.final_pay.${calcSourceFile}`);
+        const json = await res.json();
+        if (cancelled) return;
+        if (json.value) {
+          const parsed = JSON.parse(json.value) as { finals?: NonNullable<typeof replaySnapshotFinals> };
+          setReplayDispatched(true);
+          setReplaySnapshotFinals(parsed.finals ?? null);
+        } else {
+          setReplayDispatched(false);
+          setReplaySnapshotFinals(null);
+        }
+      } catch {
+        if (!cancelled) { setReplayDispatched(false); setReplaySnapshotFinals(null); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isReplay, calcSourceFile]);
 
   // Fallback: if source files loaded but none exist, load all data unfiltered
   useEffect(() => {
@@ -1898,13 +2000,14 @@ export default function PayrollWizard({
    */
   const pabMonthRange = useMemo(() => {
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const { year, month } = pabPeriodSettings.activeMonthResolved;
-    const { start, end } = pabPeriodSettings.activeRange;
-    return { year, month, start, end, monthName: monthNames[month] ?? '' };
-  }, [
-    pabPeriodSettings.activeMonthResolved,
-    pabPeriodSettings.activeRange,
-  ]);
+    return {
+      year: effectiveMonth.year,
+      month: effectiveMonth.month,
+      start: effectiveMonthRange.start,
+      end: effectiveMonthRange.end,
+      monthName: monthNames[effectiveMonth.month] ?? '',
+    };
+  }, [effectiveMonth.year, effectiveMonth.month, effectiveMonthRange.start, effectiveMonthRange.end]);
 
   // Load orphanage disputes (orphanage_visit + ceo_visitation) for the active
   // PAB range when the user lands on step 4. Re-fetches if the range changes.
@@ -2791,10 +2894,15 @@ export default function PayrollWizard({
       toast.error('No source file selected to lock progress against.');
       return;
     }
+    if (isReplay) {
+      toast.error('Replaying a past period is view-only', { description: 'Return to the current period to make changes.' });
+      return;
+    }
     setAdditionsSaving(true);
     try {
       const payload = {
         bonusOverrides,
+        bonusOverrideNotes,
         orphanageAmounts,
         employeeMetrics,
         deptMetrics,
@@ -2813,7 +2921,7 @@ export default function PayrollWizard({
     } finally {
       setAdditionsSaving(false);
     }
-  }, [calcSourceFile, bonusOverrides, orphanageAmounts, employeeMetrics, deptMetrics, employeeDepts, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
+  }, [calcSourceFile, isReplay, bonusOverrides, bonusOverrideNotes, orphanageAmounts, employeeMetrics, deptMetrics, employeeDepts, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
 
   /**
    * US-holiday forgiveness summary scoped to the current PAB month: for each holiday
@@ -2950,6 +3058,7 @@ export default function PayrollWizard({
   ]);
 
   const toggleEmployeeBonus = React.useCallback((email: string, bonusId: string, enabled: boolean) => {
+    if (isReplayRef.current) return; // view-only replay of a past period
     const ctx = auditCtxRef.current;
     const prevValue = ctx.employeeBonuses[email]?.[bonusId] ?? false;
     setEmployeeBonuses(prev => ({
@@ -3062,6 +3171,7 @@ export default function PayrollWizard({
   }, []);
 
   const updateEmployeeMetric = React.useCallback((email: string, metric: string, value: number) => {
+    if (isReplayRef.current) return; // view-only replay of a past period
     const ctx = auditCtxRef.current;
     const prevValue = ctx.employeeMetrics[email]?.[metric];
     setEmployeeMetrics(prev => ({
@@ -3087,6 +3197,7 @@ export default function PayrollWizard({
   }, []);
 
   const updateDeptMetric = React.useCallback((deptKey: string, metric: string, value: number) => {
+    if (isReplayRef.current) return; // view-only replay of a past period
     const ctx = auditCtxRef.current;
     const prevValue = ctx.deptMetrics[deptKey]?.[metric];
     setDeptMetrics(prev => ({
@@ -3119,6 +3230,7 @@ export default function PayrollWizard({
    * see exactly which manual overrides changed.
    */
   const updateBonusOverride = React.useCallback((email: string, value: number | null) => {
+    if (isReplayRef.current) return; // view-only replay of a past period
     const ctx = auditCtxRef.current;
     const prevValue = ctx.bonusOverrides[email] ?? null;
     setBonusOverrides(prev => {
@@ -3127,6 +3239,15 @@ export default function PayrollWizard({
       else next[email] = value;
       return next;
     });
+    // Clearing the adjustment also drops its note — they have no meaning apart.
+    if (value === null) {
+      setBonusOverrideNotes(prev => {
+        if (!(email in prev)) return prev;
+        const next = { ...prev };
+        delete next[email];
+        return next;
+      });
+    }
     if (valuesDiffer(prevValue, value)) {
       void logAudit({
         user_name: ctx.sessionEmail ?? 'anonymous',
@@ -3145,9 +3266,21 @@ export default function PayrollWizard({
     }
   }, []);
 
+  /** Set/clear the free-text note attached to an employee's adjustment. Empty text removes it. */
+  const updateBonusOverrideNote = React.useCallback((email: string, note: string) => {
+    if (isReplayRef.current) return; // view-only replay of a past period
+    setBonusOverrideNotes(prev => {
+      const next = { ...prev };
+      if (note.trim() === '') delete next[email];
+      else next[email] = note;
+      return next;
+    });
+  }, []);
+
   /** Set/clear the per-employee Orphanage pay (PHP). A positive amount added on top of
    *  final pay; `null` clears it. Mirrors {@link updateBonusOverride}. */
   const updateOrphanageAmount = React.useCallback((email: string, value: number | null) => {
+    if (isReplayRef.current) return; // view-only replay of a past period
     const ctx = auditCtxRef.current;
     const prevValue = ctx.orphanageAmounts[email] ?? null;
     setOrphanageAmounts(prev => {
@@ -4073,6 +4206,9 @@ export default function PayrollWizard({
    */
   const publishFinalPaySnapshot = React.useCallback(async () => {
     if (!calcSourceFile) return;
+    // Replaying a past period is view-only — never re-write its historical snapshot
+    // (the live debounce effect would otherwise clobber it with recomputed figures).
+    if (isReplay) return;
     // email -> the wizard's authoritative figures. Includes the Regular/OT split +
     // hours (not just `final`) so the Employee Dashboard's Regular + Overtime stats
     // reconcile exactly with the Estimated Take-Home. Keyed by BOTH work and personal
@@ -4109,7 +4245,7 @@ export default function PayrollWizard({
     } catch (e) {
       console.warn('[publishFinalPaySnapshot]', e);
     }
-  }, [calcSourceFile, dispatchData, savePabSetting]);
+  }, [calcSourceFile, dispatchData, savePabSetting, isReplay]);
 
   /**
    * Live publish: while accounting edits the wizard (Adj./Orphanage/bonus/metric
@@ -4370,6 +4506,17 @@ export default function PayrollWizard({
       setSourceFileLoading(false);
     }
   }, []);
+
+  // Step 1's file preview follows the header pay-period selector: load the selected
+  // file when landing on Step 1 or when the period changes. A ref tracks the last
+  // synced file so manual clicks on other files in the browser aren't overridden.
+  const step1PreviewSyncRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (currentStep !== 1 || !calcSourceFile) return;
+    if (step1PreviewSyncRef.current === calcSourceFile) return;
+    step1PreviewSyncRef.current = calcSourceFile;
+    void loadSourceFileRows(calcSourceFile);
+  }, [currentStep, calcSourceFile, loadSourceFileRows]);
 
   /**
    * Auto-populate employeeDepts whenever calcResults, masterEmployees, or
@@ -6454,7 +6601,7 @@ export default function PayrollWizard({
 
               {/* ── PAB settings trigger — opens the full picker in a modal so the Additions table has more room ── */}
               {(() => {
-                const activeHasOverride = pabPeriodSettings.activeRange.isOverride;
+                const activeHasOverride = pabPeriodSettings.overrides.has(effectiveMonthKey);
                 return (
                   <div className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200/70 bg-white/60 px-3 py-2 dark:border-indigo-900/50 dark:bg-zinc-900/40">
                     <button
@@ -6488,10 +6635,12 @@ export default function PayrollWizard({
                         key={additionsSavedAt ? 'locked' : 'unlocked'}
                         type="button"
                         onClick={async () => { await saveAdditionsProgress(); void publishFinalPaySnapshot(); }}
-                        disabled={additionsSaving || !calcSourceFile}
-                        title={additionsSavedAt
-                          ? `Locked in at ${additionsSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                          : 'Lock in your additions progress'}
+                        disabled={additionsSaving || !calcSourceFile || isReplay}
+                        title={isReplay
+                          ? 'Replaying a past period — view-only'
+                          : additionsSavedAt
+                            ? `Locked in at ${additionsSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                            : 'Lock in your additions progress'}
                         className={cn(
                           'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 font-semibold transition-colors duration-300',
                           'disabled:cursor-not-allowed disabled:opacity-60',
@@ -6542,8 +6691,8 @@ export default function PayrollWizard({
                 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
                 const today = new Date();
                 const todayPm = getCurrentPabMonth(today);
-                const activeKey = pabPeriodSettings.activeMonthResolved.key;
-                const activeHasOverride = pabPeriodSettings.activeRange.isOverride;
+                const activeKey = effectiveMonthKey;
+                const activeHasOverride = pabPeriodSettings.overrides.has(effectiveMonthKey);
                 return (
                   <Dialog open={pabSettingsOpen} onOpenChange={setPabSettingsOpen}>
                     <DialogContent className="flex max-h-[92vh] w-[95vw] max-w-[1200px] flex-col gap-0 overflow-hidden border-zinc-200 bg-white p-0 dark:border-zinc-800 dark:bg-zinc-950 sm:!max-w-[1200px]">
@@ -7148,7 +7297,8 @@ export default function PayrollWizard({
                             const v = parseInt(e.target.value, 10);
                             updateDeptMetric('qc', 'unitsSold', Number.isFinite(v) && v >= 0 ? v : 0);
                           }}
-                          className="h-8 border-violet-200 bg-white font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                          disabled={isReplay}
+                          className="h-8 border-violet-200 bg-white font-mono text-xs disabled:cursor-not-allowed disabled:opacity-60 dark:border-violet-800/50 dark:bg-zinc-900"
                         />
                       </div>
                       {qcUnitsSold > 0 && (
@@ -7213,7 +7363,8 @@ export default function PayrollWizard({
                             const v = parseInt(e.target.value, 10);
                             updateDeptMetric('hr', 'newHires', Number.isFinite(v) && v >= 0 ? v : 0);
                           }}
-                          className="h-8 border-violet-200 bg-white font-mono text-xs dark:border-violet-800/50 dark:bg-zinc-900"
+                          disabled={isReplay}
+                          className="h-8 border-violet-200 bg-white font-mono text-xs disabled:cursor-not-allowed disabled:opacity-60 dark:border-violet-800/50 dark:bg-zinc-900"
                         />
                       </div>
                       {hrBillableMembers.length > 0 && (
@@ -7599,6 +7750,20 @@ export default function PayrollWizard({
                       )}
                     </div>
 
+                    {/* Reveal the note attached to each adjustment in the Adj. column. */}
+                    <div className="flex items-center justify-end gap-2">
+                      <FileText className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                      <Label htmlFor="show-adj-notes" className="cursor-pointer text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+                        Show adjustment notes
+                      </Label>
+                      <Switch
+                        id="show-adj-notes"
+                        checked={showAdjNotes}
+                        onCheckedChange={setShowAdjNotes}
+                        className="data-[state=checked]:bg-amber-600"
+                      />
+                    </div>
+
                     {/* Manager-submitted bonus note — explains why metric inputs may be
                         blank while the Bonus column is populated from the KPI Calculator. */}
                     {managerBonusMeta[activeDeptTab] && (
@@ -7855,7 +8020,7 @@ export default function PayrollWizard({
                                             checked={employeeBonuses[emp.email]?.[bonus.id] ?? false}
                                             onCheckedChange={v => toggleEmployeeBonus(emp.email, bonus.id, v)}
                                             className="data-[state=checked]:bg-indigo-600"
-                                            disabled={amount === 0}
+                                            disabled={amount === 0 || isReplay}
                                           />
                                           <span
                                             className={cn(
@@ -7882,6 +8047,7 @@ export default function PayrollWizard({
                                         checked={employeeBonuses[emp.email]?.[bonus.id] ?? false}
                                         onCheckedChange={v => toggleEmployeeBonus(emp.email, bonus.id, v)}
                                         className="data-[state=checked]:bg-indigo-600"
+                                        disabled={isReplay}
                                       />
                                     </TableCell>
                                   );
@@ -7937,36 +8103,59 @@ export default function PayrollWizard({
                                   {isRecalcPending ? (
                                     <span className="inline-block h-3 w-12 animate-pulse rounded bg-amber-200/60 dark:bg-amber-900/40" />
                                   ) : hasOverride ? (
-                                    <div className="flex items-center justify-end gap-1">
-                                      <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        step="0.01"
-                                        value={bonusOverrides[emp.email] ?? ''}
-                                        onChange={(e) => {
-                                          const raw = e.target.value;
-                                          const next = raw === '' ? 0 : Number(raw);
-                                          if (!Number.isFinite(next)) return;
-                                          updateBonusOverride(emp.email, next);
-                                        }}
-                                        title={`Signed adjustment added on top of auto-computed bonuses (${formatPHP(autoBonus)}). Use a negative value to deduct.`}
-                                        className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => updateBonusOverride(emp.email, null)}
-                                        title={`Clear adjustment (auto bonuses: ${formatPHP(autoBonus)})`}
-                                        className="text-zinc-400 hover:text-red-500"
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
+                                    <div className="flex flex-col items-end gap-1">
+                                      <div className="flex items-center justify-end gap-1">
+                                        <input
+                                          type="number"
+                                          inputMode="decimal"
+                                          step="0.01"
+                                          value={bonusOverrides[emp.email] ?? ''}
+                                          onChange={(e) => {
+                                            const raw = e.target.value;
+                                            const next = raw === '' ? 0 : Number(raw);
+                                            if (!Number.isFinite(next)) return;
+                                            updateBonusOverride(emp.email, next);
+                                          }}
+                                          disabled={isReplay}
+                                          title={`Signed adjustment added on top of auto-computed bonuses (${formatPHP(autoBonus)}). Use a negative value to deduct.`}
+                                          className="h-6 w-[88px] rounded border border-amber-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-700/60 dark:bg-zinc-900 dark:text-amber-300"
+                                        />
+                                        {/* When notes are hidden, flag rows that have one so it isn't forgotten. */}
+                                        {!showAdjNotes && (bonusOverrideNotes[emp.email]?.trim() ?? '') !== '' && (
+                                          <span title={bonusOverrideNotes[emp.email]} className="inline-flex shrink-0">
+                                            <FileText className="h-3 w-3 text-amber-500 dark:text-amber-400" />
+                                          </span>
+                                        )}
+                                        {!isReplay && (
+                                          <button
+                                            type="button"
+                                            onClick={() => updateBonusOverride(emp.email, null)}
+                                            title={`Clear adjustment (auto bonuses: ${formatPHP(autoBonus)})`}
+                                            className="text-zinc-400 hover:text-red-500"
+                                          >
+                                            <X className="h-3 w-3" />
+                                          </button>
+                                        )}
+                                      </div>
+                                      {showAdjNotes && (
+                                        <input
+                                          type="text"
+                                          value={bonusOverrideNotes[emp.email] ?? ''}
+                                          onChange={(e) => updateBonusOverrideNote(emp.email, e.target.value)}
+                                          disabled={isReplay}
+                                          placeholder={isReplay ? 'No note' : 'Add a note…'}
+                                          title="Why was this adjustment made? Saved with the adjustment for this pay period."
+                                          className="h-6 w-[140px] rounded border border-zinc-200 bg-white px-1.5 text-right text-[10px] font-normal text-zinc-700 placeholder:text-zinc-300 focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-70 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:placeholder:text-zinc-600"
+                                        />
+                                      )}
                                     </div>
                                   ) : (
                                     <button
                                       type="button"
-                                      title={`Auto bonuses: ${formatPHP(autoBonus)} — click to add a signed adjustment`}
+                                      disabled={isReplay}
+                                      title={isReplay ? `Auto bonuses: ${formatPHP(autoBonus)}` : `Auto bonuses: ${formatPHP(autoBonus)} — click to add a signed adjustment`}
                                       onClick={() => updateBonusOverride(emp.email, 0)}
-                                      className="text-zinc-300 hover:text-amber-600 dark:text-zinc-700 dark:hover:text-amber-400"
+                                      className="text-zinc-300 hover:text-amber-600 disabled:cursor-default disabled:hover:text-zinc-300 dark:text-zinc-700 dark:hover:text-amber-400 dark:disabled:hover:text-zinc-700"
                                     >
                                       —
                                     </button>
@@ -7988,24 +8177,28 @@ export default function PayrollWizard({
                                           if (!Number.isFinite(next) || next < 0) return;
                                           updateOrphanageAmount(emp.email, next);
                                         }}
+                                        disabled={isReplay}
                                         title="Orphanage pay (PHP) added on top of final pay"
-                                        className="h-6 w-[88px] rounded border border-pink-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-pink-700 focus:outline-none focus:ring-1 focus:ring-pink-400 dark:border-pink-700/60 dark:bg-zinc-900 dark:text-pink-300"
+                                        className="h-6 w-[88px] rounded border border-pink-400/70 bg-white px-1.5 text-right font-mono text-[11px] font-bold tabular-nums text-pink-700 focus:outline-none focus:ring-1 focus:ring-pink-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-pink-700/60 dark:bg-zinc-900 dark:text-pink-300"
                                       />
-                                      <button
-                                        type="button"
-                                        onClick={() => updateOrphanageAmount(emp.email, null)}
-                                        title="Clear orphanage pay"
-                                        className="text-zinc-400 hover:text-red-500"
-                                      >
-                                        <X className="h-3 w-3" />
-                                      </button>
+                                      {!isReplay && (
+                                        <button
+                                          type="button"
+                                          onClick={() => updateOrphanageAmount(emp.email, null)}
+                                          title="Clear orphanage pay"
+                                          className="text-zinc-400 hover:text-red-500"
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </button>
+                                      )}
                                     </div>
                                   ) : (
                                     <button
                                       type="button"
-                                      title="Click to add orphanage pay"
+                                      disabled={isReplay}
+                                      title={isReplay ? 'No orphanage pay' : 'Click to add orphanage pay'}
                                       onClick={() => updateOrphanageAmount(emp.email, 0)}
-                                      className="text-zinc-300 hover:text-pink-600 dark:text-zinc-700 dark:hover:text-pink-400"
+                                      className="text-zinc-300 hover:text-pink-600 disabled:cursor-default disabled:hover:text-zinc-300 dark:text-zinc-700 dark:hover:text-pink-400 dark:disabled:hover:text-zinc-700"
                                     >
                                       —
                                     </button>
@@ -9954,6 +10147,10 @@ export default function PayrollWizard({
               <Button
                 className="bg-indigo-600 hover:bg-indigo-700 text-white px-12 font-bold"
                 onClick={async () => {
+                  if (isReplay) {
+                    toast.error('Replaying a past period is view-only', { description: 'Return to the current period to dispatch.' });
+                    return;
+                  }
                   const { rows: employees, missing, payPeriodPayload } = dispatchData;
                   if (employees.length === 0) {
                     toast.error('Dispatch blocked', {
@@ -10017,28 +10214,63 @@ export default function PayrollWizard({
                     setIsDispatching(false);
                   }
                 }}
-                disabled={isDispatching}
+                disabled={isDispatching || isReplay}
               >
-                {isDispatching ? 'Dispatching…' : 'Confirm & Dispatch'}
+                {isDispatching ? 'Dispatching…' : isReplay ? 'View-only (past period)' : 'Confirm & Dispatch'}
               </Button>
             </div>
           </div>
         );
       case 9: {
-        const isDraft = reportSnapshot == null;
+        // Replaying a past period: reconstruct the report from that period's recomputed
+        // data (hours, additions, monthly sections all follow the selected file) and
+        // overlay the dispatched per-employee finals saved in the snapshot so salary
+        // figures match exactly what was paid. Treated as a real report (not a draft)
+        // when the period was actually dispatched.
+        const replayEmployees = isReplay && replaySnapshotFinals
+          ? dispatchData.rows.map((e) => {
+              const saved = replaySnapshotFinals[e.email?.trim().toLowerCase() ?? '']
+                ?? replaySnapshotFinals[e.personal_email?.trim().toLowerCase() ?? ''];
+              if (!saved) return e;
+              return {
+                ...e,
+                hours: { total: saved.totalHours, regular: saved.regularHours, ot: saved.otHours },
+                pay_php: {
+                  ...e.pay_php,
+                  regular: saved.regularPay,
+                  ot: saved.otPay,
+                  initial: saved.initial,
+                  final: saved.final,
+                },
+              };
+            })
+          : null;
+
+        const isDraft = isReplay ? !replayDispatched : reportSnapshot == null;
         // When dispatch hasn't happened, synthesize a live preview from the same
         // sources the dispatch call would package up. Displayed with a DRAFT
         // watermark — once dispatch fires, the real snapshot replaces it.
-        const snap = reportSnapshot ?? {
-          startedAt: wizardStartedAt,
-          dispatchedAt: new Date(),
-          employees: dispatchData.rows,
-          budgetRequests: budgetRequestRows.filter(
-            (r) => r.status === 'approved' && !hiddenBudgetIds.has(r.id),
-          ),
-          giftPayments: giftPaymentRows,
-          usdToPhpRate,
-        };
+        const snap = isReplay
+          ? {
+              startedAt: wizardStartedAt,
+              dispatchedAt: new Date(),
+              employees: replayEmployees ?? dispatchData.rows,
+              budgetRequests: budgetRequestRows.filter(
+                (r) => r.status === 'approved' && !hiddenBudgetIds.has(r.id),
+              ),
+              giftPayments: giftPaymentRows,
+              usdToPhpRate,
+            }
+          : reportSnapshot ?? {
+              startedAt: wizardStartedAt,
+              dispatchedAt: new Date(),
+              employees: dispatchData.rows,
+              budgetRequests: budgetRequestRows.filter(
+                (r) => r.status === 'approved' && !hiddenBudgetIds.has(r.id),
+              ),
+              giftPayments: giftPaymentRows,
+              usdToPhpRate,
+            };
 
         const durationMs = snap.dispatchedAt.getTime() - snap.startedAt.getTime();
         const durationMins = Math.floor(durationMs / 60000);
@@ -10107,7 +10339,14 @@ export default function PayrollWizard({
                   <span className="font-medium">Started</span>
                   <span className="font-mono">{fmt(snap.startedAt)}</span>
                 </div>
-                {!isDraft && (
+                {!isDraft && isReplay && (
+                  <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+                    <Eye className="size-3.5 shrink-0" />
+                    <span className="font-medium">Replay</span>
+                    <span className="font-mono">past period · salaries from the dispatched snapshot</span>
+                  </div>
+                )}
+                {!isDraft && !isReplay && (
                   <>
                     <div className="flex items-center gap-2 text-xs text-indigo-700 dark:text-indigo-300">
                       <Send className="size-3.5 shrink-0" />
@@ -10156,8 +10395,12 @@ export default function PayrollWizard({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-[11px] text-zinc-500 dark:text-zinc-500">
                 {isDraft
-                  ? 'Draft preview · numbers reflect current wizard state.'
-                  : `Dispatched ${fmt(snap.dispatchedAt)}.`}
+                  ? (isReplay
+                      ? 'Past period · never dispatched. Numbers reconstructed from this period’s saved state.'
+                      : 'Draft preview · numbers reflect current wizard state.')
+                  : isReplay
+                    ? `Replay of ${formatPeriodLabel(calcSourceFile)} · salaries from the dispatched snapshot.`
+                    : `Dispatched ${fmt(snap.dispatchedAt)}.`}
               </span>
               <Button
                 type="button"
@@ -11490,11 +11733,58 @@ export default function PayrollWizard({
             Step {currentStep} of {steps.length} · {steps.find((s) => s.id === currentStep)?.label}
           </p>
         </div>
-        <div className="hidden items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 sm:flex dark:border-zinc-800 dark:bg-zinc-900">
-          <Button variant="ghost" size="sm" className="text-xs h-8">History</Button>
-          <Button variant="ghost" size="sm" className="text-xs h-8">Templates</Button>
-        </div>
+        {/* Pay-period (Hubstaff report) selector — replay any past period read-only. */}
+        {uploadedSourceFiles.length > 0 && (
+          <div className="flex shrink-0 items-center gap-2">
+            {isReplay && (
+              <span className="hidden items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 sm:inline-flex dark:bg-amber-900/50 dark:text-amber-300">
+                <Eye className="h-3 w-3" /> Replay
+              </span>
+            )}
+            <div className="relative">
+              <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+              <select
+                value={calcSourceFile ?? ''}
+                onChange={(e) => setCalcSourceFile(e.target.value || null)}
+                title="Replay a past payroll period — loads everything that was done for that Hubstaff report"
+                className={cn(
+                  'h-8 cursor-pointer appearance-none rounded-lg border bg-white py-1 pl-8 pr-7 text-xs font-medium shadow-sm focus:outline-none focus:ring-1 dark:bg-zinc-950',
+                  isReplay
+                    ? 'border-amber-400 text-amber-800 focus:ring-amber-400 dark:border-amber-700/60 dark:text-amber-300'
+                    : 'border-zinc-200 text-zinc-700 focus:ring-indigo-400 dark:border-zinc-800 dark:text-zinc-300',
+                )}
+              >
+                {uploadedSourceFiles.map((f, i) => (
+                  <option key={f} value={f}>
+                    {formatPeriodLabel(f)}{i === 0 ? ' · current' : ''}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Replay banner — view-only review of a closed pay period. */}
+      {isReplay && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-amber-300/70 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 sm:mb-4 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200">
+          <Eye className="h-3.5 w-3.5 shrink-0" />
+          <span className="font-semibold">Replaying {formatPeriodLabel(calcSourceFile)} — view-only.</span>
+          <span className="opacity-80">
+            Showing the adjustments, notes, bonuses and final pay saved for this period.
+            {replayDispatched ? ' This period was dispatched.' : ' This period was not dispatched.'}
+            {' '}Saving and dispatch are disabled.
+          </span>
+          <button
+            type="button"
+            onClick={() => setCalcSourceFile(newestSourceFile)}
+            className="ml-auto inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white/70 px-2 py-1 font-semibold text-amber-800 transition-colors hover:bg-white dark:border-amber-700/60 dark:bg-zinc-900/40 dark:text-amber-200 dark:hover:bg-zinc-900"
+          >
+            <ArrowLeft className="h-3 w-3" /> Return to current period
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 flex-1 overflow-hidden min-h-0 md:flex-row md:gap-8">
         {/* Stepper — horizontal scroll-strip on mobile, vertical sidebar on desktop */}

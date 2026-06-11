@@ -27,6 +27,7 @@ import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import AccountingMesa from '@/components/payroll/AccountingMesa';
 import AccountingCollabLayer from '@/components/accounting/AccountingCollabLayer';
+import BonusCatalog from '@/components/accounting/BonusCatalog';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -171,6 +172,8 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
         );
       case 'payroll-wizard':
         return <PayrollWizard sessionEmail={sessionEmail} sessionRole={roles[0] ?? null} initialData={initialData} />;
+      case 'bonus-catalog':
+        return <BonusCatalog initialData={initialData} />;
       case 'payment-dispatch':
         return <PayrollDispatch />;
       case 'disputes':

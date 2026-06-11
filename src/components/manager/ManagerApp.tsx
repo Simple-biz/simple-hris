@@ -1051,7 +1051,7 @@ function TeamSpotlight({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-              className="absolute inset-0 flex cursor-pointer flex-col items-center justify-center gap-2.5 px-9 py-4 text-center"
+              className="flex w-full cursor-pointer flex-col items-center justify-center gap-2.5 px-9 py-5 text-center"
             >
               {/* Big highlighted profile picture */}
               <div className="relative">
