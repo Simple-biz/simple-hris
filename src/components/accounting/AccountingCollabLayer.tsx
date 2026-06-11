@@ -35,8 +35,12 @@ import { normEmail } from '@/lib/email/norm-email';
  *     cursors from peers who are on the SAME section. So you only ever see
  *     Carla's cursor when you are both on, e.g., Overview.
  *
- * Unlike the Payroll Wizard follow mode there is no driver and no remote
- * navigation -- this layer is purely observational.
+ * On top of the passive layer there is an opt-in "Observe" mode: clicking
+ * Observe on a peer in the avatar rail mirrors THAT peer's active Accounting
+ * tab into your own view in real time (their `section` from presence drives
+ * your `onNavigate`), the wizard's driver-mode analogue. Since you then sit on
+ * the same section as them, the cursor broadcast above surfaces their pointer
+ * automatically. A banner with a "Stop observing" opt-out is shown while active.
  */
 
 const CHANNEL = 'accounting-collab';
@@ -207,11 +211,17 @@ function RailAvatar({
   sameSection,
   open,
   onToggle,
+  observing,
+  onObserve,
+  onStopObserve,
 }: {
   peer: PeerMeta;
   sameSection: boolean;
   open: boolean;
   onToggle: () => void;
+  observing: boolean;
+  onObserve: () => void;
+  onStopObserve: () => void;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
   const { bg: color, glow } = hashEmail(peer.email);
@@ -241,6 +251,17 @@ function RailAvatar({
             >
               {sameSection ? `Here - ${sectionLabel(peer.section)}` : sectionLabel(peer.section)}
             </div>
+            <button
+              type="button"
+              onClick={observing ? onStopObserve : onObserve}
+              className={
+                observing
+                  ? 'mt-2 w-full rounded-md bg-rose-500/90 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow transition-colors hover:bg-rose-500'
+                  : 'mt-2 w-full rounded-md bg-orange-500/90 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow transition-colors hover:bg-orange-500'
+              }
+            >
+              {observing ? 'Stop observing' : 'Observe'}
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -267,9 +288,15 @@ function RailAvatar({
         <div
           className="h-9 w-9 overflow-hidden rounded-full transition-all"
           style={{
-            // Same-section peers (mouse observable right now) get a glowing ring
-            // in their own cursor color; others get the neutral ring rendered below.
-            boxShadow: sameSection ? `0 0 0 2px ${color}, 0 0 10px ${glow}` : undefined,
+            // While actively observing this peer, pin a bold orange ring so the
+            // followed person stands out. Otherwise same-section peers (mouse
+            // observable right now) get a glowing ring in their own cursor
+            // color; others get the neutral ring rendered below.
+            boxShadow: observing
+              ? '0 0 0 2px #f97316, 0 0 12px rgba(249,115,22,0.7)'
+              : sameSection
+                ? `0 0 0 2px ${color}, 0 0 10px ${glow}`
+                : undefined,
           }}
         >
           {showImg ? (
@@ -307,9 +334,12 @@ interface Props {
   selfEmail: string | null | undefined;
   section: string;
   containerRef: React.RefObject<HTMLElement | null>;
+  /** Switches the viewer's active Accounting tab. Used by Observe mode to
+   *  mirror the observed peer's section. */
+  onNavigate?: (section: string) => void;
 }
 
-export default function AccountingCollabLayer({ selfEmail, section, containerRef }: Props) {
+export default function AccountingCollabLayer({ selfEmail, section, containerRef, onNavigate }: Props) {
   const { data: session } = useSession();
   const normSelf = useMemo(() => (selfEmail ? normEmail(selfEmail) ?? selfEmail.trim().toLowerCase() : null), [selfEmail]);
 
@@ -319,6 +349,8 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
   const [ripples, setRipples] = useState<ClickRipple[]>([]);
   // Which rail avatar has its name card pinned open (one at a time).
   const [openPeer, setOpenPeer] = useState<string | null>(null);
+  // Email of the peer currently being observed (driver-mode follow), or null.
+  const [observedEmail, setObservedEmail] = useState<string | null>(null);
 
   const selfName = session?.user?.name ?? (normSelf ? toLabel(normSelf) : null);
   const selfAvatarUrl = (uploadedPhoto && uploadedPhoto.trim()) || session?.user?.image || null;
@@ -524,6 +556,37 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
     return () => clearInterval(t);
   }, []);
 
+  // --- Observe (driver-mode follow) -----------------------------------------
+  // Keep onNavigate in a ref so the follow effect below can fire without
+  // re-subscribing whenever App re-creates the callback.
+  const onNavigateRef = useRef(onNavigate);
+  onNavigateRef.current = onNavigate;
+
+  // The peer we're observing, resolved from the live presence roster.
+  const observedPeer = useMemo(
+    () => (observedEmail ? peers.find((p) => p.email === observedEmail) ?? null : null),
+    [observedEmail, peers],
+  );
+
+  // Mirror the observed peer's section into our own active tab. Runs on initial
+  // observe and again every time their section changes (they navigate). If the
+  // observed peer drops off the roster (left Accounting), stop observing.
+  useEffect(() => {
+    if (!observedEmail) return;
+    if (!observedPeer) {
+      setObservedEmail(null);
+      return;
+    }
+    if (observedPeer.section && observedPeer.section !== sectionRef.current) {
+      onNavigateRef.current?.(observedPeer.section);
+    }
+  }, [observedEmail, observedPeer, section]);
+
+  const observedColor = observedEmail ? hashEmail(observedEmail) : null;
+  const observedDisplay = observedPeer
+    ? (observedPeer.name && observedPeer.name.trim()) || toLabel(observedPeer.email)
+    : '';
+
   if (!normSelf) return null;
 
   return (
@@ -592,8 +655,55 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
                 sameSection={p.section === section}
                 open={openPeer === p.email}
                 onToggle={() => setOpenPeer((cur) => (cur === p.email ? null : p.email))}
+                observing={observedEmail === p.email}
+                onObserve={() => {
+                  setObservedEmail(p.email);
+                  setOpenPeer(null);
+                }}
+                onStopObserve={() => setObservedEmail(null)}
               />
             ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Observe-mode banner (driver-mode analogue of the Payroll Wizard) */}
+      <AnimatePresence>
+        {observedPeer && (
+          <motion.div
+            className="pointer-events-none absolute left-1/2 top-3 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-full px-4 py-2 shadow-xl"
+            style={{
+              background: 'rgba(9,9,11,0.92)',
+              backdropFilter: 'blur(12px)',
+              border: `1px solid ${observedColor?.bg ?? '#f97316'}66`,
+              boxShadow: `0 0 16px ${observedColor?.glow ?? 'rgba(249,115,22,0.55)'}, 0 4px 16px rgba(0,0,0,0.4)`,
+            }}
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span
+                className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-70"
+                style={{ background: observedColor?.bg ?? '#f97316' }}
+              />
+              <span
+                className="relative inline-flex h-2.5 w-2.5 rounded-full"
+                style={{ background: observedColor?.bg ?? '#f97316' }}
+              />
+            </span>
+            <span className="whitespace-nowrap text-[13px] font-medium leading-none text-zinc-100">
+              Observing <span className="font-semibold text-white">{observedDisplay}</span>
+              <span className="text-zinc-400"> &middot; {sectionLabel(observedPeer.section)}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setObservedEmail(null)}
+              className="pointer-events-auto rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-white/20"
+            >
+              Stop observing
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

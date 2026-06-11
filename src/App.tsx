@@ -264,6 +264,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
           selfEmail={sessionEmail}
           section={activeTab}
           containerRef={mainRef}
+          onNavigate={navigate}
         />
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
