@@ -90,6 +90,29 @@ function LoginPageInner() {
     window.setTimeout(() => setTransitionDone(true), 300);
   }
 
+  // Tear the overlay down and return to the sign-in form. Used when the
+  // transition ends but no session resolved (popup closed/blocked, or the video
+  // errored) — otherwise the full-screen veil strands the user on a blank white
+  // screen with a Skip button that has nowhere to go. Resets the refs so a later
+  // successful sign-in can re-arm the video.
+  function resetTransition() {
+    finishedRef.current = false;
+    videoStartedRef.current = false;
+    const v = videoRef.current;
+    if (v) {
+      try {
+        v.pause();
+      } catch {
+        /* ignore */
+      }
+    }
+    setVideoActive(false);
+    setVideoReady(false);
+    setFadeToWhite(false);
+    setTransitionDone(false);
+    setSoundBlocked(false);
+  }
+
   // When NextAuth finishes, resolve the user's role + destination and warm that route.
   // Navigation itself happens later, once the video has played out.
   useEffect(() => {
@@ -270,7 +293,8 @@ function LoginPageInner() {
   // The single hand-off point: only navigate once BOTH the destination is known and the
   // transition has played out. Whichever finishes last triggers the move.
   useEffect(() => {
-    if (transitionDone && destination) {
+    if (!transitionDone) return;
+    if (destination) {
       // Hand a one-shot baton to the destination so it reveals itself from white (matching the
       // veil we end the video on) instead of popping in. Cleared by the destination on mount.
       try {
@@ -281,8 +305,27 @@ function LoginPageInner() {
         /* ignore */
       }
       router.replace(destination);
+      return;
     }
-  }, [transitionDone, destination, router]);
+    // Transition finished but no destination resolved.
+    const email = session?.user?.email;
+    if (status === 'authenticated' && email) {
+      // The user IS signed in, but the role lookup never produced a destination
+      // (slow/hung /api/employee-roles, or it errored before setting one).
+      // Never strand an authenticated user on the white veil — fall back to the
+      // default employee landing; the in-app view switcher covers other roles.
+      router.replace(`/employee?email=${encodeURIComponent(email)}`);
+      return;
+    }
+    if (status !== 'loading') {
+      // Not signed in (popup closed/blocked, or the video errored before auth).
+      // Tear the veil down and show the sign-in form again instead of trapping
+      // them on a blank screen.
+      resetTransition();
+    }
+    // While status is still 'loading' we keep the veil up and let auth settle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transitionDone, destination, status, session, router]);
 
   // Turn NextAuth error query params into a friendly toast exactly once on mount.
   useEffect(() => {
@@ -460,7 +503,20 @@ function LoginPageInner() {
 
           <button
             type="button"
-            onClick={finishTransition}
+            onClick={() => {
+              // Bulletproof escape: go straight to wherever we can, never leave
+              // the user stuck on the white veil.
+              if (destination) {
+                finishTransition();
+                return;
+              }
+              const email = session?.user?.email;
+              if (status === 'authenticated' && email) {
+                router.replace(`/employee?email=${encodeURIComponent(email)}`);
+                return;
+              }
+              resetTransition();
+            }}
             className="absolute bottom-6 right-6 rounded-full border border-white/40 bg-black/30 px-4 py-1.5 text-xs font-medium text-white/85 backdrop-blur-md transition hover:bg-black/55 hover:text-white"
           >
             Skip
