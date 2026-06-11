@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { clearTabCache, getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 
 export type MesaRequestType = 'opt_in' | 'opt_out' | 'disbursement' | 'return';
 export type MesaRequestStatus = 'pending' | 'approved' | 'denied';
@@ -61,12 +62,11 @@ const TYPE_COLORS: Record<MesaRequestType, string> = {
   return: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/40 dark:bg-violet-500/15 dark:text-violet-200',
 };
 
-// Module-level cache — cleared on Refresh.
-let cachedRequests: MesaRequest[] | null = null;
-
 export default function AccountingMesa() {
-  const [rows, setRows] = useState<MesaRequest[]>(() => cachedRequests ?? []);
-  const [loading, setLoading] = useState(cachedRequests === null);
+  const [rows, setRows] = useState<MesaRequest[]>(
+    () => getTabCache<MesaRequest[]>(TAB_CACHE_KEYS.mesaRequests) ?? [],
+  );
+  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaRequests));
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<MesaRequestStatus | ''>('');
@@ -91,7 +91,7 @@ export default function AccountingMesa() {
       const data = (json.rows ?? []).filter(
         (r) => r.request_type === 'opt_out' || r.request_type === 'disbursement' || r.request_type === 'return',
       );
-      cachedRequests = data;
+      setTabCache(TAB_CACHE_KEYS.mesaRequests, data);
       setRows(data);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load MESA requests');
@@ -102,8 +102,10 @@ export default function AccountingMesa() {
   };
 
   useEffect(() => {
-    if (cachedRequests !== null) return;
-    void load(true);
+    // Revalidate on every mount, but only show the full spinner when there's
+    // no cached data to paint — a warm cache refreshes quietly in the
+    // background so switching back to this tab feels instant.
+    void load(!hasTabCache(TAB_CACHE_KEYS.mesaRequests));
   }, []);
 
   const filtered = useMemo(() => {
@@ -137,7 +139,7 @@ export default function AccountingMesa() {
   }), [rows]);
 
   const handleRefresh = async () => {
-    cachedRequests = null;
+    clearTabCache(TAB_CACHE_KEYS.mesaRequests);
     await load(false);
     toast.success('Refreshed MESA requests');
   };
@@ -180,7 +182,7 @@ export default function AccountingMesa() {
       }
       toast.success(`Request ${status}`);
       setReviewTarget(null);
-      cachedRequests = null;
+      clearTabCache(TAB_CACHE_KEYS.mesaRequests);
       await load(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Review failed');
@@ -215,7 +217,7 @@ export default function AccountingMesa() {
         }
       }
       toast.success('Decision revoked — request is pending again');
-      cachedRequests = null;
+      clearTabCache(TAB_CACHE_KEYS.mesaRequests);
       await load(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Revoke failed');
@@ -235,7 +237,7 @@ export default function AccountingMesa() {
       }
       toast.success('Request deleted');
       setDeleteTarget(null);
-      cachedRequests = null;
+      clearTabCache(TAB_CACHE_KEYS.mesaRequests);
       await load(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Delete failed');

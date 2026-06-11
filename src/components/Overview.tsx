@@ -68,6 +68,7 @@ import {
   groupDateColumnsByCalendarDay,
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import { fetchPabPeriodSettings, isValidManualPabRange } from '@/lib/pab-period-settings';
+import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -1985,9 +1986,73 @@ function PagerEdgeBtn({
   );
 }
 
+// --- Accounting tab-cache plumbing for the Overview hero KPIs ---------------
+// The payout total and PAB metrics are recomputed from scratch on every mount,
+// so without caching the hero strip flashes its loading placeholder each time
+// the user returns to the Overview tab. We cache the computed outputs keyed by
+// the inputs that determine them and seed component state from that cache so
+// the numbers paint instantly, then revalidate in the background.
+
+/** Sorted, comma-joined HSL master-list emails — identifies HSL membership. */
+function hslEmailsKeyFromEmployees(employees: EmployeeRow[]): string {
+  const ems: string[] = [];
+  for (const e of employees) {
+    if (e.department?.trim().toLowerCase() === 'hsl') {
+      const em = normEmail(e.personal_email ?? null) ?? normEmail(e.work_email ?? null);
+      if (em) ems.push(em);
+    }
+  }
+  ems.sort();
+  return ems.join(',');
+}
+
+type CachedPayout = {
+  totalPayout: number | null;
+  payrollWorkerCount: number | null;
+  payrollEmailsNorm: string[] | null;
+  payrollIdentityByEmail: Record<string, { name: string | null; department: string | null }> | null;
+  employeePayByEmail: Record<string, { hours: number; pay: number | null }>;
+  activeSourceFile: string | null;
+};
+
+type CachedPabMetrics = {
+  totalEmployees: number;
+  eligible: number;
+  notEligible: number;
+  monthLabel: string | null;
+  periodEnd: string | null; // ISO string; rehydrated to a Date on read
+  pabMonth: { year: number; month: number } | null;
+  eligibility: Array<[string, boolean]>; // Map entries
+};
+
+const payoutCacheKey = (file: string | null): string =>
+  `${TAB_CACHE_KEYS.overviewPayouts}:${file ?? '__latest__'}`;
+
+const pabMetricsCacheKey = (
+  file: string | null,
+  monthFilter: string,
+  employeeCount: number,
+  hslKey: string,
+): string =>
+  `${TAB_CACHE_KEYS.overviewPabMetrics}:${file ?? '__latest__'}:${monthFilter || '__none__'}:${employeeCount}:${hslKey}`;
+
 export default function Overview({ onViewRates, onNavigate, initialData }: OverviewProps = {}) {
   const prefetchedRatesRef = React.useRef<import('@/lib/supabase/employee-hourly-rates').EmployeeHourlyRateRow[] | null>(
     initialData?.hourlyRates ?? null,
+  );
+  // Seed the hero KPIs from cache so they don't re-flash on tab switch. The
+  // keys must match what the payout / PAB effects compute on first mount:
+  // selectedSourceFile defaults to sourceFiles[0], monthFilter defaults to ''.
+  const initialEmployeesSeed = initialData?.employees ?? [];
+  const initialSourceFileSeed = initialData?.sourceFiles?.[0] ?? null;
+  const payoutSeed = getTabCache<CachedPayout>(payoutCacheKey(initialSourceFileSeed));
+  const pabMetricsSeed = getTabCache<CachedPabMetrics>(
+    pabMetricsCacheKey(
+      initialSourceFileSeed,
+      '',
+      initialEmployeesSeed.length,
+      hslEmailsKeyFromEmployees(initialEmployeesSeed),
+    ),
   );
   const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
   const [pabCalIsHsl, setPabCalIsHsl] = useState(false);
@@ -2001,10 +2066,12 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
   /** Month filter (YYYY-MM). Empty string = All months / no override. */
   const [monthFilter, setMonthFilter] = useState<string>('');
   const [page, setPage] = useState(1);
-  const [totalPayout, setTotalPayout] = useState<number | null>(null);
-  const [payoutLoading, setPayoutLoading] = useState(true);
-  const [payrollEmailsNorm, setPayrollEmailsNorm] = useState<Set<string> | null>(null);
-  const [payrollWorkerCount, setPayrollWorkerCount] = useState<number | null>(null);
+  const [totalPayout, setTotalPayout] = useState<number | null>(payoutSeed?.totalPayout ?? null);
+  const [payoutLoading, setPayoutLoading] = useState(!payoutSeed);
+  const [payrollEmailsNorm, setPayrollEmailsNorm] = useState<Set<string> | null>(
+    payoutSeed?.payrollEmailsNorm ? new Set(payoutSeed.payrollEmailsNorm) : null,
+  );
+  const [payrollWorkerCount, setPayrollWorkerCount] = useState<number | null>(payoutSeed?.payrollWorkerCount ?? null);
   /** All available source files from the API. */
   const [sourceFiles, setSourceFiles] = useState<string[]>(initialData?.sourceFiles ?? []);
   /** Currently selected source file: null = latest (default), '__all__' = all time, or a specific filename. */
@@ -2012,17 +2079,17 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     initialData?.sourceFiles?.[0] ?? null,
   );
   /** The actual file being displayed (resolved from selection). */
-  const [activeSourceFile, setActiveSourceFile] = useState<string | null>(null);
+  const [activeSourceFile, setActiveSourceFile] = useState<string | null>(payoutSeed?.activeSourceFile ?? null);
   /** Name / department from Hubstaff rows for the selected payroll scope (for employees not on master list). */
   const [payrollIdentityByEmail, setPayrollIdentityByEmail] = useState<Record<
     string,
     { name: string | null; department: string | null }
-  > | null>(null);
+  > | null>(payoutSeed?.payrollIdentityByEmail ?? null);
   /** Per-employee hours + initial pay for the selected payroll scope. */
   const [employeePayByEmail, setEmployeePayByEmail] = useState<Record<
     string,
     { hours: number; pay: number | null }
-  >>({});
+  >>(payoutSeed?.employeePayByEmail ?? {});
   /** Pending counts surfaced in the simple view's attention row. */
   const [pendingDisputes, setPendingDisputes] = useState<number | null>(null);
   const [oldestDisputeDays, setOldestDisputeDays] = useState<number | null>(null);
@@ -2200,9 +2267,23 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     monthLabel: string | null;
     periodEnd: Date | null;
     pabMonth: { year: number; month: number } | null;
-  }>({ loading: true, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null, pabMonth: null });
+  }>(
+    pabMetricsSeed
+      ? {
+          loading: false,
+          totalEmployees: pabMetricsSeed.totalEmployees,
+          eligible: pabMetricsSeed.eligible,
+          notEligible: pabMetricsSeed.notEligible,
+          monthLabel: pabMetricsSeed.monthLabel,
+          periodEnd: pabMetricsSeed.periodEnd ? new Date(pabMetricsSeed.periodEnd) : null,
+          pabMonth: pabMetricsSeed.pabMonth,
+        }
+      : { loading: true, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null, pabMonth: null },
+  );
 
-  const [pabEligibilityByEmail, setPabEligibilityByEmail] = useState<Map<string, boolean>>(new Map());
+  const [pabEligibilityByEmail, setPabEligibilityByEmail] = useState<Map<string, boolean>>(
+    () => (pabMetricsSeed ? new Map(pabMetricsSeed.eligibility) : new Map()),
+  );
   const [pabFilter, setPabFilter] = useState<'all' | 'eligible' | 'not-eligible'>('all');
   const [techFilter, setTechFilter] = useState<'all' | 'eligible' | 'not-eligible'>('all');
 
@@ -2348,7 +2429,22 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
       // First mount, source files not loaded yet — the above effect will set selectedSourceFile
     }
     let cancelled = false;
-    setPayoutLoading(true);
+    // Show the loading placeholder only when this scope has nothing cached.
+    // A warm cache was already painted via the seeded initial state (or is
+    // repainted below on a filter switch), so we revalidate quietly.
+    const payoutKey = payoutCacheKey(selectedSourceFile);
+    const cachedPayout = getTabCache<CachedPayout>(payoutKey);
+    if (cachedPayout) {
+      setTotalPayout(cachedPayout.totalPayout);
+      setPayrollWorkerCount(cachedPayout.payrollWorkerCount);
+      setPayrollEmailsNorm(cachedPayout.payrollEmailsNorm ? new Set(cachedPayout.payrollEmailsNorm) : null);
+      setPayrollIdentityByEmail(cachedPayout.payrollIdentityByEmail);
+      setEmployeePayByEmail(cachedPayout.employeePayByEmail);
+      setActiveSourceFile(cachedPayout.activeSourceFile);
+      setPayoutLoading(false);
+    } else {
+      setPayoutLoading(true);
+    }
     (async () => {
       try {
         const isAllTime = selectedSourceFile === '__all__';
@@ -2449,14 +2545,28 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
         }
 
         if (!cancelled) {
-          setPayrollEmailsNorm(paySet.size > 0 ? paySet : null);
-          setPayrollWorkerCount(paySet.size > 0 ? paySet.size : null);
-          setTotalPayout(hasAnyPay ? sum : null);
-          setPayrollIdentityByEmail(mergePayrollIdentity(allPayrollRows));
+          const nextEmails = paySet.size > 0 ? paySet : null;
+          const nextWorkerCount = paySet.size > 0 ? paySet.size : null;
+          const nextTotal = hasAnyPay ? sum : null;
+          const nextIdentity = mergePayrollIdentity(allPayrollRows);
+          setPayrollEmailsNorm(nextEmails);
+          setPayrollWorkerCount(nextWorkerCount);
+          setTotalPayout(nextTotal);
+          setPayrollIdentityByEmail(nextIdentity);
           setEmployeePayByEmail(perEmployeePay);
+          setTabCache<CachedPayout>(payoutKey, {
+            totalPayout: nextTotal,
+            payrollWorkerCount: nextWorkerCount,
+            payrollEmailsNorm: nextEmails ? [...nextEmails] : null,
+            payrollIdentityByEmail: nextIdentity,
+            employeePayByEmail: perEmployeePay,
+            activeSourceFile: displayFile,
+          });
         }
       } catch {
-        if (!cancelled) {
+        // Keep the last good cached data on a background-refresh failure;
+        // only blank the hero when there was nothing cached to fall back to.
+        if (!cancelled && !hasTabCache(payoutKey)) {
           setTotalPayout(null);
           setPayrollEmailsNorm(null);
           setPayrollWorkerCount(null);
@@ -2473,24 +2583,30 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
 
   // HSL master-list emails — stable across employee re-fetches when membership is unchanged,
   // so the PAB effect below doesn't re-run (and flash its loading indicator) on every 60s poll.
-  const hslMasterEmailsKey = useMemo(() => {
-    const ems: string[] = [];
-    for (const e of employees) {
-      if (e.department?.trim().toLowerCase() === 'hsl') {
-        const em = normEmail(e.personal_email ?? null) ?? normEmail(e.work_email ?? null);
-        if (em) ems.push(em);
-      }
-    }
-    ems.sort();
-    return ems.join(',');
-  }, [employees]);
+  const hslMasterEmailsKey = useMemo(() => hslEmailsKeyFromEmployees(employees), [employees]);
 
   // Compute PAB eligibility for the currently-selected source file
   // (or merged across every file when "__all__" is selected).
   useEffect(() => {
     if (sourceFiles.length === 0) return;
     let cancelled = false;
-    setPabMetrics(prev => ({ ...prev, loading: true }));
+    const pabKey = pabMetricsCacheKey(selectedSourceFile, monthFilter, employees.length, hslMasterEmailsKey);
+    const cachedPab = getTabCache<CachedPabMetrics>(pabKey);
+    if (cachedPab) {
+      // Paint cached metrics immediately and revalidate without a spinner.
+      setPabEligibilityByEmail(new Map(cachedPab.eligibility));
+      setPabMetrics({
+        loading: false,
+        totalEmployees: cachedPab.totalEmployees,
+        eligible: cachedPab.eligible,
+        notEligible: cachedPab.notEligible,
+        monthLabel: cachedPab.monthLabel,
+        periodEnd: cachedPab.periodEnd ? new Date(cachedPab.periodEnd) : null,
+        pabMonth: cachedPab.pabMonth,
+      });
+    } else {
+      setPabMetrics(prev => ({ ...prev, loading: true }));
+    }
     (async () => {
       try {
         const allCols = new Set<string>();
@@ -2751,9 +2867,21 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
             periodEnd: end,
             pabMonth,
           });
+          setTabCache<CachedPabMetrics>(pabKey, {
+            totalEmployees: evaluated,
+            eligible,
+            notEligible,
+            monthLabel,
+            periodEnd: end ? end.toISOString() : null,
+            pabMonth,
+            eligibility: [...eligMap],
+          });
         }
       } catch {
-        if (!cancelled) setPabMetrics({ loading: false, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null, pabMonth: null });
+        // Preserve the cached metrics on a background-refresh failure.
+        if (!cancelled && !hasTabCache(pabKey)) {
+          setPabMetrics({ loading: false, totalEmployees: 0, eligible: 0, notEligible: 0, monthLabel: null, periodEnd: null, pabMonth: null });
+        }
       }
     })();
     return () => { cancelled = true; };

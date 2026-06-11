@@ -6,6 +6,16 @@ import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { CurrentPayResult, PayrollPeriod } from '@/lib/payroll/current-pay';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import { buildQueueFromRates, type ExcludedRow, type QueueRow } from './mock-queue';
+import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+
+/** Cached slice of the queue state — everything except the transient flags. */
+type CachedQueue = {
+  rows: QueueRow[];
+  excluded: ExcludedRow[];
+  paid: PaymentDispatchRow[];
+  period: PayrollPeriod;
+  fxRate: number;
+};
 
 /**
  * Build a lowercased-email → EmployeeIdRow map. Both work_email and
@@ -185,23 +195,39 @@ async function loadAll(signal?: AbortSignal): Promise<{
  * Returns a `refresh()` callback so callers can re-pull after Mark paid.
  */
 export function useDispatchQueue(): DispatchQueueState {
-  const [state, setState] = useState<Omit<DispatchQueueState, 'refresh'>>({
-    rows: [],
-    excluded: [],
-    paid: [],
-    period: EMPTY_PERIOD,
-    fxRate: 0,
-    loading: true,
-    error: null,
+  // Seed from the in-session cache so switching back to the dispatch tab paints
+  // the last-known queue instantly instead of a skeleton; we still revalidate.
+  const [state, setState] = useState<Omit<DispatchQueueState, 'refresh'>>(() => {
+    const cached = getTabCache<CachedQueue>(TAB_CACHE_KEYS.dispatchQueue);
+    return {
+      rows: cached?.rows ?? [],
+      excluded: cached?.excluded ?? [],
+      paid: cached?.paid ?? [],
+      period: cached?.period ?? EMPTY_PERIOD,
+      fxRate: cached?.fxRate ?? 0,
+      loading: cached === undefined,
+      error: null,
+    };
   });
 
   const load = useCallback(async (signal?: AbortSignal, opts?: { silent?: boolean }) => {
-    // Silent refreshes (post-action reconciliation) skip the loading flag so the
-    // table isn't torn down to a skeleton and re-mounted — no visible reload.
+    // Silent refreshes (post-action reconciliation, or a cache-backed remount)
+    // skip the loading flag so the table isn't torn down to a skeleton and
+    // re-mounted — no visible reload.
     if (!opts?.silent) setState((s) => ({ ...s, loading: true }));
     try {
       const result = await loadAll(signal);
       if (signal?.aborted) return;
+      // Only cache clean loads — an errored result shouldn't overwrite good data.
+      if (!result.error) {
+        setTabCache<CachedQueue>(TAB_CACHE_KEYS.dispatchQueue, {
+          rows: result.rows,
+          excluded: result.excluded,
+          paid: result.paid,
+          period: result.period,
+          fxRate: result.fxRate,
+        });
+      }
       setState({
         rows: result.rows,
         excluded: result.excluded,
@@ -214,6 +240,12 @@ export function useDispatchQueue(): DispatchQueueState {
     } catch (e) {
       if (signal?.aborted) return;
       if (e instanceof DOMException && e.name === 'AbortError') return;
+      // A background revalidation that fails should keep the last good data on
+      // screen rather than blanking the queue.
+      if (opts?.silent && hasTabCache(TAB_CACHE_KEYS.dispatchQueue)) {
+        setState((s) => ({ ...s, loading: false }));
+        return;
+      }
       setState({
         rows: [],
         excluded: [],
@@ -228,7 +260,8 @@ export function useDispatchQueue(): DispatchQueueState {
 
   useEffect(() => {
     const controller = new AbortController();
-    void load(controller.signal);
+    // If we already have a cached snapshot, revalidate silently (no skeleton).
+    void load(controller.signal, { silent: hasTabCache(TAB_CACHE_KEYS.dispatchQueue) });
     return () => controller.abort();
   }, [load]);
 

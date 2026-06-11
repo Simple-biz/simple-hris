@@ -56,6 +56,7 @@ import {
   rowsToCsv,
   todayFilenameSuffix,
 } from "@/lib/rates/export-csv";
+import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from "@/lib/accounting/tab-cache";
 
 type EmployeeRateProfile = {
   id: string;
@@ -456,10 +457,20 @@ interface RatesProps {
   onFocusConsumed?: () => void;
 }
 
+type RatesCacheBundle = {
+  profiles: EmployeeRateProfileSummary[];
+  error: string | null;
+  mergeNotes: string[];
+  usdToPhpRate: number;
+};
+
 export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) {
-  const [profiles, setProfiles] = useState<EmployeeRateProfileSummary[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Seed from the in-session cache so re-opening the Rates tab paints the last
+  // loaded roster instantly; fetchProfiles still revalidates in the background.
+  const ratesCacheSeed = getTabCache<RatesCacheBundle>(TAB_CACHE_KEYS.ratesSummary);
+  const [profiles, setProfiles] = useState<EmployeeRateProfileSummary[]>(ratesCacheSeed?.profiles ?? []);
+  const [error, setError] = useState<string | null>(ratesCacheSeed?.error ?? null);
+  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.ratesSummary));
   const [searchQuery, setSearchQuery] = useState("");
   const [rateFilter, setRateFilter] = useState<"all" | "mesa_eligible">("all");
   const [departmentFilter, setDepartmentFilter] = useState<string>("all");
@@ -482,9 +493,9 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   const [activeProfileSummary, setActiveProfileSummary] = useState<EmployeeRateProfileSummary | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
-  const [mergeNotes, setMergeNotes] = useState<string[]>([]);
+  const [mergeNotes, setMergeNotes] = useState<string[]>(ratesCacheSeed?.mergeNotes ?? []);
   /** Same `usd_to_php_rate` as Payroll — for reference next to ₱ hourly rates. */
-  const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
+  const [usdToPhpRate, setUsdToPhpRate] = useState(ratesCacheSeed?.usdToPhpRate ?? OFFICIAL_USD_TO_PHP_RATE);
 
   // Rate editing state
   const [isEditing, setIsEditing] = useState(false);
@@ -685,18 +696,35 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
         error: string | null;
         mergeNotes?: string[];
       };
-      setProfiles(json.profiles ?? []);
-      setError(json.error ?? null);
-      setMergeNotes(json.mergeNotes ?? []);
+      const nextProfiles = json.profiles ?? [];
+      const nextError = json.error ?? null;
+      const nextMergeNotes = json.mergeNotes ?? [];
+      setProfiles(nextProfiles);
+      setError(nextError);
+      setMergeNotes(nextMergeNotes);
 
+      let nextFx = usdToPhpRate;
       if (fxRes.ok) {
         const fxJson = (await fxRes.json()) as { value: string | null };
-        setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
+        nextFx = effectiveUsdToPhpRateFromStored(fxJson.value);
+        setUsdToPhpRate(nextFx);
       }
+
+      setTabCache<RatesCacheBundle>(TAB_CACHE_KEYS.ratesSummary, {
+        profiles: nextProfiles,
+        error: nextError,
+        mergeNotes: nextMergeNotes,
+        usdToPhpRate: nextFx,
+      });
     } catch (e) {
-      setProfiles([]);
-      setMergeNotes([]);
-      setError(e instanceof Error ? e.message : "Failed to load rates");
+      // On a background revalidation failure, keep the last good cached data on
+      // screen rather than blanking the roster. Only surface the error state
+      // when we had nothing cached to show.
+      if (!hasTabCache(TAB_CACHE_KEYS.ratesSummary)) {
+        setProfiles([]);
+        setMergeNotes([]);
+        setError(e instanceof Error ? e.message : "Failed to load rates");
+      }
     } finally {
       setLoading(false);
     }

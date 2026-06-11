@@ -50,6 +50,7 @@ import {
   isOrphanageStyleReason,
 } from '@/lib/supabase/pab-day-disputes';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 
 const PAGE_SIZE = 15;
 
@@ -108,9 +109,15 @@ export default function PabDisputeQueue() {
     return () => { cancelled = true; };
   }, [currentUser]);
 
-  const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
-  const [reasonCodes, setReasonCodes] = useState<PabDisputeReasonCode[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Default filter is 'pending'; seed disputes + spinner from that filter's
+  // cached snapshot so re-opening the tab paints instantly.
+  const [disputes, setDisputes] = useState<PabDayDisputeRow[]>(
+    () => getTabCache<PabDayDisputeRow[]>(TAB_CACHE_KEYS.pabDisputes('pending')) ?? [],
+  );
+  const [reasonCodes, setReasonCodes] = useState<PabDisputeReasonCode[]>(
+    () => getTabCache<PabDisputeReasonCode[]>(TAB_CACHE_KEYS.pabReasonCodes) ?? [],
+  );
+  const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.pabDisputes('pending')));
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'denied'>('pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -153,7 +160,16 @@ export default function PabDisputeQueue() {
   }, []);
 
   const fetchDisputes = useCallback(async () => {
-    setLoading(true);
+    const cacheKey = TAB_CACHE_KEYS.pabDisputes(statusFilter);
+    const cached = getTabCache<PabDayDisputeRow[]>(cacheKey);
+    if (cached) {
+      // Paint the cached rows for this filter immediately (covers switching
+      // filters too) and revalidate quietly without a spinner.
+      setDisputes(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
       const params = new URLSearchParams();
       params.set('limit', '500');
@@ -169,9 +185,12 @@ export default function PabDisputeQueue() {
       }
       const res = await fetch(`/api/pab-disputes?${params}`, { cache: 'no-store' });
       const json = await res.json();
-      setDisputes(json.rows ?? []);
+      const rows = (json.rows ?? []) as PabDayDisputeRow[];
+      setTabCache(cacheKey, rows);
+      setDisputes(rows);
     } catch {
-      setDisputes([]);
+      // Keep the cached rows on a background-refresh failure.
+      if (!hasTabCache(cacheKey)) setDisputes([]);
     } finally {
       setLoading(false);
     }
@@ -204,10 +223,16 @@ export default function PabDisputeQueue() {
       .then((json: { value: string | null }) => {
         try {
           const codes = JSON.parse(json.value ?? '[]') as PabDisputeReasonCode[];
-          setReasonCodes(Array.isArray(codes) ? codes : []);
-        } catch { setReasonCodes([]); }
+          const next = Array.isArray(codes) ? codes : [];
+          setTabCache(TAB_CACHE_KEYS.pabReasonCodes, next);
+          setReasonCodes(next);
+        } catch {
+          if (!hasTabCache(TAB_CACHE_KEYS.pabReasonCodes)) setReasonCodes([]);
+        }
       })
-      .catch(() => setReasonCodes([]));
+      .catch(() => {
+        if (!hasTabCache(TAB_CACHE_KEYS.pabReasonCodes)) setReasonCodes([]);
+      });
   }, []);
 
   const reasonLabel = useCallback((code: string) => {
