@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CalendarDays, CalendarHeart, ChevronLeft, ChevronRight, Hourglass, Loader2, RefreshCw, Wallet } from 'lucide-react';
+import { CalendarDays, CalendarHeart, ChevronLeft, ChevronRight, Hourglass, Loader2, RefreshCw, TrendingUp, Wallet } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -181,6 +181,268 @@ function mondayOfWeekContaining(d: Date): Date {
 type EmployeeMyHoursProps = {
   employeeEmail: string;
 };
+
+/* ------------------------------------------------------------------ *
+ * Weekly earnings rail (non-HSL): a Mon-Sun ladder that shows how much
+ * an employee earns per day assuming a full 8h online shift (9AM-5PM
+ * EDT). Today's row ticks live, second-by-second, off the current EDT
+ * clock so the number visibly grows through the working day.
+ * ------------------------------------------------------------------ */
+
+const WORK_START_HOUR_EDT = 9; // 9 AM EDT
+const WORK_HOURS_PER_DAY = 8; // 9 AM - 5 PM EDT
+const DAY_LABELS_FULL = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// Weekly pay cap: regular rate covers the first 40h of the Mon-Sun week, the OT
+// rate the next 5h; hours past 45 in the week are unpaid. Both rates are
+// per-employee (resolved from their rate history / cache).
+const WEEKLY_REG_CAP_HOURS = 40;
+const WEEKLY_OT_CAP_HOURS = 5;
+const WEEKLY_PAID_CAP_HOURS = WEEKLY_REG_CAP_HOURS + WEEKLY_OT_CAP_HOURS; // 45
+
+/**
+ * Pay for `hours` worked starting at `startCum` cumulative hours into the week,
+ * splitting across the regular band (0-40h) and OT band (40-45h). Hours beyond
+ * 45h in the week earn nothing.
+ */
+function weeklyCappedPay(
+  startCum: number,
+  hours: number,
+  regRate: number,
+  otRate: number | null,
+): number {
+  const end = startCum + hours;
+  const regH = Math.max(0, Math.min(end, WEEKLY_REG_CAP_HOURS) - Math.min(startCum, WEEKLY_REG_CAP_HOURS));
+  const otH =
+    Math.max(0, Math.min(end, WEEKLY_PAID_CAP_HOURS) - Math.max(startCum, WEEKLY_REG_CAP_HOURS));
+  return regH * regRate + otH * (otRate ?? regRate);
+}
+
+/** Decompose an instant into America/New_York wall-clock parts. */
+function edtNow(ms: number): { y: number; m: number; d: number; hoursOfDay: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(ms));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? '0');
+  return {
+    y: get('year'),
+    m: get('month'),
+    d: get('day'),
+    hoursOfDay: get('hour') + get('minute') / 60 + get('second') / 3600,
+  };
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function WeeklyEarningsRail({
+  rateHistory,
+  cacheRegularRate,
+  cacheOtRate,
+  isHsl,
+}: {
+  rateHistory: RateHistoryEntry[];
+  cacheRegularRate: number | null;
+  cacheOtRate: number | null;
+  isHsl: boolean;
+}) {
+  // Per-second clock — drives the live ticker. Starts at a stable seed so the
+  // first paint (and any SSR pass) is deterministic, then begins ticking.
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const rateFor = useCallback(
+    (date: Date): { reg: number; ot: number | null } | null => {
+      const resolved = resolveRateAsOfLocal(rateHistory, date);
+      const reg = resolved?.regularRate ?? cacheRegularRate;
+      if (reg == null) return null;
+      return { reg, ot: resolved?.otRate ?? cacheOtRate };
+    },
+    [rateHistory, cacheRegularRate, cacheOtRate],
+  );
+
+  const week = useMemo(() => {
+    if (nowMs == null) return null;
+    const edt = edtNow(nowMs);
+    // Weekday of EDT "today" via a UTC-anchored date (no local-TZ drift).
+    const anchor = new Date(Date.UTC(edt.y, edt.m - 1, edt.d));
+    const dow = anchor.getUTCDay(); // 0=Sun..6=Sat
+    const todayIdx = (dow + 6) % 7; // 0=Mon..6=Sun
+    const elapsedToday = clamp(edt.hoursOfDay - WORK_START_HOUR_EDT, 0, WORK_HOURS_PER_DAY);
+
+    // Walk Mon->Sun accumulating hours so the 40h regular / 5h OT weekly cap
+    // applies in order. We track two cursors: `cumPot` (every day works a full
+    // 8h — for the "potential" figure) and `cumWorked` (actual hours so far:
+    // full for past days, live-elapsed for today, 0 for future).
+    let cumPot = 0;
+    let cumWorked = 0;
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const offsetFromMon = i - todayIdx;
+      const cell = new Date(Date.UTC(edt.y, edt.m - 1, edt.d + offsetFromMon));
+      const localDate = new Date(cell.getUTCFullYear(), cell.getUTCMonth(), cell.getUTCDate());
+      const r = rateFor(localDate);
+      const state: 'past' | 'today' | 'future' =
+        i < todayIdx ? 'past' : i === todayIdx ? 'today' : 'future';
+      const workedHours = state === 'past' ? WORK_HOURS_PER_DAY : state === 'today' ? elapsedToday : 0;
+
+      const fullDay = r != null ? weeklyCappedPay(cumPot, WORK_HOURS_PER_DAY, r.reg, r.ot) : null;
+      const earned = r != null ? weeklyCappedPay(cumWorked, workedHours, r.reg, r.ot) : null;
+      cumPot += WORK_HOURS_PER_DAY;
+      cumWorked += workedHours;
+
+      return {
+        label: DAY_LABELS_FULL[i],
+        dateNum: cell.getUTCDate(),
+        state,
+        rate: r?.reg ?? null,
+        fullDay,
+        earned,
+        elapsedToday: state === 'today' ? elapsedToday : null,
+      };
+    });
+
+    const earnedSoFar = days.reduce((sum, d) => sum + (d.earned ?? 0), 0);
+    const potential = days.reduce((sum, d) => sum + (d.fullDay ?? 0), 0);
+    return { days, earnedSoFar, potential, elapsedToday };
+  }, [nowMs, rateFor]);
+
+  // Only for non-HSL people with a known rate.
+  if (isHsl) return null;
+  if (cacheRegularRate == null && rateHistory.length === 0) return null;
+  if (!week) return null;
+
+  const pct = week.potential > 0 ? clamp((week.earnedSoFar / week.potential) * 100, 0, 100) : 0;
+
+  return (
+    <Card
+      size="sm"
+      className="flex w-full shrink-0 flex-col overflow-hidden rounded-2xl border-amber-100/80 bg-gradient-to-br from-white to-amber-50/30 shadow-md ring-1 ring-amber-500/10 dark:border-amber-950/50 dark:bg-none dark:from-amber-950/15 dark:to-amber-950/5 dark:ring-amber-950/20 lg:w-64 xl:w-72"
+    >
+      <CardHeader className="shrink-0 space-y-1 pb-2 pt-4 sm:pt-5">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-400">
+            <TrendingUp className="h-4 w-4" aria-hidden />
+          </div>
+          <CardTitle className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            This week
+          </CardTitle>
+        </div>
+        <p className="pl-10 text-[10px] leading-snug text-zinc-500 dark:text-zinc-500">
+          Projected at a full 8h day (9 AM&ndash;5 PM EDT). Today ticks live. Capped at 40h regular + 5h OT per week.
+        </p>
+      </CardHeader>
+      <CardContent className="flex flex-1 flex-col gap-3 px-4 pb-5 pt-0 sm:px-5">
+        <motion.ul
+          className="flex flex-col gap-1.5"
+          initial="hidden"
+          animate="show"
+          variants={{ show: { transition: { staggerChildren: 0.05 } } }}
+        >
+          {week.days.map((d, i) => {
+            const isToday = d.state === 'today';
+            const isFuture = d.state === 'future';
+            return (
+              <motion.li
+                key={i}
+                variants={{
+                  hidden: { opacity: 0, x: -10 },
+                  show: { opacity: 1, x: 0 },
+                }}
+                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                className={cn(
+                  'flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 transition-colors',
+                  isToday
+                    ? 'border-emerald-300 bg-emerald-50/80 shadow-sm ring-1 ring-emerald-400/40 dark:border-emerald-800/70 dark:bg-emerald-950/40'
+                    : isFuture
+                      ? 'border-transparent bg-zinc-50/60 opacity-60 dark:bg-zinc-900/30'
+                      : 'border-zinc-100 bg-white/60 dark:border-zinc-800/60 dark:bg-zinc-900/20',
+                )}
+              >
+                <div className="flex items-baseline gap-1.5">
+                  <span
+                    className={cn(
+                      'w-8 text-[11px] font-semibold',
+                      isToday
+                        ? 'text-emerald-700 dark:text-emerald-300'
+                        : 'text-zinc-600 dark:text-zinc-400',
+                    )}
+                  >
+                    {d.label}
+                  </span>
+                  <span className="text-[9px] tabular-nums text-zinc-400 dark:text-zinc-600">
+                    {d.dateNum}
+                  </span>
+                  {isToday && (
+                    <span className="flex items-center gap-1 text-[8.5px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                      </span>
+                      {d.elapsedToday != null && d.elapsedToday >= WORK_HOURS_PER_DAY
+                        ? 'Done'
+                        : d.elapsedToday != null && d.elapsedToday <= 0
+                          ? 'Soon'
+                          : 'Live'}
+                    </span>
+                  )}
+                </div>
+                <span
+                  className={cn(
+                    'font-mono text-[11px] tabular-nums',
+                    isToday
+                      ? 'text-sm font-bold text-emerald-700 dark:text-emerald-300'
+                      : isFuture
+                        ? 'text-zinc-400 dark:text-zinc-600'
+                        : 'font-medium text-zinc-700 dark:text-zinc-300',
+                  )}
+                >
+                  {d.earned == null
+                    ? '--'
+                    : isFuture
+                      ? formatPHP(d.fullDay ?? 0)
+                      : formatPHP(d.earned)}
+                </span>
+              </motion.li>
+            );
+          })}
+        </motion.ul>
+
+        <div className="mt-auto space-y-1.5 border-t border-amber-200/50 pt-3 dark:border-amber-900/30">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-[0.1em] text-amber-800/70 dark:text-amber-400/80">
+              Earned so far
+            </span>
+            <span className="font-mono text-base font-bold tabular-nums text-amber-800 dark:text-amber-300">
+              {formatPHP(week.earnedSoFar)}
+            </span>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-amber-100 dark:bg-amber-950/40">
+            <motion.div
+              className="h-full rounded-full bg-gradient-to-r from-amber-400 to-emerald-500"
+              initial={{ width: 0 }}
+              animate={{ width: `${pct}%` }}
+              transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+            />
+          </div>
+          <p className="text-right text-[9px] tabular-nums text-zinc-400 dark:text-zinc-600">
+            of {formatPHP(week.potential)} potential
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 /** One row from `/api/employee-rate-history`. */
 type RateHistoryEntry = {
@@ -907,7 +1169,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
 
   return (
     <div className="flex min-h-full min-w-0 flex-1 flex-col overflow-y-scroll bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 [scrollbar-gutter:stable] dark:bg-none dark:bg-[#0d1117]">
-      <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4 p-4 pb-8 sm:p-6">
+      <div className="mx-auto flex min-h-0 w-full max-w-[110rem] flex-1 flex-col gap-4 p-4 pb-8 sm:p-6">
         <header className="shrink-0 space-y-1">
           <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white sm:text-xl">
             My Hours
@@ -918,6 +1180,12 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:items-stretch lg:overflow-hidden">
+        <WeeklyEarningsRail
+          rateHistory={rateHistory}
+          cacheRegularRate={parseRateText(rate?.regular_rate)}
+          cacheOtRate={parseRateText(rate?.ot_rate)}
+          isHsl={isHsl}
+        />
         <Card
           size="sm"
           className="flex min-h-[34rem] min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border-indigo-100/80 bg-gradient-to-br from-white to-indigo-50/20 shadow-md ring-1 ring-indigo-500/5 [@media(max-height:850px)]:max-h-[calc(100dvh-9rem)] dark:border-indigo-950/60 dark:bg-none dark:from-indigo-950/20 dark:to-indigo-950/5 dark:ring-indigo-950/30 sm:min-h-[28rem] lg:max-h-[calc(100dvh-8rem)]"
@@ -1242,7 +1510,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                             onClick={cellClickable ? handleCellClick : undefined}
                           >
                             {cellClickable && (
-                              <div className="absolute bottom-full left-1/2 z-40 hidden -translate-x-1/2 pb-1 group-hover:block">
+                              <div className={`absolute left-1/2 z-40 hidden -translate-x-1/2 group-hover:block ${wi === 0 ? 'top-full pt-1' : 'bottom-full pb-1'}`}>
                                 <div className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-left shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
                                   <p className="whitespace-nowrap text-[10px] font-semibold text-zinc-700 dark:text-zinc-200">
                                     {day.dayLabel} {day.dateStr}

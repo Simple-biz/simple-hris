@@ -93,7 +93,12 @@ export type HrPendingStatus =
   | "ready"
   | "promoted"
   | "cancelled"
-  | "no_show";
+  | "no_show"
+  // Promote ran but a step failed (master insert/lookup, status write, or the
+  // Google Sheet append). The row is NOT on the master list end-to-end; the HR
+  // dashboard shows a red pill and lets the user retry (idempotent). See
+  // references/add_failed_to_promote_status_to_hr_pending.sql.
+  | "failed_to_promote";
 
 export type HrPendingEmployeeRow = {
   id: number;
@@ -429,7 +434,7 @@ export async function deleteHrPendingEmployee(
  */
 export async function promoteHrPendingEmployee(
   id: number,
-  opts: { skipBackfill?: boolean; skipSheet?: boolean } = {},
+  opts: { skipBackfill?: boolean; skipSheet?: boolean; deferStatus?: boolean } = {},
 ): Promise<{
   row: HrPendingEmployeeRow | null;
   /** UUID of the new global_master_list row, or null when promotion failed. */
@@ -573,18 +578,13 @@ export async function promoteHrPendingEmployee(
     masterId = (inserted as { id: string }).id;
   }
 
-  const { data: promoted, error: promoteErr } = await sb
-    .from(TABLE)
-    .update({
-      status: "promoted",
-      promoted_at: new Date().toISOString(),
-      promoted_to_master_id: masterId,
-    })
-    .eq("id", id)
-    .select("*")
-    .single();
-  if (promoteErr)
-    return { row, masterId, error: `Status update failed: ${promoteErr.message}` };
+  // NOTE: the status flip to 'promoted' is deliberately NOT done here. It is the
+  // LAST step, and it's gated on the Google Sheet write succeeding (see the end
+  // of this function). Marking 'promoted' before the Sheet append meant a hire
+  // could show as Promoted while never reaching the source-of-truth Sheet and
+  // then silently drop out on the next sync. The master-list row above already
+  // exists, so the side-effects below (which only need `masterId`) run now; the
+  // pending row stays 'ready' until we know the outcome.
 
   // Stamp the new hire's employee_id (YYMM-NNNN). Best-effort: a failure here
   // doesn't unwind the promotion — the next master-list upload or the admin
@@ -757,7 +757,90 @@ export async function promoteHrPendingEmployee(
   // create-workspace-account webhook at work-email-set time, NOT at promote
   // time. Promote is master-list-only. See src/lib/hr/workspace-account.ts.
 
-  return { row: promoted as HrPendingEmployeeRow, masterId, error: null, sheet, startDate };
+  // The bulk-promote path defers the status flip: it appends every hire to the
+  // Sheet in one batched call AFTER this returns, then calls
+  // setHrPromotionOutcome() per hire with that batch's per-row result. So leave
+  // the pending row 'ready' and hand back the masterId + startDate it needs.
+  if (opts.deferStatus) {
+    return { row, masterId, error: null, sheet, startDate };
+  }
+
+  // Single-promote path: the Sheet write ran inline above, so we know the
+  // outcome. A hire is only 'promoted' when it reached the Sheet end-to-end
+  // (or was already on it). Any real Sheet failure -> 'failed_to_promote' so
+  // the row shows a red, retryable pill instead of a misleading Promoted badge.
+  const sheetOk = sheetWriteSucceeded(sheet);
+  const { row: finalized, error: finalizeErr } = await setHrPromotionOutcome(id, {
+    promoted: sheetOk,
+    masterId,
+  });
+  if (finalizeErr)
+    return { row, masterId, error: `Status update failed: ${finalizeErr}`, sheet, startDate };
+  if (!sheetOk) {
+    return {
+      row: finalized ?? row,
+      masterId,
+      error: `Added to the master list, but the Google Sheet write failed (${
+        sheet?.reason ?? "unknown error"
+      }). Marked "Failed to promote" — retry once the Sheet is reachable.`,
+      sheet,
+      startDate,
+    };
+  }
+  return { row: finalized ?? row, masterId, error: null, sheet, startDate };
+}
+
+/**
+ * True when a best-effort master-Sheet append result means the hire is on the
+ * Sheet: either we just wrote the row, or it was already present (idempotent
+ * skip). A null result means the Sheet step was skipped entirely (bulk path) —
+ * treated as "not confirmed here". Any other { appended:false } is a real
+ * failure (env not configured, read/write/permission error).
+ */
+export function sheetWriteSucceeded(
+  sheet: { appended: boolean; reason?: string } | null | undefined,
+): boolean {
+  if (!sheet) return false;
+  return sheet.appended || sheet.reason === "already present in sheet";
+}
+
+/**
+ * Finalizes a promote's status once the master-Sheet outcome is known. This is
+ * the ONLY place a pending row flips to 'promoted', and it only does so when
+ * `promoted` is true (master row + Sheet row both landed). Otherwise it sets
+ * 'failed_to_promote' so the HR dashboard shows a red, retryable pill — the
+ * master-list row may already exist in Supabase, but a retry reuses it
+ * idempotently, so this is safe to call repeatedly.
+ *
+ * Used by both the single-promote path (above) and the batched bulk-promote
+ * route after its one-shot Sheet append.
+ */
+export async function setHrPromotionOutcome(
+  id: number,
+  opts: { promoted: boolean; masterId: string | null },
+): Promise<{ row: HrPendingEmployeeRow | null; error: string | null }> {
+  const sb = client();
+  const patch: Record<string, unknown> = opts.promoted
+    ? {
+        status: "promoted",
+        promoted_at: new Date().toISOString(),
+        promoted_to_master_id: opts.masterId,
+      }
+    : {
+        status: "failed_to_promote",
+        // Keep the link if we got far enough to create/find the master row, so a
+        // later "Back to Ready" can still unwind it; clear promoted_at.
+        promoted_at: null,
+        ...(opts.masterId ? { promoted_to_master_id: opts.masterId } : {}),
+      };
+  const { data, error } = await sb
+    .from(TABLE)
+    .update(patch)
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) return { row: null, error: error.message };
+  return { row: data as HrPendingEmployeeRow, error: null };
 }
 
 /**

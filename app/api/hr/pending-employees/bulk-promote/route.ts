@@ -2,9 +2,14 @@ import { NextResponse } from "next/server";
 import {
   listReadyLeadGenHires,
   promoteHrPendingEmployee,
+  setHrPromotionOutcome,
+  sheetWriteSucceeded,
 } from "@/lib/supabase/hr-pending-employees";
 import { backfillEmployeeIds } from "@/lib/supabase/backfill-employee-ids";
-import { appendMasterSheetRows } from "@/lib/google-sheets/append-master-sheet";
+import {
+  appendMasterSheetRows,
+  type AppendMasterRowResult,
+} from "@/lib/google-sheets/append-master-sheet";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
 
@@ -79,59 +84,89 @@ export async function POST(req: Request) {
     rows = res.rows;
   }
 
-  const results: Array<{
+  type RowResult = {
     id: number;
     name: string;
     ok: boolean;
     error: string | null;
     sheetAppended: boolean | null;
-  }> = [];
+  };
 
-  // Collected for the single batched Sheet append after the loop. `index` points
-  // back into `results` so we can stamp each row's sheetAppended outcome.
-  const sheetQueue: Array<{
-    index: number;
-    name: string;
-    personalEmail: string;
-    workEmail: string;
-    department: string;
-    startDate: string | null;
-    phoneNumber: string | null;
-    location: string | null;
-  }> = [];
+  // Phase 1 — PREPARE every hire (master-list insert/reuse + payout/rate
+  // side-effects) WITHOUT flipping its status. deferStatus:true leaves the
+  // pending row 'ready' so nothing is marked 'promoted' before we know its Sheet
+  // row actually landed. Run in parallel with a small concurrency cap: each
+  // prepare is several Supabase round-trips and they're independent (distinct
+  // work emails -> no master-row collision), so a sequential loop was the main
+  // source of the slow multi-promote.
+  type Prepared =
+    | {
+        kind: "ok";
+        id: number;
+        name: string;
+        masterId: string;
+        sheetInput: {
+          name: string;
+          personalEmail: string;
+          workEmail: string;
+          department: string;
+          startDate: string | null;
+          phoneNumber: string | null;
+          location: string | null;
+        };
+      }
+    | { kind: "fail"; id: number; name: string; error: string };
 
-  for (const row of rows) {
-    // skipSheet:true -- the Sheet append is batched once below, not per hire.
-    const res = await promoteHrPendingEmployee(row.id, {
-      skipBackfill: true,
-      skipSheet: true,
-    });
-    const ok = !res.error;
-    const index = results.length;
-    results.push({
-      id: row.id,
-      name: res.row?.name ?? row.name,
-      ok,
-      error: res.error,
-      sheetAppended: null,
-    });
-    if (ok && res.row?.work_email) {
-      sheetQueue.push({
-        index,
-        name: res.row.name,
-        personalEmail: res.row.personal_email,
-        workEmail: res.row.work_email,
-        department: res.row.department,
-        startDate: res.startDate ?? res.row.start_date ?? null,
-        phoneNumber: res.row.phone ?? null,
-        location: res.row.location ?? null,
+  const prepared = await mapWithConcurrency(rows, 5, async (row): Promise<Prepared> => {
+    try {
+      // skipSheet:true -- the Sheet append is batched once below, not per hire.
+      // deferStatus:true -- the status flip happens in phase 3, gated on the Sheet.
+      const res = await promoteHrPendingEmployee(row.id, {
+        skipBackfill: true,
+        skipSheet: true,
+        deferStatus: true,
       });
+      if (res.error || !res.masterId || !res.row?.work_email) {
+        return {
+          kind: "fail",
+          id: row.id,
+          name: res.row?.name ?? row.name,
+          error: res.error ?? "Could not stage the master-list row.",
+        };
+      }
+      return {
+        kind: "ok",
+        id: row.id,
+        name: res.row.name,
+        masterId: res.masterId,
+        sheetInput: {
+          name: res.row.name,
+          personalEmail: res.row.personal_email,
+          workEmail: res.row.work_email,
+          department: res.row.department,
+          startDate: res.startDate ?? res.row.start_date ?? null,
+          phoneNumber: res.row.phone ?? null,
+          location: res.row.location ?? null,
+        },
+      };
+    } catch (e) {
+      // A thrown prepare (e.g. transient DB error) shouldn't sink the whole
+      // batch — record it as a per-row failure so the rest still promote.
+      return {
+        kind: "fail",
+        id: row.id,
+        name: row.name,
+        error: e instanceof Error ? e.message : String(e),
+      };
     }
-  }
+  });
+
+  const okPrepared = prepared.filter(
+    (p): p is Extract<Prepared, { kind: "ok" }> => p.kind === "ok",
+  );
 
   // Single employee_id backfill for the whole batch (skipped per-row above).
-  const promotedCount = results.filter((r) => r.ok).length;
-  if (promotedCount > 0) {
+  if (okPrepared.length > 0) {
     try {
       const sb = createSupabaseServiceRoleClient();
       if (sb) await backfillEmployeeIds(sb);
@@ -144,34 +179,84 @@ export async function POST(req: Request) {
     }
   }
 
-  // One batched Google Sheet append for every promoted hire (one read + one
-  // multi-row write). Best-effort: a Sheet failure never unwinds a promotion,
-  // it just leaves sheetAppended=false so the UI can warn.
-  if (sheetQueue.length > 0) {
+  // Phase 2 — ONE batched Google Sheet append for every prepared hire (one read
+  // + one multi-row write). A thrown read/write failure means NONE of them
+  // landed on the Sheet, so every prepared hire is treated as a Sheet failure
+  // (and finalized to 'failed_to_promote' below), never silently 'promoted'.
+  let sheetResults: AppendMasterRowResult[] = okPrepared.map(() => ({
+    appended: false,
+    reason: "sheet append not attempted",
+  }));
+  if (okPrepared.length > 0) {
     try {
-      const sheetResults = await appendMasterSheetRows(
-        sheetQueue.map((q) => ({
-          name: q.name,
-          personalEmail: q.personalEmail,
-          workEmail: q.workEmail,
-          department: q.department,
-          startDate: q.startDate,
-          phoneNumber: q.phoneNumber ?? undefined,
-          location: q.location ?? undefined,
+      sheetResults = await appendMasterSheetRows(
+        okPrepared.map((p) => ({
+          name: p.sheetInput.name,
+          personalEmail: p.sheetInput.personalEmail,
+          workEmail: p.sheetInput.workEmail,
+          department: p.sheetInput.department,
+          startDate: p.sheetInput.startDate,
+          phoneNumber: p.sheetInput.phoneNumber ?? undefined,
+          location: p.sheetInput.location ?? undefined,
         })),
       );
-      sheetResults.forEach((sr, i) => {
-        results[sheetQueue[i].index].sheetAppended = sr.appended;
-      });
     } catch (e) {
-      console.warn(
-        `[bulk-promote] batched master-sheet append skipped: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
-      for (const q of sheetQueue) results[q.index].sheetAppended = false;
+      const reason = e instanceof Error ? e.message : String(e);
+      console.warn(`[bulk-promote] batched master-sheet append failed: ${reason}`);
+      sheetResults = okPrepared.map(() => ({ appended: false, reason }));
     }
   }
+
+  // Phase 3 — FINALIZE each hire's status now that the Sheet outcome is known.
+  // 'promoted' only when its Sheet row landed (or was already present);
+  // otherwise 'failed_to_promote' (red, retryable). Run the status writes in
+  // parallel — they're independent single-row updates.
+  const byId = new Map<number, RowResult>();
+  await Promise.all([
+    ...okPrepared.map(async (p, i) => {
+      const ok = sheetWriteSucceeded(sheetResults[i]);
+      const { error } = await setHrPromotionOutcome(p.id, {
+        promoted: ok,
+        masterId: p.masterId,
+      });
+      byId.set(p.id, {
+        id: p.id,
+        name: p.name,
+        ok: ok && !error,
+        error: error
+          ? `Status update failed: ${error}`
+          : ok
+            ? null
+            : `Google Sheet write failed: ${sheetResults[i]?.reason ?? "unknown error"}`,
+        sheetAppended: sheetResults[i]?.appended ?? false,
+      });
+    }),
+    ...prepared
+      .filter((p): p is Extract<Prepared, { kind: "fail" }> => p.kind === "fail")
+      .map(async (p) => {
+        await setHrPromotionOutcome(p.id, { promoted: false, masterId: null });
+        byId.set(p.id, {
+          id: p.id,
+          name: p.name,
+          ok: false,
+          error: p.error,
+          sheetAppended: null,
+        });
+      }),
+  ]);
+
+  // Preserve the caller's row order in the response.
+  const results: RowResult[] = rows.map(
+    (r) =>
+      byId.get(r.id) ?? {
+        id: r.id,
+        name: r.name,
+        ok: false,
+        error: "No result recorded.",
+        sheetAppended: null,
+      },
+  );
+  const promotedCount = results.filter((r) => r.ok).length;
 
   return NextResponse.json({
     promoted: promotedCount,
@@ -179,4 +264,23 @@ export async function POST(req: Request) {
     total: results.length,
     results,
   });
+}
+
+/** Run `fn` over `items` with at most `limit` in flight at once, preserving order. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
 }

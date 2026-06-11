@@ -854,20 +854,63 @@ export async function restampActiveNonSheetRows(
   uploadId: string,
 ): Promise<number> {
   const table = getMasterTableName();
-  // Re-stamp every active row that was NOT touched by the current sync.
-  // Supabase-js requires at least one filter — we combine the two conditions.
-  const { data, error } = await supabase
-    .from(table)
-    .update({ last_seen_upload_id: uploadId })
-    .is("off_boarded_at", null)
-    .neq("last_seen_upload_id", uploadId)
-    .select("id");
-  if (error) {
-    // Non-fatal: the sync already succeeded; log and continue.
-    console.warn(`[restampActiveNonSheetRows] update failed: ${error.message}`);
+
+  // ONLY the manually-seeded US employees are legitimately active outside the
+  // Google sheet. They're identified by `employee_ids.employee_id LIKE 'US-%'`
+  // (the same set `getEmployees` / the Rates & Profiles builder UNION back in),
+  // and the master-sheet sync never touches them, so without a re-stamp they'd
+  // drop out of `active_employees` on every sync.
+  //
+  // IMPORTANT: this used to re-stamp EVERY non-offboarded row, which silently
+  // defeated the sheet's authority — anyone removed from the Google sheet (left
+  // the company but not yet marked off-boarded) kept getting re-stamped as
+  // "current" forever and never fell out of the roster. That bloated
+  // active_employees far past the sheet's real headcount. We now restrict the
+  // re-stamp to the US employees only, so every PH row is governed by the sheet:
+  // vanish from the sheet → drop from active_employees until re-onboarded.
+  const { data: usIds, error: usErr } = await supabase
+    .from("employee_ids")
+    .select("work_email, personal_email")
+    .like("employee_id", "US-%");
+  if (usErr) {
+    console.warn(`[restampActiveNonSheetRows] could not read US employee_ids: ${usErr.message}`);
     return 0;
   }
-  return (data ?? []).length;
+  const emails = new Set<string>();
+  for (const r of (usIds ?? []) as Array<{ work_email?: string | null; personal_email?: string | null }>) {
+    const we = r.work_email?.trim();
+    const pe = r.personal_email?.trim();
+    if (we) emails.add(we);
+    if (pe) emails.add(pe);
+  }
+  if (emails.size === 0) return 0;
+
+  // Match those US rows by Work Email then Personal Email. Two separate `.in()`
+  // updates rather than a single `.or(...)`: PostgREST's `.or()` filter-string
+  // grammar mis-parses a space-containing quoted column ("Work Email"), failing
+  // with "column ... does not exist". The two-argument `.in(column, values)`
+  // form takes the column as a parameter and handles the spaced/quoted name
+  // correctly. The `.neq(last_seen, uploadId)` guard means the second pass skips
+  // any row the first pass already stamped, so a row matched on both emails is
+  // never counted twice.
+  const list = [...emails];
+  let total = 0;
+  for (const column of ['"Work Email"', '"Personal Email"'] as const) {
+    const { data, error } = await supabase
+      .from(table)
+      .update({ last_seen_upload_id: uploadId })
+      .is("off_boarded_at", null)
+      .neq("last_seen_upload_id", uploadId)
+      .in(column, list)
+      .select("id");
+    if (error) {
+      // Non-fatal: the sync already succeeded; log and continue.
+      console.warn(`[restampActiveNonSheetRows] ${column} update failed: ${error.message}`);
+      continue;
+    }
+    total += (data ?? []).length;
+  }
+  return total;
 }
 
 export async function countMasterAndRatesRows(): Promise<{

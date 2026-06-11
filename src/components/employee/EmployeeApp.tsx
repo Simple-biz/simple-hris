@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTheme } from 'next-themes';
 import { useSession } from 'next-auth/react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import EmployeeSidebar from './EmployeeSidebar';
 import EmployeeDashboard from './EmployeeDashboard';
@@ -268,6 +268,15 @@ export default function EmployeeApp() {
     (needsPhoto || needsBank || needsSkillSet);
   const profileSetupCount = [needsPhoto, needsBank, needsSkillSet].filter(Boolean).length;
 
+  // Keep-alive: once a tab has been visited we keep its component mounted and
+  // just hide it, so its fetched data/state survive tab switches (no reload when
+  // hopping overview → profile → my hours and back). Tabs are mounted lazily on
+  // first visit so we don't pay every tab's startup fetch up front.
+  const [mountedTabs, setMountedTabs] = useState<Set<string>>(() => new Set(['dashboard']));
+  useEffect(() => {
+    setMountedTabs((prev) => (prev.has(activeTab) ? prev : new Set(prev).add(activeTab)));
+  }, [activeTab]);
+
   const navigate = (tab: string, profileTarget?: EmployeeProfileFocusTab) => {
     if (tab === 'profile' && profileTarget) setProfileFocusTab(profileTarget);
     setActiveTab(tab);
@@ -299,10 +308,10 @@ export default function EmployeeApp() {
 
   if (!employeeEmail) return null;
 
-  const renderContent = () => {
+  const renderContent = (tab: string) => {
     if (!employeeEmail) return null;
 
-    switch (activeTab) {
+    switch (tab) {
       case 'dashboard':
         return (
           <EmployeeDashboard
@@ -443,19 +452,26 @@ export default function EmployeeApp() {
           </span>
         </header>
         <PayrollLockBanner state={lockState} />
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeTab}
-            role="presentation"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-            className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-          >
-            {renderContent()}
-          </motion.div>
-        </AnimatePresence>
+        <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {Array.from(mountedTabs).map((tab) => {
+            const isActive = tab === activeTab;
+            return (
+              <motion.div
+                key={tab}
+                role="presentation"
+                aria-hidden={!isActive}
+                initial={false}
+                animate={{ opacity: isActive ? 1 : 0, y: isActive ? 0 : 6 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                className={`min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
+                  isActive ? 'flex' : 'pointer-events-none hidden'
+                }`}
+              >
+                {renderContent(tab)}
+              </motion.div>
+            );
+          })}
+        </div>
         <AppFooter />
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />

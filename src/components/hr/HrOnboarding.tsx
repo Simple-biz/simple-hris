@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useSpring, useTransform } from 'motion/react';
 import { toast } from 'sonner';
 import {
   CheckCircle2,
@@ -42,7 +42,7 @@ import type {
   HrPendingStatus,
 } from '@/lib/supabase/hr-pending-employees';
 
-type TabFilter = 'pending' | 'ready' | 'promoted' | 'cancelled' | 'no_show' | 'all';
+type TabFilter = 'pending' | 'ready' | 'promoted' | 'failed' | 'cancelled' | 'no_show' | 'all';
 type SubTab = 'pending-hires' | 'onboarding-form';
 
 const STATUS_LABEL: Record<HrPendingStatus, string> = {
@@ -51,6 +51,7 @@ const STATUS_LABEL: Record<HrPendingStatus, string> = {
   promoted: 'Promoted',
   cancelled: 'Cancelled',
   no_show: 'No-show',
+  failed_to_promote: 'Failed to promote',
 };
 
 const STATUS_BADGE: Record<HrPendingStatus, string> = {
@@ -64,6 +65,9 @@ const STATUS_BADGE: Record<HrPendingStatus, string> = {
     'border-zinc-300 bg-zinc-100 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400',
   no_show:
     'border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-100',
+  // Loud red so a hire that didn't make it end-to-end can't be mistaken for done.
+  failed_to_promote:
+    'border-red-400 bg-red-100 text-red-900 dark:border-red-600 dark:bg-red-950/50 dark:text-red-100',
 };
 
 function formatDate(iso: string | null): string {
@@ -99,8 +103,17 @@ export default function HrOnboarding() {
   // Multi-select promote (Ready tab). Holds the ids ticked in the table.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [promotingSelected, setPromotingSelected] = useState(false);
-  // Progress across the chunked bulk-promote requests (null when idle).
-  const [selectProgress, setSelectProgress] = useState<{ done: number; total: number } | null>(null);
+  // Live state for the bulk-promote progress modal (null when closed). Updated
+  // after every chunk so the bar + the Promoted/Failed KPI counters move in
+  // real time as the batch lands.
+  const [promoteModal, setPromoteModal] = useState<{
+    total: number;
+    done: number;
+    promoted: number;
+    failed: number;
+    status: 'running' | 'done';
+    firstErr?: string;
+  } | null>(null);
 
   const fetchPending = useCallback(async () => {
     setPendingLoading(true);
@@ -148,10 +161,10 @@ export default function HrOnboarding() {
     return () => { void supabase.removeChannel(channel); };
   }, []);
 
-  // Drop any selection when leaving the Ready tab so the bulk bar can't act on
-  // rows the user can no longer see.
+  // Drop any selection when leaving the multi-select tabs (Ready / Failed) so
+  // the bulk bar can't act on rows the user can no longer see.
   useEffect(() => {
-    if (tab !== 'ready') setSelected(new Set());
+    if (tab !== 'ready' && tab !== 'failed') setSelected(new Set());
   }, [tab]);
 
   const filteredPending = useMemo(() => {
@@ -161,6 +174,7 @@ export default function HrOnboarding() {
         if (tab === 'pending' && r.status !== 'pending_work_email') return false;
         if (tab === 'ready' && r.status !== 'ready') return false;
         if (tab === 'promoted' && r.status !== 'promoted') return false;
+        if (tab === 'failed' && r.status !== 'failed_to_promote') return false;
         if (tab === 'cancelled' && r.status !== 'cancelled') return false;
         if (tab === 'no_show' && r.status !== 'no_show') return false;
       }
@@ -177,6 +191,7 @@ export default function HrOnboarding() {
       pending: 0,
       ready: 0,
       promoted: 0,
+      failed: 0,
       cancelled: 0,
       no_show: 0,
     };
@@ -184,26 +199,34 @@ export default function HrOnboarding() {
       if (r.status === 'pending_work_email') c.pending += 1;
       else if (r.status === 'ready') c.ready += 1;
       else if (r.status === 'promoted') c.promoted += 1;
+      else if (r.status === 'failed_to_promote') c.failed += 1;
       else if (r.status === 'cancelled') c.cancelled += 1;
       else if (r.status === 'no_show') c.no_show += 1;
     }
     return c;
   }, [pending]);
 
-  // Ready rows in the current filter that can actually be promoted (orientation
-  // confirmed; a 'ready' row always has a work email). These are the only rows
-  // that get a tick box.
+  // Rows in the current filter that can be promoted / re-promoted (orientation
+  // confirmed; both 'ready' and 'failed_to_promote' rows already have a work
+  // email + confirmed orientation). These are the only rows that get a tick box.
+  // The Failed tab reuses the same multi-select so a batch of failures can be
+  // retried in one click.
   const selectableIds = useMemo(
     () =>
       filteredPending
-        .filter((r) => r.status === 'ready' && !!r.orientation_attended_at)
+        .filter(
+          (r) =>
+            (r.status === 'ready' || r.status === 'failed_to_promote') &&
+            !!r.orientation_attended_at,
+        )
         .map((r) => r.id),
     [filteredPending],
   );
   const selectedCount = selectableIds.filter((id) => selected.has(id)).length;
   const allSelected = selectableIds.length > 0 && selectedCount === selectableIds.length;
   const someSelected = selectedCount > 0 && !allSelected;
-  const showSelect = tab === 'ready' && selectableIds.length > 0;
+  const canMultiSelect = tab === 'ready' || tab === 'failed';
+  const showSelect = canMultiSelect && selectableIds.length > 0;
 
   function toggleOne(id: number) {
     setSelected((prev) => {
@@ -231,20 +254,20 @@ export default function HrOnboarding() {
         error?: string;
         sheet?: { appended?: boolean; reason?: string } | null;
       };
+      // A promote is only a success when it landed on the master list AND the
+      // Google Sheet end-to-end. Any failure (incl. the Sheet write) comes back
+      // as an error and leaves the row 'failed_to_promote' (red, retryable).
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to promote');
-      const sheet = json.sheet;
-      if (sheet && sheet.appended === false && sheet.reason !== 'already present in sheet') {
-        toast.warning(`${row.name} added to the master list, but NOT written to the Google Sheet`, {
-          description: `${sheet.reason ?? 'Sheet append failed'} — add them to the Sheet manually, or they may drop out on the next sheet sync.`,
-        });
-      } else {
-        toast.success(`${row.name} added to the master list`, {
-          description: 'Now visible across Payroll, Manager, and Orphanage views.',
-        });
-      }
+      toast.success(`${row.name} added to the master list`, {
+        description: 'Now visible across Payroll, Manager, and Orphanage views.',
+      });
       await fetchPending();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to promote');
+      toast.error(`Could not promote ${row.name}`, {
+        description: e instanceof Error ? e.message : 'Failed to promote. Retry from the Failed tab.',
+      });
+      // Refresh so the row's red "Failed to promote" pill shows up.
+      await fetchPending();
     } finally {
       setBusyId(null);
     }
@@ -287,7 +310,7 @@ export default function HrOnboarding() {
     const ids = [...selected];
     if (ids.length === 0) return;
     setPromotingSelected(true);
-    setSelectProgress({ done: 0, total: ids.length });
+    setPromoteModal({ total: ids.length, done: 0, promoted: 0, failed: 0, status: 'running' });
 
     // Send the selection in chunks so a large batch never lands in a single
     // long request (the server batches each chunk's Sheet write into one call,
@@ -296,7 +319,6 @@ export default function HrOnboarding() {
     const CHUNK = 15;
     let promoted = 0;
     let failed = 0;
-    let sheetMisses = 0;
     let firstErr: { name: string; error: string } | null = null;
 
     try {
@@ -313,37 +335,42 @@ export default function HrOnboarding() {
           error?: string;
         };
         if (!res.ok || json.error) throw new Error(json.error ?? 'Bulk promote failed');
+        // The server now only counts a hire 'promoted' when it landed on the
+        // master list AND the Google Sheet. A Sheet miss is a failure (the row
+        // is left 'failed_to_promote'), not a silent warning.
         promoted += json.promoted ?? 0;
         failed += json.failed ?? 0;
         for (const r of json.results ?? []) {
           if (!r.ok && r.error && !firstErr) firstErr = { name: r.name, error: r.error };
-          if (r.ok && r.sheetAppended === false) sheetMisses += 1;
         }
-        setSelectProgress({ done: Math.min(i + CHUNK, ids.length), total: ids.length });
+        const done = Math.min(i + CHUNK, ids.length);
+        setPromoteModal((m) => (m ? { ...m, done, promoted, failed } : m));
       }
 
-      if (failed === 0 && sheetMisses === 0) {
-        toast.success(`${promoted} hire${promoted !== 1 ? 's' : ''} promoted`, {
-          description: 'All added to the master list and written to the Google Sheet.',
-        });
-      } else if (failed === 0) {
-        toast.warning(`${promoted} promoted, ${sheetMisses} not written to the Sheet`, {
-          description: 'They are in the master list, but add them to the Google Sheet manually or they may drop out on the next sheet sync.',
-        });
-      } else {
-        toast.warning(`${promoted} promoted, ${failed} failed`, {
-          description: firstErr
-            ? `${firstErr.name}: ${firstErr.error}`
-            : 'Some hires could not be promoted (orientation not confirmed?).',
-        });
-      }
+      setPromoteModal((m) =>
+        m
+          ? {
+              ...m,
+              status: 'done',
+              done: ids.length,
+              promoted,
+              failed,
+              firstErr: firstErr ? `${firstErr.name}: ${firstErr.error}` : undefined,
+            }
+          : m,
+      );
       setSelected(new Set());
+      // Table updates live via Realtime; this is a belt-and-braces refresh.
       await fetchPending();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Bulk promote failed');
+      const msg = e instanceof Error ? e.message : 'Bulk promote failed';
+      toast.error(msg);
+      // Some rows in the chunk may already be 'failed_to_promote' — refresh so
+      // their red pills + the Failed tab show up for retry.
+      setPromoteModal((m) => (m ? { ...m, status: 'done', firstErr: msg } : m));
+      await fetchPending();
     } finally {
       setPromotingSelected(false);
-      setSelectProgress(null);
     }
   }
 
@@ -616,6 +643,9 @@ export default function HrOnboarding() {
           <div className="mt-3 flex flex-wrap items-center gap-1">
             <TabPill label="Awaiting email" count={counts.pending} active={tab === 'pending'} onClick={() => setTab('pending')} />
             <TabPill label="Ready" count={counts.ready} active={tab === 'ready'} onClick={() => setTab('ready')} />
+            {counts.failed > 0 && (
+              <TabPill label="Failed" count={counts.failed} active={tab === 'failed'} onClick={() => setTab('failed')} tone="danger" />
+            )}
             <TabPill label="Promoted" count={counts.promoted} active={tab === 'promoted'} onClick={() => setTab('promoted')} />
             <TabPill label="No-show" count={counts.no_show} active={tab === 'no_show'} onClick={() => setTab('no_show')} />
             <TabPill label="Cancelled" count={counts.cancelled} active={tab === 'cancelled'} onClick={() => setTab('cancelled')} />
@@ -624,7 +654,7 @@ export default function HrOnboarding() {
         </CardHeader>
 
         <CardContent className="pt-4">
-          {tab === 'ready' && selected.size > 0 && (
+          {canMultiSelect && selected.size > 0 && (
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 dark:border-emerald-800/60 dark:bg-emerald-950/30">
               <span className="text-xs font-medium text-emerald-900 dark:text-emerald-100">
                 {selected.size} selected
@@ -651,9 +681,9 @@ export default function HrOnboarding() {
                   ) : (
                     <CheckCircle2 className="h-3 w-3" />
                   )}
-                  {promotingSelected && selectProgress
-                    ? `Promoting ${selectProgress.done}/${selectProgress.total}`
-                    : `Promote selected (${selected.size})`}
+                  {promotingSelected && promoteModal
+                    ? `${tab === 'failed' ? 'Retrying' : 'Promoting'} ${promoteModal.done}/${promoteModal.total}`
+                    : `${tab === 'failed' ? 'Retry' : 'Promote'} selected (${selected.size})`}
                 </Button>
               </div>
             </div>
@@ -676,7 +706,7 @@ export default function HrOnboarding() {
               <table className="w-full text-left text-sm sm:min-w-[860px]">
                 <thead className="sticky top-0 z-[1] bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
                   <tr>
-                    {tab === 'ready' && (
+                    {canMultiSelect && (
                       <th className="w-10 px-4 py-3">
                         <input
                           type="checkbox"
@@ -709,7 +739,9 @@ export default function HrOnboarding() {
                       // can be ticked by clicking anywhere on the row, not just the
                       // tiny checkbox.
                       const rowSelectable =
-                        tab === 'ready' && row.status === 'ready' && !!row.orientation_attended_at;
+                        canMultiSelect &&
+                        (row.status === 'ready' || row.status === 'failed_to_promote') &&
+                        !!row.orientation_attended_at;
                       const isSelected = selected.has(row.id);
                       return (
                         <motion.tr
@@ -734,7 +766,7 @@ export default function HrOnboarding() {
                             isSelected && 'bg-emerald-50/70 dark:bg-emerald-950/40',
                           )}
                         >
-                          {tab === 'ready' && (
+                          {canMultiSelect && (
                             <td data-label="Select" className="px-4 py-3">
                               <input
                                 type="checkbox"
@@ -856,24 +888,33 @@ export default function HrOnboarding() {
                                   )}
                                 </Button>
                               )}
-                              {row.status === 'ready' && (
+                              {(row.status === 'ready' || row.status === 'failed_to_promote') && (
                                 <Button
                                   size="sm"
-                                  className="h-7 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white hover:opacity-90 disabled:opacity-60"
+                                  className={cn(
+                                    'h-7 px-3 text-xs text-white hover:opacity-90 disabled:opacity-60',
+                                    row.status === 'failed_to_promote'
+                                      ? 'bg-gradient-to-r from-red-500 to-rose-700'
+                                      : 'bg-gradient-to-r from-emerald-500 to-teal-700',
+                                  )}
                                   onClick={() => void promote(row)}
                                   disabled={isBusy || !row.orientation_attended_at}
                                   title={
-                                    row.orientation_attended_at
-                                      ? 'Promote to master list'
-                                      : 'The department manager must mark orientation attended first.'
+                                    !row.orientation_attended_at
+                                      ? 'The department manager must mark orientation attended first.'
+                                      : row.status === 'failed_to_promote'
+                                        ? 'Retry — re-attempt the master list + Google Sheet write'
+                                        : 'Promote to master list'
                                   }
                                 >
                                   {isBusy ? (
                                     <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                  ) : row.status === 'failed_to_promote' ? (
+                                    <RotateCcw className="mr-1 h-3 w-3" />
                                   ) : (
                                     <CheckCircle2 className="mr-1 h-3 w-3" />
                                   )}
-                                  Promote
+                                  {row.status === 'failed_to_promote' ? 'Retry' : 'Promote'}
                                 </Button>
                               )}
                               {row.status === 'pending_work_email' && (
@@ -905,7 +946,8 @@ export default function HrOnboarding() {
                                 </Button>
                               )}
                               {(row.status === 'ready' ||
-                                row.status === 'pending_work_email') && (
+                                row.status === 'pending_work_email' ||
+                                row.status === 'failed_to_promote') && (
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -1034,8 +1076,212 @@ export default function HrOnboarding() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk-promote progress modal */}
+      <BulkPromoteProgressDialog
+        state={promoteModal}
+        isFailedTab={tab === 'failed'}
+        onClose={() => setPromoteModal(null)}
+        onViewFailed={() => {
+          setPromoteModal(null);
+          setTab('failed');
+        }}
+      />
     </div>
   );
+}
+
+/**
+ * Live progress modal for the chunked bulk promote. The bar + the Promoted /
+ * Failed KPI counters update after every chunk (spring-animated so the numbers
+ * roll smoothly), and the dialog can only be dismissed once the run finishes.
+ */
+function BulkPromoteProgressDialog({
+  state,
+  isFailedTab,
+  onClose,
+  onViewFailed,
+}: {
+  state: {
+    total: number;
+    done: number;
+    promoted: number;
+    failed: number;
+    status: 'running' | 'done';
+    firstErr?: string;
+  } | null;
+  isFailedTab: boolean;
+  onClose: () => void;
+  onViewFailed: () => void;
+}) {
+  const total = state?.total ?? 0;
+  const done = state?.done ?? 0;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const running = state?.status === 'running';
+  const verb = isFailedTab ? 'Retry' : 'Promotion';
+
+  // Spring-drive the bar width so it glides between chunk updates instead of
+  // snapping.
+  const widthSpring = useSpring(pct, { stiffness: 120, damping: 24, mass: 0.5 });
+  const widthPct = useTransform(widthSpring, (v) => `${Math.max(0, Math.min(100, v))}%`);
+  useEffect(() => {
+    widthSpring.set(pct);
+  }, [pct, widthSpring]);
+
+  const allGood = !running && (state?.failed ?? 0) === 0;
+
+  return (
+    <Dialog
+      open={!!state}
+      onOpenChange={(o) => {
+        // Block dismiss while the batch is still in flight.
+        if (!o && !running) onClose();
+      }}
+    >
+      <DialogContent className="max-w-md" showCloseButton={!running}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            {running ? (
+              <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+            ) : allGood ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            ) : (
+              <XCircle className="h-4 w-4 text-red-600" />
+            )}
+            {running
+              ? `${verb} in progress…`
+              : allGood
+                ? `${verb} complete`
+                : `${verb} finished with errors`}
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            {running
+              ? `Writing hires to the master list and Google Sheet. ${done} of ${total} processed.`
+              : `${done} of ${total} processed.`}
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Progress bar */}
+        <div className="mt-1">
+          <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+            <span>{done} / {total}</span>
+            <AnimatedNumber value={pct} suffix="%" className="tabular-nums" />
+          </div>
+          <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+            <motion.div
+              className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600"
+              style={{ width: widthPct }}
+            />
+            {/* Indeterminate shimmer over the filled edge while a chunk is mid-flight. */}
+            {running && (
+              <motion.div
+                className="absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/40 to-transparent"
+                initial={{ x: '-100%' }}
+                animate={{ x: '350%' }}
+                transition={{ duration: 1.1, repeat: Infinity, ease: 'easeInOut' }}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* KPI cards */}
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 dark:border-emerald-800/60 dark:bg-emerald-950/30">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Promoted
+            </div>
+            <AnimatedNumber
+              value={state?.promoted ?? 0}
+              className="mt-0.5 block text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-200"
+            />
+          </div>
+          <div
+            className={cn(
+              'rounded-xl border px-3 py-2.5 transition-colors',
+              (state?.failed ?? 0) > 0
+                ? 'border-red-300 bg-red-50/80 dark:border-red-700/60 dark:bg-red-950/30'
+                : 'border-zinc-200 bg-zinc-50/70 dark:border-zinc-700/60 dark:bg-zinc-900/40',
+            )}
+          >
+            <div
+              className={cn(
+                'flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide',
+                (state?.failed ?? 0) > 0
+                  ? 'text-red-700 dark:text-red-300'
+                  : 'text-zinc-500 dark:text-zinc-400',
+              )}
+            >
+              <XCircle className="h-3.5 w-3.5" /> Failed
+            </div>
+            <AnimatedNumber
+              value={state?.failed ?? 0}
+              className={cn(
+                'mt-0.5 block text-2xl font-bold tabular-nums',
+                (state?.failed ?? 0) > 0
+                  ? 'text-red-700 dark:text-red-200'
+                  : 'text-zinc-400 dark:text-zinc-600',
+              )}
+            />
+          </div>
+        </div>
+
+        {!running && (state?.failed ?? 0) > 0 && state?.firstErr && (
+          <p className="mt-2 rounded-lg border border-red-200 bg-red-50/60 px-2.5 py-1.5 text-[11px] text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300">
+            {state.firstErr}
+          </p>
+        )}
+
+        <DialogFooter className="mt-1 gap-2 sm:gap-2">
+          {running ? (
+            <Button size="sm" variant="outline" disabled className="gap-1.5">
+              <Loader2 className="h-3 w-3 animate-spin" /> Working…
+            </Button>
+          ) : (
+            <>
+              {(state?.failed ?? 0) > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-red-700 hover:bg-red-50 hover:text-red-800 dark:text-red-300 dark:hover:bg-red-950/30"
+                  onClick={onViewFailed}
+                >
+                  <RotateCcw className="mr-1 h-3 w-3" /> View {state?.failed} failed
+                </Button>
+              )}
+              <Button
+                size="sm"
+                className="bg-gradient-to-r from-emerald-500 to-teal-700 text-white hover:opacity-90"
+                onClick={onClose}
+              >
+                Done
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * A number that springs smoothly from its previous value to the next instead of
+ * jumping — used for the bulk-promote KPI counters + the percent readout.
+ */
+function AnimatedNumber({
+  value,
+  suffix = '',
+  className,
+}: {
+  value: number;
+  suffix?: string;
+  className?: string;
+}) {
+  const spring = useSpring(value, { stiffness: 140, damping: 22, mass: 0.5 });
+  const text = useTransform(spring, (v) => `${Math.round(v)}${suffix}`);
+  useEffect(() => {
+    spring.set(value);
+  }, [spring, value]);
+  return <motion.span className={className}>{text}</motion.span>;
 }
 
 const DEPT_COLORS = [
@@ -1273,12 +1519,17 @@ function TabPill({
   count,
   active,
   onClick,
+  tone = 'emerald',
 }: {
   label: string;
   count: number;
   active: boolean;
   onClick: () => void;
+  // 'danger' paints the Failed tab red so unfinished promotes stand out even
+  // when the tab isn't selected.
+  tone?: 'emerald' | 'danger';
 }) {
+  const isDanger = tone === 'danger';
   return (
     <button
       type="button"
@@ -1286,18 +1537,19 @@ function TabPill({
       aria-pressed={active}
       className={cn(
         'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
-        active
-          ? 'bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25'
-          : 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
+        active && isDanger && 'bg-gradient-to-r from-red-500 to-rose-700 text-white shadow-sm shadow-rose-600/25',
+        active && !isDanger && 'bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25',
+        !active && isDanger && 'text-red-700 hover:bg-red-50 hover:text-red-900 dark:text-red-300 dark:hover:bg-red-950/40 dark:hover:text-red-100',
+        !active && !isDanger && 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
       )}
     >
       {label}
       <span
         className={cn(
           'rounded-full px-1.5 text-[10px] tabular-nums',
-          active
-            ? 'bg-white/20 text-white'
-            : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+          active && 'bg-white/20 text-white',
+          !active && isDanger && 'bg-red-200 text-red-800 dark:bg-red-900/60 dark:text-red-200',
+          !active && !isDanger && 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
         )}
       >
         {count}

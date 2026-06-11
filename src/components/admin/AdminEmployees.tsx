@@ -8,7 +8,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Layers,
-  Loader2,
   Mail,
   MapPin,
   Search,
@@ -20,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
@@ -383,12 +383,7 @@ export default function AdminEmployees() {
   }, [filtered, selectedId]);
 
   if (loading) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-zinc-50/50 dark:bg-zinc-950/30">
-        <Loader2 className="h-8 w-8 animate-spin text-orange-500" aria-hidden />
-        <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Loading merged profiles…</p>
-      </div>
-    );
+    return <AdminEmployeesSkeleton />;
   }
 
   const primary = selected ? primaryEmailForAvatar(selected) : null;
@@ -407,8 +402,8 @@ export default function AdminEmployees() {
               Employees
             </h1>
             <p className="max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              Directory merged from your Supabase tables (master list, hourly rates, Hubstaff, and any
-              configured profile sources). Open a person to see every stored field.
+              Everyone on the Master List. Each profile's fields are merged from your Supabase tables
+              (hourly rates, Hubstaff, and any configured sources). Open a person to see every stored field.
             </p>
           </div>
           <div className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white/90 px-3 py-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
@@ -699,6 +694,112 @@ export default function AdminEmployees() {
             )}
           </CardContent>
         </Card>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Loading skeleton — mirrors the live layout (header with title + Profiles stat
+ * chip, then the Directory / Profile two-pane grid) so the page doesn't shift
+ * when the merged profiles arrive.
+ */
+function AdminEmployeesSkeleton() {
+  return (
+    <div
+      className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 dark:from-zinc-950/50"
+      role="status"
+      aria-busy="true"
+      aria-label="Loading employee profiles"
+    >
+      {/* Header */}
+      <header className="shrink-0">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2.5">
+              <Skeleton className="h-10 w-10 rounded-xl" />
+              <Skeleton className="h-7 w-40" />
+            </div>
+            <Skeleton className="h-4 w-96 max-w-full" />
+          </div>
+          <Skeleton className="h-[3.25rem] w-24 rounded-xl" />
+        </div>
+      </header>
+
+      {/* Two-pane grid */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+        {/* Left: Directory list */}
+        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800/80 dark:bg-zinc-900/40">
+          <div className="shrink-0 space-y-3 border-b border-zinc-100 p-4 dark:border-zinc-800/80">
+            <div className="flex items-center justify-between gap-2">
+              <Skeleton className="h-5 w-20" />
+              <Skeleton className="h-4 w-14 rounded-full" />
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Skeleton className="h-10 flex-1 rounded-lg" />
+              <Skeleton className="h-10 w-44 rounded-lg" />
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-hidden px-3 pb-4 pt-2 sm:px-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-3 rounded-xl border border-zinc-200/90 px-3 py-2.5 dark:border-zinc-800"
+              >
+                <Skeleton className="h-10 w-10 shrink-0 rounded-xl" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <Skeleton className="h-3.5 w-1/2" />
+                  <Skeleton className="h-3 w-2/3" />
+                </div>
+                <Skeleton className="h-4 w-12 shrink-0 rounded-md" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right: Profile detail */}
+        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800/80 dark:bg-zinc-900/40">
+          <div className="shrink-0 border-b border-zinc-100 p-4 dark:border-zinc-800/80">
+            <Skeleton className="h-5 w-20" />
+          </div>
+          <div className="min-h-0 flex-1 space-y-6 overflow-hidden px-3 pb-4 pt-4 sm:px-4">
+            {/* Identity block */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+              <Skeleton className="h-24 w-24 shrink-0 rounded-2xl" />
+              <div className="min-w-0 flex-1 space-y-3">
+                <Skeleton className="h-6 w-48" />
+                <div className="flex gap-2">
+                  <Skeleton className="h-5 w-24 rounded-full" />
+                  <Skeleton className="h-5 w-20 rounded-full" />
+                </div>
+                <Skeleton className="h-4 w-64 max-w-full" />
+                <Skeleton className="h-4 w-56 max-w-full" />
+              </div>
+            </div>
+            {/* Data sections */}
+            {Array.from({ length: 2 }).map((_, s) => (
+              <div
+                key={s}
+                className="overflow-hidden rounded-xl border border-zinc-200/90 dark:border-zinc-800/80"
+              >
+                <div className="border-b border-zinc-100 bg-zinc-50/90 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/50">
+                  <Skeleton className="h-3.5 w-36" />
+                </div>
+                <div className="divide-y divide-zinc-100 dark:divide-zinc-800/80">
+                  {Array.from({ length: 3 }).map((_, r) => (
+                    <div
+                      key={r}
+                      className="grid grid-cols-1 gap-2 px-3 py-2 sm:grid-cols-[minmax(0,34%)_1fr]"
+                    >
+                      <Skeleton className="h-3.5 w-28" />
+                      <Skeleton className="h-3.5 w-40 max-w-full" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

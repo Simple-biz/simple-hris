@@ -68,10 +68,10 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
 
     const result = await replaceGlobalMasterListFromCsvText(csvText, sourceLabel, { clearOffboarded });
 
-    // Re-stamp any active employees that are not in the Google sheet (e.g. manually-seeded
-    // US employees) onto the new current upload so they stay visible in active_employees.
-    // Without this, every sync would knock them out of the roster until someone ran a
-    // manual recovery SQL. See global-master-list-db.ts: restampActiveNonSheetRows.
+    // Re-stamp the manually-seeded US employees (managed outside the Google sheet)
+    // onto the new current upload so they stay visible in active_employees. Scoped
+    // to US-only on purpose: every PH row is governed by the sheet, so anyone removed
+    // from the sheet correctly drops out of the roster. See restampActiveNonSheetRows.
     const sb = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!.trim(),
       process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(),

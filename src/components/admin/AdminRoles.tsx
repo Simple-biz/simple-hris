@@ -23,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -187,33 +188,24 @@ export default function AdminRoles() {
   useEffect(() => {
     (async () => {
       try {
-        const [empRes, ratesRes, hubRes, rolesRes, deptRes, mgrDeptRes] = await Promise.all([
+        const [empRes, rolesRes, deptRes, mgrDeptRes] = await Promise.all([
           fetch('/api/employees', { cache: 'no-store' }),
-          fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
-          fetch('/api/hubstaff-hours', { cache: 'no-store' }),
           fetch('/api/employee-roles', { cache: 'no-store' }),
           fetch('/api/departments', { cache: 'no-store' }),
           fetch('/api/department-managers', { cache: 'no-store' }),
         ]);
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[] };
-        const ratesJson = (await ratesRes.json()) as {
-          rows?: Array<{
-            work_email?: string | null;
-            personal_email?: string | null;
-            department?: string | null;
-            name?: string | null;
-          }>;
-        };
-        const hubJson = (await hubRes.json()) as {
-          rows?: Array<Record<string, unknown>>;
-          columns?: string[];
-        };
         const rolesJson = (await rolesRes.json()) as { rows?: RoleRow[] };
         const deptJson = (await deptRes.json()) as { departments?: string[] };
         const mgrDeptJson = (await mgrDeptRes.json()) as { rows?: DepartmentManagerRow[] };
         setDepartments(deptJson.departments ?? []);
         setDeptAssignments(mgrDeptJson.rows ?? []);
 
+        // Directory is the Master List only (`/api/employees` → active_employees
+        // view). We deliberately do NOT merge the rates CSV or Hubstaff sources
+        // here — those surface people who aren't on the master list and bloat
+        // the picker. Off-roster service accounts / contractors are added
+        // explicitly via "Add by email" (tracked in customEmails below).
         const merged = new Map<string, EmployeeRow>();
         const keyFor = (we: string | null | undefined, pe: string | null | undefined, nm?: string | null) =>
           (we ?? pe ?? nm ?? '').toString().trim().toLowerCase();
@@ -224,46 +216,10 @@ export default function AdminRoles() {
           merged.set(k, e);
         }
 
-        for (const r of ratesJson.rows ?? []) {
-          const k = keyFor(r.work_email, r.personal_email, r.name);
-          if (!k || merged.has(k)) continue;
-          merged.set(k, {
-            name: r.name ?? null,
-            work_email: r.work_email ?? null,
-            personal_email: r.personal_email ?? null,
-            department: r.department ?? null,
-            start_date: null,
-            employee_id: null,
-          } as EmployeeRow);
-        }
-
-        for (const row of hubJson.rows ?? []) {
-          const pickStr = (...keys: string[]): string | null => {
-            for (const k of keys) {
-              const v = row[k];
-              if (v != null && String(v).trim() !== '') return String(v).trim();
-            }
-            return null;
-          };
-          const work_email = pickStr('Work Email', 'work_email', 'workEmail', 'email', 'Email');
-          const personal_email = pickStr('Personal Email', 'personal_email');
-          const name = pickStr('Name', 'Member', 'Employee', 'name');
-          const k = keyFor(work_email, personal_email, name);
-          if (!k || merged.has(k)) continue;
-          merged.set(k, {
-            name,
-            work_email,
-            personal_email,
-            department: pickStr('Department', 'department'),
-            start_date: null,
-            employee_id: null,
-          } as EmployeeRow);
-        }
-
-        // Surface every email that already has a role assignment but isn't in
-        // master / rates / Hubstaff. Lets admins keep managing permissions for
-        // off-roster addresses (service accounts, founders, contractors, etc.)
-        // without ghosting them from the UI on reload.
+        // Surface every email that already has a role assignment but isn't on
+        // the master list. Lets admins keep managing permissions for off-roster
+        // addresses (service accounts, founders, contractors, etc.) without
+        // ghosting them from the UI on reload.
         const customSet = new Set<string>();
         for (const a of rolesJson.rows ?? []) {
           const k = (a.work_email ?? '').toLowerCase();
@@ -663,12 +619,7 @@ export default function AdminRoles() {
   }
 
   if (loading) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 bg-zinc-50/50 dark:bg-zinc-950/30">
-        <Loader2 className="h-8 w-8 animate-spin text-orange-500" aria-hidden />
-        <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Loading people and assignments…</p>
-      </div>
-    );
+    return <AdminRolesSkeleton />;
   }
 
   return (
@@ -1320,6 +1271,96 @@ export default function AdminRoles() {
             )}
           </CardContent>
         </Card>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Loading skeleton — mirrors the live layout (header with title + three stat
+ * chips, then the two-pane People / Role-assignments grid) so the page doesn't
+ * jump when data arrives.
+ */
+function AdminRolesSkeleton() {
+  return (
+    <div
+      className="flex h-full min-h-0 flex-col gap-4 overflow-hidden bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 dark:from-zinc-950/50"
+      role="status"
+      aria-busy="true"
+      aria-label="Loading people and assignments"
+    >
+      {/* Header */}
+      <header className="shrink-0">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2.5">
+              <Skeleton className="h-10 w-10 rounded-xl" />
+              <Skeleton className="h-7 w-52" />
+            </div>
+            <Skeleton className="h-4 w-80 max-w-full" />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-[3.25rem] w-24 rounded-xl" />
+            ))}
+          </div>
+        </div>
+      </header>
+
+      {/* Two-pane grid */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        {/* Left: People list */}
+        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800/80 dark:bg-zinc-900/40">
+          <div className="shrink-0 space-y-3 border-b border-zinc-100 p-4 dark:border-zinc-800/80">
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-5 w-16" />
+              <Skeleton className="h-4 w-14 rounded-full" />
+              <Skeleton className="ml-auto h-8 w-28 rounded-md" />
+            </div>
+            <Skeleton className="h-10 w-full rounded-lg" />
+          </div>
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-hidden px-3 pb-4 pt-2 sm:px-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-3 rounded-xl border border-zinc-200/90 px-3 py-2.5 dark:border-zinc-800"
+              >
+                <Skeleton className="h-10 w-10 shrink-0 rounded-xl" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <Skeleton className="h-3.5 w-1/2" />
+                  <Skeleton className="h-3 w-2/3" />
+                </div>
+                <Skeleton className="h-5 w-14 shrink-0 rounded-md" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right: Role assignments detail */}
+        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200/90 bg-white shadow-sm dark:border-zinc-800/80 dark:bg-zinc-900/40">
+          <div className="shrink-0 space-y-3 border-b border-zinc-100 p-4 dark:border-zinc-800/80">
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-8 w-8 rounded-lg" />
+              <Skeleton className="h-5 w-40" />
+            </div>
+            <Skeleton className="h-14 w-full rounded-xl" />
+          </div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-hidden px-3 pb-4 pt-2 sm:px-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-3 rounded-xl border border-l-4 border-zinc-200/90 p-3 dark:border-zinc-800/90"
+              >
+                <Skeleton className="h-10 w-10 shrink-0 rounded-lg" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <Skeleton className="h-3.5 w-32" />
+                  <Skeleton className="h-3 w-48 max-w-full" />
+                </div>
+                <Skeleton className="h-9 w-24 shrink-0 rounded-lg" />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
