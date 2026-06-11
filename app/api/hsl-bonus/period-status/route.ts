@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -19,6 +21,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authz = await requireFeatureEdit('manager', 'hsl_bonus');
+  if (!authz.ok) return deniedResponse(authz);
   const body = (await req.json()) as {
     department: string;
     period_type: string;

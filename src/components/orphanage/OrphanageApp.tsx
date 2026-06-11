@@ -54,6 +54,8 @@ import OrphanageBudgetForm from '@/components/orphanage/OrphanageBudgetForm';
 import OrphanageBudgetHistory from '@/components/orphanage/OrphanageBudgetHistory';
 import OrphanagesPanel from '@/components/orphanage/OrphanagesPanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
+import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import {
   fetchHoursByEmployee,
@@ -188,6 +190,19 @@ export default function OrphanageApp() {
   >('overview');
   // Sub-tab inside the Orphanage Budget tab — Budget Request form vs Orphanages list.
   const [budgetSubTab, setBudgetSubTab] = useState<'request' | 'orphanages'>('request');
+
+  // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
+  const { ready: permsReady, allowedTabs, canEditTab } = useFeaturePermissions(viewerEmail);
+  const allowedOrphanageTabs = allowedTabs('orphanage');
+  const allowedOrphanageKey = allowedOrphanageTabs.join(',');
+  const canSeeOrphanageTab = (id: string) => allowedOrphanageTabs.includes(id);
+  useEffect(() => {
+    if (!permsReady) return;
+    if (!allowedOrphanageTabs.includes(activeTab)) {
+      setActiveTab((allowedOrphanageTabs[0] as typeof activeTab) ?? 'overview');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permsReady, allowedOrphanageKey, activeTab]);
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   useEffect(() => {
@@ -454,7 +469,7 @@ export default function OrphanageApp() {
                 <LayoutDashboard className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'overview' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <span className="truncate text-left">Overview</span>
               </button>
-              <button
+              {canSeeOrphanageTab('queue') && (<button
                 type="button"
                 onClick={() => { setActiveTab('queue'); setMobileNavOpen(false); }}
                 className={cn(
@@ -466,8 +481,8 @@ export default function OrphanageApp() {
               >
                 <HeartHandshake className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'queue' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <span className="truncate text-left">Dispute queue</span>
-              </button>
-              <button
+              </button>)}
+              {canSeeOrphanageTab('budget') && (<button
                 type="button"
                 onClick={() => { setActiveTab('budget'); setMobileNavOpen(false); }}
                 className={cn(
@@ -479,8 +494,8 @@ export default function OrphanageApp() {
               >
                 <PiggyBank className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'budget' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <span className="truncate text-left">Orphanage Budget</span>
-              </button>
-<button
+              </button>)}
+              {canSeeOrphanageTab('budget-history') && (<button
                 type="button"
                 onClick={() => { setActiveTab('budget-history'); setMobileNavOpen(false); }}
                 className={cn(
@@ -492,8 +507,8 @@ export default function OrphanageApp() {
               >
                 <HistoryIcon className={cn('h-[15px] w-[15px] shrink-0', activeTab === 'budget-history' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <span className="truncate text-left">Budget History</span>
-              </button>
-              <button
+              </button>)}
+              {canSeeOrphanageTab('notifications') && (<button
                 type="button"
                 onClick={() => { setActiveTab('notifications'); setMobileNavOpen(false); }}
                 className={cn(
@@ -508,8 +523,8 @@ export default function OrphanageApp() {
                 {lockState.locked && (
                   <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
                 )}
-              </button>
-              <button
+              </button>)}
+              {canSeeOrphanageTab('s-wall') && (<button
                 type="button"
                 onClick={() => { setActiveTab('s-wall'); setMobileNavOpen(false); }}
                 className={cn(
@@ -521,7 +536,7 @@ export default function OrphanageApp() {
               >
                 <Newspaper className={cn('h-[15px] w-[15px] shrink-0', activeTab === 's-wall' ? 'text-white/85' : 'text-[#a1a1aa] dark:text-zinc-500')} />
                 <SWallNavLabel />
-              </button>
+              </button>)}
             </nav>
           </div>
 
@@ -612,6 +627,7 @@ export default function OrphanageApp() {
           disputesLoading={disputesByEmployeeLoading}
         />
 
+        <ReadOnlyTab readOnly={permsReady && !canEditTab('orphanage', activeTab)}>
         <AnimatePresence mode="wait" initial={false}>
           {activeTab === 'overview' && (
         <motion.div
@@ -1114,6 +1130,7 @@ export default function OrphanageApp() {
             </motion.div>
           )}
         </AnimatePresence>
+        </ReadOnlyTab>
         <AppFooter />
       </main>
       <Toaster position="top-right" />

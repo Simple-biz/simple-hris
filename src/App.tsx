@@ -20,8 +20,9 @@ import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import AnnouncementWall from './components/announcements/AnnouncementWall';
 import AnnouncementComposer from './components/announcements/AnnouncementComposer';
 import SWall from './components/swall/SWall';
-import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForUser, canAccessAccountingTabForUser } from '@/lib/rbac/accounting-tabs';
+import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForUser, canAccessAccountingTabForUser, canEditAccountingTab } from '@/lib/rbac/accounting-tabs';
 import { canEditFeature, type FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
+import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import AccountingMesa from '@/components/payroll/AccountingMesa';
@@ -153,6 +154,11 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   }, [activeTab, allowedTabs, roles, featurePerms, permsLoaded]);
 
   const renderContent = () => {
+    const readOnly = permsLoaded && !canEditAccountingTab(activeTab as typeof ACCOUNTING_TAB_IDS[number], roles, featurePerms);
+    return <ReadOnlyTab readOnly={readOnly}>{renderTabContent()}</ReadOnlyTab>;
+  };
+
+  const renderTabContent = () => {
     switch (activeTab) {
       case 'overview':
         return <Overview onViewRates={handleViewRates} onNavigate={navigate} initialData={initialData} />;
@@ -211,7 +217,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
           onClick={() => setMobileNavOpen(false)}
         />
       )}
-      <Sidebar activeTab={activeTab} setActiveTab={navigate} mobileOpen={mobileNavOpen} />
+      <Sidebar activeTab={activeTab} setActiveTab={navigate} mobileOpen={mobileNavOpen} allowedTabs={allowedTabs} />
       <main ref={mainRef} className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-orange-100 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-blue-950/60 dark:bg-[#0d1117]/95 md:hidden">
           <Button

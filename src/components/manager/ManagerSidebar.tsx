@@ -38,6 +38,8 @@ interface ManagerSidebarProps {
   viewerEmail: string | null;
   pendingApprovals: number;
   pendingLeaves?: number;
+  /** Tab ids the viewer may see after the feature-permission overlay. */
+  allowedTabs: readonly string[];
 }
 
 export default function ManagerSidebar({
@@ -47,7 +49,9 @@ export default function ManagerSidebar({
   viewerEmail,
   pendingApprovals,
   pendingLeaves = 0,
+  allowedTabs,
 }: ManagerSidebarProps) {
+  const can = (id: ManagerTab) => allowedTabs.includes(id);
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => { setMounted(true); }, []);
@@ -159,22 +163,22 @@ export default function ManagerSidebar({
             Workspace
           </p>
           <nav className="flex flex-col gap-px">
-            {navBtn('overview', 'Overview', LayoutDashboard)}
-            {navBtn(
+            {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
+            {can('time-adjustments') && navBtn(
               'time-adjustments',
               'Time adjustments',
               ClipboardCheck,
               countBadge(pendingApprovals, activeTab === 'time-adjustments'),
             )}
-            {navBtn(
+            {can('leaves') && navBtn(
               'leaves',
               'Leaves',
               CalendarDays,
               countBadge(pendingLeaves, activeTab === 'leaves'),
             )}
-            {navBtn('team', 'My team', Users)}
-            {navBtn('announcements', 'Announcements', Megaphone)}
-            <button
+            {can('team') && navBtn('team', 'My team', Users)}
+            {can('announcements') && navBtn('announcements', 'Announcements', Megaphone)}
+            {can('s-wall') && <button
               key="s-wall"
               type="button"
               onClick={() => setActiveTab('s-wall')}
@@ -192,18 +196,22 @@ export default function ManagerSidebar({
                 )}
               />
               <SWallNavLabel />
-            </button>
+            </button>}
           </nav>
 
-          <div className="my-5 mx-2.5 h-px bg-gradient-to-r from-transparent via-blue-200/60 to-transparent dark:via-blue-900/40" />
+          {(can('hsl-bonus') || can('bonus-history')) && (
+            <div className="my-5 mx-2.5 h-px bg-gradient-to-r from-transparent via-blue-200/60 to-transparent dark:via-blue-900/40" />
+          )}
 
-          <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
-            Bonuses
-          </p>
+          {(can('hsl-bonus') || can('bonus-history')) && (
+            <p className="mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa]">
+              Bonuses
+            </p>
+          )}
           <nav className="flex flex-col gap-px">
-            {navBtn('hsl-bonus', 'KPI Calculator', Calculator)}
-            {navBtn('bonus-history', 'Bonus History', History)}
-            {navBtn(
+            {can('hsl-bonus') && navBtn('hsl-bonus', 'KPI Calculator', Calculator)}
+            {can('bonus-history') && navBtn('bonus-history', 'Bonus History', History)}
+            {can('notifications') && navBtn(
               'notifications',
               'Notifications',
               Bell,

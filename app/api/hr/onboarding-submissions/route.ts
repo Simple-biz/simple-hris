@@ -9,6 +9,7 @@ import {
   deniedResponse,
   requireElevatedSession,
 } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -22,7 +23,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'onboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   let body: Partial<CreateOnboardingLinkInput>;

@@ -14,6 +14,8 @@ import ContractorOverview from './ContractorOverview';
 import ContractorInvoices from './ContractorInvoices';
 import ContractorProfile from './ContractorProfile';
 import { normEmail } from '@/lib/email/norm-email';
+import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 
 const SESSION_KEY = 'contractor_session_email';
@@ -122,6 +124,18 @@ export default function ContractorApp() {
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
 
+  // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
+  const { ready: permsReady, allowedTabs, canEditTab } = useFeaturePermissions(contractorEmail);
+  const allowedContractorTabs = allowedTabs('contractor');
+  const allowedContractorKey = allowedContractorTabs.join(',');
+  useEffect(() => {
+    if (!permsReady) return;
+    if (!allowedContractorTabs.includes(activeTab)) {
+      setActiveTab(allowedContractorTabs[0] ?? 'overview');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permsReady, allowedContractorKey, activeTab]);
+
   const navigate = (tab: string) => {
     setActiveTab(tab);
     setMobileNavOpen(false);
@@ -200,6 +214,7 @@ export default function ContractorApp() {
         contractorEmail={contractorEmail}
         profilePhotoUrl={profilePhotoUrl}
         googlePhotoUrl={googlePhotoUrl}
+        allowedTabs={allowedContractorTabs}
       />
 
       <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -232,7 +247,9 @@ export default function ContractorApp() {
             transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
             className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
           >
-            {renderContent()}
+            <ReadOnlyTab readOnly={permsReady && !canEditTab('contractor', activeTab)}>
+              {renderContent()}
+            </ReadOnlyTab>
           </motion.div>
         </AnimatePresence>
         <AppFooter />

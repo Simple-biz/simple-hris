@@ -30,6 +30,8 @@ interface ContractorSidebarProps {
   contractorEmail?: string | null;
   profilePhotoUrl?: string | null;
   googlePhotoUrl?: string | null;
+  /** Tab ids the viewer may see after the feature-permission overlay. */
+  allowedTabs: readonly string[];
 }
 
 const navItems = [
@@ -46,7 +48,9 @@ export default function ContractorSidebar({
   contractorEmail = null,
   profilePhotoUrl = null,
   googlePhotoUrl = null,
+  allowedTabs,
 }: ContractorSidebarProps) {
+  const visibleNavItems = navItems.filter((item) => allowedTabs.includes(item.id));
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
@@ -103,7 +107,7 @@ export default function ContractorSidebar({
 
         <ScrollArea className="-mx-2 min-h-0 flex-1">
           <nav className="space-y-1 px-2">
-            {navItems.map((item, index) => (
+            {visibleNavItems.map((item, index) => (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}

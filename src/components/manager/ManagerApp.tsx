@@ -51,6 +51,8 @@ import ManagerMemberDialog from '@/components/manager/ManagerMemberDialog';
 import ManagerTransferDialog from '@/components/manager/ManagerTransferDialog';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
+import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { useOnlineEmails } from '@/components/presence/PresenceProvider';
 import { TeamAvatar, initialsOf, gradientFor } from '@/components/team/team-ui';
 import { formatCurrentProjects } from '@/lib/skill-set-titles';
@@ -250,6 +252,18 @@ export default function ManagerApp() {
     };
   }, [authChecked, activeTab]);
 
+  // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
+  const { ready: permsReady, allowedTabs, canEditTab } = useFeaturePermissions(viewerEmail);
+  const allowedManagerTabs = allowedTabs('manager');
+  const allowedManagerKey = allowedManagerTabs.join(',');
+  useEffect(() => {
+    if (!permsReady) return;
+    if (!allowedManagerTabs.includes(activeTab)) {
+      setActiveTab((allowedManagerTabs[0] as ManagerTab) ?? 'overview');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permsReady, allowedManagerKey, activeTab]);
+
   const handleNavigate = (tab: ManagerTab) => {
     setActiveTab(tab);
     setMobileNavOpen(false);
@@ -293,6 +307,7 @@ export default function ManagerApp() {
         viewerEmail={viewerEmail}
         pendingApprovals={pendingApprovals}
         pendingLeaves={pendingLeaves}
+        allowedTabs={allowedManagerTabs}
       />
 
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -328,6 +343,7 @@ export default function ManagerApp() {
               }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
+              <ReadOnlyTab readOnly={permsReady && !canEditTab('manager', activeTab)}>
               {activeTab === 'overview' && (
                 <Overview
                   viewerEmail={viewerEmail}
@@ -460,6 +476,7 @@ export default function ManagerApp() {
               {activeTab === 'notifications' && (
                 <NotificationsPanel viewerEmail={viewerEmail} accent="blue" />
               )}
+              </ReadOnlyTab>
             </motion.div>
           </AnimatePresence>
         </div>

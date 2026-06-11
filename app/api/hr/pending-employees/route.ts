@@ -5,6 +5,7 @@ import {
   type CreateHrPendingInput,
 } from "@/lib/supabase/hr-pending-employees";
 import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,7 +21,7 @@ export async function GET() {
 
 /** POST — Add Person form submission. */
 export async function POST(req: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'onboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   let body: Partial<CreateHrPendingInput>;

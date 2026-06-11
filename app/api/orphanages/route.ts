@@ -4,6 +4,8 @@ import {
   listOrphanages,
   type InsertOrphanageInput,
 } from '@/lib/supabase/orphanages';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -17,6 +19,8 @@ export async function GET() {
 
 /** POST /api/orphanages -> create a new orphanage. */
 export async function POST(req: NextRequest) {
+  const authz = await requireFeatureEdit('orphanage', 'budget');
+  if (!authz.ok) return deniedResponse(authz);
   let body: InsertOrphanageInput;
   try {
     body = (await req.json()) as InsertOrphanageInput;

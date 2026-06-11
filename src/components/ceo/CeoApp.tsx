@@ -14,6 +14,8 @@ import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
 import SWall from '@/components/swall/SWall';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
+import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -80,6 +82,18 @@ export default function CeoApp() {
     return () => window.removeEventListener('keydown', onKey);
   }, [mobileNavOpen]);
 
+  // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
+  const { ready: permsReady, allowedTabs, canEditTab } = useFeaturePermissions(viewerEmail);
+  const allowedCeoTabs = allowedTabs('ceo');
+  const allowedCeoKey = allowedCeoTabs.join(',');
+  useEffect(() => {
+    if (!permsReady) return;
+    if (!allowedCeoTabs.includes(activeTab)) {
+      setActiveTab((allowedCeoTabs[0] as CeoTab) ?? 'overview');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permsReady, allowedCeoKey, activeTab]);
+
   if (!authChecked) {
     return (
       <div className="flex h-screen items-center justify-center bg-white dark:bg-[#0d1117]">
@@ -104,6 +118,7 @@ export default function CeoApp() {
         setActiveTab={(tab) => { setActiveTab(tab); setMobileNavOpen(false); }}
         mobileOpen={mobileNavOpen}
         viewerEmail={viewerEmail}
+        allowedTabs={allowedCeoTabs}
       />
 
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -133,6 +148,7 @@ export default function CeoApp() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
+              <ReadOnlyTab readOnly={permsReady && !canEditTab('ceo', activeTab)}>
               {activeTab === 'overview' && <CeoOverview viewerEmail={viewerEmail} />}
               {activeTab === 'announcements' && (
                 <CeoAnnouncements viewerEmail={viewerEmail} />
@@ -143,6 +159,7 @@ export default function CeoApp() {
               {activeTab === 's-wall' && (
                 <CeoSwallTab viewerEmail={viewerEmail} />
               )}
+              </ReadOnlyTab>
             </motion.div>
           </AnimatePresence>
         </div>

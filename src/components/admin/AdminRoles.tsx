@@ -341,6 +341,55 @@ export default function AdminRoles() {
     }
   }
 
+  /** Bulk-set every feature in a view to one access level. Provisions (or
+   *  clears) a whole dashboard in one click — essential under the
+   *  hidden-until-granted model where each tab is off by default. */
+  async function setAllFeatureAccess(view: FeatureViewKey, access: 'hidden' | FeatureAccess) {
+    const email = (selWork?.trim() || selPersonal?.trim() || '').trim();
+    if (!email) return;
+    const features = FEATURE_CATALOG[view] ?? [];
+    if (features.length === 0) return;
+    setFeaturePermMutating(`${view}:__all__`);
+    try {
+      const results = await Promise.all(
+        features.map((f) =>
+          fetch('/api/employee-feature-permissions', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ email, view, feature: f.key, access }),
+          })
+            .then((r) => r.ok)
+            .catch(() => false),
+        ),
+      );
+      const failed = results.filter((ok) => !ok).length;
+      setFeaturePerms((prev) => {
+        const next = { ...prev };
+        if (access === 'hidden') {
+          next[view] = {};
+        } else {
+          const bucket: Record<string, FeatureAccess> = {};
+          for (const f of features) bucket[f.key] = access;
+          next[view] = bucket;
+        }
+        return next;
+      });
+      if (failed > 0) {
+        toast.warning(`Updated with ${failed} failure${failed === 1 ? '' : 's'}`);
+      } else {
+        toast.success(
+          access === 'hidden'
+            ? 'Hid every tab'
+            : `Granted ${access === 'edit' ? 'Edit' : 'View'} on every tab`,
+        );
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setFeaturePermMutating(null);
+    }
+  }
+
   const uniqueEmployees = useMemo(() => {
     const seen = new Set<string>();
     const out: EmployeeRow[] = [];
@@ -1280,6 +1329,7 @@ export default function AdminRoles() {
                                   loading={featurePermsLoading}
                                   mutatingKey={featurePermMutating}
                                   onChange={(feature, access) => void setFeatureAccess(view, feature, access)}
+                                  onBulkSet={(access) => void setAllFeatureAccess(view, access)}
                                 />
                               );
                             })()}
@@ -1434,6 +1484,7 @@ function FeaturePermissionGrid({
   loading,
   mutatingKey,
   onChange,
+  onBulkSet,
 }: {
   view: FeatureViewKey;
   features: readonly { key: string; label: string }[];
@@ -1441,15 +1492,39 @@ function FeaturePermissionGrid({
   loading: boolean;
   mutatingKey: string | null;
   onChange: (feature: string, access: 'hidden' | FeatureAccess) => void;
+  onBulkSet: (access: 'hidden' | FeatureAccess) => void;
 }) {
+  const bulkBusy = mutatingKey === `${view}:__all__`;
   return (
     <div className="rounded-lg border border-zinc-200/80 bg-white/60 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
-      <div className="mb-2 flex items-center justify-between gap-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
           Tab access
         </p>
-        <p className="text-[10px] text-zinc-400 dark:text-zinc-500">Hidden by default — pick a level per tab</p>
+        <div className="flex items-center gap-1">
+          {bulkBusy && <Loader2 className="h-3 w-3 animate-spin text-zinc-400" aria-hidden />}
+          {(['edit', 'view', 'hidden'] as const).map((level) => (
+            <button
+              key={level}
+              type="button"
+              disabled={loading || bulkBusy}
+              onClick={() => onBulkSet(level)}
+              className={cn(
+                'rounded-md border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                level === 'edit'
+                  ? 'border-emerald-300/70 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/40'
+                  : level === 'view'
+                  ? 'border-amber-300/70 text-amber-700 hover:bg-amber-50 dark:border-amber-700/50 dark:text-amber-300 dark:hover:bg-amber-950/40'
+                  : 'border-zinc-300/70 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800',
+              )}
+              title={`Set every tab to ${level}`}
+            >
+              {level === 'edit' ? 'All: Edit' : level === 'view' ? 'All: View' : 'Hide all'}
+            </button>
+          ))}
+        </div>
       </div>
+      <p className="mb-2 text-[10px] text-zinc-400 dark:text-zinc-500">Hidden by default — pick a level per tab, or use the bulk actions above</p>
       {loading ? (
         <div className="flex items-center gap-2 py-3 text-[11px] text-zinc-500 dark:text-zinc-400">
           <Loader2 className="h-3 w-3 animate-spin" aria-hidden />

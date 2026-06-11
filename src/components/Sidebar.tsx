@@ -29,7 +29,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { normEmail } from '@/lib/email/norm-email';
-import { allowedAccountingTabsForRoles } from '@/lib/rbac/accounting-tabs';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -44,6 +43,10 @@ interface SidebarProps {
   setActiveTab: (tab: string) => void;
   /** Below `md`, sidebar is a drawer; when false it sits off-screen. Desktop ignores this. */
   mobileOpen: boolean;
+  /** Tab ids the viewer is allowed to see, after the feature-permission
+   *  overlay. Computed once by the parent App so the rail and content gate
+   *  agree. */
+  allowedTabs: readonly string[];
 }
 
 const navItems = [
@@ -58,7 +61,7 @@ const navItems = [
   { id: 'settings', label: 'System Settings', icon: Settings },
 ];
 
-export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: SidebarProps) {
+export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTabs }: SidebarProps) {
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   const [email, setEmail] = React.useState<string | null>(null);
@@ -106,7 +109,6 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen }: Sidebar
   const { profilePhotoUrl, googlePhotoUrl } = useViewerProfilePhoto(email);
   const { state: lockState } = useDispatchLock();
   const unreadNotifications = useEmployeeNotificationsUnread(email);
-  const allowedTabs = React.useMemo(() => allowedAccountingTabsForRoles(roles), [roles]);
   const allowedTabSet = React.useMemo(() => new Set<string>(allowedTabs), [allowedTabs]);
   const visibleNavItems = React.useMemo(
     () => navItems.filter((item) => allowedTabSet.has(item.id)),

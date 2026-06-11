@@ -29,6 +29,8 @@ import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
 import { useNotificationChime } from '@/hooks/useNotificationChime';
+import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
 import HrOnboarding from './HrOnboarding';
@@ -63,6 +65,18 @@ export default function HrApp() {
   // submitting their onboarding form), and an unread badge on the sidebar.
   useNotificationChime(viewerEmail);
   const unreadNotifications = useEmployeeNotificationsUnread(viewerEmail);
+
+  // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
+  const { ready: permsReady, allowedTabs, canEditTab } = useFeaturePermissions(viewerEmail);
+  const allowedHrTabs = allowedTabs('hr');
+  const allowedHrKey = allowedHrTabs.join(',');
+  useEffect(() => {
+    if (!permsReady) return;
+    if (!allowedHrTabs.includes(activeTab)) {
+      setActiveTab((allowedHrTabs[0] as HrTab) ?? 'overview');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permsReady, allowedHrKey, activeTab]);
 
   // Identity comes from the AUTHENTICATED session, not a client-supplied
   // ?email= / sessionStorage value. ?email= is honored only for elevated users
@@ -154,6 +168,7 @@ export default function HrApp() {
         mobileOpen={mobileNavOpen}
         viewerEmail={viewerEmail}
         unreadNotifications={unreadNotifications}
+        allowedTabs={allowedHrTabs}
       />
 
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -183,6 +198,7 @@ export default function HrApp() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
+              <ReadOnlyTab readOnly={permsReady && !canEditTab('hr', activeTab)}>
               {activeTab === 'overview' && <HrOverview viewerEmail={viewerEmail} />}
               {activeTab === 'onboarding' && <HrOnboarding />}
               {activeTab === 'offboarding' && <HrOffboarding />}
@@ -195,6 +211,7 @@ export default function HrApp() {
                 <NotificationsPanel viewerEmail={viewerEmail} accent="emerald" backfillOnboarding />
               )}
               {activeTab === 's-wall' && <HrSwallTab viewerEmail={viewerEmail} />}
+              </ReadOnlyTab>
             </motion.div>
           </AnimatePresence>
         </div>

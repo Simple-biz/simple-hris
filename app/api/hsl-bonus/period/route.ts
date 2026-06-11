@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -14,6 +16,8 @@ export const runtime = 'nodejs';
  * Returns the counts of rows removed from each table.
  */
 export async function DELETE(req: NextRequest) {
+  const authz = await requireFeatureEdit('manager', 'hsl_bonus');
+  if (!authz.ok) return deniedResponse(authz);
   const { searchParams } = new URL(req.url);
   const dept = searchParams.get('dept');
   const period_start = searchParams.get('period_start');

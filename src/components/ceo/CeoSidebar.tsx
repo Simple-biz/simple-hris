@@ -22,6 +22,8 @@ interface CeoSidebarProps {
   setActiveTab: (tab: CeoTab) => void;
   mobileOpen: boolean;
   viewerEmail: string | null;
+  /** Tab ids the viewer may see after the feature-permission overlay. */
+  allowedTabs: readonly string[];
 }
 
 export default function CeoSidebar({
@@ -29,7 +31,9 @@ export default function CeoSidebar({
   setActiveTab,
   mobileOpen,
   viewerEmail,
+  allowedTabs,
 }: CeoSidebarProps) {
+  const can = (id: CeoTab) => allowedTabs.includes(id);
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => { setMounted(true); }, []);
@@ -123,9 +127,9 @@ export default function CeoSidebar({
             Workspace
           </p>
           <nav className="flex flex-col gap-px">
-            {navBtn('overview', 'Overview', LayoutDashboard)}
-            {navBtn('announcements', 'Announcements', Megaphone)}
-            {navBtn(
+            {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
+            {can('announcements') && navBtn('announcements', 'Announcements', Megaphone)}
+            {can('notifications') && navBtn(
               'notifications',
               'Notifications',
               Bell,
@@ -133,7 +137,7 @@ export default function CeoSidebar({
                 <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500" />
               ) : null,
             )}
-            <button
+            {can('s-wall') && <button
               key="s-wall"
               type="button"
               onClick={() => setActiveTab('s-wall')}
@@ -151,7 +155,7 @@ export default function CeoSidebar({
                 )}
               />
               <SWallNavLabel />
-            </button>
+            </button>}
           </nav>
 
           <div className="mt-6 border-t border-yellow-100/60 pt-4 dark:border-yellow-950/40">

@@ -7,6 +7,8 @@ import {
   type OrphanageBudgetRequestStatus,
 } from '@/lib/supabase/orphanage-budget-requests';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -54,6 +56,8 @@ export async function GET(req: NextRequest) {
 interface PostBody extends InsertOrphanageBudgetRequestInput {}
 
 export async function POST(req: NextRequest) {
+  const authz = await requireFeatureEdit('orphanage', 'budget');
+  if (!authz.ok) return deniedResponse(authz);
   let body: PostBody;
   try {
     body = (await req.json()) as PostBody;

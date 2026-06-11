@@ -5,7 +5,8 @@ import {
 } from "@/lib/supabase/server";
 import { deleteOffboardedSheetByWorkEmail } from "@/lib/supabase/global-master-list-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
-import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
+import { deniedResponse } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { appendMasterSheetRow } from "@/lib/google-sheets/append-master-sheet";
 import { restoreRbacGrants } from "@/lib/hr/offboard-rbac";
 
@@ -28,7 +29,7 @@ function getClient() {
  * active_employees (and every downstream dashboard) immediately.
  */
 export async function POST(req: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'offboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   let body: { work_email?: string };

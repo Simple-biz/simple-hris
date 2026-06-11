@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth/auth-options";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -49,6 +51,8 @@ export async function GET(req: NextRequest) {
  *  Any authenticated session can write — team wallpaper is shared identity,
  *  not sensitive data. */
 export async function POST(req: NextRequest) {
+  const feat = await requireFeatureEdit('manager', 'team');
+  if (!feat.ok) return deniedResponse(feat);
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -105,6 +109,8 @@ export async function POST(req: NextRequest) {
  *  string for a department's wallpaper without re-uploading the image.
  *  Used by the drag-to-reposition UI in the My Team banner. */
 export async function PATCH(req: NextRequest) {
+  const feat = await requireFeatureEdit('manager', 'team');
+  if (!feat.ok) return deniedResponse(feat);
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -141,6 +147,8 @@ export async function PATCH(req: NextRequest) {
 
 /** DELETE ?department=X — removes the wallpaper. */
 export async function DELETE(req: NextRequest) {
+  const feat = await requireFeatureEdit('manager', 'team');
+  if (!feat.ok) return deniedResponse(feat);
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

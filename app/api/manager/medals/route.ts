@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -40,6 +42,8 @@ export async function GET(req: NextRequest) {
 
 /** POST /api/manager/medals — award a medal */
 export async function POST(req: NextRequest) {
+  const authz = await requireFeatureEdit('manager', 'team');
+  if (!authz.ok) return deniedResponse(authz);
   const session = await getServerSession(authOptions);
   const awardedBy = sessionEmail(session);
   if (!awardedBy) {

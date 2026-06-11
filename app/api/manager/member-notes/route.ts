@@ -4,6 +4,8 @@ import { authOptions } from '@/lib/auth/auth-options';
 import { hasElevatedRole } from '@/lib/auth/elevated-roles';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import { getSkillSet, upsertSkillSet } from '@/lib/supabase/employee-skill-sets';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -59,6 +61,8 @@ export async function GET(req: NextRequest) {
 
 /** PUT { work_email, member_notes } — manager writes a teammate's member notes. */
 export async function PUT(req: NextRequest) {
+  const feat = await requireFeatureEdit('manager', 'team');
+  if (!feat.ok) return deniedResponse(feat);
   const authz = await authorizeManager();
   if (!authz.ok) return NextResponse.json({ error: authz.message }, { status: authz.status });
 

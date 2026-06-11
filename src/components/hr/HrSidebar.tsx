@@ -40,6 +40,8 @@ interface HrSidebarProps {
   viewerEmail: string | null;
   /** Unread notification count — drives the bell badge in the sidebar. */
   unreadNotifications?: number;
+  /** Tab ids the viewer may see after the feature-permission overlay. */
+  allowedTabs: readonly string[];
 }
 
 export default function HrSidebar({
@@ -48,7 +50,9 @@ export default function HrSidebar({
   mobileOpen,
   viewerEmail,
   unreadNotifications = 0,
+  allowedTabs,
 }: HrSidebarProps) {
+  const can = (id: HrTab) => allowedTabs.includes(id);
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => { setMounted(true); }, []);
@@ -142,15 +146,15 @@ export default function HrSidebar({
             Workspace
           </p>
           <nav className="flex flex-col gap-px">
-            {navBtn('overview', 'Overview', LayoutDashboard)}
-            {navBtn('onboarding', 'Onboarding', LogIn)}
-            {navBtn('offboarding', 'Offboarding', UserMinus)}
-            {navBtn('leaves', 'Leave Requests', CalendarDays)}
-            {navBtn('transfers', 'Transfers', ArrowRightLeft)}
-            {navBtn('gift-tracker', 'Gift Tracker', Gift)}
-            {navBtn('mesa', 'MESA', HeartHandshake)}
-            {navBtn('announcements', 'Announcements', Megaphone)}
-            {navBtn(
+            {can('overview') && navBtn('overview', 'Overview', LayoutDashboard)}
+            {can('onboarding') && navBtn('onboarding', 'Onboarding', LogIn)}
+            {can('offboarding') && navBtn('offboarding', 'Offboarding', UserMinus)}
+            {can('leaves') && navBtn('leaves', 'Leave Requests', CalendarDays)}
+            {can('transfers') && navBtn('transfers', 'Transfers', ArrowRightLeft)}
+            {can('gift-tracker') && navBtn('gift-tracker', 'Gift Tracker', Gift)}
+            {can('mesa') && navBtn('mesa', 'MESA', HeartHandshake)}
+            {can('announcements') && navBtn('announcements', 'Announcements', Megaphone)}
+            {can('notifications') && navBtn(
               'notifications',
               'Notifications',
               Bell,
@@ -174,7 +178,7 @@ export default function HrSidebar({
                 </span>
               ) : null,
             )}
-            <button
+            {can('s-wall') && <button
               key="s-wall"
               type="button"
               onClick={() => setActiveTab('s-wall')}
@@ -192,7 +196,7 @@ export default function HrSidebar({
                 )}
               />
               <SWallNavLabel />
-            </button>
+            </button>}
           </nav>
 
           <div className="mt-6 border-t border-emerald-100/60 pt-4 dark:border-emerald-950/40">
