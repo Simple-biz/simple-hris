@@ -202,7 +202,17 @@ function RemoteCursor({
 }
 
 // --- avatar rail item ---------------------------------------------------------
-function RailAvatar({ peer, sameSection }: { peer: PeerMeta; sameSection: boolean }) {
+function RailAvatar({
+  peer,
+  sameSection,
+  open,
+  onToggle,
+}: {
+  peer: PeerMeta;
+  sameSection: boolean;
+  open: boolean;
+  onToggle: () => void;
+}) {
   const [imgFailed, setImgFailed] = useState(false);
   const { bg: color, glow } = hashEmail(peer.email);
   const url = peer.avatarUrl?.trim();
@@ -213,18 +223,47 @@ function RailAvatar({ peer, sameSection }: { peer: PeerMeta; sameSection: boolea
 
   return (
     <div className="group pointer-events-auto relative flex items-center justify-end">
-      {/* Tooltip to the left */}
-      <div className="pointer-events-none absolute right-full mr-2 hidden whitespace-nowrap rounded-lg bg-zinc-900/95 px-2.5 py-1.5 text-right shadow-lg backdrop-blur-md group-hover:block">
-        <div className="text-[11px] font-semibold leading-tight text-white">{display}</div>
-        <div
-          className="text-[9px] uppercase leading-tight tracking-widest"
-          style={{ color: sameSection ? color : '#a1a1aa' }}
-        >
-          {sameSection ? `Here - ${sectionLabel(peer.section)}` : sectionLabel(peer.section)}
+      {/* Name card to the left -- shown on hover, and pinned open on click. */}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            className="absolute right-full mr-2 max-w-[60vw] whitespace-nowrap rounded-lg bg-zinc-900/95 px-3 py-2 text-right shadow-xl ring-1 ring-white/10 backdrop-blur-md"
+            initial={{ opacity: 0, x: 8, scale: 0.92 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 8, scale: 0.92 }}
+            transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="text-[13px] font-semibold leading-tight text-white">{display}</div>
+            <div className="text-[10px] leading-tight text-zinc-400">{peer.email}</div>
+            <div
+              className="mt-0.5 text-[9px] uppercase leading-tight tracking-widest"
+              style={{ color: sameSection ? color : '#a1a1aa' }}
+            >
+              {sameSection ? `Here - ${sectionLabel(peer.section)}` : sectionLabel(peer.section)}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* Lightweight hover hint (only when not pinned open) */}
+      {!open && (
+        <div className="pointer-events-none absolute right-full mr-2 hidden whitespace-nowrap rounded-lg bg-zinc-900/95 px-2.5 py-1.5 text-right shadow-lg backdrop-blur-md group-hover:block">
+          <div className="text-[11px] font-semibold leading-tight text-white">{display}</div>
+          <div
+            className="text-[9px] uppercase leading-tight tracking-widest"
+            style={{ color: sameSection ? color : '#a1a1aa' }}
+          >
+            {sameSection ? `Here - ${sectionLabel(peer.section)}` : sectionLabel(peer.section)}
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={`Show ${display}`}
+        aria-expanded={open}
+        className="relative block cursor-pointer rounded-full outline-none transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-orange-400"
+      >
         <div
           className="h-9 w-9 overflow-hidden rounded-full transition-all"
           style={{
@@ -258,7 +297,7 @@ function RailAvatar({ peer, sameSection }: { peer: PeerMeta; sameSection: boolea
         )}
         {/* Online badge */}
         <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 shadow dark:border-zinc-900" />
-      </div>
+      </button>
     </div>
   );
 }
@@ -278,6 +317,8 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
   const [peers, setPeers] = useState<PeerMeta[]>([]);
   const [cursors, setCursors] = useState<Map<string, CursorState>>(new Map());
   const [ripples, setRipples] = useState<ClickRipple[]>([]);
+  // Which rail avatar has its name card pinned open (one at a time).
+  const [openPeer, setOpenPeer] = useState<string | null>(null);
 
   const selfName = session?.user?.name ?? (normSelf ? toLabel(normSelf) : null);
   const selfAvatarUrl = (uploadedPhoto && uploadedPhoto.trim()) || session?.user?.image || null;
@@ -545,7 +586,13 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           >
             {peers.map((p) => (
-              <RailAvatar key={p.email} peer={p} sameSection={p.section === section} />
+              <RailAvatar
+                key={p.email}
+                peer={p}
+                sameSection={p.section === section}
+                open={openPeer === p.email}
+                onToggle={() => setOpenPeer((cur) => (cur === p.email ? null : p.email))}
+              />
             ))}
           </motion.div>
         )}

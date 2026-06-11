@@ -11,6 +11,7 @@ import {
   Crown,
   Eye,
   Loader2,
+  LogOut,
   Mail,
   Plus,
   Search,
@@ -169,6 +170,7 @@ export default function AdminRoles() {
   const [loading, setLoading] = useState(true);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [mutating, setMutating] = useState<RoleKey | null>(null);
+  const [forcingLogout, setForcingLogout] = useState(false);
   // Invoicing currency for the selected contractor (PHP/USD). Only meaningful
   // when the `contractor` role is granted.
   const [contractorCurrency, setContractorCurrency] = useState<ContractorCurrency>('PHP');
@@ -529,6 +531,41 @@ export default function AdminRoles() {
     setCustomInput('');
     setCustomInputOpen(false);
     toast.success(`Added ${raw}. Grant roles on the right.`);
+  }
+
+  /** Force-logout the selected person so their next request re-mints a JWT that
+   *  reflects the roles/permissions just changed. Revoking already fires this
+   *  automatically; this button lets an admin also reset the session after a
+   *  GRANT (or feature-permission change), where the user would otherwise keep
+   *  using a stale token until they happened to sign out. */
+  async function forceLogoutSelected() {
+    const email = employeeIdentityEmail(selected);
+    if (!email) {
+      toast.error('This person has no email on file — add a work or personal email first.');
+      return;
+    }
+    setForcingLogout(true);
+    try {
+      const res = await fetch('/api/auth/force-logout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, reason: 'manual session reset' }),
+      });
+      const json = (await res.json()) as { success?: boolean; error?: string; skipped?: string };
+      if (!res.ok || !json.success) {
+        toast.error(json.error || 'Failed to reset session');
+        return;
+      }
+      if (json.skipped === 'self') {
+        toast.info("That's your own account — your session was left intact.");
+        return;
+      }
+      toast.success(`Logged out ${email}. They'll sign in again with the updated access.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setForcingLogout(false);
+    }
   }
 
   async function toggleRole(role: RoleKey) {
@@ -980,6 +1017,24 @@ export default function AdminRoles() {
                     <Crown className="h-3 w-3" aria-hidden />
                     Admin
                   </Badge>
+                )}
+                {identity && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void forceLogoutSelected()}
+                    disabled={forcingLogout}
+                    title="Invalidate this person's active sessions so their next request picks up the roles/permissions you just changed."
+                    className="h-8 shrink-0 gap-1.5 border-zinc-200 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800/60"
+                  >
+                    {forcingLogout ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <LogOut className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                    Reset session
+                  </Button>
                 )}
               </div>
             )}
