@@ -26,6 +26,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "onboarding",    label: "Onboarding" },
     { key: "offboarding",   label: "Offboarding" },
     { key: "leaves",        label: "Leaves" },
+    { key: "transfers",     label: "Transfers" },
     { key: "gift_tracker",  label: "Gift Tracker" },
     { key: "mesa",          label: "MESA" },
     { key: "announcements", label: "Announcements" },

@@ -58,6 +58,74 @@ function onboardingRateLimited(req: NextRequest): boolean {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Force-logout enforcement (edge-side).
+//
+// `getToken()` only DECODES the cookie — it never runs the NextAuth `jwt`
+// callback, so the callback's force-logout check (which neuters a revoked
+// token) doesn't fire until the client next refreshes its session. That left a
+// window where an admin's "Reset session" had no effect on the target's
+// in-flight cookie. We close it here: the middleware reads the same
+// `auth.force_logout_map` and rejects any token issued before the user's
+// cutoff on their VERY NEXT request — then clears the session cookie so they're
+// fully signed out and must re-authenticate (re-minting a JWT with the new
+// roles/permissions).
+//
+// Cached per edge isolate for 30s (matching force-logout.ts) so we hit Supabase
+// at most ~twice a minute per region, not on every request.
+// ---------------------------------------------------------------------------
+let _flCache: { ts: number; map: Record<string, string> } | null = null;
+const FL_TTL_MS = 30_000;
+
+async function getForceLogoutMap(): Promise<Record<string, string>> {
+  if (_flCache && Date.now() - _flCache.ts < FL_TTL_MS) return _flCache.map;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  let map: Record<string, string> = {};
+  if (url && key) {
+    try {
+      const res = await fetch(
+        `${url}/rest/v1/app_settings?select=value&key=eq.auth.force_logout_map`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` }, cache: 'no-store' },
+      );
+      if (res.ok) {
+        const rows = (await res.json()) as { value?: string | null }[];
+        const raw = rows?.[0]?.value;
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') map = parsed as Record<string, string>;
+        }
+      }
+    } catch {
+      // Never fail a request on a lookup hiccup — reuse the last good map.
+      return _flCache?.map ?? {};
+    }
+  }
+  _flCache = { ts: Date.now(), map };
+  return map;
+}
+
+/** True when this token was issued before an admin force-logged-out the email. */
+async function isForceLoggedOut(emailLower: string, issuedAtSec: number): Promise<boolean> {
+  if (!emailLower || !issuedAtSec) return false;
+  const map = await getForceLogoutMap();
+  const iso = map[emailLower];
+  if (!iso) return false;
+  const cutoffMs = Date.parse(iso);
+  if (!Number.isFinite(cutoffMs)) return false;
+  return Math.floor(cutoffMs / 1000) >= issuedAtSec;
+}
+
+/** NextAuth session-cookie names (plain + Secure prefix + chunked variants). */
+const SESSION_COOKIE_NAMES = [
+  'next-auth.session-token',
+  '__Secure-next-auth.session-token',
+  'next-auth.session-token.0',
+  'next-auth.session-token.1',
+  '__Secure-next-auth.session-token.0',
+  '__Secure-next-auth.session-token.1',
+];
+
 const PUBLIC_PATHS = new Set<string>([
   '/login',
 ]);
@@ -108,6 +176,26 @@ export async function middleware(req: NextRequest) {
     loginUrl.pathname = '/login';
     loginUrl.search = `?callbackUrl=${encodeURIComponent(pathname + search)}`;
     return NextResponse.redirect(loginUrl);
+  }
+
+  // Force-logout enforcement: if an admin reset this person's session, reject
+  // the still-valid cookie immediately, clear it, and send them to /login so
+  // they re-authenticate into a fresh JWT carrying the updated access.
+  {
+    const emailLower = (tokenEmail ?? '').toString().trim().toLowerCase();
+    const issuedAt = typeof (token as { iat?: number }).iat === 'number'
+      ? (token as { iat: number }).iat
+      : 0;
+    if (await isForceLoggedOut(emailLower, issuedAt)) {
+      const loginUrl = req.nextUrl.clone();
+      loginUrl.pathname = '/login';
+      loginUrl.search = `?callbackUrl=${encodeURIComponent(pathname + search)}`;
+      const res = NextResponse.redirect(loginUrl);
+      for (const name of SESSION_COOKIE_NAMES) {
+        res.cookies.set(name, '', { path: '/', maxAge: 0 });
+      }
+      return res;
+    }
   }
 
   // Contractors are not permitted to access the employee dashboard.

@@ -17,15 +17,7 @@ export const ACCOUNTING_TAB_IDS = [
 
 export type AccountingTabId = (typeof ACCOUNTING_TAB_IDS)[number];
 
-const FULL_ACCOUNTING_ACCESS_ROLES = new Set([
-  'admin',
-  'finance',
-  'hr_coordinator',
-  'payroll_coordinator',
-  'viewer',
-]);
-
-/** UI tab id → feature key stored in `employee_feature_permissions`. */
+/** UI tab id -> feature key stored in `employee_feature_permissions`. */
 const TAB_TO_FEATURE: Record<AccountingTabId, string> = {
   'overview': 'overview',
   'rates': 'rates',
@@ -40,48 +32,57 @@ const TAB_TO_FEATURE: Record<AccountingTabId, string> = {
 };
 
 /**
- * Roles that automatically receive every accounting tab, ignoring the
- * `employee_feature_permissions` overlay. Used as a backstop so locking
- * yourself out is hard — admins always see everything.
+ * Roles that bypass the per-tab overlay and always see + edit every tab.
+ * Admins always see everything so locking yourself out is hard.
  */
 const BYPASS_PERMS_ROLES = new Set(['admin']);
 
-export function allowedAccountingTabsForRoles(roles: readonly string[]): AccountingTabId[] {
-  const hasPrivilegedAccountingRole = roles.some((role) =>
-    role === 'admin' ||
-    role === 'finance' ||
-    role === 'hr_coordinator' ||
-    role === 'payroll_coordinator',
-  );
+/** Always-visible tabs (read-only landing) so a dashboard is never blank. */
+const ALWAYS_VISIBLE_TABS = new Set<AccountingTabId>(['overview']);
 
-  if (roles.includes('payroll_manager') && !hasPrivilegedAccountingRole) {
-    return ['overview', 'payment-dispatch', 'disputes'];
-  }
-
-  if (roles.some((role) => FULL_ACCOUNTING_ACCESS_ROLES.has(role))) {
-    return [...ACCOUNTING_TAB_IDS];
-  }
-
+/**
+ * Role baseline. The accounting dashboard no longer restricts tabs by role --
+ * what an admin grants in the per-tab permission grid is the sole gate (see
+ * {@link allowedAccountingTabsForUser}). This returns the full catalog and is
+ * kept only so older callers don't break.
+ */
+export function allowedAccountingTabsForRoles(_roles: readonly string[]): AccountingTabId[] {
   return [...ACCOUNTING_TAB_IDS];
 }
 
 /**
- * Tab list after the per-user feature-permission overlay is applied. Tabs the
- * user hasn't been granted (no `view` or `edit` row in `employee_feature_permissions`)
- * are filtered out. Admins always see every tab regardless of the overlay.
+ * Visible accounting tabs after the per-user feature-permission overlay.
+ *
+ * Model: HIDDEN UNTIL GRANTED. A user sees a tab only if the admin granted it
+ * `view` or `edit` (plus `overview`, always visible as a read-only landing).
+ * The `admin` role bypasses the overlay entirely. There is no role-based tab
+ * special-casing -- whatever the admin sets per tab is what shows.
  */
 export function allowedAccountingTabsForUser(
   roles: readonly string[],
   perms: FeaturePermissionsMap | null | undefined,
 ): AccountingTabId[] {
-  const base = allowedAccountingTabsForRoles(roles);
-  if (roles.some((r) => BYPASS_PERMS_ROLES.has(r))) return base;
+  if (roles.some((r) => BYPASS_PERMS_ROLES.has(r))) return [...ACCOUNTING_TAB_IDS];
   const accountingPerms = perms?.accounting ?? {};
-  return base.filter((tab) => {
-    const featureKey = TAB_TO_FEATURE[tab];
-    const access = accountingPerms[featureKey];
+  return ACCOUNTING_TAB_IDS.filter((tab) => {
+    if (ALWAYS_VISIBLE_TABS.has(tab)) return true;
+    const access = accountingPerms[TAB_TO_FEATURE[tab]];
     return access === 'view' || access === 'edit';
   });
+}
+
+/**
+ * Whether the user may edit (mutate) within an accounting tab. Admins bypass;
+ * everyone else needs an explicit `edit` grant on the tab's feature
+ * (`overview` is read-only unless granted).
+ */
+export function canEditAccountingTab(
+  tab: AccountingTabId,
+  roles: readonly string[],
+  perms: FeaturePermissionsMap | null | undefined,
+): boolean {
+  if (roles.some((r) => BYPASS_PERMS_ROLES.has(r))) return true;
+  return perms?.accounting?.[TAB_TO_FEATURE[tab]] === 'edit';
 }
 
 export function canAccessAccountingTab(tab: string, roles: readonly string[]): tab is AccountingTabId {
