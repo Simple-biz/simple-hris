@@ -26,8 +26,11 @@ export interface BonusDef {
   amount?: number;
   /** For kind === 'formula' (Excel-style syntax). */
   formula?: string;
-  /** ISO timestamp, stamped client-side at create/edit time. */
-  updatedAt?: string;
+  /** Author attribution (set server-side from the session). */
+  createdBy?: string | null;
+  createdAt?: string | null;
+  updatedBy?: string | null;
+  updatedAt?: string | null;
 }
 
 export type AssignmentScope = 'department' | 'employee';
@@ -43,6 +46,9 @@ export interface BonusAssignment {
   employeeEmail?: string;
   /** Display name captured at assignment time. */
   employeeName?: string;
+  /** Author attribution (set server-side from the session). */
+  createdBy?: string | null;
+  createdAt?: string | null;
 }
 
 export interface BonusCatalog {

@@ -10,11 +10,12 @@
 //   2. Assignments-- attach a library bonus to a whole department ("common")
 //                    or to a specific employee.
 //
-// Standalone authoring tool: it persists to app_settings (bonus.catalog) and
-// does NOT yet feed the Payroll Wizard. Wiring computed amounts into payroll is
-// a deliberate later step.
+// Persistence: dedicated tables (bonus_catalog_bonuses + bonus_catalog_assignments)
+// via /api/bonus-catalog. Each row records its creator + timestamps, and the tab
+// subscribes to Supabase Realtime so a teammate's new bonus appears live.
+// Standalone authoring tool: it does NOT yet feed the Payroll Wizard.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import {
@@ -23,7 +24,6 @@ import {
   Pencil,
   Calculator,
   Code2,
-  Save,
   Building2,
   User,
   Sparkles,
@@ -36,13 +36,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
+import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
-  BONUS_CATALOG_KEY,
-  emptyCatalog,
-  parseCatalog,
   newId,
   validateBonus,
-  type BonusCatalog,
   type BonusDef,
   type BonusAssignment,
 } from '@/lib/bonus-catalog/types';
@@ -60,6 +57,24 @@ function money(n: number): string {
 
 /** Shared easing — matches the app's tab transition (App.tsx). */
 const EASE = [0.22, 1, 0.36, 1] as const;
+
+/** Short "name part" of an email for compact attribution chips. */
+function shortWho(email?: string | null): string {
+  if (!email) return 'someone';
+  const at = email.indexOf('@');
+  return at > 0 ? email.slice(0, at) : email;
+}
+
+/** Compact "Added by X" attribution line. */
+function ByLine({ who }: { who?: string | null }) {
+  if (!who) return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-[10.5px] text-zinc-400" title={who}>
+      <User className="h-3 w-3" />
+      {who === 'migrated' ? 'imported' : `by ${shortWho(who)}`}
+    </span>
+  );
+}
 
 /** Smoothly expands/collapses its children (height + opacity). */
 function Expand({ show, children }: { show: boolean; children: React.ReactNode }) {
@@ -101,57 +116,139 @@ function buildRoster(initialData?: InitialAccountingData | null): RosterEntry[] 
 // ---------------------------------------------------------------------------
 
 export default function BonusCatalog({ initialData }: { initialData?: InitialAccountingData | null }) {
-  const [catalog, setCatalog] = useState<BonusCatalog>(emptyCatalog());
+  const [bonuses, setBonuses] = useState<BonusDef[]>([]);
+  const [assignments, setAssignments] = useState<BonusAssignment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
   const [tab, setTab] = useState<'library' | 'assignments'>('library');
+  const instanceId = useId();
 
   const roster = useMemo(() => buildRoster(initialData), [initialData]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/app-settings?key=${encodeURIComponent(BONUS_CATALOG_KEY)}`, {
-          cache: 'no-store',
-        });
-        const json = (await res.json()) as { value: string | null };
-        if (!cancelled) setCatalog(parseCatalog(json.value));
-      } catch {
-        if (!cancelled) setCatalog(emptyCatalog());
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const mutate = useCallback((next: BonusCatalog) => {
-    setCatalog(next);
-    setDirty(true);
-  }, []);
-
-  const save = useCallback(async () => {
-    setSaving(true);
+  const refetch = useCallback(async () => {
     try {
-      const res = await fetch('/api/app-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: BONUS_CATALOG_KEY, value: JSON.stringify(catalog) }),
-      });
-      const json = (await res.json()) as { error: string | null };
-      if (json.error) throw new Error(json.error);
-      setDirty(false);
-      toast.success('Bonus catalog saved');
-    } catch (e) {
-      toast.error(`Could not save: ${e instanceof Error ? e.message : 'unknown error'}`);
+      const res = await fetch('/api/bonus-catalog', { cache: 'no-store' });
+      const json = (await res.json()) as {
+        bonuses?: BonusDef[];
+        assignments?: BonusAssignment[];
+        error?: string | null;
+      };
+      setBonuses(json.bonuses ?? []);
+      setAssignments(json.assignments ?? []);
+    } catch {
+      /* keep prior state */
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
-  }, [catalog]);
+  }, []);
+
+  // Initial load.
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  // Realtime: a teammate's create/edit/delete refetches the list live.
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const channel = supabase
+      .channel(`bonus-catalog${instanceId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bonus_catalog_bonuses' }, () => void refetch())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bonus_catalog_assignments' }, () => void refetch())
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [refetch, instanceId]);
+
+  // Refetch when the tab regains focus (covers Realtime gaps).
+  useEffect(() => {
+    const onFocus = () => void refetch();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refetch]);
+
+  const failMsg = (e: unknown) => (e instanceof Error ? e.message : 'unknown error');
+
+  const upsertBonus = useCallback(
+    async (bonus: BonusDef) => {
+      // Optimistic: reflect immediately, reconcile from the server row.
+      setBonuses((prev) =>
+        prev.some((b) => b.id === bonus.id)
+          ? prev.map((b) => (b.id === bonus.id ? { ...b, ...bonus } : b))
+          : [...prev, bonus],
+      );
+      try {
+        const res = await fetch('/api/bonus-catalog', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'bonus', bonus }),
+        });
+        const json = (await res.json()) as { row?: BonusDef; error: string | null };
+        if (json.error) throw new Error(json.error);
+        if (json.row) setBonuses((prev) => prev.map((b) => (b.id === json.row!.id ? json.row! : b)));
+        toast.success('Bonus saved');
+      } catch (e) {
+        toast.error(`Could not save bonus: ${failMsg(e)}`);
+        void refetch();
+      }
+    },
+    [refetch],
+  );
+
+  const deleteBonus = useCallback(
+    async (id: string) => {
+      setBonuses((prev) => prev.filter((b) => b.id !== id));
+      setAssignments((prev) => prev.filter((a) => a.bonusId !== id));
+      try {
+        const res = await fetch(`/api/bonus-catalog?type=bonus&id=${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        });
+        const json = (await res.json()) as { error: string | null };
+        if (json.error) throw new Error(json.error);
+      } catch (e) {
+        toast.error(`Could not delete bonus: ${failMsg(e)}`);
+        void refetch();
+      }
+    },
+    [refetch],
+  );
+
+  const addAssignment = useCallback(
+    async (a: BonusAssignment) => {
+      setAssignments((prev) => [...prev, a]);
+      try {
+        const res = await fetch('/api/bonus-catalog', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'assignment', assignment: a }),
+        });
+        const json = (await res.json()) as { row?: BonusAssignment; error: string | null };
+        if (json.error) throw new Error(json.error);
+        if (json.row) setAssignments((prev) => prev.map((x) => (x.id === json.row!.id ? json.row! : x)));
+      } catch (e) {
+        toast.error(`Could not assign bonus: ${failMsg(e)}`);
+        void refetch();
+      }
+    },
+    [refetch],
+  );
+
+  const removeAssignment = useCallback(
+    async (id: string) => {
+      setAssignments((prev) => prev.filter((x) => x.id !== id));
+      try {
+        const res = await fetch(`/api/bonus-catalog?type=assignment&id=${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        });
+        const json = (await res.json()) as { error: string | null };
+        if (json.error) throw new Error(json.error);
+      } catch (e) {
+        toast.error(`Could not remove assignment: ${failMsg(e)}`);
+        void refetch();
+      }
+    },
+    [refetch],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[#fafaf8] dark:bg-[#0d1117]">
@@ -168,20 +265,13 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               department or a specific employee.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {dirty && (
-              <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">Unsaved changes</span>
-            )}
-            <Button
-              type="button"
-              onClick={save}
-              disabled={saving || !dirty}
-              className="gap-2 bg-orange-500 text-white hover:bg-orange-600"
-            >
-              <Save className="h-4 w-4" />
-              {saving ? 'Saving...' : 'Save'}
-            </Button>
-          </div>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
+            Live &middot; changes save automatically
+          </span>
         </div>
 
         {/* Inner tabs */}
@@ -202,9 +292,9 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
             >
               <t.icon className="h-4 w-4" />
               {t.label}
-              {t.id === 'library' && catalog.bonuses.length > 0 && (
+              {t.id === 'library' && bonuses.length > 0 && (
                 <span className="ml-1 rounded-full bg-orange-200/70 px-1.5 text-[10px] font-bold text-orange-800 dark:bg-blue-900/60 dark:text-blue-200">
-                  {catalog.bonuses.length}
+                  {bonuses.length}
                 </span>
               )}
             </button>
@@ -233,7 +323,12 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               transition={{ duration: 0.24, ease: EASE }}
               className="h-full"
             >
-              <LibraryTab catalog={catalog} onChange={mutate} />
+              <LibraryTab
+                bonuses={bonuses}
+                assignments={assignments}
+                onUpsert={upsertBonus}
+                onDelete={deleteBonus}
+              />
             </motion.div>
           ) : (
             <motion.div
@@ -244,7 +339,13 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               transition={{ duration: 0.24, ease: EASE }}
               className="h-full"
             >
-              <AssignmentsTab catalog={catalog} onChange={mutate} roster={roster} />
+              <AssignmentsTab
+                bonuses={bonuses}
+                assignments={assignments}
+                roster={roster}
+                onAdd={addAssignment}
+                onRemove={removeAssignment}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -257,13 +358,23 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 // Library tab
 // ---------------------------------------------------------------------------
 
-function LibraryTab({ catalog, onChange }: { catalog: BonusCatalog; onChange: (c: BonusCatalog) => void }) {
+function LibraryTab({
+  bonuses,
+  assignments,
+  onUpsert,
+  onDelete,
+}: {
+  bonuses: BonusDef[];
+  assignments: BonusAssignment[];
+  onUpsert: (b: BonusDef) => void;
+  onDelete: (id: string) => void;
+}) {
   const [editing, setEditing] = useState<BonusDef | null>(null);
   const [creating, setCreating] = useState(false);
 
   const assignmentCount = useCallback(
-    (bonusId: string) => catalog.assignments.filter((a) => a.bonusId === bonusId).length,
-    [catalog.assignments],
+    (bonusId: string) => assignments.filter((a) => a.bonusId === bonusId).length,
+    [assignments],
   );
 
   const startCreate = () => {
@@ -272,29 +383,18 @@ function LibraryTab({ catalog, onChange }: { catalog: BonusCatalog; onChange: (c
   };
 
   const upsert = (bonus: BonusDef) => {
-    const exists = catalog.bonuses.some((b) => b.id === bonus.id);
-    const stamped = { ...bonus, updatedAt: new Date().toISOString() };
-    const bonuses = exists
-      ? catalog.bonuses.map((b) => (b.id === bonus.id ? stamped : b))
-      : [...catalog.bonuses, stamped];
-    onChange({ ...catalog, bonuses });
+    onUpsert(bonus);
     setEditing(null);
     setCreating(false);
   };
 
-  const remove = (bonusId: string) => {
-    onChange({
-      ...catalog,
-      bonuses: catalog.bonuses.filter((b) => b.id !== bonusId),
-      assignments: catalog.assignments.filter((a) => a.bonusId !== bonusId),
-    });
-  };
+  const remove = (bonusId: string) => onDelete(bonusId);
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          {catalog.bonuses.length} bonus{catalog.bonuses.length === 1 ? '' : 'es'} defined
+          {bonuses.length} bonus{bonuses.length === 1 ? '' : 'es'} defined
         </p>
         <Button type="button" onClick={startCreate} className="gap-2 bg-orange-500 text-white hover:bg-orange-600">
           <Plus className="h-4 w-4" />
@@ -318,7 +418,7 @@ function LibraryTab({ catalog, onChange }: { catalog: BonusCatalog; onChange: (c
         )}
       </Expand>
 
-      {catalog.bonuses.length === 0 && !creating ? (
+      {bonuses.length === 0 && !creating ? (
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: EASE }}>
           <EmptyState
             icon={Sparkles}
@@ -329,7 +429,7 @@ function LibraryTab({ catalog, onChange }: { catalog: BonusCatalog; onChange: (c
       ) : (
         <motion.div layout className="grid gap-3 sm:grid-cols-2">
           <AnimatePresence mode="popLayout">
-            {catalog.bonuses.map((b, i) => (
+            {bonuses.map((b, i) => (
               <motion.div
                 key={b.id}
                 layout
@@ -402,8 +502,9 @@ function BonusCard({
       </div>
 
       <div className="mt-3 flex items-center justify-between">
-        <span className="text-[11px] text-zinc-400">
+        <span className="flex items-center gap-2 text-[11px] text-zinc-400">
           {assignments} assignment{assignments === 1 ? '' : 's'}
+          <ByLine who={bonus.createdBy} />
         </span>
         {bonus.kind === 'formula' && (
           <button
@@ -708,28 +809,32 @@ function InlineTester({ formula }: { formula: string }) {
 // ---------------------------------------------------------------------------
 
 function AssignmentsTab({
-  catalog,
-  onChange,
+  bonuses,
+  assignments,
   roster,
+  onAdd,
+  onRemove,
 }: {
-  catalog: BonusCatalog;
-  onChange: (c: BonusCatalog) => void;
+  bonuses: BonusDef[];
+  assignments: BonusAssignment[];
   roster: RosterEntry[];
+  onAdd: (a: BonusAssignment) => void;
+  onRemove: (id: string) => void;
 }) {
   const [selectedDept, setSelectedDept] = useState<string>(DEPARTMENTS[0]?.key ?? '');
   const [deptSearch, setDeptSearch] = useState('');
 
   const bonusById = useMemo(() => {
     const m = new Map<string, BonusDef>();
-    for (const b of catalog.bonuses) m.set(b.id, b);
+    for (const b of bonuses) m.set(b.id, b);
     return m;
-  }, [catalog.bonuses]);
+  }, [bonuses]);
 
   const countsByDept = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const a of catalog.assignments) m[a.departmentKey] = (m[a.departmentKey] ?? 0) + 1;
+    for (const a of assignments) m[a.departmentKey] = (m[a.departmentKey] ?? 0) + 1;
     return m;
-  }, [catalog.assignments]);
+  }, [assignments]);
 
   const filteredDepts = useMemo(() => {
     const q = deptSearch.trim().toLowerCase();
@@ -738,18 +843,17 @@ function AssignmentsTab({
 
   const dept = DEPARTMENTS.find((d) => d.key === selectedDept) ?? DEPARTMENTS[0];
 
-  const commonForDept = catalog.assignments.filter(
+  const commonForDept = assignments.filter(
     (a) => a.scope === 'department' && a.departmentKey === selectedDept,
   );
-  const employeeForDept = catalog.assignments.filter(
+  const employeeForDept = assignments.filter(
     (a) => a.scope === 'employee' && a.departmentKey === selectedDept,
   );
 
-  const addAssignment = (a: BonusAssignment) => onChange({ ...catalog, assignments: [...catalog.assignments, a] });
-  const removeAssignment = (id: string) =>
-    onChange({ ...catalog, assignments: catalog.assignments.filter((x) => x.id !== id) });
+  const addAssignment = (a: BonusAssignment) => onAdd(a);
+  const removeAssignment = (id: string) => onRemove(id);
 
-  if (catalog.bonuses.length === 0) {
+  if (bonuses.length === 0) {
     return (
       <div className="mx-auto max-w-2xl p-6">
         <EmptyState
@@ -836,7 +940,7 @@ function AssignmentsTab({
           subtitle="Applied to everyone in this department."
         >
           <CommonBonusAdder
-            bonuses={catalog.bonuses}
+            bonuses={bonuses}
             existingBonusIds={new Set(commonForDept.map((a) => a.bonusId))}
             onAdd={(bonusId) =>
               addAssignment({ id: newId('asg'), bonusId, scope: 'department', departmentKey: selectedDept })
@@ -856,7 +960,11 @@ function AssignmentsTab({
                     exit={{ opacity: 0, x: 12, scale: 0.96 }}
                     transition={{ duration: 0.2, ease: EASE }}
                   >
-                    <AssignmentRow bonus={bonusById.get(a.bonusId)} onRemove={() => removeAssignment(a.id)} />
+                    <AssignmentRow
+                      bonus={bonusById.get(a.bonusId)}
+                      by={a.createdBy}
+                      onRemove={() => removeAssignment(a.id)}
+                    />
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -871,7 +979,7 @@ function AssignmentsTab({
           subtitle="Assigned to one person only."
         >
           <EmployeeBonusAdder
-            bonuses={catalog.bonuses}
+            bonuses={bonuses}
             roster={roster}
             deptName={dept?.name ?? ''}
             onAdd={(emp, bonusId) =>
@@ -902,6 +1010,7 @@ function AssignmentsTab({
                     <AssignmentRow
                       bonus={bonusById.get(a.bonusId)}
                       who={a.employeeName || a.employeeEmail}
+                      by={a.createdBy}
                       onRemove={() => removeAssignment(a.id)}
                     />
                   </motion.div>
@@ -1041,10 +1150,12 @@ function EmployeeBonusAdder({
 function AssignmentRow({
   bonus,
   who,
+  by,
   onRemove,
 }: {
   bonus: BonusDef | undefined;
   who?: string;
+  by?: string | null;
   onRemove: () => void;
 }) {
   return (
@@ -1064,6 +1175,7 @@ function AssignmentRow({
           {bonus?.kind === 'formula' && (
             <code className="truncate font-mono text-[11px] text-zinc-500">{bonus.formula}</code>
           )}
+          <ByLine who={by} />
         </div>
       </div>
       <IconButton title="Remove" onClick={onRemove} danger>
