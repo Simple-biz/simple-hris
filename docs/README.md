@@ -35,7 +35,10 @@ docs/
 | [paystub-dispatch.md](./features/paystub-dispatch.md) | Paystub generation + dispatch |
 | [payroll-wizard-final-pay.md](./features/payroll-wizard-final-pay.md) | Initial Calculation → Final pay: formula, Adj. (signed delta) + Orphanage columns, Sun→Sat pay weeks + cross-upload merge, MESA flag |
 | [bonus-calculator.md](./features/bonus-calculator.md) | Department + HSL bonus calculators |
+| [bonus-catalog.md](./features/bonus-catalog.md) | Reusable custom bonuses (flat or Excel-formula engine), DB-backed, assigned per-dept or per-employee |
 | [csv-imports.md](./features/csv-imports.md) | CSV ingest + Google Sheet sync (Admin tab, endpoints, env, schema) |
+| [rbac-feature-permissions.md](./features/rbac-feature-permissions.md) | Role grants + per-tab Hidden/View/Edit overlay; Admin-provisioned, enforced across all views + API; force-logout/session reset |
+| [accounting-cobrowse.md](./features/accounting-cobrowse.md) | Live "Observe" screen mirroring in Accounting (rrweb over Realtime), built on the collab layer |
 | [orphanage-dispute-flow.md](./features/orphanage-dispute-flow.md) | Orphanage-visit / PAB dispute flow |
 | [delete-authorization.md](./features/delete-authorization.md) | Who can delete what, and the audit trail |
 | [system-diagnostics.md](./features/system-diagnostics.md) | Admin diagnostics service map + probes |

@@ -14,9 +14,12 @@ import {
   useSpring,
   useTransform,
 } from 'motion/react';
+import { Eye, EyeOff } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { normEmail } from '@/lib/email/norm-email';
+import CobrowseSurface from './CobrowseSurface';
+import { useCobrowse } from '@/hooks/useCobrowse';
 
 /**
  * Live "who's in Accounting" collaboration layer.
@@ -278,6 +281,7 @@ function RailAvatar({
         </div>
       )}
 
+      <div className="relative">
       <button
         type="button"
         onClick={onToggle}
@@ -325,6 +329,28 @@ function RailAvatar({
         {/* Online badge */}
         <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 shadow dark:border-zinc-900" />
       </button>
+
+      {/* Always-visible Observe affordance: an eye badge pinned to the avatar's
+          bottom-left (mirrors the online dot). Click to start/stop following
+          this person -- no need to open the name card first. */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (observing) onStopObserve();
+          else onObserve();
+        }}
+        title={observing ? `Stop observing ${display}` : `Observe ${display}`}
+        aria-label={observing ? `Stop observing ${display}` : `Observe ${display}`}
+        aria-pressed={observing}
+        className={
+          'absolute -bottom-1 -left-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white shadow outline-none transition-transform hover:scale-110 focus-visible:ring-2 focus-visible:ring-orange-400 dark:border-zinc-900 ' +
+          (observing ? 'bg-rose-500 text-white' : 'bg-orange-500 text-white')
+        }
+      >
+        {observing ? <EyeOff className="h-2.5 w-2.5" /> : <Eye className="h-2.5 w-2.5" />}
+      </button>
+      </div>
     </div>
   );
 }
@@ -334,12 +360,9 @@ interface Props {
   selfEmail: string | null | undefined;
   section: string;
   containerRef: React.RefObject<HTMLElement | null>;
-  /** Switches the viewer's active Accounting tab. Used by Observe mode to
-   *  mirror the observed peer's section. */
-  onNavigate?: (section: string) => void;
 }
 
-export default function AccountingCollabLayer({ selfEmail, section, containerRef, onNavigate }: Props) {
+export default function AccountingCollabLayer({ selfEmail, section, containerRef }: Props) {
   const { data: session } = useSession();
   const normSelf = useMemo(() => (selfEmail ? normEmail(selfEmail) ?? selfEmail.trim().toLowerCase() : null), [selfEmail]);
 
@@ -556,36 +579,37 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
     return () => clearInterval(t);
   }, []);
 
-  // --- Observe (driver-mode follow) -----------------------------------------
-  // Keep onNavigate in a ref so the follow effect below can fire without
-  // re-subscribing whenever App re-creates the callback.
-  const onNavigateRef = useRef(onNavigate);
-  onNavigateRef.current = onNavigate;
-
+  // --- Observe (live screen mirror) -----------------------------------------
   // The peer we're observing, resolved from the live presence roster.
   const observedPeer = useMemo(
     () => (observedEmail ? peers.find((p) => p.email === observedEmail) ?? null : null),
     [observedEmail, peers],
   );
 
-  // Mirror the observed peer's section into our own active tab. Runs on initial
-  // observe and again every time their section changes (they navigate). If the
-  // observed peer drops off the roster (left Accounting), stop observing.
+  // Stop observing if the peer drops off the roster (left Accounting). We keep
+  // observing across their tab switches — the mirror streams their whole screen
+  // regardless of which tab they're on.
   useEffect(() => {
-    if (!observedEmail) return;
-    if (!observedPeer) {
+    if (observedEmail && peers.length > 0 && !peers.some((p) => p.email === observedEmail)) {
       setObservedEmail(null);
-      return;
     }
-    if (observedPeer.section && observedPeer.section !== sectionRef.current) {
-      onNavigateRef.current?.(observedPeer.section);
-    }
-  }, [observedEmail, observedPeer, section]);
+  }, [observedEmail, peers]);
 
   const observedColor = observedEmail ? hashEmail(observedEmail) : null;
   const observedDisplay = observedPeer
     ? (observedPeer.name && observedPeer.name.trim()) || toLabel(observedPeer.email)
-    : '';
+    : observedEmail
+      ? toLabel(observedEmail)
+      : '';
+
+  // Co-browse runs for every accounting user: the DRIVER half (record + stream
+  // when watched) must always be live so this person is observable even when
+  // they aren't observing anyone. The OBSERVER half activates when observedEmail
+  // is set.
+  const { setReplayContainer, status: cobrowseStatus } = useCobrowse({
+    selfEmail: normSelf,
+    observedEmail,
+  });
 
   if (!normSelf) return null;
 
@@ -667,44 +691,17 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
         )}
       </AnimatePresence>
 
-      {/* Observe-mode banner (driver-mode analogue of the Payroll Wizard) */}
+      {/* Live screen mirror of the observed peer (full-screen overlay). */}
       <AnimatePresence>
-        {observedPeer && (
-          <motion.div
-            className="pointer-events-none absolute left-1/2 top-3 z-[70] flex -translate-x-1/2 items-center gap-3 rounded-full px-4 py-2 shadow-xl"
-            style={{
-              background: 'rgba(9,9,11,0.92)',
-              backdropFilter: 'blur(12px)',
-              border: `1px solid ${observedColor?.bg ?? '#f97316'}66`,
-              boxShadow: `0 0 16px ${observedColor?.glow ?? 'rgba(249,115,22,0.55)'}, 0 4px 16px rgba(0,0,0,0.4)`,
-            }}
-            initial={{ opacity: 0, y: -12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
-            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <span className="relative flex h-2.5 w-2.5 shrink-0">
-              <span
-                className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-70"
-                style={{ background: observedColor?.bg ?? '#f97316' }}
-              />
-              <span
-                className="relative inline-flex h-2.5 w-2.5 rounded-full"
-                style={{ background: observedColor?.bg ?? '#f97316' }}
-              />
-            </span>
-            <span className="whitespace-nowrap text-[13px] font-medium leading-none text-zinc-100">
-              Observing <span className="font-semibold text-white">{observedDisplay}</span>
-              <span className="text-zinc-400"> &middot; {sectionLabel(observedPeer.section)}</span>
-            </span>
-            <button
-              type="button"
-              onClick={() => setObservedEmail(null)}
-              className="pointer-events-auto rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-white/20"
-            >
-              Stop observing
-            </button>
-          </motion.div>
+        {observedEmail && (
+          <CobrowseSurface
+            key={observedEmail}
+            driverName={observedDisplay}
+            accent={observedColor ?? { bg: '#f97316', glow: 'rgba(249,115,22,0.55)' }}
+            status={cobrowseStatus}
+            setReplayContainer={setReplayContainer}
+            onStop={() => setObservedEmail(null)}
+          />
         )}
       </AnimatePresence>
     </>

@@ -2036,7 +2036,19 @@ const pabMetricsCacheKey = (
 ): string =>
   `${TAB_CACHE_KEYS.overviewPabMetrics}:${file ?? '__latest__'}:${monthFilter || '__none__'}:${employeeCount}:${hslKey}`;
 
+// Whether this module has already mounted once on the client. The tab-cache is
+// sessionStorage-backed, so it is unavailable during SSR but populated on the
+// client after a reload — seeding state from it on the very first (hydration)
+// render therefore diverges from the server HTML and trips a React hydration
+// mismatch. We skip the cache on that first render only; every later remount
+// (e.g. Accounting tab switches, which fully unmount/remount this component)
+// seeds freely so the instant-paint behaviour is preserved.
+let hasMountedOnce = false;
+
 export default function Overview({ onViewRates, onNavigate, initialData }: OverviewProps = {}) {
+  React.useEffect(() => {
+    hasMountedOnce = true;
+  }, []);
   const prefetchedRatesRef = React.useRef<import('@/lib/supabase/employee-hourly-rates').EmployeeHourlyRateRow[] | null>(
     initialData?.hourlyRates ?? null,
   );
@@ -2045,15 +2057,21 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
   // selectedSourceFile defaults to sourceFiles[0], monthFilter defaults to ''.
   const initialEmployeesSeed = initialData?.employees ?? [];
   const initialSourceFileSeed = initialData?.sourceFiles?.[0] ?? null;
-  const payoutSeed = getTabCache<CachedPayout>(payoutCacheKey(initialSourceFileSeed));
-  const pabMetricsSeed = getTabCache<CachedPabMetrics>(
-    pabMetricsCacheKey(
-      initialSourceFileSeed,
-      '',
-      initialEmployeesSeed.length,
-      hslEmailsKeyFromEmployees(initialEmployeesSeed),
-    ),
-  );
+  // Gate the (client-only) tab-cache reads behind the first-mount flag so the
+  // hydration render matches the server, which has no access to sessionStorage.
+  const payoutSeed = hasMountedOnce
+    ? getTabCache<CachedPayout>(payoutCacheKey(initialSourceFileSeed))
+    : undefined;
+  const pabMetricsSeed = hasMountedOnce
+    ? getTabCache<CachedPabMetrics>(
+        pabMetricsCacheKey(
+          initialSourceFileSeed,
+          '',
+          initialEmployeesSeed.length,
+          hslEmailsKeyFromEmployees(initialEmployeesSeed),
+        ),
+      )
+    : undefined;
   const [pabCalEmail, setPabCalEmail] = useState<string | null>(null);
   const [pabCalIsHsl, setPabCalIsHsl] = useState(false);
   const [employees, setEmployees] = useState<EmployeeRow[]>(initialData?.employees ?? []);
