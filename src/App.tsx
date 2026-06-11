@@ -25,6 +25,7 @@ import { canEditFeature, type FeaturePermissionsMap } from '@/lib/rbac/feature-p
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import AccountingMesa from '@/components/payroll/AccountingMesa';
+import AccountingCollabLayer from '@/components/accounting/AccountingCollabLayer';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -106,6 +107,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
     roles.includes('admin') || canEditFeature(featurePerms, 'accounting', 'notifications');
 
   const tabDirRef = useRef<1 | -1>(1);
+  const mainRef = useRef<HTMLElement | null>(null);
 
   const navigate = (tab: string) => {
     // Only gate once roles + feature-perms have loaded. Before then everything
@@ -210,7 +212,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
         />
       )}
       <Sidebar activeTab={activeTab} setActiveTab={navigate} mobileOpen={mobileNavOpen} />
-      <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <main ref={mainRef} className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-orange-100 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-blue-950/60 dark:bg-[#0d1117]/95 md:hidden">
           <Button
             type="button"
@@ -249,6 +251,11 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
           </AnimatePresence>
         </div>
         <AppFooter />
+        <AccountingCollabLayer
+          selfEmail={sessionEmail}
+          section={activeTab}
+          containerRef={mainRef}
+        />
       </main>
       <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>
