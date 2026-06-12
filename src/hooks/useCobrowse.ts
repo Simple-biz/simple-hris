@@ -108,6 +108,7 @@ export function useCobrowse({ selfEmail, observedEmail }: Args): Result {
     const s = JSON.stringify(batch);
     const eid = ++eidRef.current;
     const n = Math.ceil(s.length / CHUNK_SIZE) || 1;
+    log('flush → eid', eid, 'events', batch.length, 'types', batch.map((e: AnyEvent) => e?.type).join('/'), 'chunks', n);
     for (let i = 0; i < n; i++) {
       sendRef.current({ t: 'ev', from: normSelf, eid, i, n, s: s.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE) });
     }
@@ -226,14 +227,15 @@ export function useCobrowse({ selfEmail, observedEmail }: Args): Result {
       if (!startedRef.current && pendingMetaRef.current) {
         initReplayer(pendingMetaRef.current, ev);
       } else if (startedRef.current) {
-        try { replayerRef.current?.addEvent(ev); } catch { /* ignore */ }
+        try { replayerRef.current?.addEvent(ev); } catch (e) { log('addEvent(full) threw', e); }
       }
       return;
     }
     if (startedRef.current) {
-      try { replayerRef.current?.addEvent(ev); } catch { /* ignore */ }
+      try { replayerRef.current?.addEvent(ev); } catch (e) { log('addEvent threw', e); }
+    } else {
+      log('dropped event type', ev?.type, '(no baseline yet)');
     }
-    // else: incremental before a baseline snapshot — ignore.
   }, [destroyReplayer, initReplayer]);
 
   const handleIncomingEvent = useCallback((ev: AnyEvent) => {
@@ -257,8 +259,9 @@ export function useCobrowse({ selfEmail, observedEmail }: Args): Result {
     reassembleRef.current.delete(msg.eid);
     try {
       const events = JSON.parse(entry.parts.join('')) as AnyEvent[];
+      log('recv ← eid', msg.eid, 'events', events.length, 'types', events.map((e: AnyEvent) => e?.type).join('/'));
       for (const ev of events) handleIncomingEvent(ev);
-    } catch { /* corrupt batch — skip */ }
+    } catch (e) { log('recv parse FAILED eid', msg.eid, e); }
   }, [handleIncomingEvent]);
 
   // ============================ CHANNEL ============================
