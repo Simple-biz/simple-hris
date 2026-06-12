@@ -2270,6 +2270,8 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                           <UserCog className="size-3.5" />
                           Edit Profile
                         </Button>
+                        {/* HSL agents are paid from the HOGAN sheet, so their
+                            rates are read-only here; everyone else gets Edit Rates. */}
                         {activeProfileSummary?.hslRole ? (
                           <div
                             className="flex h-8 items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50/70 px-2.5 text-[11px] font-medium text-violet-700 dark:border-violet-900/50 dark:bg-violet-950/30 dark:text-violet-300"

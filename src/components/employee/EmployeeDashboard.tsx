@@ -43,8 +43,6 @@ import {
   groupDateColumnsByCalendarDay,
   pickPreferredHubstaffColumn,
   getCurrentPabMonth,
-  getLatestPabMonthFromColumns,
-  getPabMonthRange,
   inferPabMonthFromColumns,
   filterColumnGroupsByPabRange,
   parseColDate,
@@ -58,6 +56,10 @@ import {
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import type { PabCalendarDay } from '@/lib/hubstaff/calendar-column-dedupe';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
+import {
+  resolvePabMonthFromColumns,
+  resolvePabRangeForMonth,
+} from '@/lib/pab-period-settings';
 import {
   disputeGrantsPabForgiveness,
   disputeIsAwaitingResolution,
@@ -980,14 +982,14 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       const { start, end } = pabPeriodSettings.activeRange;
       groups = filterColumnGroupsByPabRange(groups, pabCols, start, end);
     } else {
-      // Manual file browse: PAB month inferred from the selected file, honoring
-      // that month's saved override if present.
+      // Manual file browse: PAB month inferred from the selected file. Override
+      // windows claim their dates first (so a CSV inside May's Jun–Jul override
+      // resolves to May), then that month's explicit window bounds the groups.
       const pabMonth =
-        getLatestPabMonthFromColumns(pabCols) ?? inferPabMonthFromColumns(pabCols);
+        resolvePabMonthFromColumns(pabCols, pabPeriodSettings.overrides)
+        ?? inferPabMonthFromColumns(pabCols);
       if (pabMonth) {
-        const mKey = `${pabMonth.year}-${String(pabMonth.month + 1).padStart(2, '0')}`;
-        const ov = pabPeriodSettings.overrides.get(mKey);
-        const { start, end } = ov ?? getPabMonthRange(pabMonth.year, pabMonth.month);
+        const { start, end } = resolvePabRangeForMonth(pabMonth.year, pabMonth.month, pabPeriodSettings.overrides);
         groups = filterColumnGroupsByPabRange(groups, pabCols, start, end);
       }
     }
@@ -1058,15 +1060,14 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       selCols = Object.keys(resolved);
     }
     const mergedCols = pabMergedColumns.length > 0 ? pabMergedColumns : columns;
+    const ovs = pabPeriodSettings.overrides;
     const pabMonth = selCols?.length
-      ? (getLatestPabMonthFromColumns(selCols)
+      ? (resolvePabMonthFromColumns(selCols, ovs)
           ?? inferPabMonthFromColumns(selCols)
           ?? getCurrentPabMonth())
-      : (getLatestPabMonthFromColumns(mergedCols) ?? getCurrentPabMonth());
+      : (resolvePabMonthFromColumns(mergedCols, ovs) ?? getCurrentPabMonth());
     if (!pabMonth) return null;
-    const mKey = `${pabMonth.year}-${String(pabMonth.month + 1).padStart(2, '0')}`;
-    const ov = pabPeriodSettings.overrides.get(mKey);
-    const { start, end } = ov ?? getPabMonthRange(pabMonth.year, pabMonth.month);
+    const { start, end } = resolvePabRangeForMonth(pabMonth.year, pabMonth.month, ovs);
     return { ...pabMonth, start, end, monthName: monthNames[pabMonth.month] ?? '' };
   }, [pabMergedColumns, columns, row, selectedFile, manualFileSelect, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides, pabPeriodSettings.activeMonthResolved, pabPeriodSettings.activeRange]);
 
@@ -1373,11 +1374,18 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     }
     if (!selectedFileWeek) return null;
     const ws = selectedFileWeek.start;
+    // The week's OWNING Monday. Hubstaff weeks start Sunday → the Monday is the next
+    // day (matches non-HSL Sun–Sat and HSL Mon–Sun, which drops the leading Sunday).
+    // Walking *back* from a Sunday wrongly pulled e.g. the May 31–Jun 6 week into May.
+    // Mirrors `member-monthly-pay.ts` and the wizard's `weekPabMonth`.
     const dow = ws.getDay();
-    const daysBackToMon = dow === 0 ? 6 : dow - 1;
-    const mon = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() - daysBackToMon);
-    return { pabMonth: { year: mon.getFullYear(), month: mon.getMonth() }, ...getPabMonthRange(mon.getFullYear(), mon.getMonth()) };
-  }, [selectedFileWeek, pabPeriodSettings.validManualRange]);
+    const mon =
+      dow === 0
+        ? new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + 1)
+        : new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() - (dow - 1));
+    const range = resolvePabRangeForMonth(mon.getFullYear(), mon.getMonth(), pabPeriodSettings.overrides);
+    return { pabMonth: { year: mon.getFullYear(), month: mon.getMonth() }, start: range.start, end: range.end };
+  }, [selectedFileWeek, pabPeriodSettings.validManualRange, pabPeriodSettings.overrides]);
 
   /** When viewing a specific weekly file, PAB attaches only to the final week of that week's PAB month. */
   const isFinalPabWeekForSelected = useMemo(() => {

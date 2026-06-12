@@ -56,8 +56,6 @@ import { normEmail } from '@/lib/email/norm-email';
 import { phpHourlyPayFromSeconds, splitRegularOvertimeSeconds } from '@/lib/payroll/money-php';
 import {
   getCurrentPabMonth,
-  getLatestPabMonthFromColumns,
-  getPabMonthRange,
   getPabMonthRangeSunSat,
   resolveCanonicalColumnsToIso,
   columnsAreAllCanonical,
@@ -67,7 +65,13 @@ import {
   parseColDate,
   groupDateColumnsByCalendarDay,
 } from '@/lib/hubstaff/calendar-column-dedupe';
-import { fetchPabPeriodSettings, isValidManualPabRange } from '@/lib/pab-period-settings';
+import {
+  fetchPabPeriodSettings,
+  isValidManualPabRange,
+  resolvePabMonthForDate,
+  resolvePabMonthFromColumns,
+  resolvePabRangeForMonth,
+} from '@/lib/pab-period-settings';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import {
   US_HOLIDAYS_ENABLED_KEY,
@@ -2711,15 +2715,26 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
               selectedSourceFile !== '__all__' &&
               selectedSourceFile !== newest;
             if (isCustomPick) {
+              // Resolve from the file's END date through override windows so a CSV
+              // inside a custom window (e.g. May → Jun 1–Jul 3) maps to that month.
               const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(selectedSourceFile);
-              if (m) pabMonth = { year: +m[1], month: +m[2] - 1 };
+              if (m) {
+                const endDate = new Date(+m[4], +m[5] - 1, +m[6]);
+                pabMonth = resolvePabMonthForDate(endDate, pabCfg.overrides);
+              }
             }
           }
-          if (!pabMonth) pabMonth = getLatestPabMonthFromColumns(cols) ?? getCurrentPabMonth();
-          const r = getPabMonthRange(pabMonth.year, pabMonth.month);
+          // Latest uploaded date, override-window-aware (custom month stays sticky).
+          if (!pabMonth) pabMonth = resolvePabMonthFromColumns(cols, pabCfg.overrides) ?? getCurrentPabMonth();
+          // Explicit window: saved override for this month, else canonical default.
+          // An override is a single range — it bounds both the Mon–Fri and Sun–Sat
+          // evaluations (it is authoritative for every department once set).
+          const r = resolvePabRangeForMonth(pabMonth.year, pabMonth.month, pabCfg.overrides);
           start = r.start;
           end = r.end;
-          const rSunSat = getPabMonthRangeSunSat(pabMonth.year, pabMonth.month);
+          const rSunSat = r.isOverride
+            ? { start: r.start, end: r.end }
+            : getPabMonthRangeSunSat(pabMonth.year, pabMonth.month);
           startSunSat = rSunSat.start;
           endSunSat = rSunSat.end;
           const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

@@ -738,11 +738,17 @@ State additions:
 
 **Data fetch:** `GET /api/time-adjustments?email={email}&from={monthStart}&to={monthEnd}&limit=200`. Scoped to the visible month so response size stays bounded.
 
+**PAB period awareness (added 2026-06-12):**
+
+My Hours reads `pab_period_overrides` (the Payroll Wizard's PAB Calendar period setter) in the same `/api/app-settings?keys=` batch as the US-holiday settings, stored in `pabOverrides: PabOverridesMap`. The `pabRange` memo resolves the viewed month's window to the saved override or, when absent, `getPabMonthRange(viewYear, viewMonth)` — identical to `usePabPeriodSettings.activeRange` and the server `member-monthly-pay.ts`. The header shows a **"PAB period: … – …"** line with a `custom` chip when an override is in effect, so the employee sees the exact window the wizard evaluates.
+
+`isPAEligible` now walks every Mon–Fri in `pabRange` (not the raw calendar month) and passes a day on ≥7h, a US holiday, an approved forgiving dispute, or (HSL) an overnight-qualifying pairing — matching the per-cell `effectivelyPasses` logic and the wizard. The authoritative PAB **amount** still comes from `payView.pab` (`member-monthly-pay`), which is override- and forgiveness-aware.
+
 **Pay Summary** (right column):
 - **Estimated take-home** = `regular pay + OT pay + PAB bonus + Tech bonus`. The breakdown line below shows the components separately.
 - **Total hours (month)** — every day from `monthStart` to `monthEnd`, weekends included.
 - **Regular / Overtime split** — Mon–Sun weeks within the month; only the portion of each week's total that exceeds **40h** routes to OT (no assumption that Mon–Fri hits 40h on its own).
-- **PAB Bonus row** — ₱5,000 when every weekday in the displayed month logged ≥7h.
+- **PAB Bonus row** — ₱5,000 when every weekday in the PAB period logged ≥7h (or was forgiven), once the period has closed.
 - **Tech Bonus row** — ₱1,850 once the displayed month has fully concluded (`monthHasEnded` gate, so future / current months show `· month not yet ended`). Mirrors `PayrollWizard.hasThirtyDaysByWeek` for the 30-day service check (gates against the **pay-period Monday** = salary Tuesday − 8d, not the salary Tuesday itself). When `employeeStartDate` is unknown (master-row miss / email drift), defaults optimistic — assume past 30 days.
 
 **Smooth transitions** (motion/react `AnimatePresence`):

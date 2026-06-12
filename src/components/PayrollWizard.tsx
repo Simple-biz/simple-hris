@@ -108,7 +108,7 @@ import {
 } from '@/lib/audit/client-format';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import { parseLocalDateFromIso, yearMonthKey } from '@/lib/pab-period-settings';
+import { parseLocalDateFromIso, resolvePabRangeForMonth, yearMonthKey } from '@/lib/pab-period-settings';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -977,6 +977,13 @@ export default function PayrollWizard({
   /** Local YYYY-MM-DD for the active month's start/end date inputs (mirrors the hook after each refresh). */
   const [pabStartLocal, setPabStartLocal] = useState('');
   const [pabEndLocal, setPabEndLocal] = useState('');
+  /**
+   * Month the PAB settings modal is currently inspecting/editing. The selector
+   * drives this directly so clicking a pill always moves the highlight + dates,
+   * independent of the loaded Hubstaff file's month. Null → defaults to the
+   * effective month (reset whenever the modal opens).
+   */
+  const [pabEditMonth, setPabEditMonth] = useState<{ year: number; month: number } | null>(null);
   /** Year shown in the 12-month strip (defaults to today's year; arrows shift ±1 year). */
   const [pabPickerYear, setPabPickerYear] = useState<number>(() => new Date().getFullYear());
   const [pabSaveState, setPabSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -1254,21 +1261,43 @@ export default function PayrollWizard({
   }, [pabPeriodSettings.overrides, pabPeriodSettings.activeRange.start, pabPeriodSettings.activeRange.end, effectiveMonthKey, effectiveMonth.year, effectiveMonth.month, fileMonth]);
 
   /**
-   * Sync hook → local form state whenever the hook refreshes (initial load, save, refresh button).
-   * Local inputs always reflect the active month's resolved range (override or default).
+   * Month the PAB settings modal edits: the user's picker selection when set,
+   * else the effective month. Drives the modal highlight, date inputs, readout,
+   * and the save/auto-calc/reset handlers — so clicking a pill always moves them,
+   * even while a Hubstaff file pins `effectiveMonth` to its own month.
+   */
+  const editMonth = useMemo(
+    () => pabEditMonth ?? { year: effectiveMonth.year, month: effectiveMonth.month },
+    [pabEditMonth, effectiveMonth.year, effectiveMonth.month],
+  );
+  const editMonthKey = yearMonthKey(editMonth.year, editMonth.month);
+  const editMonthRange = useMemo(
+    () => resolvePabRangeForMonth(editMonth.year, editMonth.month, pabPeriodSettings.overrides),
+    [editMonth.year, editMonth.month, pabPeriodSettings.overrides],
+  );
+
+  // Reset the modal's edit month to the effective month each time it opens, so it
+  // always lands on the currently-evaluated month rather than a stale selection.
+  useEffect(() => {
+    if (pabSettingsOpen) setPabEditMonth(null);
+  }, [pabSettingsOpen]);
+
+  /**
+   * Sync hook → local form state. Local inputs reflect the modal's edit month's
+   * resolved range (override or default), following picker selections live.
    */
   useEffect(() => {
     if (pabPeriodSettings.loading) return;
     const toIso = (d: Date): string =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    setPabStartLocal(toIso(effectiveMonthRange.start));
-    setPabEndLocal(toIso(effectiveMonthRange.end));
-    setPabPickerYear(effectiveMonth.year);
+    setPabStartLocal(toIso(editMonthRange.start));
+    setPabEndLocal(toIso(editMonthRange.end));
+    setPabPickerYear(editMonth.year);
   }, [
     pabPeriodSettings.loading,
-    effectiveMonthRange.start,
-    effectiveMonthRange.end,
-    effectiveMonth.year,
+    editMonthRange.start,
+    editMonthRange.end,
+    editMonth.year,
   ]);
 
   const savePabSetting = React.useCallback(async (key: string, value: string) => {
@@ -1341,9 +1370,22 @@ export default function PayrollWizard({
         toast.error('Invalid PAB period', { description: 'End date must be on or after start date.' });
         return;
       }
+      // The window must intersect the month it's keyed to — a PAB period can spill
+      // a few days into the next month (the canonical Friday can land there) but it
+      // can never be an entirely different month. Blocks e.g. saving June's
+      // Jun 1–Jul 3 default under the May key.
+      const mStart = new Date(editMonth.year, editMonth.month, 1);
+      const mEnd = new Date(editMonth.year, editMonth.month + 1, 0);
+      if (sd.getTime() > mEnd.getTime() || ed.getTime() < mStart.getTime()) {
+        const monthName = mStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        toast.error('PAB period is outside the selected month', {
+          description: `${monthName}'s window must include at least one day in ${monthName}. Pick dates inside the month, or use Auto-calc.`,
+        });
+        return;
+      }
       setPabSaveState('saving');
       try {
-        await writeOverridesBlob(effectiveMonthKey, { start, end });
+        await writeOverridesBlob(editMonthKey, { start, end });
         await pabPeriodSettings.refresh();
         setPabSaveState('saved');
         toast.success('PAB override saved', { description: `${start} → ${end}` });
@@ -1354,7 +1396,7 @@ export default function PayrollWizard({
         setTimeout(() => setPabSaveState('idle'), 3000);
       }
     },
-    [writeOverridesBlob, pabPeriodSettings, effectiveMonthKey, isReplay],
+    [writeOverridesBlob, pabPeriodSettings, editMonth.year, editMonth.month, editMonthKey, isReplay],
   );
 
   /**
@@ -1364,13 +1406,13 @@ export default function PayrollWizard({
    */
   const autoCalcActiveMonth = React.useCallback(async () => {
     if (isReplay) { toast.error('Replaying a past period is view-only'); return; }
-    const { year, month } = effectiveMonth;
+    const { year, month } = editMonth;
     const r = getPabMonthRange(year, month);
     const startIso = `${r.start.getFullYear()}-${String(r.start.getMonth() + 1).padStart(2, '0')}-${String(r.start.getDate()).padStart(2, '0')}`;
     const endIso = `${r.end.getFullYear()}-${String(r.end.getMonth() + 1).padStart(2, '0')}-${String(r.end.getDate()).padStart(2, '0')}`;
     setPabSaveState('saving');
     try {
-      await writeOverridesBlob(effectiveMonthKey, { start: startIso, end: endIso });
+      await writeOverridesBlob(editMonthKey, { start: startIso, end: endIso });
       await pabPeriodSettings.refresh();
       setPabSaveState('saved');
       toast.success('PAB dates auto-calculated', { description: `${startIso} → ${endIso}` });
@@ -1380,14 +1422,14 @@ export default function PayrollWizard({
       toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
       setTimeout(() => setPabSaveState('idle'), 3000);
     }
-  }, [pabPeriodSettings, writeOverridesBlob, effectiveMonth, effectiveMonthKey, isReplay]);
+  }, [pabPeriodSettings, writeOverridesBlob, editMonth, editMonthKey, isReplay]);
 
   /** Remove the override for the active month; the default `getPabMonthRange` takes over. */
   const resetActiveMonthOverride = React.useCallback(async () => {
     if (isReplay) { toast.error('Replaying a past period is view-only'); return; }
     setPabSaveState('saving');
     try {
-      await writeOverridesBlob(effectiveMonthKey, null);
+      await writeOverridesBlob(editMonthKey, null);
       await pabPeriodSettings.refresh();
       setPabSaveState('saved');
       toast.success('Override removed', { description: 'Reverted to the default Mon–Fri window for this month.' });
@@ -1397,13 +1439,16 @@ export default function PayrollWizard({
       toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
       setTimeout(() => setPabSaveState('idle'), 3000);
     }
-  }, [writeOverridesBlob, pabPeriodSettings, effectiveMonthKey, isReplay]);
+  }, [writeOverridesBlob, pabPeriodSettings, editMonthKey, isReplay]);
 
   /** Switch which month the Additions tab evaluates. */
   const selectPabMonth = React.useCallback(
     async (year: number, month: number) => {
       if (isReplay) { toast.error('Replaying a past period is view-only'); return; }
       const key = `${year}-${String(month + 1).padStart(2, '0')}`;
+      // Move the modal highlight + date readout to the clicked month immediately,
+      // independent of the loaded file's month.
+      setPabEditMonth({ year, month });
       setPabSaveState('saving');
       try {
         await savePabSetting('pab_period_active_month', key);
@@ -4022,17 +4067,21 @@ export default function PayrollWizard({
     const weekEndDate = week ? parseIso(week.end) : null;
     const weekPabMonth = (() => {
       if (!weekStartDate) return null;
+      // The week's OWNING Monday. Hubstaff files start on Sunday → the week's
+      // Monday is the next day (this matches both the non-HSL Sun–Sat week and the
+      // HSL Mon–Sun week, which drops the leading Sunday). A Monday start (no-file
+      // fallback / HSL) is already the Monday. Walking *back* from a Sunday (the old
+      // bug) wrongly attributed e.g. the May 31–Jun 6 week to May instead of June.
+      // Mirrors `member-monthly-pay.ts` → `weekMonForPab`.
       const dow = weekStartDate.getDay();
-      const daysBackToMon = dow === 0 ? 6 : dow - 1;
-      const mon = new Date(
-        weekStartDate.getFullYear(),
-        weekStartDate.getMonth(),
-        weekStartDate.getDate() - daysBackToMon,
-      );
+      const mon =
+        dow === 0
+          ? new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() + 1)
+          : new Date(weekStartDate.getFullYear(), weekStartDate.getMonth(), weekStartDate.getDate() - (dow - 1));
       return { year: mon.getFullYear(), month: mon.getMonth() };
     })();
     const weekPabRange = weekPabMonth
-      ? getPabMonthRange(weekPabMonth.year, weekPabMonth.month)
+      ? resolvePabRangeForMonth(weekPabMonth.year, weekPabMonth.month, pabPeriodSettings.overrides)
       : null;
 
     const isFinalPabWeek = (() => {
@@ -6698,8 +6747,28 @@ export default function PayrollWizard({
                 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
                 const today = new Date();
                 const todayPm = getCurrentPabMonth(today);
-                const activeKey = effectiveMonthKey;
-                const activeHasOverride = pabPeriodSettings.overrides.has(effectiveMonthKey);
+                // Highlight + editor follow the modal's edit month (the clicked pill),
+                // not the file-pinned effective month.
+                const activeKey = editMonthKey;
+                const activeHasOverride = pabPeriodSettings.overrides.has(editMonthKey);
+                /** Short, locale-friendly date (e.g. "May 4, 2026") for period readouts. */
+                const fmtPab = (d: Date) =>
+                  d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                // Resolved window for the edit month + its weekday count, shown as a
+                // plain-language readout so clicking a month tells you its exact PAB period.
+                const activeRangeResolved = editMonthRange;
+                const activeWeekdayCount = countMonFriInclusiveInRange(
+                  activeRangeResolved.start,
+                  activeRangeResolved.end,
+                );
+                // Flag a saved override that lands entirely outside its own month
+                // (e.g. June's Jun 1–Jul 3 stored under May) so it can be reset.
+                const editMStart = new Date(editMonth.year, editMonth.month, 1);
+                const editMEnd = new Date(editMonth.year, editMonth.month + 1, 0);
+                const rangeOutsideMonth =
+                  activeRangeResolved.isOverride &&
+                  (activeRangeResolved.start.getTime() > editMEnd.getTime() ||
+                    activeRangeResolved.end.getTime() < editMStart.getTime());
                 return (
                   <Dialog open={pabSettingsOpen} onOpenChange={setPabSettingsOpen}>
                     <DialogContent className="flex max-h-[92vh] w-[95vw] max-w-[1200px] flex-col gap-0 overflow-hidden border-zinc-200 bg-white p-0 dark:border-zinc-800 dark:bg-zinc-950 sm:!max-w-[1200px]">
@@ -6786,6 +6855,7 @@ export default function PayrollWizard({
                         const isActive = key === activeKey;
                         const isToday = pabPickerYear === todayPm.year && m === todayPm.month;
                         const selectable = hasData || isToday;
+                        const pillRange = resolvePabRangeForMonth(pabPickerYear, m, pabPeriodSettings.overrides);
                         return (
                           <button
                             key={key}
@@ -6795,7 +6865,7 @@ export default function PayrollWizard({
                             title={
                               !selectable
                                 ? `${lbl} ${pabPickerYear} — no Hubstaff data uploaded yet`
-                                : `${lbl} ${pabPickerYear}${hasOverride ? ' · custom range saved' : ''}${isToday ? ' · current PAB month' : ''}`
+                                : `${lbl} ${pabPickerYear} · PAB period ${fmtPab(pillRange.start)} – ${fmtPab(pillRange.end)} (${hasOverride ? 'custom override' : 'default Mon–Fri'})${isToday ? ' · current PAB month' : ''}`
                             }
                             className={cn(
                               'group flex min-w-0 items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition',
@@ -6838,9 +6908,40 @@ export default function PayrollWizard({
 
                     {/* Active-month editor */}
                     <div className="mt-3 border-t border-indigo-200/60 pt-3 dark:border-indigo-900/40">
+                      {/* Plain-language readout of the selected month's PAB period. */}
+                      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-indigo-50/70 px-3 py-2 text-xs dark:bg-indigo-950/30">
+                        <CalendarDays className="h-3.5 w-3.5 shrink-0 text-indigo-500" />
+                        <span className="font-semibold text-indigo-800 dark:text-indigo-200">
+                          {MONTH_NAMES[editMonth.month]} {editMonth.year} PAB period:
+                        </span>
+                        <span className="font-mono font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
+                          {fmtPab(activeRangeResolved.start)} – {fmtPab(activeRangeResolved.end)}
+                        </span>
+                        <span className="text-zinc-500 dark:text-zinc-400">
+                          · {activeWeekdayCount} weekday{activeWeekdayCount === 1 ? '' : 's'} evaluated
+                        </span>
+                        <span
+                          className={cn(
+                            'rounded px-1.5 py-px text-[10px] font-bold uppercase tracking-wide',
+                            activeRangeResolved.isOverride
+                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                              : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+                          )}
+                        >
+                          {activeRangeResolved.isOverride ? 'Custom override' : 'Default Mon–Fri'}
+                        </span>
+                        {rangeOutsideMonth && (
+                          <span
+                            className="rounded px-1.5 py-px text-[10px] font-bold uppercase tracking-wide bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
+                            title={`This saved window is entirely outside ${MONTH_NAMES[editMonth.month]} — it belongs to another month. Use Auto-calc or Reset override to fix it.`}
+                          >
+                            ⚠ Outside {MONTH_NAMES[editMonth.month]} — fix it
+                          </span>
+                        )}
+                      </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                         <span className="rounded-md bg-indigo-600/10 px-2 py-1 text-xs font-bold uppercase tracking-wide text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
-                          Active: {pabMonthRange.monthName} {pabMonthRange.year}
+                          Editing: {MONTH_NAMES[editMonth.month]} {editMonth.year}
                         </span>
                         <div className="flex min-w-0 items-center gap-2">
                           <Input

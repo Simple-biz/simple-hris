@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CalendarDays, CalendarHeart, ChevronLeft, ChevronRight, Hourglass, Loader2, RefreshCw, TrendingUp, Wallet } from 'lucide-react';
+import { CalendarDays, CalendarHeart, ChevronLeft, ChevronRight, Hourglass, Loader2, RefreshCw, TrendingUp, Trophy, Wallet } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -36,6 +36,12 @@ import {
   resolveCanonicalColumnsToIso,
   type PabCalendarDay,
 } from '@/lib/hubstaff/calendar-column-dedupe';
+import {
+  PAB_PERIOD_OVERRIDES_KEY,
+  parsePabPeriodOverrides,
+  resolvePabRangeForMonth,
+  type PabOverridesMap,
+} from '@/lib/pab-period-settings';
 import {
   disputeGrantsPabForgiveness,
   disputeIsAwaitingResolution,
@@ -489,6 +495,11 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
+  // Per-month PAB window overrides set by accounting in the Payroll Wizard's PAB
+  // Calendar period setter (`pab_period_overrides`). Empty map → fall back to the
+  // default `getPabMonthRange()` window. Keeps My Hours' PAB evaluation in lockstep
+  // with the wizard + Employee Dashboard.
+  const [pabOverrides, setPabOverrides] = useState<PabOverridesMap>(new Map());
   const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
   const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
@@ -810,7 +821,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     void (async () => {
       try {
         const res = await fetch(
-          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY].join(','))}`,
+          `/api/app-settings?keys=${encodeURIComponent([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY, PAB_PERIOD_OVERRIDES_KEY].join(','))}`,
           { cache: 'no-store' },
         );
         const json = (await res.json()) as { values?: Record<string, string | null> };
@@ -819,8 +830,12 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         const enabled =
           values[US_HOLIDAYS_ENABLED_KEY] == null ? true : values[US_HOLIDAYS_ENABLED_KEY] === 'true';
         setUsHolidayDates(getEnabledHolidayMap(parseUsHolidaysList(values[US_HOLIDAYS_LIST_KEY] ?? null), enabled));
+        setPabOverrides(parsePabPeriodOverrides(values[PAB_PERIOD_OVERRIDES_KEY] ?? null));
       } catch {
-        if (!cancelled) setUsHolidayDates(new Map());
+        if (!cancelled) {
+          setUsHolidayDates(new Map());
+          setPabOverrides(new Map());
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -1065,19 +1080,44 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     };
   }, [rate, rateHistory, mergedHoursByDateKey, monthStart, monthEnd, monthAllDaysTotalSeconds]);
 
+  /**
+   * PAB evaluation window for the viewed month. Uses the accounting-set override
+   * from the Payroll Wizard's PAB Calendar period setter (`pab_period_overrides`)
+   * when present, otherwise the default Mon-based PAB month range. Mirrors
+   * `member-monthly-pay.ts` + `usePabPeriodSettings` so My Hours' eligibility
+   * status and the Employee Dashboard agree with what the wizard dispatches.
+   */
+  const pabRange = useMemo(
+    () => resolvePabRangeForMonth(viewYear, viewMonth, pabOverrides),
+    [pabOverrides, viewYear, viewMonth],
+  );
+
   const isPAEligible = useMemo(() => {
-    const days = hoursCalendar?.flat() ?? [];
-    const wd = days.filter(
-      (d) =>
-        d.date.getMonth() === viewMonth &&
-        d.date.getFullYear() === viewYear &&
-        d.date.getDay() >= 1 &&
-        d.date.getDay() <= 5,
-    );
     const toIso = (date: Date) =>
       `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    return wd.length > 0 && wd.every((d) => d.passes || usHolidayDates.has(toIso(d.date)));
-  }, [hoursCalendar, viewMonth, viewYear, usHolidayDates]);
+    // Walk every Mon–Fri in the PAB period (not the raw calendar month) so the
+    // status matches the wizard's window. A day passes on ≥7h, a US holiday, an
+    // approved forgiving dispute, or (HSL) an overnight-qualifying pairing —
+    // identical to the per-cell `effectivelyPasses` logic below.
+    const cur = new Date(pabRange.start.getFullYear(), pabRange.start.getMonth(), pabRange.start.getDate());
+    const end = pabRange.end.getTime();
+    let anyWeekday = false;
+    while (cur.getTime() <= end) {
+      const dow = cur.getDay();
+      if (dow >= 1 && dow <= 5) {
+        anyWeekday = true;
+        const iso = toIso(cur);
+        const sec = mergedHoursByDateKey.get(pabDateKey(cur)) ?? 0;
+        const dispute = disputesByDate.get(iso);
+        const forgiven = !!dispute && disputeGrantsPabForgiveness(dispute);
+        const hslOvernight = isHsl && hslOvernightIsos.has(iso);
+        const passes = sec >= 7 * 3600 || usHolidayDates.has(iso) || forgiven || hslOvernight;
+        if (!passes) return false;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    return anyWeekday;
+  }, [pabRange, mergedHoursByDateKey, usHolidayDates, disputesByDate, isHsl, hslOvernightIsos]);
 
   /** Hourly rates loaded — gates both PAB and Tech bonus visibility. */
   const hasRates = useMemo(() => {
@@ -1255,6 +1295,17 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                 </span>
                 {' · '}
               {formatRangeDate(monthStart)} – {formatRangeDate(monthEnd)}
+              </span>
+            </p>
+            <p className="flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400 sm:text-[11px]">
+              <Trophy className="h-3 w-3 shrink-0 text-indigo-500/80 dark:text-indigo-400/80" />
+              <span>
+                PAB period: {formatRangeDate(pabRange.start)} – {formatRangeDate(pabRange.end)}
+                {pabRange.isOverride ? (
+                  <span className="ml-1 rounded bg-indigo-100 px-1 py-px text-[9px] font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                    custom
+                  </span>
+                ) : null}
               </span>
             </p>
           </CardHeader>

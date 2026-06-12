@@ -239,7 +239,9 @@
       "Bash(sed -i '7625,7703d;7902,8259d' src/components/PayrollWizard.tsx)",
       "Bash(sed -n '7265,7285p' src/components/PayrollWizard.tsx)",
       "PowerShell(Head -20)",
-      "Bash(git rev-list *)"
+      "Bash(git rev-list *)",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, StartTime | Format-Table; \\(Get-Content package.json | ConvertFrom-Json\\).scripts.dev)",
+      "PowerShell($f = \"src\\\\components\\\\Rates.tsx\"; \\(Get-Item $f\\).LastWriteTime = Get-Date; \"touched $f at $\\(\\(Get-Item $f\\).LastWriteTime\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

@@ -90,3 +90,5 @@ docs/
 |---|
 | [problem.md](./notes/problem.md) |
 | [notebooklm-skill.md](./notes/notebooklm-skill.md) |
+| [hubstaff-sunday-overlap.md](./notes/hubstaff-sunday-overlap.md) |
+| [pab-period-parity-2026-06-12.md](./notes/pab-period-parity-2026-06-12.md) |

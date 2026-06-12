@@ -31,6 +31,7 @@ import {
 import {
   PAB_BONUS_PHP,
   TECH_BONUS_PHP,
+  applyPabAdjustments,
   computeEmployeeBonus,
   getHslAdjustedEnd,
   hasThirtyDaysFromStart,
@@ -203,6 +204,61 @@ async function fetchHubstaffRowsForEmail(
     if (from > 10_000) break; // one employee won't have >10k rows
   }
   return { rows: out, error: null };
+}
+
+/**
+ * Approved PAB disputes + approved time adjustments for this employee's alias
+ * set, flattened into one `ISO date -> override_hours|null` map. Mirrors the
+ * authoritative dispatch path (`current-pay.ts` -> `dispatch-bonuses.ts`) so
+ * the dashboard / My Hours PAB matches what Lenny actually dispatched: a
+ * forgiven sub-7h weekday (orphanage visit, approved dispute, or accounting
+ * time correction) counts toward eligibility instead of reading as a miss.
+ *
+ * Time adjustments win on a same day (overlaid last), matching
+ * `mergeApprovedTimeAdjustments` in current-pay.
+ */
+async function fetchForgivenDatesForEmails(
+  emailNorms: Set<string>,
+): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return out;
+  const emails = [...emailNorms].filter(Boolean);
+  if (emails.length === 0) return out;
+
+  const matchesAlias = (raw: string | null | undefined): boolean => {
+    const e = normEmail(raw ?? null) ?? (raw ?? '').toLowerCase();
+    return !!e && emailNorms.has(e);
+  };
+
+  const { data: disputes } = await supabase
+    .from('pab_day_disputes')
+    .select('work_email, dispute_date, override_hours')
+    .in('status', ['approved', 'accounting_approved']);
+  for (const row of (disputes ?? []) as Array<{
+    work_email: string;
+    dispute_date: string;
+    override_hours: number | null;
+  }>) {
+    if (!matchesAlias(row.work_email)) continue;
+    out.set(row.dispute_date, row.override_hours);
+  }
+
+  const { data: adjustments } = await supabase
+    .from('time_adjustment_requests')
+    .select('work_email, adjust_date, approved_hours')
+    .eq('status', 'approved');
+  for (const row of (adjustments ?? []) as Array<{
+    work_email: string;
+    adjust_date: string;
+    approved_hours: number | null;
+  }>) {
+    if (row.approved_hours == null) continue;
+    if (!matchesAlias(row.work_email)) continue;
+    out.set(row.adjust_date, row.approved_hours);
+  }
+
+  return out;
 }
 
 interface MasterMin {
@@ -410,8 +466,14 @@ export async function computeMemberMonthlyPay(args: {
   if (a1) aliasNorms.add(a1);
   if (a2) aliasNorms.add(a2);
 
-  // Step 2: Fetch only this employee's Hubstaff rows (server-side filtered by email).
-  const hsRes = await fetchHubstaffRowsForEmail(aliasNorms);
+  // Step 2: Fetch this employee's Hubstaff rows + approved PAB forgiveness
+  // (disputes + time adjustments) in parallel. Forgiveness is applied to the
+  // PAB eligibility check only — never to paid hours — so the dashboard / My
+  // Hours bonus matches what dispatch actually pays.
+  const [hsRes, forgivenDates] = await Promise.all([
+    fetchHubstaffRowsForEmail(aliasNorms),
+    fetchForgivenDatesForEmails(aliasNorms),
+  ]);
   if (hsRes.error) return { data: null, error: hsRes.error };
 
   // Find this employee's rate row (lookup by either email).
@@ -465,6 +527,13 @@ export async function computeMemberMonthlyPay(args: {
   const overrides = parsePabPeriodOverrides(pabOverridesValue);
   const pabEligByMonthKey = new Map<string, boolean>();
 
+  // Eligibility runs against a forgiveness-adjusted copy of the hours map —
+  // approved disputes/time-adjustments bump a forgiven day to 7h, US holidays
+  // auto-pass — exactly mirroring the dispatch path (`dispatch-bonuses.ts`).
+  // Paid hours (`hoursByDateKey`) are never touched.
+  const holidaySet = new Set(holidayMap.keys());
+  const eligibilityHours = applyPabAdjustments(hoursByDateKey, forgivenDates, holidaySet);
+
   function computeEligibilityForPabMonth(year: number, month: number): boolean {
     const key = yearMonthKey(year, month);
     if (pabEligByMonthKey.has(key)) return pabEligByMonthKey.get(key)!;
@@ -477,17 +546,11 @@ export async function computeMemberMonthlyPay(args: {
 
     let passes: boolean;
     if (isHsl) {
-      passes = checkHslPabEligibility(pabRange.start, hslAdjustedEnd, hoursByDateKey);
+      passes = checkHslPabEligibility(pabRange.start, hslAdjustedEnd, eligibilityHours);
     } else {
-      const weeks = buildPabCalendarWeeks(pabRange.start, pabRange.end, hoursByDateKey);
+      const weeks = buildPabCalendarWeeks(pabRange.start, pabRange.end, eligibilityHours);
       const flat = weeks.flat();
-      passes =
-        flat.length > 0 &&
-        flat.every((d) => {
-          if (d.passes) return true;
-          const iso = `${d.date.getFullYear()}-${String(d.date.getMonth() + 1).padStart(2, '0')}-${String(d.date.getDate()).padStart(2, '0')}`;
-          return holidayMap.has(iso);
-        });
+      passes = flat.length > 0 && flat.every((d) => d.passes);
     }
     pabEligByMonthKey.set(key, passes);
     return passes;

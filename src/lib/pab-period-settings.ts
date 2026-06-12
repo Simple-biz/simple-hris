@@ -11,6 +11,12 @@
  * and auto-migrated into the overrides map + active_month on the first save of the new shape.
  */
 
+import {
+  getCurrentPabMonth,
+  getLatestPabMonthFromColumns,
+  getPabMonthRange,
+} from '@/lib/hubstaff/calendar-column-dedupe';
+
 export const PAB_PERIOD_MANUAL_KEY = 'pab_period_manual';
 export const PAB_PERIOD_START_KEY = 'pab_period_start';
 export const PAB_PERIOD_END_KEY = 'pab_period_end';
@@ -86,12 +92,86 @@ export function parsePabPeriodOverrides(value: string | null | undefined): PabOv
       const end = typeof entry.end === 'string' ? parseLocalDateFromIso(entry.end) : null;
       if (!start || !end) continue;
       if (start.getTime() > end.getTime()) continue;
+      // The window must intersect the month it's keyed to. A PAB period can spill a
+      // few days into the next month (the canonical Friday may land there), but an
+      // override that lies ENTIRELY outside its month is invalid — e.g. June's
+      // Jun 1–Jul 3 saved under the May key. Drop it so the month falls back to its
+      // real default everywhere (wizard, My Hours, dashboard, overview).
+      const ym = parseYearMonthKey(k)!;
+      const mStart = new Date(ym.year, ym.month, 1);
+      const mEnd = new Date(ym.year, ym.month + 1, 0);
+      if (start.getTime() > mEnd.getTime() || end.getTime() < mStart.getTime()) continue;
       map.set(k, { start, end });
     }
   } catch {
     // malformed JSON → empty map
   }
   return map;
+}
+
+/**
+ * Resolve which PAB month a calendar date belongs to, honoring saved overrides.
+ *
+ * A custom override window **claims** every date inside it for its month key —
+ * so a date in June can belong to the "May" PAB month when May's override runs
+ * into June (e.g. May → Jun 1–Jul 3). This is what keeps the wizard's custom
+ * month "sticky" everywhere: any surface resolving a PAB month from a date/CSV
+ * lands on the same month the wizard configured. Falls back to the canonical
+ * Monday-based rule (`getCurrentPabMonth`) when no override window contains the
+ * date.
+ */
+export function resolvePabMonthForDate(
+  date: Date,
+  overrides: PabOverridesMap,
+): { year: number; month: number } {
+  const t = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  for (const [key, range] of overrides) {
+    const ym = parseYearMonthKey(key);
+    if (!ym) continue;
+    const s = new Date(
+      range.start.getFullYear(),
+      range.start.getMonth(),
+      range.start.getDate(),
+    ).getTime();
+    const e = new Date(
+      range.end.getFullYear(),
+      range.end.getMonth(),
+      range.end.getDate(),
+    ).getTime();
+    if (t >= s && t <= e) return ym;
+  }
+  return getCurrentPabMonth(date);
+}
+
+/**
+ * Resolve the PAB month implied by a set of Hubstaff column headers — the latest
+ * parseable date, run through {@link resolvePabMonthForDate} so override windows
+ * are honored. Returns null when no date parses (caller should fall back).
+ */
+export function resolvePabMonthFromColumns(
+  cols: string[],
+  overrides: PabOverridesMap,
+): { year: number; month: number } | null {
+  const latest = getLatestPabMonthFromColumns(cols);
+  if (!latest) return null;
+  return resolvePabMonthForDate(latest.latest, overrides);
+}
+
+/**
+ * The explicit PAB window for a month: the saved override if present, otherwise
+ * the canonical Mon–Fri `getPabMonthRange()` window. `isOverride` flags which.
+ * An override applies to every department (HSL and non-HSL alike) — it is the
+ * single authoritative window once set, matching `member-monthly-pay.ts`.
+ */
+export function resolvePabRangeForMonth(
+  year: number,
+  month: number,
+  overrides: PabOverridesMap,
+): { start: Date; end: Date; isOverride: boolean } {
+  const ov = overrides.get(yearMonthKey(year, month));
+  if (ov) return { start: ov.start, end: ov.end, isOverride: true };
+  const r = getPabMonthRange(year, month);
+  return { start: r.start, end: r.end, isOverride: false };
 }
 
 export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {

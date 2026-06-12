@@ -21,8 +21,6 @@ import {
   buildPabCalendarWeeks,
   columnsAreAllCanonical,
   getCurrentPabMonth,
-  getLatestPabMonthFromColumns,
-  getPabMonthRange,
   groupDateColumnsByCalendarDay,
   pabDateKey,
   parseColDate,
@@ -44,6 +42,8 @@ import {
 import {
   PAB_PERIOD_OVERRIDES_KEY,
   parsePabPeriodOverrides,
+  resolvePabMonthFromColumns,
+  resolvePabRangeForMonth,
   type PabOverridesMap,
 } from '@/lib/pab-period-settings';
 
@@ -394,11 +394,9 @@ export default function EmployeePabCalendar({
     const cols = mergedColumns;
     const pabMonth: { year: number; month: number } =
       pabMonthOverride
-      ?? (cols.length > 0 ? getLatestPabMonthFromColumns(cols) : null)
+      ?? (cols.length > 0 ? resolvePabMonthFromColumns(cols, pabOverrideMap) : null)
       ?? getCurrentPabMonth();
-    const monthKey = `${pabMonth.year}-${String(pabMonth.month + 1).padStart(2, '0')}`;
-    const override = pabOverrideMap.get(monthKey);
-    const { start, end } = override ?? getPabMonthRange(pabMonth.year, pabMonth.month);
+    const { start, end } = resolvePabRangeForMonth(pabMonth.year, pabMonth.month, pabOverrideMap);
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December',

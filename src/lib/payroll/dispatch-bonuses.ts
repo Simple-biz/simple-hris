@@ -120,7 +120,7 @@ function rowSelfReportsHsl(row: RawRow): boolean {
  * requiring Hubstaff data (same as the wizard's `continue` on holiday dates).
  * Holidays are applied last so they are never overridden by a dispute entry.
  */
-function applyPabAdjustments(
+export function applyPabAdjustments(
   hoursByDateKey: Map<string, number>,
   forgivenDates: Map<string, number | null> | undefined,
   usHolidayDates: Set<string> | undefined,

@@ -136,6 +136,9 @@ The Additions tab owns the PAB period UI (System Settings only keeps the departm
   - Amber dot if a custom override is saved for that month.
   - "Now" badge on today's PAB month.
   - Non-selectable (dashed border) if no Hubstaff data exists *and* it's not today's month. Requirement: only months with data can be picked.
+- **Period readout** — a plain-language line above the inputs states the selected month's resolved window: `"May 2026 PAB period: May 4, 2026 – May 29, 2026 · 20 weekdays evaluated · Default Mon–Fri / Custom override"` (range from `resolvePabRangeForMonth`, count from `countMonFriInclusiveInRange`). Each month pill's hover tooltip shows the same resolved date range so a period is visible without selecting the month.
+- **Edit-month decoupling** — clicking a month pill sets a modal-local `pabEditMonth` (reset to the effective month each time the modal opens), so the highlight, date inputs, readout, and the save/auto-calc/reset handlers always follow the clicked month — even while a loaded Hubstaff file pins `effectiveMonth` (the *evaluated* month) to its own month. Previously the highlight/editor tracked `effectiveMonth`, so selecting a month did nothing visible whenever a file was loaded.
+- **Month-intersection guard** — the PAB period is **not** the calendar month; it routinely spills into the next month (e.g. June 2026 = `Jun 1–Jul 3`, because June's last Monday is Jun 29 → Friday Jul 3). The guard only requires an override to **intersect** (include ≥1 day of) the month it's keyed to — so `Jun 1–Jul 3` is valid for June but invalid for May. Enforced in two places: `saveActiveMonthOverride` rejects a wholly-other-month save with a toast, and `parsePabPeriodOverrides` **drops** any already-stored out-of-month entry on read so the month falls back to its real default everywhere (wizard, My Hours, dashboard, overview).
 - **Active-month editor** — start / end date inputs that auto-save an override for the currently selected month, plus:
   - **Auto-calc** — writes the canonical `getPabMonthRange(year, month)` window as that month's override.
   - **Reset override** — deletes the override so the month falls back to the default Mon–Fri formula.
@@ -151,6 +154,16 @@ Storage keys in `app_settings`:
 | `pab_period_manual`, `pab_period_start`, `pab_period_end` | legacy | Still read by `fetchPabPeriodSettings`; auto-migrated into `pab_period_overrides` on first load when the new map is empty. Employee Dashboard's `validManualRange` still reads these for back-compat. |
 
 Resolution in `usePabPeriodSettings`: the hook exposes `activeMonthResolved`, `activeRange` ( = override for active month if present, else `getPabMonthRange(year, month)`), and legacy `validManualRange`.
+
+#### Override-window containment — custom month is "sticky" everywhere
+
+A custom override **claims every date inside its window** for its month key. Example: the May override runs Jun 1 – Jul 3. A CSV / date in mid-June then belongs to the **May** PAB month, *not* June — because the canonical Monday rule (`getCurrentPabMonth`) would otherwise bucket it as June and miss the override. Three shared helpers in `pab-period-settings.ts` enforce this so every surface resolves the same month:
+
+- `resolvePabMonthForDate(date, overrides)` — returns the month key of the first override window containing `date`; falls back to `getCurrentPabMonth(date)`.
+- `resolvePabMonthFromColumns(cols, overrides)` — runs the latest parseable date from a CSV's columns through the above.
+- `resolvePabRangeForMonth(year, month, overrides)` — the explicit window for a month (override if saved, else `getPabMonthRange`), with an `isOverride` flag. An override is authoritative for **every department** (it bounds both the Mon–Fri and Sun–Sat evaluations).
+
+Consumers (all kept in lockstep): `EmployeeDashboard` (CSV/file selector → `pabMonthRange` + daily-hours filter), `EmployeeMyHours` (`pabRange` per viewed month), `EmployeePabCalendar`, and the system `Overview` PAB metrics. Previously each derived the month via the Monday rule and only *then* looked up the override by that (wrong) key, so a CSV inside a cross-month override resolved to the wrong PAB month.
 
 ### US Holiday forgiveness
 
@@ -208,6 +221,27 @@ When the default (merged-latest) PAB period end date is in the future (today ≤
 - The bonus card shows "Pending / Period in progress — not finalized" and `pabBonusAmount = 0` (excluded from the pay summary total).
 - Pay summary renders the PAB row as `—` with a `(pending)` label instead of a peso amount.
 - A specific CSV selection is **never pending** (historical view shows the full range and a finalized eligible/not-eligible status).
+
+### Server pay summary forgiveness parity (`member-monthly-pay.ts`)
+
+`computeMemberMonthlyPay()` powers both the manager My Team Payments modal and the
+employee **My Hours** pay summary (`/api/manager/member-monthly-pay`). Its PAB
+eligibility check runs against a **forgiveness-adjusted copy** of the hours map so
+it matches what dispatch actually pays — never against raw Hubstaff hours alone:
+
+- `fetchForgivenDatesForEmails()` loads this employee's approved PAB disputes
+  (`status in ('approved','accounting_approved')`) plus approved time adjustments
+  (`time_adjustment_requests.status = 'approved'`, time adjustments win on a same
+  day), flattened across the alias set into one `ISO date → override_hours|null` map.
+- `applyPabAdjustments()` (exported from `dispatch-bonuses.ts`, the same helper the
+  dispatch path uses) bumps a forgiven sub-7h weekday with ≥ 4 h effective hours up
+  to 7 h and auto-passes US holidays, producing `eligibilityHours`.
+- Eligibility (both HSL and non-HSL) reads `eligibilityHours`; **paid** hours
+  (`hoursByDateKey`) are untouched — forgiveness never adds payable time.
+
+Without this, a forgiven day (orphanage visit, approved dispute, or accounting time
+correction) read as a raw sub-7h miss and the My Hours / dashboard PAB row showed
+`₱0 · not yet` even though dispatch had already paid the bonus.
 
 ### All Time mode (Employee Dashboard)
 
@@ -319,6 +353,8 @@ Both the Perfect Attendance Bonus and the Technology Bonus are **monthly** bonus
 - **Tech Bonus**: only attaches to the weekly paystub whose **Salary Date (Tue = weekStart + 8d)** falls in the 3rd Mon–Sun week of that Salary Date's month (see above). The Tech Bonus uses its **own** month bucket derived from the salary date — independent of `weekPabMonth`, which buckets by the dispatch week's Monday and is used only by PAB.
 
 The PAB month used for the PAB check is derived from **the dispatch week's own Monday**, *not* from the most-frequent month in merged uploads. This prevents a heavily-covered prior month (e.g., March) from masking a partial current month (e.g., first week of April) and mis-attaching PAB to the wrong week. Implemented in `dispatchData.weekPabMonth` / `weekPabRange`.
+
+**Owning-Monday derivation (important).** Hubstaff uploads start on **Sunday**, so the week's owning Monday is `weekStart + 1` — *not* the previous Monday. This holds for both conventions: the non-HSL Sun–Sat week's Monday and the HSL Mon–Sun week's Monday (HSL drops the leading Sunday) are the same day = Sunday + 1. The authoritative dispatch (`current-pay.ts`) gets this for free via `payWeekFromUploadStart(start, true).start`. The PayrollWizard and EmployeeDashboard reimplemented it inline and originally walked *back* from a Sunday (`weekStart − 6`), which pulled the **May 31 – Jun 6** week into May (Mon May 25) and flagged it as May's final PAB week — so PAB landed on a June-owned week. Fixed 2026-06-12: both now map a Sunday start forward (`+1`), matching `member-monthly-pay.ts → weekMonForPab`. So May's PAB correctly attaches to the **May 24 – 30** paystub (file `…05-24_to_…05-31`), and `…05-31_to_…06-06` is June's. All three week-resolvers also run `weekPabRange` through `resolvePabRangeForMonth` so per-month overrides bound the final-week check.
 
 `pabMonthRange` display itself was switched from `inferPabMonthFromColumns` (mode) to `getLatestPabMonthFromColumns` (latest) in PayrollWizard so the Additions tab surfaces the in-progress current month and does not auto-toggle PAB based on a concluded prior month's data.
 
