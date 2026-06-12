@@ -1,21 +1,27 @@
 'use client';
 
-// Bonus Catalog (Accounting tab).
+// Payment Catalog (Accounting tab).
 //
-// Two-part tool:
-//   1. Library    -- create reusable custom bonuses (flat amount OR Excel-style
+// Three-part tool:
+//   1. Pay Structure -- the authoritative starting compensation (Regular Rate +
+//                    OT Rate) per department ("common") or per individual.
+//                    This is the SOURCE OF TRUTH for HR onboarding prefill
+//                    (see src/lib/supabase/department-rates.ts). Each entry has
+//                    its own currency (PHP default, switchable to USD).
+//   2. Bonus Library -- create reusable custom bonuses (flat amount OR Excel-style
 //                    formula). The formula editor validates live, shows the
 //                    variables it references, runs a test calculator, and
 //                    displays the generated TypeScript ("translate to code").
-//   2. Assignments-- attach a library bonus to a whole department ("common")
+//   3. Assignments-- attach a library bonus to a whole department ("common")
 //                    or to a specific employee.
 //
-// Persistence: dedicated tables (bonus_catalog_bonuses + bonus_catalog_assignments)
-// via /api/bonus-catalog. Each row records its creator + timestamps, and the tab
-// subscribes to Supabase Realtime so a teammate's new bonus appears live.
-// Standalone authoring tool: it does NOT yet feed the Payroll Wizard.
+// Persistence: dedicated tables (payment_catalog_pay_structures,
+// bonus_catalog_bonuses + bonus_catalog_assignments) via
+// /api/payment-catalog/pay-structures + /api/bonus-catalog. Each row records its
+// creator + timestamps, and the tab subscribes to Supabase Realtime so a
+// teammate's change appears live.
 
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import {
@@ -26,12 +32,17 @@ import {
   Code2,
   Building2,
   User,
+  Users,
   Sparkles,
   CheckCircle2,
   AlertTriangle,
   X,
   Search,
   Eye,
+  Wallet,
+  ChevronDown,
+  ArrowDownUp,
+  Check,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -49,6 +60,13 @@ import {
   evaluateFormula,
   compileToTypeScript,
 } from '@/lib/bonus-catalog/formula';
+import {
+  newPayId,
+  formatRate,
+  CURRENCY_SYMBOL,
+  type PayStructure,
+  type PayCurrency,
+} from '@/lib/payment-catalog/pay-structure';
 
 const PESO = '₱';
 
@@ -96,6 +114,150 @@ function Expand({ show, children }: { show: boolean; children: React.ReactNode }
   );
 }
 
+// ---------------------------------------------------------------------------
+// Reusable animated UI bits (dropdowns + loading bar)
+// ---------------------------------------------------------------------------
+
+type SelectOption = { value: string; label: string; hint?: string };
+
+/**
+ * A custom dropdown that animates open/closed with a staggered option reveal.
+ * Replaces native <select> so the whole tab shares one motion language.
+ */
+function AnimatedSelect({
+  value,
+  onChange,
+  options,
+  placeholder = 'Select...',
+  className = '',
+  disabled = false,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: SelectOption[];
+  placeholder?: string;
+  className?: string;
+  disabled?: boolean;
+  ariaLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const selected = options.find((o) => o.value === value);
+
+  return (
+    <div ref={ref} className={`relative ${className}`}>
+      <button
+        type="button"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        onClick={() => !disabled && setOpen((o) => !o)}
+        className={`flex w-full items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-left text-sm text-zinc-900 outline-none transition-colors hover:border-orange-300 focus:border-orange-400 focus:ring-2 focus:ring-orange-200 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-blue-800 dark:focus:ring-blue-900/40 ${
+          open ? 'border-orange-400 ring-2 ring-orange-200 dark:ring-blue-900/40' : ''
+        }`}
+      >
+        <span className={`truncate ${selected ? '' : 'text-zinc-400'}`}>
+          {selected ? selected.label : placeholder}
+        </span>
+        <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2, ease: EASE }}>
+          <ChevronDown className="h-4 w-4 shrink-0 text-zinc-400" />
+        </motion.span>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.ul
+            role="listbox"
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.16, ease: EASE }}
+            className="absolute z-30 mt-1 max-h-64 w-full origin-top overflow-auto rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            {options.length === 0 ? (
+              <li className="px-3 py-2 text-xs text-zinc-400">No options</li>
+            ) : (
+              options.map((o, i) => {
+                const active = o.value === value;
+                return (
+                  <motion.li
+                    key={o.value || `opt-${i}`}
+                    initial={{ opacity: 0, x: -6 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.14, delay: Math.min(i * 0.018, 0.14), ease: EASE }}
+                  >
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      onClick={() => {
+                        onChange(o.value);
+                        setOpen(false);
+                      }}
+                      className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm transition-colors ${
+                        active
+                          ? 'bg-orange-50 font-medium text-orange-900 dark:bg-blue-950/50 dark:text-white'
+                          : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                      }`}
+                    >
+                      <span className="min-w-0 truncate">
+                        {o.label}
+                        {o.hint && <span className="ml-1 text-[11px] text-zinc-400">{o.hint}</span>}
+                      </span>
+                      {active && <Check className="h-3.5 w-3.5 shrink-0 text-orange-500" />}
+                    </button>
+                  </motion.li>
+                );
+              })
+            )}
+          </motion.ul>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Indeterminate top loading bar -- a gradient sweep while data loads. */
+function LoadingBar({ show }: { show: boolean }) {
+  return (
+    <AnimatePresence>
+      {show && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="absolute inset-x-0 top-0 z-40 h-0.5 overflow-hidden bg-orange-100 dark:bg-blue-950/40"
+        >
+          <motion.div
+            className="h-full w-1/3 rounded-full bg-gradient-to-r from-transparent via-orange-500 to-transparent"
+            animate={{ x: ['-100%', '350%'] }}
+            transition={{ duration: 1.1, ease: 'easeInOut', repeat: Infinity }}
+          />
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 type RosterEntry = { email: string; name: string; department: string };
 
 function buildRoster(initialData?: InitialAccountingData | null): RosterEntry[] {
@@ -116,29 +278,40 @@ function buildRoster(initialData?: InitialAccountingData | null): RosterEntry[] 
 // Top-level component
 // ---------------------------------------------------------------------------
 
+type CatalogTab = 'pay-structure' | 'library' | 'assignments';
+
 export default function BonusCatalog({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [bonuses, setBonuses] = useState<BonusDef[]>([]);
   const [assignments, setAssignments] = useState<BonusAssignment[]>([]);
+  const [payStructures, setPayStructures] = useState<PayStructure[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'library' | 'assignments'>('library');
+  const [refreshing, setRefreshing] = useState(false);
+  const [tab, setTab] = useState<CatalogTab>('pay-structure');
   const instanceId = useId();
 
   const roster = useMemo(() => buildRoster(initialData), [initialData]);
 
   const refetch = useCallback(async () => {
+    setRefreshing(true);
     try {
-      const res = await fetch('/api/bonus-catalog', { cache: 'no-store' });
-      const json = (await res.json()) as {
+      const [catRes, payRes] = await Promise.all([
+        fetch('/api/bonus-catalog', { cache: 'no-store' }),
+        fetch('/api/payment-catalog/pay-structures', { cache: 'no-store' }),
+      ]);
+      const cat = (await catRes.json()) as {
         bonuses?: BonusDef[];
         assignments?: BonusAssignment[];
         error?: string | null;
       };
-      setBonuses(json.bonuses ?? []);
-      setAssignments(json.assignments ?? []);
+      const pay = (await payRes.json()) as { structures?: PayStructure[]; error?: string | null };
+      setBonuses(cat.bonuses ?? []);
+      setAssignments(cat.assignments ?? []);
+      setPayStructures(pay.structures ?? []);
     } catch {
       /* keep prior state */
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -155,6 +328,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       .channel(`bonus-catalog${instanceId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bonus_catalog_bonuses' }, () => void refetch())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bonus_catalog_assignments' }, () => void refetch())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_catalog_pay_structures' }, () => void refetch())
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
@@ -251,19 +425,68 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
     [refetch],
   );
 
+  const upsertPay = useCallback(
+    async (s: PayStructure) => {
+      setPayStructures((prev) =>
+        prev.some((p) => p.id === s.id)
+          ? prev.map((p) => (p.id === s.id ? { ...p, ...s } : p))
+          : [...prev, s],
+      );
+      try {
+        const res = await fetch('/api/payment-catalog/pay-structures', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ structure: s }),
+        });
+        const json = (await res.json()) as { row?: PayStructure; error: string | null };
+        if (json.error) throw new Error(json.error);
+        if (json.row) setPayStructures((prev) => prev.map((p) => (p.id === json.row!.id ? json.row! : p)));
+        toast.success('Pay structure saved');
+      } catch (e) {
+        toast.error(`Could not save pay structure: ${failMsg(e)}`);
+        void refetch();
+      }
+    },
+    [refetch],
+  );
+
+  const deletePay = useCallback(
+    async (id: string) => {
+      setPayStructures((prev) => prev.filter((p) => p.id !== id));
+      try {
+        const res = await fetch(`/api/payment-catalog/pay-structures?id=${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+        });
+        const json = (await res.json()) as { error: string | null };
+        if (json.error) throw new Error(json.error);
+      } catch (e) {
+        toast.error(`Could not delete pay structure: ${failMsg(e)}`);
+        void refetch();
+      }
+    },
+    [refetch],
+  );
+
+  const tabs = [
+    { id: 'pay-structure', label: 'Pay Structure', icon: Wallet, count: payStructures.length },
+    { id: 'library', label: 'Bonus Library', icon: Sparkles, count: bonuses.length },
+    { id: 'assignments', label: 'Assignments', icon: Building2, count: assignments.length },
+  ] as const;
+
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[#fafaf8] dark:bg-[#0d1117]">
+    <div className="relative flex h-full min-h-0 flex-col bg-[#fafaf8] dark:bg-[#0d1117]">
+      <LoadingBar show={loading || refreshing} />
       {/* Header */}
       <div className="shrink-0 border-b border-orange-100 bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-blue-950/60 dark:bg-[#0d1117]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="flex items-center gap-2 text-base font-semibold tracking-tight text-zinc-900 sm:text-xl dark:text-white">
-              <Sparkles className="h-5 w-5 text-orange-500" />
-              Bonus Catalog
+              <Wallet className="h-5 w-5 text-orange-500" />
+              Payment Catalog
             </h1>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
-              Create reusable bonuses with flat amounts or Excel-style formulas, then assign them to a
-              department or a specific employee.
+              The source of truth for starting pay. Set Regular &amp; OT rates per department or person,
+              and define reusable bonuses to assign across the team.
             </p>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
@@ -276,28 +499,34 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
         </div>
 
         {/* Inner tabs */}
-        <div className="mt-4 flex gap-1">
-          {([
-            { id: 'library', label: 'Bonus Library', icon: Sparkles },
-            { id: 'assignments', label: 'Assignments', icon: Building2 },
-          ] as const).map((t) => (
+        <div className="mt-4 flex flex-wrap gap-1">
+          {tabs.map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
                 tab === t.id
-                  ? 'bg-orange-100 text-orange-900 dark:bg-blue-950/60 dark:text-white'
+                  ? 'text-orange-900 dark:text-white'
                   : 'text-zinc-500 hover:bg-orange-50 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-blue-950/30'
               }`}
             >
-              <t.icon className="h-4 w-4" />
-              {t.label}
-              {t.id === 'library' && bonuses.length > 0 && (
-                <span className="ml-1 rounded-full bg-orange-200/70 px-1.5 text-[10px] font-bold text-orange-800 dark:bg-blue-900/60 dark:text-blue-200">
-                  {bonuses.length}
-                </span>
+              {tab === t.id && (
+                <motion.span
+                  layoutId="catalogTabPill"
+                  className="absolute inset-0 rounded-md bg-orange-100 dark:bg-blue-950/60"
+                  transition={{ type: 'spring', stiffness: 500, damping: 36 }}
+                />
               )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                <t.icon className="h-4 w-4" />
+                {t.label}
+                {t.count > 0 && (
+                  <span className="ml-0.5 rounded-full bg-orange-200/70 px-1.5 text-[10px] font-bold text-orange-800 dark:bg-blue-900/60 dark:text-blue-200">
+                    {t.count}
+                  </span>
+                )}
+              </span>
             </button>
           ))}
         </div>
@@ -314,6 +543,22 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               className="p-10 text-center text-sm text-zinc-400"
             >
               Loading catalog...
+            </motion.div>
+          ) : tab === 'pay-structure' ? (
+            <motion.div
+              key="pay-structure"
+              initial={{ opacity: 0, x: -14 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 14 }}
+              transition={{ duration: 0.24, ease: EASE }}
+              className="h-full"
+            >
+              <PayStructureTab
+                structures={payStructures}
+                roster={roster}
+                onUpsert={upsertPay}
+                onDelete={deletePay}
+              />
             </motion.div>
           ) : tab === 'library' ? (
             <motion.div
@@ -356,6 +601,511 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 }
 
 // ---------------------------------------------------------------------------
+// Pay Structure tab -- authoritative Regular + OT rates (source of truth for
+// onboarding), per department ("common") or per individual.
+// ---------------------------------------------------------------------------
+
+/** Animated PHP / USD segmented toggle. */
+function CurrencyToggle({
+  value,
+  onChange,
+  idSuffix,
+}: {
+  value: PayCurrency;
+  onChange: (c: PayCurrency) => void;
+  idSuffix: string;
+}) {
+  return (
+    <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
+      {(['PHP', 'USD'] as const).map((c) => (
+        <button
+          key={c}
+          type="button"
+          onClick={() => onChange(c)}
+          className={`relative rounded px-2.5 py-1 text-xs font-semibold transition-colors ${
+            value === c ? 'text-white' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+          }`}
+        >
+          {value === c && (
+            <motion.span
+              layoutId={`currencyPill-${idSuffix}`}
+              className="absolute inset-0 rounded bg-orange-500"
+              transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+            />
+          )}
+          <span className="relative z-10">
+            {CURRENCY_SYMBOL[c]} {c}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Shared Regular + OT + currency form used by both dept and individual rows. */
+function PayRateEditor({
+  initial,
+  onSave,
+  onCancel,
+  saveLabel = 'Save rate',
+}: {
+  initial: { regularRate?: number; otRate?: number; currency?: PayCurrency };
+  onSave: (regular: number, ot: number | undefined, currency: PayCurrency) => void;
+  onCancel?: () => void;
+  saveLabel?: string;
+}) {
+  const [regular, setRegular] = useState(initial.regularRate != null ? String(initial.regularRate) : '');
+  const [ot, setOt] = useState(initial.otRate != null ? String(initial.otRate) : '');
+  const [currency, setCurrency] = useState<PayCurrency>(initial.currency ?? 'PHP');
+
+  const regularNum = Number(regular);
+  const otNum = ot.trim() === '' ? undefined : Number(ot);
+  const valid =
+    regular.trim() !== '' &&
+    Number.isFinite(regularNum) &&
+    regularNum >= 0 &&
+    (otNum === undefined || (Number.isFinite(otNum) && otNum >= 0));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label={`Regular rate (${CURRENCY_SYMBOL[currency]}/hr)`}>
+          <Input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            value={regular}
+            onChange={(e) => setRegular(e.target.value)}
+            placeholder="0.00"
+            className="w-32"
+          />
+        </Field>
+        <Field label={`OT rate (${CURRENCY_SYMBOL[currency]}/hr)`}>
+          <Input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            value={ot}
+            onChange={(e) => setOt(e.target.value)}
+            placeholder="optional"
+            className="w-32"
+          />
+        </Field>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Currency</span>
+          <CurrencyToggle value={currency} onChange={setCurrency} idSuffix={saveLabel} />
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          disabled={!valid}
+          onClick={() => valid && onSave(regularNum, otNum, currency)}
+          className="bg-orange-500 text-white hover:bg-orange-600"
+        >
+          {saveLabel}
+        </Button>
+        {onCancel && (
+          <Button type="button" size="sm" variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PayStructureTab({
+  structures,
+  roster,
+  onUpsert,
+  onDelete,
+}: {
+  structures: PayStructure[];
+  roster: RosterEntry[];
+  onUpsert: (s: PayStructure) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [selectedDept, setSelectedDept] = useState<string>(DEPARTMENTS[0]?.key ?? '');
+  const [deptSearch, setDeptSearch] = useState('');
+  const [editingDept, setEditingDept] = useState(false);
+
+  const countsByDept = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const s of structures) m[s.departmentKey] = (m[s.departmentKey] ?? 0) + 1;
+    return m;
+  }, [structures]);
+
+  const filteredDepts = useMemo(() => {
+    const q = deptSearch.trim().toLowerCase();
+    return DEPARTMENTS.filter((d) => !q || d.name.toLowerCase().includes(q));
+  }, [deptSearch]);
+
+  const dept = DEPARTMENTS.find((d) => d.key === selectedDept) ?? DEPARTMENTS[0];
+
+  const deptStructure = structures.find(
+    (s) => s.scope === 'department' && s.departmentKey === selectedDept,
+  );
+  const individualForDept = structures.filter(
+    (s) => s.scope === 'employee' && s.departmentKey === selectedDept,
+  );
+
+  // Collapse the dept editor when switching departments.
+  useEffect(() => {
+    setEditingDept(false);
+  }, [selectedDept]);
+
+  const saveDept = (regular: number, ot: number | undefined, currency: PayCurrency) => {
+    onUpsert({
+      id: deptStructure?.id ?? newPayId(),
+      scope: 'department',
+      departmentKey: selectedDept,
+      regularRate: regular,
+      otRate: ot,
+      currency,
+    });
+    setEditingDept(false);
+  };
+
+  return (
+    <div className="flex h-full min-h-0">
+      {/* Dept rail */}
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 sm:flex">
+        <div className="border-b border-zinc-100 p-2 dark:border-zinc-800">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <input
+              value={deptSearch}
+              onChange={(e) => setDeptSearch(e.target.value)}
+              placeholder="Search departments"
+              className="w-full rounded-md border border-zinc-200 bg-white py-1.5 pl-7 pr-2 text-xs dark:border-zinc-700 dark:bg-zinc-900"
+            />
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+          {filteredDepts.map((d) => {
+            const hasDeptRate = structures.some(
+              (s) => s.scope === 'department' && s.departmentKey === d.key,
+            );
+            return (
+              <button
+                key={d.key}
+                type="button"
+                onClick={() => setSelectedDept(d.key)}
+                className={`flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-sm transition-colors ${
+                  selectedDept === d.key
+                    ? 'bg-orange-100 font-medium text-orange-900 dark:bg-blue-950/60 dark:text-white'
+                    : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900'
+                }`}
+              >
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {hasDeptRate && (
+                    <span
+                      className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
+                      title="Department rate set"
+                    />
+                  )}
+                  <span className="truncate">{d.name}</span>
+                </span>
+                {countsByDept[d.key] ? (
+                  <span className="ml-1 shrink-0 rounded-full bg-orange-200/70 px-1.5 text-[10px] font-bold text-orange-800 dark:bg-blue-900/60 dark:text-blue-200">
+                    {countsByDept[d.key]}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      </aside>
+
+      {/* Detail */}
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+        {/* Mobile dept select */}
+        <div className="mb-4 sm:hidden">
+          <AnimatedSelect
+            ariaLabel="Select department"
+            value={selectedDept}
+            onChange={setSelectedDept}
+            options={DEPARTMENTS.map((d) => ({ value: d.key, label: d.name }))}
+          />
+        </div>
+
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.h2
+            key={selectedDept}
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.18, ease: EASE }}
+            className="mb-4 text-lg font-semibold text-zinc-900 dark:text-zinc-100"
+          >
+            {dept?.name}
+          </motion.h2>
+        </AnimatePresence>
+
+        {/* Department-wide pay structure */}
+        <Section
+          icon={Building2}
+          title="Department pay structure"
+          subtitle="Default starting Regular & OT rate for everyone in this department. Used as the source of truth when HR onboards a new hire."
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            {editingDept || !deptStructure ? (
+              <motion.div
+                key="edit"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.22, ease: EASE }}
+                className="overflow-hidden"
+              >
+                <PayRateEditor
+                  initial={deptStructure ?? {}}
+                  onSave={saveDept}
+                  onCancel={deptStructure ? () => setEditingDept(false) : undefined}
+                  saveLabel={deptStructure ? 'Update rate' : 'Set department rate'}
+                />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="view"
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.2, ease: EASE }}
+                className="flex flex-wrap items-center justify-between gap-3"
+              >
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+                  <RateStat label="Regular" value={formatRate(deptStructure.regularRate, deptStructure.currency)} />
+                  <RateStat
+                    label="OT"
+                    value={deptStructure.otRate != null ? formatRate(deptStructure.otRate, deptStructure.currency) : '-'}
+                  />
+                  <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    {deptStructure.currency}
+                  </span>
+                  <ByLine who={deptStructure.updatedBy ?? deptStructure.createdBy} />
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button type="button" size="sm" variant="outline" onClick={() => setEditingDept(true)} className="gap-1">
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit
+                  </Button>
+                  <IconButton title="Remove department rate" onClick={() => onDelete(deptStructure.id)} danger>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </IconButton>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </Section>
+
+        {/* Individual overrides */}
+        <Section
+          icon={Users}
+          title="Individual pay structure"
+          subtitle="Override the department default for a specific person."
+        >
+          <IndividualPayAdder
+            roster={roster}
+            deptName={dept?.name ?? ''}
+            existingEmails={new Set(individualForDept.map((s) => (s.employeeEmail ?? '').toLowerCase()))}
+            onAdd={(emp, regular, ot, currency) =>
+              onUpsert({
+                id: newPayId(),
+                scope: 'employee',
+                departmentKey: selectedDept,
+                employeeEmail: emp.email,
+                employeeName: emp.name,
+                regularRate: regular,
+                otRate: ot,
+                currency,
+              })
+            }
+          />
+          {individualForDept.length === 0 ? (
+            <p className="text-sm text-zinc-400">No individual overrides in this department.</p>
+          ) : (
+            <motion.div layout className="space-y-2">
+              <AnimatePresence initial={false} mode="popLayout">
+                {individualForDept.map((s) => (
+                  <motion.div
+                    key={s.id}
+                    layout
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 12, scale: 0.96 }}
+                    transition={{ duration: 0.2, ease: EASE }}
+                  >
+                    <IndividualPayRow
+                      structure={s}
+                      onSave={(regular, ot, currency) =>
+                        onUpsert({ ...s, regularRate: regular, otRate: ot, currency })
+                      }
+                      onRemove={() => onDelete(s.id)}
+                    />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </motion.div>
+          )}
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+function RateStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="block text-[11px] font-medium uppercase tracking-wide text-zinc-400">{label}</span>
+      <span className="text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{value}</span>
+    </div>
+  );
+}
+
+function IndividualPayAdder({
+  roster,
+  deptName,
+  existingEmails,
+  onAdd,
+}: {
+  roster: RosterEntry[];
+  deptName: string;
+  existingEmails: Set<string>;
+  onAdd: (emp: RosterEntry, regular: number, ot: number | undefined, currency: PayCurrency) => void;
+}) {
+  const [empEmail, setEmpEmail] = useState('');
+  const [open, setOpen] = useState(false);
+
+  const normDept = deptName.trim().toLowerCase();
+  const list = useMemo(() => {
+    const matched = roster.filter((r) => r.department.trim().toLowerCase() === normDept);
+    const base = matched.length > 0 ? matched : roster;
+    return base.filter((r) => !existingEmails.has(r.email.toLowerCase()));
+  }, [roster, normDept, existingEmails]);
+
+  const emp = roster.find((r) => r.email === empEmail);
+
+  return (
+    <div className="mb-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <AnimatedSelect
+          ariaLabel="Select an employee"
+          className="min-w-[14rem]"
+          value={empEmail}
+          onChange={(v) => {
+            setEmpEmail(v);
+            setOpen(true);
+          }}
+          placeholder="Select an employee..."
+          options={list.map((r) => ({
+            value: r.email,
+            label: r.name,
+            hint: r.department ? `(${r.department})` : undefined,
+          }))}
+        />
+        {!open && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!emp}
+            onClick={() => setOpen(true)}
+            className="gap-1"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add override
+          </Button>
+        )}
+      </div>
+
+      <Expand show={open && !!emp}>
+        {open && emp && (
+          <div className="mt-3 rounded-md border border-orange-200 bg-orange-50/40 p-3 dark:border-blue-900/60 dark:bg-blue-950/20">
+            <p className="mb-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              Rate for <span className="font-semibold">{emp.name}</span>
+            </p>
+            <PayRateEditor
+              initial={{}}
+              saveLabel="Add override"
+              onCancel={() => {
+                setOpen(false);
+                setEmpEmail('');
+              }}
+              onSave={(regular, ot, currency) => {
+                onAdd(emp, regular, ot, currency);
+                setOpen(false);
+                setEmpEmail('');
+              }}
+            />
+          </div>
+        )}
+      </Expand>
+    </div>
+  );
+}
+
+function IndividualPayRow({
+  structure,
+  onSave,
+  onRemove,
+}: {
+  structure: PayStructure;
+  onSave: (regular: number, ot: number | undefined, currency: PayCurrency) => void;
+  onRemove: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  return (
+    <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <span className="block truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+            {structure.employeeName || structure.employeeEmail}
+          </span>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-zinc-500">
+            <span className="font-medium text-emerald-600 dark:text-emerald-400">
+              {formatRate(structure.regularRate, structure.currency)}
+            </span>
+            {structure.otRate != null && (
+              <span>OT {formatRate(structure.otRate, structure.currency)}</span>
+            )}
+            <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+              {structure.currency}
+            </span>
+            <ByLine who={structure.updatedBy ?? structure.createdBy} />
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <IconButton title={editing ? 'Close' : 'Edit'} onClick={() => setEditing((e) => !e)}>
+            {editing ? <X className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+          </IconButton>
+          <IconButton title="Remove" onClick={onRemove} danger>
+            <Trash2 className="h-3.5 w-3.5" />
+          </IconButton>
+        </div>
+      </div>
+      <Expand show={editing}>
+        <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+          <PayRateEditor
+            initial={structure}
+            saveLabel="Update"
+            onCancel={() => setEditing(false)}
+            onSave={(regular, ot, currency) => {
+              onSave(regular, ot, currency);
+              setEditing(false);
+            }}
+          />
+        </div>
+      </Expand>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Library tab
 // ---------------------------------------------------------------------------
 
@@ -373,6 +1123,7 @@ function LibraryTab({
   const [editing, setEditing] = useState<BonusDef | null>(null);
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<'name' | 'newest' | 'oldest' | 'amount'>('name');
   const [page, setPage] = useState(0);
   const [viewingId, setViewingId] = useState<string | null>(null);
 
@@ -402,21 +1153,39 @@ function LibraryTab({
     );
   }, [bonuses, search]);
 
-  const pageCount = Math.max(1, Math.ceil(filteredBonuses.length / PAGE_SIZE));
+  const sortedBonuses = useMemo(() => {
+    const list = [...filteredBonuses];
+    const ts = (b: BonusDef) => (b.createdAt ? Date.parse(b.createdAt) : 0);
+    switch (sort) {
+      case 'newest':
+        return list.sort((a, b) => ts(b) - ts(a));
+      case 'oldest':
+        return list.sort((a, b) => ts(a) - ts(b));
+      case 'amount':
+        return list.sort((a, b) => (b.amount ?? -1) - (a.amount ?? -1));
+      case 'name':
+      default:
+        return list.sort((a, b) =>
+          (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }),
+        );
+    }
+  }, [filteredBonuses, sort]);
+
+  const pageCount = Math.max(1, Math.ceil(sortedBonuses.length / PAGE_SIZE));
 
   // Reset to the first page whenever the result set shrinks past the current page.
   useEffect(() => {
     setPage((p) => Math.min(p, pageCount - 1));
   }, [pageCount]);
 
-  // Jump back to page 1 when the search query changes.
+  // Jump back to page 1 when the search query or sort changes.
   useEffect(() => {
     setPage(0);
-  }, [search]);
+  }, [search, sort]);
 
   const pagedBonuses = useMemo(
-    () => filteredBonuses.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE),
-    [filteredBonuses, page],
+    () => sortedBonuses.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE),
+    [sortedBonuses, page],
   );
 
   const startCreate = () => {
@@ -456,6 +1225,21 @@ function LibraryTab({
               <X className="h-3.5 w-3.5" />
             </button>
           )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <ArrowDownUp className="h-3.5 w-3.5 text-zinc-400" />
+          <AnimatedSelect
+            ariaLabel="Sort bonuses"
+            className="w-40"
+            value={sort}
+            onChange={(v) => setSort(v as typeof sort)}
+            options={[
+              { value: 'name', label: 'Name (A-Z)' },
+              { value: 'newest', label: 'Newest first' },
+              { value: 'oldest', label: 'Oldest first' },
+              { value: 'amount', label: 'Amount (high-low)' },
+            ]}
+          />
         </div>
         <Button type="button" onClick={startCreate} className="shrink-0 gap-2 bg-orange-500 text-white hover:bg-orange-600">
           <Plus className="h-4 w-4" />
@@ -1244,17 +2028,12 @@ function AssignmentsTab({
       <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         {/* Mobile dept select */}
         <div className="mb-4 sm:hidden">
-          <select
+          <AnimatedSelect
+            ariaLabel="Select department"
             value={selectedDept}
-            onChange={(e) => setSelectedDept(e.target.value)}
-            className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            {DEPARTMENTS.map((d) => (
-              <option key={d.key} value={d.key}>
-                {d.name}
-              </option>
-            ))}
-          </select>
+            onChange={setSelectedDept}
+            options={DEPARTMENTS.map((d) => ({ value: d.key, label: d.name }))}
+          />
         </div>
 
         <AnimatePresence mode="wait" initial={false}>
@@ -1374,18 +2153,14 @@ function CommonBonusAdder({
   const available = bonuses.filter((b) => !existingBonusIds.has(b.id));
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
-      <select
+      <AnimatedSelect
+        ariaLabel="Select a bonus"
+        className="min-w-[12rem]"
         value={pick}
-        onChange={(e) => setPick(e.target.value)}
-        className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-      >
-        <option value="">Select a bonus...</option>
-        {available.map((b) => (
-          <option key={b.id} value={b.id}>
-            {b.name}
-          </option>
-        ))}
-      </select>
+        onChange={setPick}
+        placeholder="Select a bonus..."
+        options={available.map((b) => ({ value: b.id, label: b.name }))}
+      />
       <Button
         type="button"
         size="sm"
@@ -1432,31 +2207,26 @@ function EmployeeBonusAdder({
   return (
     <div className="mb-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <select
+        <AnimatedSelect
+          ariaLabel="Select an employee"
+          className="min-w-[12rem]"
           value={empEmail}
-          onChange={(e) => setEmpEmail(e.target.value)}
-          className="min-w-[12rem] rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        >
-          <option value="">Select an employee...</option>
-          {list.map((r) => (
-            <option key={r.email} value={r.email}>
-              {r.name}
-              {r.department ? ` (${r.department})` : ''}
-            </option>
-          ))}
-        </select>
-        <select
+          onChange={setEmpEmail}
+          placeholder="Select an employee..."
+          options={list.map((r) => ({
+            value: r.email,
+            label: r.name,
+            hint: r.department ? `(${r.department})` : undefined,
+          }))}
+        />
+        <AnimatedSelect
+          ariaLabel="Select a bonus"
+          className="min-w-[12rem]"
           value={bonusId}
-          onChange={(e) => setBonusId(e.target.value)}
-          className="rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-        >
-          <option value="">Select a bonus...</option>
-          {bonuses.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
+          onChange={setBonusId}
+          placeholder="Select a bonus..."
+          options={bonuses.map((b) => ({ value: b.id, label: b.name }))}
+        />
         <Button
           type="button"
           size="sm"

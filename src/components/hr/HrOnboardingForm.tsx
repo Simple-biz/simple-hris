@@ -58,6 +58,29 @@ function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
 
+// Peso sign as a char code so this source stays ASCII (the editor on this box
+// mangles literal non-ASCII bytes).
+const CURRENCY_PESO = String.fromCharCode(0x20b1);
+
+/** Shape returned by GET /api/hr/department-rates. */
+type DeptRateApi = {
+  department: string;
+  regular_rate: string | null;
+  ot_rate: string | null;
+  source?: 'catalog' | 'observed';
+  currency?: 'PHP' | 'USD' | null;
+};
+
+/** A department's prefill rate as held in the form's lookup map. `source`
+ *  distinguishes an authoritative Payment Catalog rate from the observed mode;
+ *  `currency` carries the catalog entry's currency for the hint symbol. */
+type DeptRate = {
+  regular_rate: string | null;
+  ot_rate: string | null;
+  source?: 'catalog' | 'observed';
+  currency?: 'PHP' | 'USD' | null;
+};
+
 // Runs `fn` over `items` with at most `limit` in-flight at once.
 // Callers that previously used Promise.all/allSettled with no cap use this
 // instead so bursts of bulk actions don't saturate the n8n webhook endpoints.
@@ -1331,7 +1354,7 @@ function SetOnboardingWorkEmailDialog({
 }) {
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptsLoading, setDeptsLoading] = useState(false);
-  const [deptRates, setDeptRates] = useState<Map<string, { regular_rate: string | null; ot_rate: string | null }>>(new Map());
+  const [deptRates, setDeptRates] = useState<Map<string, DeptRate>>(new Map());
   const [dept, setDept] = useState('');
   const [workEmail, setWorkEmail] = useState('');
   const [suggesting, setSuggesting] = useState(false);
@@ -1406,15 +1429,17 @@ function SetOnboardingWorkEmailDialog({
     ])
       .then(([dj, rj]: [
         { departments?: string[]; error?: string },
-        { departments?: Array<{ department: string; regular_rate: string | null; ot_rate: string | null }>; error?: string },
+        { departments?: Array<DeptRateApi>; error?: string },
       ]) => {
         if (dj.error) throw new Error(dj.error);
         setDepartments(dj.departments ?? []);
-        const m = new Map<string, { regular_rate: string | null; ot_rate: string | null }>();
+        const m = new Map<string, DeptRate>();
         for (const d of rj.departments ?? []) {
           m.set(d.department.trim().toLowerCase(), {
             regular_rate: d.regular_rate,
             ot_rate: d.ot_rate,
+            source: d.source,
+            currency: d.currency,
           });
         }
         setDeptRates(m);
@@ -1561,8 +1586,17 @@ function SetOnboardingWorkEmailDialog({
   if (!row) return null;
 
   const deptKey = dept.trim().toLowerCase();
-  const typicalRegular = deptKey ? deptRates.get(deptKey)?.regular_rate : null;
-  const typicalOt = deptKey ? deptRates.get(deptKey)?.ot_rate : null;
+  const deptRate = deptKey ? deptRates.get(deptKey) : undefined;
+  const typicalRegular = deptRate?.regular_rate ?? null;
+  const typicalOt = deptRate?.ot_rate ?? null;
+  const rateFromCatalog = deptRate?.source === 'catalog';
+  const rateSym = deptRate?.currency === 'PHP' ? CURRENCY_PESO : '$';
+  const regularHint = typicalRegular
+    ? `${rateFromCatalog ? 'Catalog rate' : 'Dept. typical'}: ${rateSym}${typicalRegular}`
+    : 'Required';
+  const otHint = typicalOt
+    ? `${rateFromCatalog ? 'Catalog rate' : 'Dept. typical'}: ${rateSym}${typicalOt}`
+    : 'Optional';
 
   return (
     <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
@@ -1695,7 +1729,7 @@ function SetOnboardingWorkEmailDialog({
                     aria-invalid={regularRate.trim() !== '' && !regularRateValid ? true : undefined}
                   />
                   <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    {typicalRegular ? `Dept. typical: $${typicalRegular}` : 'Required'}
+                    {regularHint}
                   </p>
                 </div>
                 <div className="flex flex-col gap-1">
@@ -1711,7 +1745,7 @@ function SetOnboardingWorkEmailDialog({
                     aria-invalid={otRate.trim() !== '' && !otRateValid ? true : undefined}
                   />
                   <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    {typicalOt ? `Dept. typical: $${typicalOt}` : 'Optional'}
+                    {otHint}
                   </p>
                 </div>
               </div>
@@ -1779,7 +1813,7 @@ function SetOnboardingWorkEmailDialog({
 
 // --- Bulk set-work-email dialog (grouped by department) -------------------
 
-type BulkDeptRate = { regular_rate: string | null; ot_rate: string | null };
+type BulkDeptRate = DeptRate;
 
 /**
  * Mints @simple.biz addresses for a batch of SUBMITTED hires at once. The

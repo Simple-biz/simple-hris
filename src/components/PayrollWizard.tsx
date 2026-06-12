@@ -48,6 +48,7 @@ import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardFollow } from '@/hooks/useWizardFollow';
 import { cn } from '@/lib/utils';
 import { formatMoney, normalizeCurrency, sumByCurrency } from '@/lib/contractor-currency';
+import { InvoiceViewDialog, type SavedInvoice } from '@/components/contractor/InvoiceReceiptDialog';
 import { KPI_BONUS_ID, DEPARTMENTS, FORMULA_DEPT_KEYS, MANAGER_BONUS_DEPT_KEYS, ACCOUNTING_WEEKDAY_METRICS, calcLeadGenBonus, isDevsDelivery, isDevsChecking, isJeromeRosero, isTeal } from '@/lib/payroll/department-bonus';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -934,20 +935,15 @@ export default function PayrollWizard({
   const [orphanageTab, setOrphanageTab] = useState<OrphanageTab>('visits');
 
   // ── Step 5: Contractor invoices ──────────────────────────────────────────────
-  const [contractorInvoices, setContractorInvoices] = useState<{
-    id: string;
-    contractor_email: string;
-    invoice_number: string;
-    invoice_date: string;
-    due_date: string;
-    from_entity_name: string;
-    from_name: string;
-    total: number;
-    currency: string | null;
-    status: string;
-  }[]>([]);
+  // The /api/contractor/invoices endpoint returns the full invoice row (line
+  // items, addresses, logo, notes), so we hold the complete SavedInvoice shape
+  // here — that lets the Preview Emails → Contractors tab render the exact same
+  // receipt the contractor sees in their own dashboard.
+  const [contractorInvoices, setContractorInvoices] = useState<(SavedInvoice & { status: string })[]>([]);
   const [contractorInvoicesLoading, setContractorInvoicesLoading] = useState(false);
   const [contractorInvoicesUpdating, setContractorInvoicesUpdating] = useState<string | null>(null);
+  // Invoice whose receipt is open in the Preview Emails → Contractors tab.
+  const [previewSelectedInvoiceId, setPreviewSelectedInvoiceId] = useState<string | null>(null);
 
   /** USD → PHP (PHP per $1). Saved in app_settings `usd_to_php_rate`; default is the official ₱100,000 ÷ 10⁵ rate. */
   const [usdToPhpRate, setUsdToPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
@@ -11730,6 +11726,14 @@ export default function PayrollWizard({
                                 {inv.invoice_number} · {formatMoney(inv.total ?? 0, normalizeCurrency(inv.currency))} {normalizeCurrency(inv.currency)}
                               </div>
                             </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 shrink-0"
+                              onClick={() => setPreviewSelectedInvoiceId(inv.id)}
+                            >
+                              View
+                            </Button>
                           </div>
                         ))}
                       </div>
@@ -11832,6 +11836,18 @@ export default function PayrollWizard({
           })()}
         </DialogContent>
       </Dialog>
+
+      {/* Contractor receipt — same view the contractor sees in their dashboard,
+          opened from Preview Emails → Contractors → View. */}
+      <InvoiceViewDialog
+        invoice={
+          previewSelectedInvoiceId
+            ? contractorInvoices.find((i) => i.id === previewSelectedInvoiceId) ?? null
+            : null
+        }
+        open={previewSelectedInvoiceId !== null}
+        onClose={() => setPreviewSelectedInvoiceId(null)}
+      />
 
       <div className="mb-3 flex items-start justify-between gap-2 sm:mb-6 md:mb-8">
         <div className="min-w-0">

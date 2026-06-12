@@ -1,4 +1,7 @@
 import { getEmployeeHourlyRatesRows } from "./employee-hourly-rates";
+import { listPayStructures } from "./pay-structures-db";
+import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
+import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
 
 export type DepartmentRateSummary = {
   department: string;
@@ -9,6 +12,14 @@ export type DepartmentRateSummary = {
   /** How many rate rows we found for the department — UI hint when the modal
    *  rate is based on a tiny sample. */
   count: number;
+  /**
+   * Where the rate came from. `catalog` means an authoritative Payment Catalog
+   * pay structure (source of truth) overrode the observed mode; `observed` is
+   * the historical most-common-value heuristic.
+   */
+  source: "catalog" | "observed";
+  /** Currency of the rate. Observed rates carry no currency (null). */
+  currency: PayCurrency | null;
 };
 
 /**
@@ -61,16 +72,44 @@ export async function getDepartmentRateSummaries(): Promise<{
     return best;
   }
 
-  const departments: DepartmentRateSummary[] = [];
+  const byName = new Map<string, DepartmentRateSummary>();
   for (const [department, b] of buckets) {
-    departments.push({
+    byName.set(department.trim().toLowerCase(), {
       department,
       regular_rate: pickMode(b.regularCounts),
       ot_rate: pickMode(b.otCounts),
       count: b.count,
+      source: "observed",
+      currency: null,
     });
   }
-  departments.sort((a, b) =>
+
+  // Overlay authoritative Payment Catalog department pay structures. Catalog
+  // wins where defined; departments with no catalog entry keep the observed
+  // mode. Best-effort: if the catalog table is missing/unreachable, fall back
+  // to the observed rates rather than failing the onboarding prefill.
+  try {
+    const { structures } = await listPayStructures();
+    const deptName = new Map(DEPARTMENTS.map((d) => [d.key, d.name] as const));
+    for (const s of structures) {
+      if (s.scope !== "department") continue;
+      const name = deptName.get(s.departmentKey) ?? s.departmentKey;
+      const key = name.trim().toLowerCase();
+      const prior = byName.get(key);
+      byName.set(key, {
+        department: prior?.department ?? name,
+        regular_rate: String(s.regularRate),
+        ot_rate: s.otRate != null ? String(s.otRate) : null,
+        count: prior?.count ?? 0,
+        source: "catalog",
+        currency: s.currency,
+      });
+    }
+  } catch {
+    /* keep observed rates */
+  }
+
+  const departments = [...byName.values()].sort((a, b) =>
     a.department.localeCompare(b.department, undefined, { sensitivity: "base" }),
   );
   return { departments, error: null };
