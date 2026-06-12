@@ -1058,12 +1058,13 @@ export default function PayrollWizard({
   }, [calcSourceFile]);
 
   /**
-   * Manager-submitted department bonuses (KPI Calculator → Additions bridge).
-   * For each manager-bonus department, pulls the latest `ready`/`locked` weekly
-   * submission and indexes `calculated_bonus` by the entry's stored email
-   * (personal/work, lowercased). Resolved to each wizard row's identity in
-   * `resolvedManagerBonus`. Surfaces in the Additions Bonus column; the
-   * accountant can still override per row.
+   * Manager-applied department bonuses (KPI Calculator → Additions bridge).
+   * Each manager-bonus department's KPI week is gated `ready`/`locked` in
+   * `hsl_bonus_period_status`; the payout amounts come from the catalog-driven
+   * `bonus_catalog_applied` table (one row per applied bonus, summed per
+   * employee). Indexed by the stored email (personal/work, lowercased) and
+   * resolved to each wizard row's identity in `resolvedManagerBonus`. Surfaces
+   * in the Additions "KPI Sub." column; the accountant can still override per row.
    */
   const [managerBonusRaw, setManagerBonusRaw] = useState<Record<string, number>>({});
   const [managerBonusMeta, setManagerBonusMeta] = useState<Record<string, { period_start: string; status: string }>>({});
@@ -1107,14 +1108,20 @@ export default function PayrollWizard({
         await Promise.all(
           Array.from(chosen.entries()).map(async ([dept, info]) => {
             meta[dept] = info;
-            const res = await fetch(`/api/hsl-bonus/entries?dept=${dept}&period_start=${info.period_start}`, {
-              cache: 'no-store',
-            });
-            const json = (await res.json()) as { rows?: { employee_email: string; calculated_bonus: number }[] };
+            // Amounts come from the catalog-applied table; an employee may have
+            // several applied bonuses in the week, so sum them per email.
+            const res = await fetch(
+              `/api/bonus-catalog-applied?dept=${dept}&period_start=${info.period_start}`,
+              { cache: 'no-store' },
+            );
+            const json = (await res.json()) as {
+              rows?: { employee_email: string; amount: number | string | null }[];
+            };
             for (const r of json.rows ?? []) {
               const em = (r.employee_email ?? '').toLowerCase();
-              if (!em || em === '__dept_meta__') continue;
-              raw[em] = Math.round(r.calculated_bonus ?? 0);
+              if (!em) continue;
+              const amt = r.amount == null ? 0 : Number(r.amount);
+              raw[em] = Math.round((raw[em] ?? 0) + amt);
             }
           }),
         );

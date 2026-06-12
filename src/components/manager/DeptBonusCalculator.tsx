@@ -1,8 +1,38 @@
 'use client';
 
+// KPI Calculator -- Departments (non-HSL).
+//
+// Catalog-driven: the bonuses a manager can apply come from the Bonus Catalog
+// (Accounting tab). For each department the manager controls:
+//   - "Common" bonuses (assigned to the whole department) apply to every member.
+//   - "Individual" bonuses (assigned to one employee in the department) show on
+//     that person only.
+// The manager decides which bonuses pay out this week. Flat bonuses are a simple
+// on/off; formula bonuses collect their variable inputs per employee and compute
+// live via the catalog formula engine. Applied rows are saved to
+// bonus_catalog_applied (one row per member x applied bonus) and, once the week
+// is marked Ready, feed the Payroll Wizard "KPI Sub." column.
+//
+// Week = the latest Hubstaff upload (pinned, same key accounting processes).
+// Status (draft/ready/locked) lives in hsl_bonus_period_status (reused).
+
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, LayoutGroup, motion, useSpring } from 'motion/react';
-import { AlertTriangle, CheckCircle2, ChevronDown, Clock, Lock, RefreshCw, Save, Search, Users } from 'lucide-react';
+import {
+  AlertTriangle,
+  Building2,
+  CheckCheck,
+  CheckCircle2,
+  ChevronDown,
+  Clock,
+  Lock,
+  RefreshCw,
+  Save,
+  Search,
+  Sparkles,
+  User,
+  Users,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,35 +40,33 @@ import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
-import {
-  DEPARTMENTS,
-  DEPT_DESCRIPTION,
-  DEPT_INPUT_CONFIG,
-  FORMULA_DEPT_KEYS,
-  MANAGER_BONUS_DEPT_KEYS,
-  calculateDepartmentBonus,
-} from '@/lib/payroll/department-bonus';
+import { DEPARTMENTS, DEPT_DESCRIPTION, MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
+import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
+import { validateFormula, evaluateFormula } from '@/lib/bonus-catalog/formula';
+import type { BonusDef, BonusAssignment } from '@/lib/bonus-catalog/types';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// -- Types ---------------------------------------------------------------------
 
 type BonusStatus = 'draft' | 'ready' | 'locked';
 
-/** Sentinel email used to persist department-level metrics (one row per dept+period). */
-const DEPT_META_EMAIL = '__dept_meta__';
-
 const EASE = [0.22, 1, 0.36, 1] as const;
+const PESO = '₱';
 
-interface EmpEntry {
+/** Per-member, per-bonus applied state. `vars` holds formula inputs as strings. */
+interface AppliedState {
+  on: boolean;
+  vars: Record<string, string>;
+}
+
+interface MemberState {
   email: string;
   name: string;
-  metrics: Record<string, number>;   // per-employee numeric inputs
-  toggles: Record<string, boolean>;  // award toggles (us_manager_bonus)
+  applied: Record<string, AppliedState>; // keyed by bonusId
 }
 
 interface DeptState {
-  employees: EmpEntry[];
-  deptMetrics: Record<string, number>; // department-level numeric inputs
+  members: MemberState[];
   status: BonusStatus;
   dirty: boolean;
   saving: boolean;
@@ -59,7 +87,7 @@ interface DeptBonusCalculatorProps {
   isElevated: boolean;
 }
 
-// ── Per-department colour identity (hex; inline-styled to dodge Tailwind purge) ──
+// -- Per-department colour identity (hex; inline-styled to dodge Tailwind purge) --
 
 const DEPT_COLOR: Record<string, string> = {
   accounting: '#10b981',
@@ -82,7 +110,7 @@ function deptColor(key: string): string {
   return DEPT_COLOR[key] ?? '#6366f1';
 }
 
-/** hex (#rrggbb) → rgba string at the given alpha. */
+/** hex (#rrggbb) -> rgba string at the given alpha. */
 function hexA(hex: string, alpha: number): string {
   const h = hex.replace('#', '');
   const r = parseInt(h.slice(0, 2), 16);
@@ -100,11 +128,11 @@ function fallbackBg(color: string): string {
   ].join(', ');
 }
 
-// ── Period helpers (weekly, Monday-anchored — matches the payroll week) ─────────
+// -- Period helpers (weekly, Monday-anchored -- matches the payroll week) -------
 
 function isoWeekStart(d: Date): string {
   const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const dow = day.getDay(); // 0=Sun … 6=Sat
+  const dow = day.getDay(); // 0=Sun ... 6=Sat
   const daysBack = dow === 0 ? 6 : dow - 1;
   day.setDate(day.getDate() - daysBack);
   return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
@@ -117,10 +145,10 @@ function weekEndFromStart(startIso: string): string {
 }
 
 function peso(n: number): string {
-  return `₱${Math.round(n).toLocaleString('en-PH')}`;
+  return `${PESO}${Math.round(n).toLocaleString('en-PH')}`;
 }
 
-/** Two-letter initials from a roster name (handles "Last, First M. \"Nick\"" formats). */
+/** Two-letter initials from a roster name (handles "Last, First M." formats). */
 function initials(name: string): string {
   const parts = name.replace(/["']/g, '').replace(/,/g, ' ').split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
@@ -136,7 +164,33 @@ function rowEmail(r: EmployeeRow): string {
   return normEmail(r.personal_email ?? null) || normEmail(r.work_email ?? null) || '';
 }
 
-// ── Component ───────────────────────────────────────────────────────────────────
+/** Deterministic applied-row id so re-saves upsert the same row. */
+function appliedId(dept: string, periodStart: string, email: string, bonusId: string): string {
+  return `app:${periodStart}:${dept}:${email}:${bonusId}`;
+}
+
+/** Compute the peso amount a bonus pays for a given set of (string) variable inputs. */
+function computeAmount(bonus: BonusDef, varsStr: Record<string, string> | undefined): number {
+  if (bonus.kind === 'flat') return Number.isFinite(bonus.amount) ? (bonus.amount as number) : 0;
+  const check = validateFormula(bonus.formula ?? '');
+  if (!check.ok) return 0;
+  const nums: Record<string, number> = {};
+  for (const v of check.variables) nums[v] = Number(varsStr?.[v] ?? '') || 0;
+  try {
+    return evaluateFormula(bonus.formula ?? '', nums);
+  } catch {
+    return 0;
+  }
+}
+
+/** Variable names a formula references (empty for flat bonuses / invalid formulas). */
+function bonusVariables(bonus: BonusDef): string[] {
+  if (bonus.kind !== 'formula') return [];
+  const check = validateFormula(bonus.formula ?? '');
+  return check.ok ? check.variables : [];
+}
+
+// -- Component ------------------------------------------------------------------
 
 export default function DeptBonusCalculator({
   viewerEmail,
@@ -147,28 +201,83 @@ export default function DeptBonusCalculator({
   const [weekStart, setWeekStart] = useState(() => isoWeekStart(new Date()));
   const weekEnd = useMemo(() => weekEndFromStart(weekStart), [weekStart]);
 
-  // Roster grouped by normalized department key, limited to manager-bonus depts.
+  // Catalog (authored in Accounting -> Bonus Catalog).
+  const [bonuses, setBonuses] = useState<BonusDef[]>([]);
+  const [assignments, setAssignments] = useState<BonusAssignment[]>([]);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
+
+  const bonusById = useMemo(() => {
+    const m = new Map<string, BonusDef>();
+    for (const b of bonuses) m.set(b.id, b);
+    return m;
+  }, [bonuses]);
+
+  const fetchCatalog = useCallback(async () => {
+    try {
+      const res = await fetch('/api/bonus-catalog', { cache: 'no-store' });
+      const json = (await res.json()) as { bonuses?: BonusDef[]; assignments?: BonusAssignment[] };
+      setBonuses(json.bonuses ?? []);
+      setAssignments(json.assignments ?? []);
+    } catch {
+      /* keep prior */
+    } finally {
+      setCatalogLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchCatalog();
+  }, [fetchCatalog]);
+
+  // Roster grouped by normalized department key, limited to this calculator's depts.
   const rosterByDept = useMemo(() => {
-    const map = new Map<string, EmpEntry[]>();
+    const map = new Map<string, { email: string; name: string }[]>();
     for (const r of teamMembers) {
       const key = normalizeDeptToKey(r.department);
-      if (!key || !(key in DEPT_INPUT_CONFIG)) continue;
+      if (!key || !MANAGER_BONUS_DEPT_KEYS.includes(key)) continue;
       const email = rowEmail(r);
       if (!email) continue;
       const list = map.get(key) ?? [];
-      list.push({ email, name: r.name ?? email, metrics: {}, toggles: {} });
+      list.push({ email, name: r.name ?? email });
       map.set(key, list);
     }
     for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
     return map;
   }, [teamMembers]);
 
-  // The real `Department` string each key was derived from — this is what the
-  // Manager "My Team" banner saves the wallpaper under (e.g. key `accounting`
-  // came from "Accounting Team"). `DEPARTMENTS[].name` is only a short display
-  // label and can differ ("Accounting" vs "Accounting Team"), which is why the
-  // wallpaper lookup missed before. Keying off the real string keeps the
-  // calculator's wallpaper fetch in sync with the banner that uploads it.
+  // Common + per-employee catalog bonuses resolved per department key.
+  const commonByDept = useMemo(() => {
+    const map = new Map<string, BonusDef[]>();
+    for (const a of assignments) {
+      if (a.scope !== 'department') continue;
+      const key = normalizeDeptToKey(a.departmentKey) ?? a.departmentKey;
+      const bonus = bonusById.get(a.bonusId);
+      if (!bonus) continue;
+      const list = map.get(key) ?? [];
+      if (!list.some((b) => b.id === bonus.id)) list.push(bonus);
+      map.set(key, list);
+    }
+    return map;
+  }, [assignments, bonusById]);
+
+  const individualByDept = useMemo(() => {
+    // dept key -> (employee email -> BonusDef[])
+    const map = new Map<string, Map<string, BonusDef[]>>();
+    for (const a of assignments) {
+      if (a.scope !== 'employee' || !a.employeeEmail) continue;
+      const key = normalizeDeptToKey(a.departmentKey) ?? a.departmentKey;
+      const bonus = bonusById.get(a.bonusId);
+      if (!bonus) continue;
+      const email = normEmail(a.employeeEmail) || a.employeeEmail.toLowerCase();
+      const byEmail = map.get(key) ?? new Map<string, BonusDef[]>();
+      const list = byEmail.get(email) ?? [];
+      if (!list.some((b) => b.id === bonus.id)) list.push(bonus);
+      byEmail.set(email, list);
+      map.set(key, byEmail);
+    }
+    return map;
+  }, [assignments, bonusById]);
+
   const deptLabelByKey = useMemo<Record<string, string>>(() => {
     const out: Record<string, string> = {};
     const add = (raw: string | null | undefined) => {
@@ -183,15 +292,20 @@ export default function DeptBonusCalculator({
 
   const visibleDeptKeys = useMemo<string[]>(() => {
     if (isElevated) {
-      return MANAGER_BONUS_DEPT_KEYS.filter((k) => (rosterByDept.get(k)?.length ?? 0) > 0);
+      return MANAGER_BONUS_DEPT_KEYS.filter(
+        (k) =>
+          (rosterByDept.get(k)?.length ?? 0) > 0 ||
+          (commonByDept.get(k)?.length ?? 0) > 0 ||
+          (individualByDept.get(k)?.size ?? 0) > 0,
+      );
     }
     const keys = new Set<string>();
     for (const d of managedDepts) {
       const k = normalizeDeptToKey(d);
-      if (k && k in DEPT_INPUT_CONFIG) keys.add(k);
+      if (k && MANAGER_BONUS_DEPT_KEYS.includes(k)) keys.add(k);
     }
     return Array.from(keys);
-  }, [isElevated, managedDepts, rosterByDept]);
+  }, [isElevated, managedDepts, rosterByDept, commonByDept, individualByDept]);
 
   const [state, setState] = useState<AllState>({});
   const [wallpapers, setWallpapers] = useState<Record<string, Wallpaper>>({});
@@ -203,82 +317,109 @@ export default function DeptBonusCalculator({
     setState((prev) => ({ ...prev, [key]: { ...prev[key]!, ...patch } }));
   }
 
-  // ── Load existing entries + status for a department ──────────────────────────
+  /** Bonuses applicable to one member: dept-common + that person's individual ones. */
+  const applicableBonuses = useCallback(
+    (deptKey: string, email: string): BonusDef[] => {
+      const common = commonByDept.get(deptKey) ?? [];
+      const indiv = individualByDept.get(deptKey)?.get(email) ?? [];
+      const seen = new Set<string>();
+      const out: BonusDef[] = [];
+      for (const b of [...common, ...indiv]) {
+        if (seen.has(b.id)) continue;
+        seen.add(b.id);
+        out.push(b);
+      }
+      return out;
+    },
+    [commonByDept, individualByDept],
+  );
+
+  // -- Load existing applied rows + status for a department ----------------------
 
   const loadDept = useCallback(
     async (key: string) => {
       const roster = rosterByDept.get(key) ?? [];
       try {
-        const [entriesRes, statusRes] = await Promise.all([
-          fetch(`/api/hsl-bonus/entries?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' }),
+        const [appliedRes, statusRes] = await Promise.all([
+          fetch(`/api/bonus-catalog-applied?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' }),
           fetch(`/api/hsl-bonus/period-status?dept=${key}&period_start=${weekStart}`, { cache: 'no-store' }),
         ]);
-        const entriesJson = (await entriesRes.json()) as {
-          rows?: { employee_email: string; employee_name: string | null; kpi_data: Record<string, unknown> | null }[];
+        const appliedJson = (await appliedRes.json()) as {
+          rows?: {
+            employee_email: string;
+            employee_name: string | null;
+            bonus_id: string;
+            vars: Record<string, number> | null;
+          }[];
         };
         const statusJson = (await statusRes.json()) as { rows?: { status: BonusStatus }[] };
 
-        const cfg = DEPT_INPUT_CONFIG[key]!;
-        const dept = DEPARTMENTS.find((d) => d.key === key);
-
-        const savedByEmail = new Map<string, Record<string, unknown>>();
-        const deptMetrics: Record<string, number> = {};
-        for (const row of entriesJson.rows ?? []) {
+        // Seed members from roster, then overlay anyone who has saved applied rows.
+        const byEmail = new Map<string, MemberState>();
+        for (const e of roster) byEmail.set(e.email, { email: e.email, name: e.name, applied: {} });
+        // Also include individually-assigned employees even if not in the roster fetch.
+        const indivMap = individualByDept.get(key);
+        if (indivMap) {
+          for (const email of indivMap.keys()) {
+            if (!byEmail.has(email)) byEmail.set(email, { email, name: email, applied: {} });
+          }
+        }
+        for (const row of appliedJson.rows ?? []) {
           const em = (row.employee_email ?? '').toLowerCase();
-          if (em === DEPT_META_EMAIL) {
-            for (const f of cfg.deptFields) {
-              const v = Number(row.kpi_data?.[f.key] ?? 0);
-              if (Number.isFinite(v)) deptMetrics[f.key] = v;
-            }
-            continue;
-          }
-          savedByEmail.set(em, row.kpi_data ?? {});
+          if (!em) continue;
+          const member =
+            byEmail.get(em) ?? { email: em, name: row.employee_name ?? em, applied: {} };
+          if (!byEmail.has(em)) byEmail.set(em, member);
+          const vars: Record<string, string> = {};
+          if (row.vars) for (const [k, v] of Object.entries(row.vars)) vars[k] = String(v);
+          member.applied[row.bonus_id] = { on: true, vars };
         }
 
-        const byEmail = new Map<string, EmpEntry>();
-        for (const e of roster) byEmail.set(e.email, { ...e, metrics: {}, toggles: {} });
-        for (const [em, kpi] of savedByEmail) {
-          if (!byEmail.has(em)) {
-            byEmail.set(em, { email: em, name: String(kpi.__name__ ?? em), metrics: {}, toggles: {} });
-          }
-        }
-        for (const entry of byEmail.values()) {
-          const kpi = savedByEmail.get(entry.email);
-          if (!kpi) continue;
-          for (const f of cfg.employeeFields) {
-            const v = Number(kpi[f.key] ?? 0);
-            if (Number.isFinite(v) && v !== 0) entry.metrics[f.key] = v;
-          }
-          if (cfg.useToggleBonuses) {
-            for (const b of dept?.bonuses ?? []) {
-              if (kpi[b.id]) entry.toggles[b.id] = true;
-            }
-          }
-        }
-
-        const employees = Array.from(byEmail.values()).sort((a, b) => a.name.localeCompare(b.name));
+        const members = Array.from(byEmail.values()).sort((a, b) => a.name.localeCompare(b.name));
         const status: BonusStatus = statusJson.rows?.[0]?.status ?? 'draft';
         setState((prev) => ({
           ...prev,
-          [key]: { employees, deptMetrics, status, dirty: false, saving: false, loaded: true },
+          [key]: { members, status, dirty: false, saving: false, loaded: true },
         }));
       } catch {
         setState((prev) => ({
           ...prev,
-          [key]: { employees: roster, deptMetrics: {}, status: 'draft', dirty: false, saving: false, loaded: true },
+          [key]: {
+            members: roster.map((e) => ({ email: e.email, name: e.name, applied: {} })),
+            status: 'draft',
+            dirty: false,
+            saving: false,
+            loaded: true,
+          },
         }));
       }
     },
-    [rosterByDept, weekStart],
+    [rosterByDept, individualByDept, weekStart],
   );
 
   useEffect(() => {
+    if (!catalogLoaded) return;
     visibleDeptKeys.forEach((k) => void loadDept(k));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleDeptKeys, loadDept]);
+  }, [visibleDeptKeys, loadDept, catalogLoaded]);
 
-  // Pin the KPI week to the latest Hubstaff upload so managers always enter
-  // data for the same week accounting is processing in the Payroll Wizard.
+  // Live: a teammate authoring/assigning a bonus, or another manager applying one,
+  // refetches the catalog and reloads the open departments.
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const channel = supabase
+      .channel('dept-bonus-calc')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bonus_catalog_bonuses' }, () => void fetchCatalog())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bonus_catalog_assignments' }, () => void fetchCatalog())
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [fetchCatalog]);
+
+  // Pin the KPI week to the latest Hubstaff upload so managers always enter data
+  // for the same week accounting is processing in the Payroll Wizard.
   useEffect(() => {
     (async () => {
       try {
@@ -304,8 +445,6 @@ export default function DeptBonusCalculator({
     let cancelled = false;
     void Promise.all(
       visibleDeptKeys.map(async (key) => {
-        // Prefer the real Department string the banner saves under; fall back to
-        // the short display label only if no roster/managed string is available.
         const name = deptLabelByKey[key] ?? DEPARTMENTS.find((d) => d.key === key)?.name ?? key;
         try {
           const res = await fetch(`/api/manager/team-wallpaper?department=${encodeURIComponent(name)}`, { cache: 'no-store' });
@@ -322,118 +461,128 @@ export default function DeptBonusCalculator({
     };
   }, [visibleDeptKeys, deptLabelByKey]);
 
-  // ── Live bonus computation ───────────────────────────────────────────────────
+  // -- Live bonus computation ----------------------------------------------------
 
-  const computeBonuses = useCallback((key: string, st: DeptState): Record<string, number> => {
-    const cfg = DEPT_INPUT_CONFIG[key]!;
-    if (FORMULA_DEPT_KEYS.has(key)) {
-      const empMetrics: Record<string, Record<string, number>> = {};
-      for (const e of st.employees) empMetrics[e.email] = e.metrics;
-      return calculateDepartmentBonus(key, st.employees, empMetrics, { [key]: st.deptMetrics });
-    }
-    if (cfg.useToggleBonuses) {
-      const dept = DEPARTMENTS.find((d) => d.key === key);
-      const out: Record<string, number> = {};
-      for (const e of st.employees) {
-        let sum = 0;
-        for (const b of dept?.bonuses ?? []) if (e.toggles[b.id]) sum += b.amount;
-        out[e.email] = sum;
+  const memberTotal = useCallback(
+    (deptKey: string, member: MemberState): number => {
+      let sum = 0;
+      for (const bonus of applicableBonuses(deptKey, member.email)) {
+        const st = member.applied[bonus.id];
+        if (st?.on) sum += computeAmount(bonus, st.vars);
       }
-      return out;
-    }
-    const out: Record<string, number> = {};
-    for (const e of st.employees) out[e.email] = 0;
-    return out;
-  }, []);
+      return sum;
+    },
+    [applicableBonuses],
+  );
 
-  // ── Mutators ─────────────────────────────────────────────────────────────────
+  const deptTotal = useCallback(
+    (deptKey: string, st: DeptState | undefined): number => {
+      if (!st) return 0;
+      return st.members.reduce((s, m) => s + memberTotal(deptKey, m), 0);
+    },
+    [memberTotal],
+  );
 
-  function setEmpMetric(key: string, email: string, metric: string, value: number) {
+  // -- Mutators ------------------------------------------------------------------
+
+  function toggleBonus(deptKey: string, email: string, bonusId: string, on: boolean) {
     setState((prev) => {
-      const d = prev[key]!;
+      const d = prev[deptKey]!;
       return {
         ...prev,
-        [key]: {
+        [deptKey]: {
           ...d,
           dirty: true,
-          employees: d.employees.map((e) =>
-            e.email === email ? { ...e, metrics: { ...e.metrics, [metric]: value } } : e,
+          members: d.members.map((m) =>
+            m.email === email
+              ? { ...m, applied: { ...m.applied, [bonusId]: { on, vars: m.applied[bonusId]?.vars ?? {} } } }
+              : m,
           ),
         },
       };
     });
   }
 
-  function setEmpToggle(key: string, email: string, bonusId: string, on: boolean) {
+  function setVar(deptKey: string, email: string, bonusId: string, varName: string, value: string) {
     setState((prev) => {
-      const d = prev[key]!;
+      const d = prev[deptKey]!;
       return {
         ...prev,
-        [key]: {
+        [deptKey]: {
           ...d,
           dirty: true,
-          employees: d.employees.map((e) =>
-            e.email === email ? { ...e, toggles: { ...e.toggles, [bonusId]: on } } : e,
-          ),
+          members: d.members.map((m) => {
+            if (m.email !== email) return m;
+            const cur = m.applied[bonusId] ?? { on: true, vars: {} };
+            return {
+              ...m,
+              applied: { ...m.applied, [bonusId]: { on: true, vars: { ...cur.vars, [varName]: value } } },
+            };
+          }),
         },
       };
     });
   }
 
-  function setDeptMetric(key: string, metric: string, value: number) {
+  /** Toggle a common bonus on/off for every member of the department at once. */
+  function applyToAll(deptKey: string, bonusId: string, on: boolean) {
     setState((prev) => {
-      const d = prev[key]!;
-      return { ...prev, [key]: { ...d, dirty: true, deptMetrics: { ...d.deptMetrics, [metric]: value } } };
+      const d = prev[deptKey]!;
+      return {
+        ...prev,
+        [deptKey]: {
+          ...d,
+          dirty: true,
+          members: d.members.map((m) => ({
+            ...m,
+            applied: { ...m.applied, [bonusId]: { on, vars: m.applied[bonusId]?.vars ?? {} } },
+          })),
+        },
+      };
     });
   }
 
-  // ── Persistence ──────────────────────────────────────────────────────────────
+  // -- Persistence ---------------------------------------------------------------
 
   async function saveDept(key: string) {
     const d = state[key];
     if (!d) return;
-    const cfg = DEPT_INPUT_CONFIG[key]!;
-    const bonuses = computeBonuses(key, d);
     patchDept(key, { saving: true });
     try {
-      const entries: Record<string, unknown>[] = d.employees.map((e) => ({
-        department: key,
-        period_type: 'weekly',
-        period_start: weekStart,
-        period_end: weekEnd,
-        employee_email: e.email,
-        employee_name: e.name,
-        is_manager: false,
-        kpi_data: { ...e.metrics, ...e.toggles, __name__: e.name },
-        calculated_bonus: bonuses[e.email] ?? 0,
-        created_by: viewerEmail ?? undefined,
-      }));
-      if (cfg.deptFields.length > 0) {
-        entries.push({
-          department: key,
-          period_type: 'weekly',
-          period_start: weekStart,
-          period_end: weekEnd,
-          employee_email: DEPT_META_EMAIL,
-          employee_name: 'Department metrics',
-          is_manager: false,
-          kpi_data: { ...d.deptMetrics },
-          calculated_bonus: 0,
-          created_by: viewerEmail ?? undefined,
-        });
+      const rows = [] as Array<Record<string, unknown>>;
+      for (const m of d.members) {
+        for (const bonus of applicableBonuses(key, m.email)) {
+          const st = m.applied[bonus.id];
+          if (!st?.on) continue;
+          const numVars: Record<string, number> = {};
+          for (const v of bonusVariables(bonus)) numVars[v] = Number(st.vars?.[v] ?? '') || 0;
+          rows.push({
+            id: appliedId(key, weekStart, m.email, bonus.id),
+            periodStart: weekStart,
+            periodEnd: weekEnd,
+            department: key,
+            employeeEmail: m.email,
+            employeeName: m.name,
+            bonusId: bonus.id,
+            bonusName: bonus.name,
+            kind: bonus.kind,
+            vars: bonus.kind === 'formula' ? numVars : null,
+            amount: computeAmount(bonus, st.vars),
+          });
+        }
       }
-      const res = await fetch('/api/hsl-bonus/entries', {
+      const res = await fetch('/api/bonus-catalog-applied', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries }),
+        body: JSON.stringify({ department: key, period_start: weekStart, period_end: weekEnd, rows }),
       });
-      const json = (await res.json()) as { error?: string; saved?: number };
-      if (!res.ok) throw new Error(json.error ?? 'Save failed');
+      const json = (await res.json()) as { error?: string | null; saved?: number };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
       patchDept(key, { dirty: false });
       const stillDraft = d.status !== 'ready' && d.status !== 'locked';
-      const memberCount = `${d.employees.length} member${d.employees.length === 1 ? '' : 's'} updated`;
+      const applied = `${rows.length} bonus${rows.length === 1 ? '' : 'es'} applied`;
       toast.success(`${DEPARTMENTS.find((x) => x.key === key)?.name ?? key} saved`, {
-        description: stillDraft ? `${memberCount} · Mark Ready before payroll` : memberCount,
+        description: stillDraft ? `${applied} · Mark Ready before payroll` : applied,
       });
     } catch (e) {
       toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
@@ -480,21 +629,16 @@ export default function DeptBonusCalculator({
     }
   }
 
-  // ── Derived view data ────────────────────────────────────────────────────────
+  // -- Derived view data ---------------------------------------------------------
 
   const grandTotal = useMemo(() => {
     let sum = 0;
-    for (const k of visibleDeptKeys) {
-      const d = state[k];
-      if (!d) continue;
-      const b = computeBonuses(k, d);
-      for (const v of Object.values(b)) sum += v;
-    }
+    for (const k of visibleDeptKeys) sum += deptTotal(k, state[k]);
     return sum;
-  }, [visibleDeptKeys, state, computeBonuses]);
+  }, [visibleDeptKeys, state, deptTotal]);
 
   const totalPeople = useMemo(
-    () => visibleDeptKeys.reduce((s, k) => s + (state[k]?.employees.length ?? 0), 0),
+    () => visibleDeptKeys.reduce((s, k) => s + (state[k]?.members.length ?? 0), 0),
     [visibleDeptKeys, state],
   );
 
@@ -510,8 +654,7 @@ export default function DeptBonusCalculator({
 
   const q = search.trim().toLowerCase();
 
-  // Weekly KPI deadline: managers must mark every department Ready before the
-  // current week's payroll. Whole-days remaining until the week closes (Sunday).
+  // Weekly KPI deadline: managers submit before the current week's payroll.
   const now = new Date();
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const [ey, em, ed] = weekEnd.split('-').map(Number);
@@ -530,12 +673,14 @@ export default function DeptBonusCalculator({
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
-              KPI Calculator · Departments
+              KPI Calculator &middot; Departments
             </p>
             <h2 className="mt-0.5 text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-              {isElevated ? 'All Departments' : visibleDeptKeys.length === 1
-                ? DEPARTMENTS.find((d) => d.key === visibleDeptKeys[0])?.name
-                : 'My Departments'}
+              {isElevated
+                ? 'All Departments'
+                : visibleDeptKeys.length === 1
+                  ? DEPARTMENTS.find((d) => d.key === visibleDeptKeys[0])?.name
+                  : 'My Departments'}
               <span className="ml-2 font-mono text-[11px] font-normal text-zinc-400">week of {weekStart}</span>
             </h2>
           </div>
@@ -572,7 +717,7 @@ export default function DeptBonusCalculator({
                     onClick={() => setActiveFilter(k)}
                     label={DEPARTMENTS.find((d) => d.key === k)?.name ?? k}
                     color={deptColor(k)}
-                    count={state[k]?.employees.length ?? 0}
+                    count={state[k]?.members.length ?? 0}
                   />
                 ))}
               </div>
@@ -582,7 +727,7 @@ export default function DeptBonusCalculator({
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
             <Input
               type="search"
-              placeholder="Find member…"
+              placeholder="Find member..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="h-8 w-full pl-8 text-xs sm:w-44"
@@ -612,17 +757,16 @@ export default function DeptBonusCalculator({
       >
         {filteredKeys.map((key) => {
           const d = state[key];
-          const cfg = DEPT_INPUT_CONFIG[key]!;
           const dept = DEPARTMENTS.find((x) => x.key === key);
           const color = deptColor(key);
           const wp = wallpapers[key];
           const readOnly = d ? d.status !== 'draft' : false;
-          const bonuses = d ? computeBonuses(key, d) : {};
-          const total = Object.values(bonuses).reduce((s, n) => s + n, 0);
+          const total = deptTotal(key, d);
           const open = isOpen(key);
-          const awards = cfg.useToggleBonuses ? dept?.bonuses ?? [] : [];
-          const cols = `minmax(0,1fr) ${[...cfg.employeeFields, ...awards].map(() => '5.5rem').join(' ')} 5rem`;
-          const members = (d?.employees ?? []).filter((e) => !q || e.name.toLowerCase().includes(q));
+          const common = commonByDept.get(key) ?? [];
+          const members = (d?.members ?? []).filter((e) => !q || e.name.toLowerCase().includes(q));
+          const hasAnyBonus =
+            common.length > 0 || (individualByDept.get(key)?.size ?? 0) > 0;
 
           return (
             <motion.div
@@ -653,7 +797,6 @@ export default function DeptBonusCalculator({
                 }}
                 className="relative block h-32 w-full cursor-pointer overflow-hidden outline-none"
               >
-                {/* Background: uploaded wallpaper or generated mesh */}
                 <div
                   className="absolute inset-0 bg-cover bg-center group-hover:scale-[1.06]"
                   style={{
@@ -665,25 +808,17 @@ export default function DeptBonusCalculator({
                   }}
                   aria-hidden
                 />
-                {/* Legibility overlay */}
                 <div
                   className="absolute inset-0"
                   style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.45) 48%, rgba(0,0,0,0.1) 100%)' }}
                   aria-hidden
                 />
-                {/* Sheen sweep on hover */}
                 <div
                   className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/15 to-transparent group-hover:translate-x-full"
-                  style={{
-                    transitionProperty: 'transform',
-                    transitionDuration: '900ms',
-                    transitionTimingFunction: 'ease-out',
-                  }}
+                  style={{ transitionProperty: 'transform', transitionDuration: '900ms', transitionTimingFunction: 'ease-out' }}
                   aria-hidden
                 />
-                {/* Film-grain texture */}
                 <div className="pointer-events-none absolute inset-0 opacity-[0.15] mix-blend-overlay" style={{ backgroundImage: HERO_NOISE }} aria-hidden />
-                {/* Top colour accent */}
                 <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: color }} aria-hidden />
 
                 <div className="relative flex h-full flex-col justify-between p-3 sm:p-4">
@@ -701,7 +836,7 @@ export default function DeptBonusCalculator({
                       )}
                       <div className="flex items-center gap-1 text-white/70">
                         <Users className="h-3 w-3" aria-hidden />
-                        <span className="tabular-nums font-mono text-xs">{d?.employees.length ?? 0}</span>
+                        <span className="tabular-nums font-mono text-xs">{d?.members.length ?? 0}</span>
                       </div>
                       <div className="text-right">
                         <div className="font-mono text-[8px] uppercase tracking-[0.18em] text-white/55">Projected</div>
@@ -742,147 +877,145 @@ export default function DeptBonusCalculator({
                     className="overflow-hidden"
                   >
                     <div className="border-t border-zinc-100 dark:border-zinc-800/70">
-                      {/* Formula */}
-                      <motion.div
-                        className="flex flex-wrap items-center gap-2 px-3.5 pt-3"
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.3, delay: 0.08, ease: EASE }}
-                      >
-                        <span
-                          className="rounded-md px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-                          style={{ backgroundColor: hexA(color, 0.14), color }}
-                        >
-                          Formula
-                        </span>
-                        <p className="flex-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">{cfg.formula}</p>
-                      </motion.div>
-
-                      {/* Dept-level inputs */}
-                      {cfg.deptFields.length > 0 && (
-                        <motion.div
-                          className="mx-3.5 mt-2.5 flex flex-wrap gap-2.5 rounded-xl p-2.5"
-                          style={{ backgroundColor: hexA(color, 0.06) }}
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3, delay: 0.12, ease: EASE }}
-                        >
-                          {cfg.deptFields.map((f) => (
-                            <label key={f.key} className="flex flex-col gap-1">
-                              <span className="font-mono text-[9px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                                {f.label}
-                              </span>
-                              <Input
-                                type="number"
-                                inputMode="numeric"
-                                className="h-7 w-20 text-sm tabular-nums"
-                                disabled={readOnly || !d?.loaded}
-                                value={d?.deptMetrics[f.key] ?? ''}
-                                onChange={(ev) => setDeptMetric(key, f.key, Number(ev.target.value) || 0)}
-                              />
-                            </label>
+                      {/* Common-bonus legend with one-tap apply-to-all */}
+                      {common.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 px-3.5 pt-3">
+                          <span
+                            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
+                            style={{ backgroundColor: hexA(color, 0.14), color }}
+                          >
+                            <Building2 className="h-3 w-3" /> Common
+                          </span>
+                          {common.map((b) => (
+                            <button
+                              key={b.id}
+                              type="button"
+                              disabled={readOnly}
+                              onClick={() => applyToAll(key, b.id, true)}
+                              title={`Apply "${b.name}" to all members`}
+                              className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                            >
+                              <CheckCheck className="h-3 w-3" />
+                              {b.name}
+                            </button>
                           ))}
-                        </motion.div>
+                        </div>
                       )}
 
                       {/* Members */}
                       {!d || !d.loaded ? (
-                        <div className="px-3.5 py-5 text-center text-xs text-zinc-400">Loading…</div>
+                        <div className="px-3.5 py-5 text-center text-xs text-zinc-400">Loading...</div>
+                      ) : !hasAnyBonus ? (
+                        <div className="px-3.5 py-6 text-center text-xs text-zinc-400">
+                          No bonuses assigned to this department yet.
+                          <br />
+                          Assign one in Accounting &rarr; Bonus Catalog.
+                        </div>
                       ) : members.length === 0 ? (
                         <div className="px-3.5 py-5 text-center text-xs text-zinc-400">
                           {q ? 'No members match your search.' : 'No team members in this department.'}
                         </div>
                       ) : (
-                        <div className="mt-1.5 px-1.5 pb-1 sm:overflow-x-auto">
-                          {(cfg.employeeFields.length > 0 || awards.length > 0) && (
-                            <div
-                              className="hidden items-end gap-2 px-2 pb-1 text-[9px] font-medium uppercase tracking-wide text-zinc-400 sm:grid"
-                              style={{ gridTemplateColumns: cols }}
-                            >
-                              <span>Member</span>
-                              {cfg.employeeFields.map((f) => (
-                                <span key={f.key} className="text-center leading-tight">{f.label}</span>
-                              ))}
-                              {awards.map((b) => (
-                                <span key={b.id} className="text-center leading-tight">{b.label}</span>
-                              ))}
-                              <span className="text-right">Bonus</span>
-                            </div>
-                          )}
-                          <motion.div
-                            className="space-y-0.5"
-                            initial="hidden"
-                            animate="show"
-                            variants={{ show: { transition: { staggerChildren: 0.028, delayChildren: 0.12 } } }}
-                          >
-                            {members.map((e) => (
+                        <motion.div
+                          className="space-y-1.5 px-2.5 pb-1 pt-2"
+                          initial="hidden"
+                          animate="show"
+                          variants={{ show: { transition: { staggerChildren: 0.028, delayChildren: 0.06 } } }}
+                        >
+                          {members.map((m) => {
+                            const mBonuses = applicableBonuses(key, m.email);
+                            const mTotal = memberTotal(key, m);
+                            return (
                               <motion.div
-                                key={e.email}
+                                key={m.email}
                                 variants={{ hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0 } }}
-                                className="flex flex-col gap-2 rounded-lg border border-zinc-100 px-2.5 py-2 transition-colors hover:bg-zinc-50 dark:border-zinc-800/60 dark:hover:bg-zinc-800/40 sm:grid sm:items-center sm:gap-2 sm:border-0 sm:px-2 sm:py-1.5"
-                                style={{ gridTemplateColumns: cols }}
+                                className="rounded-xl border border-zinc-100 bg-white px-3 py-2.5 dark:border-zinc-800/60 dark:bg-zinc-900/30"
                               >
-                                <div className="flex min-w-0 items-center gap-2">
-                                  <span
-                                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
-                                    style={{ backgroundColor: hexA(color, 0.16), color }}
-                                    aria-hidden
-                                  >
-                                    {initials(e.name)}
-                                  </span>
-                                  <div className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">{e.name}</div>
-                                </div>
-                                {cfg.employeeFields.map((f) => {
-                                  const applies = !f.appliesTo || f.appliesTo(e.name);
-                                  return (
-                                    <div key={f.key} className="flex items-center justify-between gap-2 sm:justify-center">
-                                      <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:hidden">{f.label}</span>
-                                      {applies ? (
-                                        <Input
-                                          type="number"
-                                          inputMode="numeric"
-                                          aria-label={`${f.label} for ${e.name}`}
-                                          className="h-7 w-[4.75rem] text-center text-sm tabular-nums"
-                                          disabled={readOnly}
-                                          value={e.metrics[f.key] ?? ''}
-                                          onChange={(ev) => setEmpMetric(key, e.email, f.key, Number(ev.target.value) || 0)}
-                                        />
-                                      ) : (
-                                        <span className="text-zinc-300 dark:text-zinc-600">—</span>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                                {awards.map((b) => (
-                                  <div key={b.id} className="flex items-center justify-between gap-2 sm:justify-center">
-                                    <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:hidden">{b.label}</span>
-                                    <input
-                                      type="checkbox"
-                                      aria-label={`${b.label} for ${e.name}`}
-                                      className="h-4 w-4 rounded accent-emerald-600"
-                                      disabled={readOnly}
-                                      checked={e.toggles[b.id] ?? false}
-                                      onChange={(ev) => setEmpToggle(key, e.email, b.id, ev.target.checked)}
-                                    />
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <span
+                                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+                                      style={{ backgroundColor: hexA(color, 0.16), color }}
+                                      aria-hidden
+                                    >
+                                      {initials(m.name)}
+                                    </span>
+                                    <div className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">{m.name}</div>
                                   </div>
-                                ))}
-                                <div className="flex items-center justify-between gap-2 border-t border-zinc-100 pt-1.5 dark:border-zinc-800/60 sm:block sm:border-0 sm:pt-0 sm:text-right">
-                                  <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 sm:hidden">Bonus</span>
                                   <span
                                     className={cn(
-                                      'inline-block rounded-md px-1.5 py-0.5 font-mono text-sm font-semibold tabular-nums',
-                                      (bonuses[e.email] ?? 0) > 0
+                                      'shrink-0 rounded-md px-1.5 py-0.5 font-mono text-sm font-semibold tabular-nums',
+                                      mTotal > 0
                                         ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
                                         : 'text-zinc-400 dark:text-zinc-600',
                                     )}
                                   >
-                                    <AnimatedPeso value={bonuses[e.email] ?? 0} />
+                                    <AnimatedPeso value={mTotal} />
                                   </span>
                                 </div>
+
+                                {/* Applicable bonuses for this member */}
+                                <div className="mt-2 space-y-1">
+                                  {mBonuses.map((b) => {
+                                    const st = m.applied[b.id];
+                                    const on = !!st?.on;
+                                    const isCommon = common.some((c) => c.id === b.id);
+                                    const vars = bonusVariables(b);
+                                    const amt = on ? computeAmount(b, st?.vars) : 0;
+                                    return (
+                                      <div
+                                        key={b.id}
+                                        className="rounded-lg border border-zinc-100 px-2 py-1.5 dark:border-zinc-800/50"
+                                      >
+                                        <div className="flex items-center justify-between gap-2">
+                                          <label className="flex min-w-0 items-center gap-2">
+                                            <input
+                                              type="checkbox"
+                                              className="h-4 w-4 shrink-0 rounded accent-emerald-600"
+                                              disabled={readOnly}
+                                              checked={on}
+                                              onChange={(ev) => toggleBonus(key, m.email, b.id, ev.target.checked)}
+                                            />
+                                            <span className="truncate text-[12.5px] text-zinc-700 dark:text-zinc-200">{b.name}</span>
+                                            <BonusTag isCommon={isCommon} kind={b.kind} />
+                                          </label>
+                                          <span
+                                            className={cn(
+                                              'shrink-0 font-mono text-[12px] tabular-nums',
+                                              amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                            )}
+                                          >
+                                            {peso(amt)}
+                                          </span>
+                                        </div>
+
+                                        {/* Formula variable inputs (shown when applied) */}
+                                        {on && b.kind === 'formula' && vars.length > 0 && (
+                                          <div className="mt-1.5 flex flex-wrap gap-2 pl-6">
+                                            {vars.map((v) => (
+                                              <label key={v} className="flex items-center gap-1">
+                                                <span className="font-mono text-[10px] text-zinc-400">{v}</span>
+                                                <Input
+                                                  type="number"
+                                                  inputMode="decimal"
+                                                  aria-label={`${v} for ${m.name}`}
+                                                  disabled={readOnly}
+                                                  value={st?.vars?.[v] ?? ''}
+                                                  onChange={(ev) => setVar(key, m.email, b.id, v, ev.target.value)}
+                                                  className="h-7 w-20 text-center text-sm tabular-nums"
+                                                />
+                                              </label>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
                               </motion.div>
-                            ))}
-                          </motion.div>
-                        </div>
+                            );
+                          })}
+                        </motion.div>
                       )}
 
                       {/* Footer */}
@@ -890,10 +1023,10 @@ export default function DeptBonusCalculator({
                         <span
                           className={cn(
                             'font-mono text-[10px] uppercase tracking-wide',
-                            readOnly ? 'text-emerald-500' : 'text-amber-600 dark:text-amber-400',
+                            readOnly ? 'text-emerald-500' : d?.dirty ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-400',
                           )}
                         >
-                          {readOnly ? 'Sent to Accounting' : d?.dirty ? 'Unsaved changes' : 'Saved — not yet submitted'}
+                          {readOnly ? 'Sent to Accounting' : d?.dirty ? 'Unsaved changes' : 'Saved -- not yet submitted'}
                         </span>
                         <div className="flex items-center gap-2">
                           {readOnly ? (
@@ -903,7 +1036,7 @@ export default function DeptBonusCalculator({
                           ) : (
                             <>
                               <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" disabled={d?.saving} onClick={() => void saveDept(key)}>
-                                <Save className="h-3.5 w-3.5" /> {d?.saving ? 'Saving…' : 'Save'}
+                                <Save className="h-3.5 w-3.5" /> {d?.saving ? 'Saving...' : 'Save'}
                               </Button>
                               <motion.div whileTap={{ scale: 0.95 }}>
                                 <Button
@@ -931,7 +1064,7 @@ export default function DeptBonusCalculator({
   );
 }
 
-// ── Bits ─────────────────────────────────────────────────────────────────────
+// -- Bits -----------------------------------------------------------------------
 
 /** Peso figure that springs to its new value whenever it changes. */
 function AnimatedPeso({ value }: { value: number }) {
@@ -942,6 +1075,34 @@ function AnimatedPeso({ value }: { value: number }) {
   }, [spring, value]);
   useEffect(() => spring.on('change', (v) => setShown(v)), [spring]);
   return <>{peso(shown)}</>;
+}
+
+function BonusTag({ isCommon, kind }: { isCommon: boolean; kind: BonusDef['kind'] }) {
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      <span
+        className={cn(
+          'inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
+          isCommon
+            ? 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300'
+            : 'bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300',
+        )}
+      >
+        {isCommon ? <Building2 className="h-2.5 w-2.5" /> : <User className="h-2.5 w-2.5" />}
+        {isCommon ? 'Dept' : 'Individual'}
+      </span>
+      <span
+        className={cn(
+          'rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
+          kind === 'flat'
+            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+            : 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
+        )}
+      >
+        {kind}
+      </span>
+    </span>
+  );
 }
 
 function FilterPill({
@@ -1025,7 +1186,7 @@ function DeadlineBanner({
         {done ? 'All departments submitted for this week.' : `${draft} of ${total} department${total === 1 ? '' : 's'} not yet submitted.`}
       </span>
       <span className="opacity-80">
-        Week {fmt(weekStart)} – {fmt(weekEnd)} · feeds this week&rsquo;s payroll{done ? '' : ` · ${countdown}`}
+        Week {fmt(weekStart)} &ndash; {fmt(weekEnd)} &middot; feeds this week&rsquo;s payroll{done ? '' : ` · ${countdown}`}
       </span>
       <span className="ml-auto rounded-full bg-white/70 px-2 py-0.5 font-mono text-[10px] font-semibold dark:bg-black/30">
         {readyCount}/{total} ready
@@ -1036,10 +1197,9 @@ function DeadlineBanner({
 
 function HeroBadge({ status, warn }: { status: BonusStatus; warn?: boolean }) {
   const map: Record<BonusStatus, { label: string; cls: string; icon?: React.ReactNode }> = {
-    draft:
-      warn
-        ? { label: 'Action needed', cls: 'bg-amber-400/30 text-amber-50 ring-1 ring-amber-200/40', icon: <AlertTriangle className="h-3 w-3" /> }
-        : { label: 'Draft', cls: 'bg-white/15 text-white/90' },
+    draft: warn
+      ? { label: 'Action needed', cls: 'bg-amber-400/30 text-amber-50 ring-1 ring-amber-200/40', icon: <AlertTriangle className="h-3 w-3" /> }
+      : { label: 'Draft', cls: 'bg-white/15 text-white/90', icon: <Sparkles className="h-3 w-3" /> },
     ready: { label: 'Ready', cls: 'bg-emerald-400/25 text-emerald-100', icon: <CheckCircle2 className="h-3 w-3" /> },
     locked: { label: 'Locked', cls: 'bg-amber-400/25 text-amber-100', icon: <Lock className="h-3 w-3" /> },
   };

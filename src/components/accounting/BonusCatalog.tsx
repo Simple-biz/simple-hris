@@ -31,6 +31,7 @@ import {
   AlertTriangle,
   X,
   Search,
+  Eye,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -371,10 +372,51 @@ function LibraryTab({
 }) {
   const [editing, setEditing] = useState<BonusDef | null>(null);
   const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const [viewingId, setViewingId] = useState<string | null>(null);
+
+  // Keep the open modal in sync with the latest bonus row (so edits show live).
+  const viewingBonus = useMemo(
+    () => (viewingId ? bonuses.find((b) => b.id === viewingId) ?? null : null),
+    [viewingId, bonuses],
+  );
+
+  // 3 per row x 3 rows.
+  const PAGE_SIZE = 9;
 
   const assignmentCount = useCallback(
     (bonusId: string) => assignments.filter((a) => a.bonusId === bonusId).length,
     [assignments],
+  );
+
+  const filteredBonuses = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return bonuses;
+    return bonuses.filter(
+      (b) =>
+        b.name.toLowerCase().includes(q) ||
+        (b.description ?? '').toLowerCase().includes(q) ||
+        (b.formula ?? '').toLowerCase().includes(q) ||
+        b.kind.includes(q),
+    );
+  }, [bonuses, search]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredBonuses.length / PAGE_SIZE));
+
+  // Reset to the first page whenever the result set shrinks past the current page.
+  useEffect(() => {
+    setPage((p) => Math.min(p, pageCount - 1));
+  }, [pageCount]);
+
+  // Jump back to page 1 when the search query changes.
+  useEffect(() => {
+    setPage(0);
+  }, [search]);
+
+  const pagedBonuses = useMemo(
+    () => filteredBonuses.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE),
+    [filteredBonuses, page],
   );
 
   const startCreate = () => {
@@ -392,11 +434,30 @@ function LibraryTab({
 
   return (
     <div className="mx-auto max-w-5xl space-y-4 p-4 sm:p-6">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="shrink-0 text-sm text-zinc-500 dark:text-zinc-400">
           {bonuses.length} bonus{bonuses.length === 1 ? '' : 'es'} defined
         </p>
-        <Button type="button" onClick={startCreate} className="gap-2 bg-orange-500 text-white hover:bg-orange-600">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search bonuses by name, formula..."
+            className="w-full rounded-md border border-zinc-200 bg-white py-1.5 pl-8 pr-8 text-sm text-zinc-900 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-blue-900/40"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+              aria-label="Clear search"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        <Button type="button" onClick={startCreate} className="shrink-0 gap-2 bg-orange-500 text-white hover:bg-orange-600">
           <Plus className="h-4 w-4" />
           New bonus
         </Button>
@@ -426,10 +487,19 @@ function LibraryTab({
             hint='Click "New bonus" to define your first reusable bonus. Use a flat amount, or an Excel formula like IF(tickets >= 10, 500, 250) * tickets.'
           />
         </motion.div>
+      ) : filteredBonuses.length === 0 ? (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: EASE }}>
+          <EmptyState
+            icon={Search}
+            title={`No bonuses match "${search}"`}
+            hint="Try a different name, keyword, or formula snippet. Clear the search to see all bonuses."
+          />
+        </motion.div>
       ) : (
-        <motion.div layout className="grid gap-3 sm:grid-cols-2">
+        <>
+        <motion.div layout className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <AnimatePresence mode="popLayout">
-            {bonuses.map((b, i) => (
+            {pagedBonuses.map((b, i) => (
               <motion.div
                 key={b.id}
                 layout
@@ -442,17 +512,52 @@ function LibraryTab({
                 <BonusCard
                   bonus={b}
                   assignments={assignmentCount(b.id)}
-                  onEdit={() => {
-                    setEditing(b);
-                    setCreating(false);
-                  }}
+                  onView={() => setViewingId(b.id)}
                   onDelete={() => remove(b.id)}
                 />
               </motion.div>
             ))}
           </AnimatePresence>
         </motion.div>
+
+        {pageCount > 1 && (
+          <div className="flex items-center justify-center gap-3 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              Previous
+            </Button>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              Page {page + 1} of {pageCount}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={page >= pageCount - 1}
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+            >
+              Next
+            </Button>
+          </div>
+        )}
+        </>
       )}
+
+      <BonusDetailModal
+        bonus={viewingBonus}
+        assignments={viewingBonus ? assignmentCount(viewingBonus.id) : 0}
+        onClose={() => setViewingId(null)}
+        onSave={(b) => onUpsert(b)}
+        onDelete={(id) => {
+          remove(id);
+          setViewingId(null);
+        }}
+      />
     </div>
   );
 }
@@ -460,17 +565,16 @@ function LibraryTab({
 function BonusCard({
   bonus,
   assignments,
-  onEdit,
+  onView,
   onDelete,
 }: {
   bonus: BonusDef;
   assignments: number;
-  onEdit: () => void;
+  onView: () => void;
   onDelete: () => void;
 }) {
-  const [showTest, setShowTest] = useState(false);
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <div className="flex h-48 flex-col rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -482,8 +586,8 @@ function BonusCard({
           )}
         </div>
         <div className="flex shrink-0 gap-1">
-          <IconButton title="Edit" onClick={onEdit}>
-            <Pencil className="h-3.5 w-3.5" />
+          <IconButton title="View" onClick={onView}>
+            <Eye className="h-3.5 w-3.5" />
           </IconButton>
           <IconButton title="Delete" onClick={onDelete} danger>
             <Trash2 className="h-3.5 w-3.5" />
@@ -491,37 +595,259 @@ function BonusCard({
         </div>
       </div>
 
-      <div className="mt-3">
+      {/* Body grows to fill; overflow is hidden so every card is the same height. */}
+      <div className="mt-3 min-h-0 flex-1 overflow-hidden">
         {bonus.kind === 'flat' ? (
           <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{money(bonus.amount ?? 0)}</div>
         ) : (
-          <code className="block break-words rounded bg-zinc-100 px-2 py-1.5 font-mono text-xs text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+          <code className="block overflow-hidden rounded bg-zinc-100 px-2 py-1.5 font-mono text-xs leading-relaxed text-zinc-700 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3] dark:bg-zinc-900 dark:text-zinc-300">
             {bonus.formula || '(empty formula)'}
           </code>
         )}
       </div>
 
       <div className="mt-3 flex items-center justify-between">
-        <span className="flex items-center gap-2 text-[11px] text-zinc-400">
+        <span className="flex min-w-0 items-center gap-2 text-[11px] text-zinc-400">
           {assignments} assignment{assignments === 1 ? '' : 's'}
           <ByLine who={bonus.createdBy} />
         </span>
-        {bonus.kind === 'formula' && (
-          <button
-            type="button"
-            onClick={() => setShowTest((s) => !s)}
-            className="flex items-center gap-1 text-[11px] font-medium text-orange-600 hover:underline dark:text-orange-400"
-          >
-            <Calculator className="h-3 w-3" />
-            {showTest ? 'Hide test' : 'Test'}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onView}
+          className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-orange-600 hover:underline dark:text-orange-400"
+        >
+          <Eye className="h-3 w-3" />
+          View
+        </button>
       </div>
-
-      <Expand show={showTest && bonus.kind === 'formula'}>
-        <InlineTester formula={bonus.formula ?? ''} />
-      </Expand>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Bonus detail modal (view + inline edit toggle)
+// ---------------------------------------------------------------------------
+
+/** Animated View <-> Edit toggle switch (track + sliding knob with icon morph). */
+function EditToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span
+          key={on ? 'editing' : 'viewing'}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -6 }}
+          transition={{ duration: 0.16, ease: EASE }}
+          className={`text-xs font-medium ${on ? 'text-orange-600 dark:text-orange-400' : 'text-zinc-500 dark:text-zinc-400'}`}
+        >
+          {on ? 'Editing' : 'Viewing'}
+        </motion.span>
+      </AnimatePresence>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={on ? 'Switch to view mode' : 'Switch to edit mode'}
+        onClick={() => onChange(!on)}
+        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${
+          on ? 'bg-orange-500' : 'bg-zinc-300 dark:bg-zinc-700'
+        }`}
+      >
+        <motion.span
+          className="absolute left-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm dark:bg-zinc-100"
+          animate={{ x: on ? 20 : 0 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span
+              key={on ? 'pencil' : 'eye'}
+              initial={{ opacity: 0, rotate: -90, scale: 0.5 }}
+              animate={{ opacity: 1, rotate: 0, scale: 1 }}
+              exit={{ opacity: 0, rotate: 90, scale: 0.5 }}
+              transition={{ duration: 0.18, ease: EASE }}
+              className="flex items-center justify-center"
+            >
+              {on ? (
+                <Pencil className="h-3 w-3 text-orange-600" />
+              ) : (
+                <Eye className="h-3 w-3 text-zinc-500" />
+              )}
+            </motion.span>
+          </AnimatePresence>
+        </motion.span>
+      </button>
+    </div>
+  );
+}
+
+function BonusDetailModal({
+  bonus,
+  assignments,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  bonus: BonusDef | null;
+  assignments: number;
+  onClose: () => void;
+  onSave: (b: BonusDef) => void;
+  onDelete: (id: string) => void;
+}) {
+  const open = !!bonus;
+  const [editMode, setEditMode] = useState(false);
+  // Cache the last bonus so the panel keeps its content during the exit animation.
+  const [cache, setCache] = useState<BonusDef | null>(bonus);
+
+  useEffect(() => {
+    if (bonus) setCache(bonus);
+    else setEditMode(false);
+  }, [bonus]);
+
+  // Close on Escape; lock body scroll while open.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  const b = bonus ?? cache;
+  const formulaCheck = b?.kind === 'formula' ? validateFormula(b.formula ?? '') : null;
+
+  return (
+    <AnimatePresence>
+      {open && b && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          {/* Backdrop */}
+          <motion.div
+            className="absolute inset-0 bg-zinc-900/40 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+          />
+
+          {/* Panel */}
+          <motion.div
+            className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950"
+            initial={{ opacity: 0, y: 24, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 24, scale: 0.96 }}
+            transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+          >
+            {/* Header */}
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-100 p-4 dark:border-zinc-800 sm:p-5">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">
+                    {b.name || 'Untitled'}
+                  </h2>
+                  <KindBadge kind={b.kind} />
+                </div>
+                {b.description && (
+                  <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{b.description}</p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <EditToggle on={editMode} onChange={setEditMode} />
+                <IconButton title="Close" onClick={onClose}>
+                  <X className="h-4 w-4" />
+                </IconButton>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+              <AnimatePresence mode="wait" initial={false}>
+                {editMode ? (
+                  <motion.div
+                    key="edit"
+                    initial={{ opacity: 0, x: 24 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -24 }}
+                    transition={{ duration: 0.22, ease: EASE }}
+                  >
+                    <BonusEditor
+                      embedded
+                      initial={b}
+                      onCancel={() => setEditMode(false)}
+                      onSave={(next) => {
+                        onSave(next);
+                        setEditMode(false);
+                      }}
+                    />
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="view"
+                    initial={{ opacity: 0, x: -24 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 24 }}
+                    transition={{ duration: 0.22, ease: EASE }}
+                    className="space-y-4"
+                  >
+                    {b.kind === 'flat' ? (
+                      <div>
+                        <span className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">Amount</span>
+                        <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                          {money(b.amount ?? 0)}
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <span className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">Formula</span>
+                        <code className="block break-words rounded-md bg-zinc-100 px-3 py-2 font-mono text-sm text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                          {b.formula || '(empty formula)'}
+                        </code>
+                        {formulaCheck?.ok && formulaCheck.variables.length > 0 && (
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                            Variables:
+                            {formulaCheck.variables.map((v) => (
+                              <code
+                                key={v}
+                                className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[11px] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                              >
+                                {v}
+                              </code>
+                            ))}
+                          </div>
+                        )}
+                        {b.kind === 'formula' && <InlineTester formula={b.formula ?? ''} />}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
+                      <span className="flex items-center gap-2 text-[11px] text-zinc-400">
+                        {assignments} assignment{assignments === 1 ? '' : 's'}
+                        <ByLine who={b.createdBy} />
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onDelete(b.id)}
+                        className="gap-1 border-rose-200 text-rose-600 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/40"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
+                      </Button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -533,10 +859,13 @@ function BonusEditor({
   initial,
   onCancel,
   onSave,
+  embedded = false,
 }: {
   initial: BonusDef;
   onCancel: () => void;
   onSave: (b: BonusDef) => void;
+  /** When rendered inside the detail modal, hide the framing chrome (header + border). */
+  embedded?: boolean;
 }) {
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description ?? '');
@@ -559,15 +888,23 @@ function BonusEditor({
   const valid = name.trim().length > 0 && validateBonus(draft).ok;
 
   return (
-    <div className="rounded-lg border-2 border-orange-200 bg-white p-4 shadow-sm dark:border-blue-900/60 dark:bg-zinc-950 sm:p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          {initial.name ? 'Edit bonus' : 'New bonus'}
-        </h3>
-        <IconButton title="Close" onClick={onCancel}>
-          <X className="h-4 w-4" />
-        </IconButton>
-      </div>
+    <div
+      className={
+        embedded
+          ? ''
+          : 'rounded-lg border-2 border-orange-200 bg-white p-4 shadow-sm dark:border-blue-900/60 dark:bg-zinc-950 sm:p-5'
+      }
+    >
+      {!embedded && (
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {initial.name ? 'Edit bonus' : 'New bonus'}
+          </h3>
+          <IconButton title="Close" onClick={onCancel}>
+            <X className="h-4 w-4" />
+          </IconButton>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Name">
