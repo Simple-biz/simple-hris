@@ -7,6 +7,8 @@ import {
   getCurrentHubstaffUploadId,
   getUploadedSourceFiles,
   listHubstaffUploads,
+  renameHubstaffSourceFile,
+  setHubstaffUploadCurrentBySourceFile,
   replaceHubstaffHoursFromCsvText,
   rowsToPayrollRows,
   sortHubstaffColumnsForDisplay,
@@ -259,6 +261,91 @@ export async function DELETE(req: NextRequest) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[DELETE /api/hubstaff-hours]", msg);
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+  }
+}
+
+// Rename a payroll week's source_file everywhere it is the key (hubstaff_uploads,
+// hubstaff_hours, disbursement_records, payment_dispatches, final-pay snapshot).
+// Body: { from: string, to: string }. The UI locks the embedded date range, so a
+// rename only ever changes the descriptive prefix -- period parsing stays intact.
+export async function PATCH(req: NextRequest) {
+  try {
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "SUPABASE_SERVICE_ROLE_KEY is required. Add it to .env -- Supabase -> Project Settings -> API -> service_role (secret) key.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const body = (await req.json().catch(() => ({}))) as {
+      action?: unknown;
+      source_file?: unknown;
+      from?: unknown;
+      to?: unknown;
+    };
+
+    // Initialize: promote an existing batch to be the active source of truth.
+    if (body.action === "set_current") {
+      const sourceFile = typeof body.source_file === "string" ? body.source_file.trim() : "";
+      if (!sourceFile) {
+        return NextResponse.json(
+          { success: false, error: "`source_file` is required to set the current batch." },
+          { status: 400 },
+        );
+      }
+      const result = await setHubstaffUploadCurrentBySourceFile(sourceFile);
+
+      const actor = await getSessionActor();
+      void insertAuditLog({
+        user_name:   actor.user_name,
+        user_role:   actor.user_role,
+        action:      'csv.set_current',
+        resource:    'hubstaff_uploads',
+        resource_id: sourceFile,
+        details:     { source_file: sourceFile, upload_id: result.uploadId },
+        ip_address:  clientIp(req),
+      });
+
+      return NextResponse.json({ success: true, ...result });
+    }
+
+    const from = typeof body.from === "string" ? body.from.trim() : "";
+    const to = typeof body.to === "string" ? body.to.trim() : "";
+    if (!from || !to) {
+      return NextResponse.json(
+        { success: false, error: "Both `from` and `to` filenames are required." },
+        { status: 400 },
+      );
+    }
+    if (from === to) {
+      return NextResponse.json(
+        { success: false, error: "The new name is the same as the current name." },
+        { status: 400 },
+      );
+    }
+
+    const result = await renameHubstaffSourceFile(from, to);
+
+    const actor = await getSessionActor();
+    void insertAuditLog({
+      user_name:   actor.user_name,
+      user_role:   actor.user_role,
+      action:      'csv.rename',
+      resource:    'hubstaff_hours',
+      resource_id: to,
+      details:     { from, to, ...result },
+      ip_address:  clientIp(req),
+    });
+
+    return NextResponse.json({ success: true, ...result });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[PATCH /api/hubstaff-hours]", msg);
     return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }

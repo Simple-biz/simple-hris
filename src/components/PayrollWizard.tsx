@@ -15,6 +15,7 @@ import {
   ArrowRight,
   ArrowLeft,
   Trash2,
+  Pencil,
   Loader2,
   DollarSign,
   FileText,
@@ -43,6 +44,7 @@ import {
   Search,
   Eye,
   Radio,
+  Zap,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardFollow } from '@/hooks/useWizardFollow';
@@ -833,6 +835,12 @@ export default function PayrollWizard({
   const [sourceFileSearch, setSourceFileSearch] = useState('');
   const [deleteSourceFilePending, setDeleteSourceFilePending] = useState<string | null>(null);
   const [deleteSourceFileLoading, setDeleteSourceFileLoading] = useState(false);
+  /** Batch currently being renamed (the original filename), the editable prefix draft, and save state. */
+  const [renameSourceFilePending, setRenameSourceFilePending] = useState<string | null>(null);
+  const [renamePrefixDraft, setRenamePrefixDraft] = useState('');
+  const [renameSourceFileLoading, setRenameSourceFileLoading] = useState(false);
+  /** Batch currently being promoted to the active source of truth (filename), for the loading animation. */
+  const [initializingSourceFile, setInitializingSourceFile] = useState<string | null>(null);
 
   /** Source file selected for Initial Calculation (step 2). Defaults to latest uploaded file. */
   const [calcSourceFile, setCalcSourceFile] = useState<string | null>(null);
@@ -4445,11 +4453,26 @@ export default function PayrollWizard({
         }[];
         error?: string | null;
       };
-      const files = json.files ?? [];
-      const uploads = json.uploads ?? [];
-      setUploadedSourceFiles(files);
+      // The public endpoint returns newest-first (so employee/manager dashboards
+      // always show the latest upload). The wizard, however, follows the Initialized
+      // batch: re-sort is_current first here so the wizard's active week (files[0],
+      // newestSourceFile, loadHubstaffPreview) tracks the source of truth.
+      const uploads = [...(json.uploads ?? [])].sort(
+        (a, b) => Number(b.is_current) - Number(a.is_current),
+      );
+      const currentFirst = new Set<string>();
+      const files: string[] = [];
+      for (const u of uploads) {
+        const f = (u.source_file ?? '').trim();
+        if (!f || currentFirst.has(f)) continue;
+        currentFirst.add(f);
+        files.push(f);
+      }
+      // Fall back to the endpoint's file list if uploads metadata was empty.
+      const finalFiles = files.length > 0 ? files : (json.files ?? []);
+      setUploadedSourceFiles(finalFiles);
       setHubstaffUploads(uploads);
-      return files;
+      return finalFiles;
     } catch {
       setUploadedSourceFiles([]);
       setHubstaffUploads([]);
@@ -4532,6 +4555,110 @@ export default function PayrollWizard({
       setDeleteSourceFileLoading(false);
     }
   }, [deleteSourceFilePending, selectedSourceFile, loadUploadedSourceFiles, loadHubstaffPreview]);
+
+  // Splits a filename around the embedded YYYY-MM-DD_to_YYYY-MM-DD date block.
+  // The prefix (text before the dates) is editable; the date block and anything
+  // after it (e.g. ".csv") stay locked so period parsing can never break. When a
+  // name has no parseable date range, the whole name is editable (prefix only).
+  const splitRenameFilename = React.useCallback((name: string): { prefix: string; locked: string } => {
+    const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(name);
+    if (!m || m.index === undefined) return { prefix: name, locked: '' };
+    return { prefix: name.slice(0, m.index), locked: name.slice(m.index) };
+  }, []);
+
+  const renameTargetName = React.useMemo(() => {
+    if (renameSourceFilePending === null) return '';
+    const { locked } = splitRenameFilename(renameSourceFilePending);
+    return `${renamePrefixDraft}${locked}`;
+  }, [renameSourceFilePending, renamePrefixDraft, splitRenameFilename]);
+
+  const openRenameSourceFile = React.useCallback((file: string) => {
+    const { prefix } = splitRenameFilename(file);
+    setRenamePrefixDraft(prefix);
+    setRenameSourceFilePending(file);
+  }, [splitRenameFilename]);
+
+  const confirmRenameSourceFile = React.useCallback(async () => {
+    if (!renameSourceFilePending) return;
+    const from = renameSourceFilePending;
+    const to = renameTargetName.trim();
+    if (!to || to === from) {
+      setRenameSourceFilePending(null);
+      return;
+    }
+    setRenameSourceFileLoading(true);
+    try {
+      const res = await fetch(`/api/hubstaff-hours?_=${Date.now()}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({ from, to }),
+      });
+      const json = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        hours?: number;
+        disbursements?: number;
+        dispatches?: number;
+      };
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Rename failed');
+      }
+      const extra: string[] = [];
+      if (json.disbursements) extra.push(`${json.disbursements} report row(s)`);
+      if (json.dispatches) extra.push(`${json.dispatches} dispatch(es)`);
+      toast.success('Renamed upload', {
+        description: `${from} -> ${to}. Updated ${json.hours ?? 0} hour row(s)${
+          extra.length ? `, ${extra.join(', ')}` : ''
+        }.`,
+      });
+      // Keep the wizard pointed at the renamed week.
+      if (selectedSourceFile === from) setSelectedSourceFile(to);
+      setCalcSourceFile((cur) => (cur === from ? to : cur));
+      setRenameSourceFilePending(null);
+      await loadUploadedSourceFiles();
+      await loadHubstaffPreview();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Rename failed';
+      toast.error('Could not rename upload', { description: msg });
+    } finally {
+      setRenameSourceFileLoading(false);
+    }
+  }, [renameSourceFilePending, renameTargetName, selectedSourceFile, loadUploadedSourceFiles, loadHubstaffPreview]);
+
+  // Initialize: promote a batch to the active source of truth (is_current=true).
+  // The accounting surfaces (this Payroll Wizard + Accounting Overview) sort the
+  // upload list current-first, so this re-points THEM at the chosen week. Employee
+  // My Hours + manager dashboards intentionally stay on the latest upload and are
+  // not affected. Shows a blocking loading overlay while data reloads.
+  const initializeSourceFile = React.useCallback(async (file: string) => {
+    setInitializingSourceFile(file);
+    try {
+      const res = await fetch(`/api/hubstaff-hours?_=${Date.now()}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({ action: 'set_current', source_file: file }),
+      });
+      const json = (await res.json()) as { success?: boolean; error?: string };
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Initialize failed');
+      }
+      // Point the wizard at the freshly activated week, then reload everything.
+      setSelectedSourceFile(file);
+      setCalcSourceFile(file);
+      await loadUploadedSourceFiles();
+      await loadHubstaffPreview();
+      toast.success('Initialized as source of truth', {
+        description: `${file} is now the active payroll week for the Wizard + Accounting Overview. Employee & manager dashboards still show the latest upload.`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Initialize failed';
+      toast.error('Could not initialize batch', { description: msg });
+    } finally {
+      setInitializingSourceFile(null);
+    }
+  }, [loadUploadedSourceFiles, loadHubstaffPreview]);
 
   // ── Load rows for a specific source file ──
   const loadSourceFileRows = React.useCallback(async (file: string) => {
@@ -5153,6 +5280,17 @@ export default function PayrollWizard({
                             </button>
                             <button
                               type="button"
+                              className="shrink-0 rounded-md px-1.5 text-zinc-400 transition-colors hover:bg-indigo-500/10 hover:text-indigo-600 dark:hover:text-indigo-400"
+                              title="Rename this upload (source of truth for the week)"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openRenameSourceFile(file);
+                              }}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
                               className="shrink-0 rounded-md px-1.5 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
                               title="Delete this upload from Supabase"
                               onClick={(e) => {
@@ -5644,28 +5782,36 @@ export default function PayrollWizard({
                 </Card>
 
                 {uploadedSourceFiles.length > 0 && (
-                  <div className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
+                  <div className="relative rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
                     <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-                      Uploaded batches (delete removes rows in Supabase)
+                      Uploaded batches &mdash; Initialize sets the payroll-processing week (Accounting only; employee &amp; manager always see the latest)
                     </p>
-                    <ul className="max-h-[200px] space-y-1 overflow-y-auto">
+                    <ul className="max-h-[240px] space-y-1 overflow-y-auto">
                       {uploadedSourceFiles.map((file) => {
                         const meta = uploadMetaByFile.get(file);
                         const stamp = formatUploadStamp(meta?.uploaded_at);
+                        const isActive = !!meta?.is_current;
+                        const busy = initializingSourceFile !== null;
+                        const thisBusy = initializingSourceFile === file;
                         return (
                           <li
                             key={file}
-                            className="flex items-start gap-2 rounded-md border border-zinc-100 bg-zinc-50/80 px-2 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/50"
+                            className={cn(
+                              'flex items-start gap-2 rounded-md border px-2 py-1.5',
+                              isActive
+                                ? 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-800/60 dark:bg-emerald-950/20'
+                                : 'border-zinc-100 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/50',
+                            )}
                           >
-                            <FileText className="h-3.5 w-3.5 mt-0.5 shrink-0 text-zinc-400" />
+                            <FileText className={cn('h-3.5 w-3.5 mt-0.5 shrink-0', isActive ? 'text-emerald-500' : 'text-zinc-400')} />
                             <span className="min-w-0 flex-1">
                               <span className="flex items-center gap-1.5">
                                 <span className="truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">
                                   {file}
                                 </span>
-                                {meta?.is_current && (
+                                {isActive && (
                                   <span className="shrink-0 rounded border border-emerald-300 bg-emerald-50 px-1 py-0 text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-400">
-                                    Current
+                                    Source of truth
                                   </span>
                                 )}
                               </span>
@@ -5677,9 +5823,36 @@ export default function PayrollWizard({
                                 </span>
                               )}
                             </span>
+                            {isActive ? (
+                              <span className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Active
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-100 disabled:opacity-40 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-400 dark:hover:bg-indigo-500/20"
+                                title="Make this batch the active payroll-processing week (Wizard + Accounting Overview). Employee & manager dashboards still show the latest upload."
+                                onClick={() => void initializeSourceFile(file)}
+                              >
+                                {thisBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                                Initialize
+                              </button>
+                            )}
                             <button
                               type="button"
-                              className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                              disabled={busy}
+                              className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-indigo-500/10 hover:text-indigo-600 disabled:opacity-40 dark:hover:text-indigo-400"
+                              title="Rename this batch (source of truth for the week)"
+                              onClick={() => openRenameSourceFile(file)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-600 disabled:opacity-40 dark:hover:text-red-400"
                               title="Delete this batch from Supabase"
                               onClick={() => setDeleteSourceFilePending(file)}
                             >
@@ -5689,6 +5862,35 @@ export default function PayrollWizard({
                         );
                       })}
                     </ul>
+
+                    {/* Blocking loading animation while a batch is promoted + data reloads. */}
+                    <AnimatePresence>
+                      {initializingSourceFile !== null && (
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 rounded-xl bg-white/85 backdrop-blur-sm dark:bg-zinc-950/85"
+                        >
+                          <span className="relative flex h-10 w-10 items-center justify-center">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400/30" />
+                            <Loader2 className="h-7 w-7 animate-spin text-indigo-600 dark:text-indigo-400" />
+                          </span>
+                          <div className="px-4 text-center">
+                            <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                              Initializing source of truth&hellip;
+                            </p>
+                            <p className="mt-0.5 max-w-xs break-all font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                              {initializingSourceFile}
+                            </p>
+                            <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                              Pointing the Wizard + Accounting Overview at this week&hellip;
+                            </p>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 )}
 
@@ -10872,6 +11074,100 @@ export default function PayrollWizard({
                 <Trash2 className="h-4 w-4" />
               )}
               Delete from database
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={renameSourceFilePending !== null}
+        onOpenChange={(open) => {
+          if (!open) setRenameSourceFilePending(null);
+        }}
+      >
+        <DialogContent className="border-zinc-200 bg-white sm:max-w-lg dark:border-zinc-800 dark:bg-zinc-950">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-zinc-900 dark:text-white">
+              <Pencil className="h-5 w-5 shrink-0 text-indigo-600 dark:text-indigo-400" />
+              Rename this upload
+            </DialogTitle>
+            <DialogDescription className="text-zinc-600 dark:text-zinc-400">
+              This filename is the source of truth for the whole week. Renaming updates it
+              everywhere &mdash; hourly rows, the Reports tab, dispatched payments, and the
+              employee take-home snapshot &mdash; so the week stays linked. The date range is
+              locked so payroll calculations never shift.
+            </DialogDescription>
+          </DialogHeader>
+          {renameSourceFilePending !== null && (() => {
+            const { locked } = splitRenameFilename(renameSourceFilePending);
+            return (
+              <div className="space-y-3 pt-1">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                    Name
+                  </label>
+                  <div className="flex items-stretch overflow-hidden rounded-md border border-zinc-200 focus-within:border-indigo-400 focus-within:ring-1 focus-within:ring-indigo-400 dark:border-zinc-800">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={renamePrefixDraft}
+                      onChange={(e) => setRenamePrefixDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !renameSourceFileLoading) {
+                          e.preventDefault();
+                          void confirmRenameSourceFile();
+                        }
+                      }}
+                      placeholder="simple-biz_daily_report_"
+                      className="min-w-0 flex-1 bg-transparent px-2.5 py-2 font-mono text-sm text-zinc-900 outline-none dark:text-white"
+                    />
+                    {locked && (
+                      <span
+                        title="Date range is locked"
+                        className="flex shrink-0 items-center bg-zinc-100 px-2.5 font-mono text-sm text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400"
+                      >
+                        {locked}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-md bg-zinc-50 px-3 py-2 dark:bg-zinc-900/60">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                    New filename
+                  </p>
+                  <p className="mt-0.5 break-all font-mono text-sm text-zinc-700 dark:text-zinc-300">
+                    {renameTargetName || <span className="text-zinc-400">(empty)</span>}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-zinc-200 dark:border-zinc-800"
+              disabled={renameSourceFileLoading}
+              onClick={() => setRenameSourceFilePending(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                renameSourceFileLoading ||
+                !renameTargetName.trim() ||
+                renameTargetName.trim() === renameSourceFilePending
+              }
+              className="gap-2 bg-indigo-600 text-white hover:bg-indigo-700"
+              onClick={() => void confirmRenameSourceFile()}
+            >
+              {renameSourceFileLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Pencil className="h-4 w-4" />
+              )}
+              Rename everywhere
             </Button>
           </div>
         </DialogContent>

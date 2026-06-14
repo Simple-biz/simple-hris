@@ -498,11 +498,8 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
   const [usdToPhpRate, setUsdToPhpRate] = useState(ratesCacheSeed?.usdToPhpRate ?? OFFICIAL_USD_TO_PHP_RATE);
 
   // Rate editing state
-  const [isEditing, setIsEditing] = useState(false);
   const [editRegularRate, setEditRegularRate] = useState("");
   const [editOtRate, setEditOtRate] = useState("");
-  const [editEffectiveDate, setEditEffectiveDate] = useState<string>(""); // YYYY-MM-DD
-  const [isSaving, setIsSaving] = useState(false);
 
   // Rate-history list for the open profile — drives the revoke UI inside the
   // detail modal. Refetches whenever the active profile email changes or a
@@ -853,7 +850,6 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     setActiveProfileSummary(p);
     setActiveProfile(profileStubFromSummary(p));
     setProfileOpen(true);
-    setIsEditing(false);
     setIsEditingProfile(false);
     setProfileError(null);
 
@@ -932,99 +928,6 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
     }
     onFocusConsumed?.();
   }, [focusEmail, profiles, onFocusConsumed]);
-
-  async function handleSaveRates() {
-    if (!activeProfile) return;
-    setIsSaving(true);
-
-    try {
-      const m = buildNormFieldMap(activeProfile.fields);
-      let workEmail = pickFromMap(m, ["Work Email", "work_email", "Work_Email"]);
-      let personalEmail = pickFromMap(m, ["Personal Email", "personal_email", "Personal_Email"]);
-
-      // Fallback: extract from activeProfile.id if it's e:email
-      if (workEmail === "—" && activeProfile.id.startsWith("e:")) {
-        workEmail = activeProfile.id.slice(2);
-      }
-      
-      // Secondary fallback: extract from subtitle
-      if (workEmail === "—" && activeProfile.subtitle) {
-        // Subtitle might be "work@simple.biz · personal@other.com"
-        const parts = activeProfile.subtitle.split("·").map(s => s.trim());
-        if (parts[0]) workEmail = parts[0];
-        if (parts[1]) personalEmail = parts[1];
-      }
-
-      const emailToUse = workEmail !== "—" ? workEmail : (personalEmail !== "—" ? personalEmail : null);
-
-      if (!emailToUse) {
-        toast.error("Could not find an email to identify the employee");
-        setIsSaving(false);
-        return;
-      }
-
-      const res = await fetch("/api/update-employee-rates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workEmail: workEmail !== "—" ? workEmail : null,
-          personalEmail: personalEmail !== "—" ? personalEmail : null,
-          regularRate: sanitizeRateForApi(editRegularRate),
-          otRate: sanitizeRateForApi(editOtRate),
-          effectiveDate: editEffectiveDate || null,
-        }),
-      });
-
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Failed to update rates");
-
-      const today = new Date();
-      const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      if (editEffectiveDate && editEffectiveDate > todayIso) {
-        toast.success(`Rate change scheduled for ${editEffectiveDate}`);
-      } else {
-        toast.success("Rates updated successfully");
-      }
-
-      // Refresh the rate-history list so the revoke UI reflects the new row
-      // and any superseded pending changes are gone.
-      void fetchRateHistoryFor(activeProfileSummary);
-      setIsEditing(false);
-
-      // We need to update the local activeProfile state and the profiles list
-      // Simplest is to refetch all profiles
-      await fetchProfiles();
-      setActiveProfileSummary((prev) =>
-        prev
-          ? {
-              ...prev,
-              regularRate: sanitizeRateForApi(editRegularRate) || null,
-              otRate: sanitizeRateForApi(editOtRate) || null,
-            }
-          : prev,
-      );
-
-      // Also update activeProfile fields locally to reflect the change in the modal
-      const rr = sanitizeRateForApi(editRegularRate);
-      const ot = sanitizeRateForApi(editOtRate);
-      const updatedFields = activeProfile.fields.map(f => {
-        const nk = normFieldKey(f.key);
-        if (["regular_rate", "regular_rate", "Regular_Rate"].map(normFieldKey).includes(nk)) {
-          return { ...f, value: rr };
-        }
-        if (["ot_rate", "ot_rate", "OT_Rate", "Ot Rate"].map(normFieldKey).includes(nk)) {
-          return { ...f, value: ot };
-        }
-        return f;
-      });
-      setActiveProfile({ ...activeProfile, fields: updatedFields });
-
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update rates");
-    } finally {
-      setIsSaving(false);
-    }
-  }
 
   function openEditProfile() {
     if (!activeProfile) return;
@@ -2159,61 +2062,19 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
                       <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
                         Regular Rate
                       </p>
-                      {isEditing ? (
-                        <div className="relative">
-                          <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm font-medium text-orange-500">
-                            ₱
-                          </span>
-                          <Input
-                            value={editRegularRate}
-                            onChange={(e) => setEditRegularRate(e.target.value)}
-                            className="h-9 w-32 border-zinc-200 bg-white pl-7 tabular-nums text-base font-semibold text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
-                          />
-                        </div>
-                      ) : (
-                        <p className="text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
-                          {formatRateDisplay(editRegularRate)}
-                        </p>
-                      )}
+                      <p className="text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
+                        {formatRateDisplay(editRegularRate)}
+                      </p>
                     </div>
                     <div className="w-px self-stretch bg-zinc-200 dark:bg-zinc-800" />
                     <div className="flex flex-col gap-1">
                       <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
                         OT Rate
                       </p>
-                      {isEditing ? (
-                        <div className="relative">
-                          <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm font-medium text-orange-500">
-                            ₱
-                          </span>
-                          <Input
-                            value={editOtRate}
-                            onChange={(e) => setEditOtRate(e.target.value)}
-                            className="h-9 w-32 border-zinc-200 bg-white pl-7 tabular-nums text-base font-semibold text-zinc-900 transition-colors hover:border-zinc-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
-                          />
-                        </div>
-                      ) : (
-                        <p className="text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
-                          {formatRateDisplay(editOtRate)}
-                        </p>
-                      )}
+                      <p className="text-xl font-bold tabular-nums leading-none text-zinc-900 dark:text-white">
+                        {formatRateDisplay(editOtRate)}
+                      </p>
                     </div>
-                    {isEditing && (
-                      <>
-                        <div className="w-px self-stretch bg-zinc-200 dark:bg-zinc-800" />
-                        <div className="flex flex-col gap-1">
-                          <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-emerald-600 dark:text-emerald-400">
-                            Effective From
-                          </p>
-                          <Input
-                            type="date"
-                            value={editEffectiveDate}
-                            onChange={(e) => setEditEffectiveDate(e.target.value)}
-                            className="h-9 w-40 border-zinc-200 bg-white tabular-nums text-sm font-medium text-zinc-900 transition-colors hover:border-zinc-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
-                          />
-                        </div>
-                      </>
-                    )}
                     <div className="w-px self-stretch bg-zinc-200 dark:bg-zinc-800" />
                     <div className="flex flex-col gap-1">
                       <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-blue-600 dark:text-blue-400">
@@ -2227,111 +2088,59 @@ export default function Rates({ focusEmail, onFocusConsumed }: RatesProps = {}) 
 
                   {/* Action buttons */}
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    {isEditing ? (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-8 gap-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
-                          onClick={() => {
-                            setIsEditing(false);
-                            const m = buildNormFieldMap(activeProfile.fields);
-                            setEditRegularRate(normalizeRateForEdit(pickRawFromMap(m, ["Regular Rate", "regular_rate", "Regular_Rate"])));
-                            setEditOtRate(normalizeRateForEdit(pickRawFromMap(m, ["OT Rate", "ot_rate", "OT_Rate", "Ot Rate"])));
-                          }}
-                          disabled={isSaving}
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 gap-1.5 border-zinc-200 text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
+                        onClick={openEditProfile}
+                        disabled={isEditingProfile || profileLoading}
+                      >
+                        <UserCog className="size-3.5" />
+                        Edit Profile
+                      </Button>
+                      {/* HSL agents are paid from the HOGAN sheet, so their
+                          rates are read-only here; non-HSL rates are managed in Payment Catalog. */}
+                      {activeProfileSummary?.hslRole ? (
+                        <div
+                          className="flex h-8 items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50/70 px-2.5 text-[11px] font-medium text-violet-700 dark:border-violet-900/50 dark:bg-violet-950/30 dark:text-violet-300"
+                          title="HSL agents' rates come from the HOGAN pay plan sheet. Use the HSL Sync button to refresh them."
                         >
-                          <X className="size-3.5" />
-                          Cancel
-                        </Button>
-                        <Button
-                          size="sm"
-                          className="h-8 gap-1.5 bg-gradient-to-r from-orange-500 to-orange-600 px-3 text-white shadow-sm shadow-orange-500/20 transition-all hover:from-orange-600 hover:to-orange-700 hover:shadow-md active:scale-[0.98]"
-                          onClick={handleSaveRates}
-                          disabled={isSaving}
-                        >
-                          {isSaving ? (
-                            <Loader2 className="size-3.5 animate-spin" />
-                          ) : (
-                            <Check className="size-3.5" />
-                          )}
-                          Save Rates
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-8 gap-1.5 border-zinc-200 text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:border-zinc-700 dark:hover:bg-zinc-900"
-                          onClick={openEditProfile}
-                          disabled={isEditingProfile || profileLoading}
-                        >
-                          <UserCog className="size-3.5" />
-                          Edit Profile
-                        </Button>
-                        {/* HSL agents are paid from the HOGAN sheet, so their
-                            rates are read-only here; everyone else gets Edit Rates. */}
-                        {activeProfileSummary?.hslRole ? (
-                          <div
-                            className="flex h-8 items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50/70 px-2.5 text-[11px] font-medium text-violet-700 dark:border-violet-900/50 dark:bg-violet-950/30 dark:text-violet-300"
-                            title="HSL agents' rates come from the HOGAN pay plan sheet. Use the HSL Sync button to refresh them."
-                          >
-                            <Lock className="size-3" />
-                            Managed by HOGAN pay plan sync
-                          </div>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 gap-1.5 border-orange-200 text-orange-700 hover:border-orange-300 hover:bg-orange-50 dark:border-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-950/30"
-                            onClick={() => {
-                              // Default effective date = next Monday so the
-                              // current pay week stays on the OLD rate. The
-                              // accountant can move it earlier (today, mid-cycle)
-                              // to trigger prorating, or later to schedule ahead.
-                              const d = new Date();
-                              const dow = d.getDay(); // 0=Sun..6=Sat
-                              const daysToMon = ((1 - dow + 7) % 7) || 7;
-                              d.setDate(d.getDate() + daysToMon);
-                              const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                              setEditEffectiveDate(iso);
-                              setIsEditing(true);
-                            }}
-                            disabled={profileLoading}
-                          >
-                            <Edit2 className="size-3.5" />
-                            Edit Rates
-                          </Button>
+                          <Lock className="size-3" />
+                          Managed by HOGAN pay plan sync
+                        </div>
+                      ) : (
+                        <div className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-[11px] font-medium text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+                          Manage rates in Payment Catalog
+                        </div>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isSuspending === activeProfile.id}
+                        onClick={() => handleToggleSuspend(activeProfile, !isSuspendedFromProfile(activeProfile))}
+                        className={cn(
+                          "h-8 gap-1.5",
+                          isSuspendedFromProfile(activeProfile)
+                            ? "border-emerald-200 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
+                            : "border-amber-200 text-amber-700 hover:border-amber-300 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:hover:bg-amber-950/30",
                         )}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={isSuspending === activeProfile.id}
-                          onClick={() => handleToggleSuspend(activeProfile, !isSuspendedFromProfile(activeProfile))}
-                          className={cn(
-                            "h-8 gap-1.5",
-                            isSuspendedFromProfile(activeProfile)
-                              ? "border-emerald-200 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
-                              : "border-amber-200 text-amber-700 hover:border-amber-300 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:hover:bg-amber-950/30",
-                          )}
-                        >
-                          {isSuspending === activeProfile.id ? (
-                            <Loader2 className="size-3.5 animate-spin" />
-                          ) : isSuspendedFromProfile(activeProfile) ? (
-                            <>
-                              <UserCheck className="size-3.5" />
-                              Unsuspend
-                            </>
-                          ) : (
-                            <>
-                              <UserX className="size-3.5" />
-                              Suspend
-                            </>
-                          )}
-                        </Button>
-                      </>
-                    )}
+                      >
+                        {isSuspending === activeProfile.id ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : isSuspendedFromProfile(activeProfile) ? (
+                          <>
+                            <UserCheck className="size-3.5" />
+                            Unsuspend
+                          </>
+                        ) : (
+                          <>
+                            <UserX className="size-3.5" />
+                            Suspend
+                          </>
+                        )}
+                      </Button>
+                    </>
                   </div>
                 </div>
               </div>

@@ -460,10 +460,14 @@ async function createPendingHubstaffUpload(
 }
 
 /**
- * Lists Hubstaff upload history from `hubstaff_uploads`, newest first. Each row
- * has the metadata shown in the Payroll Wizard's "Source Files" panel: filename,
- * when it was uploaded, how many rows it carried, and whether it's the current
- * (active) upload.
+ * Lists Hubstaff upload history from `hubstaff_uploads`, newest first. This is what
+ * the PUBLIC `?source_files=1` endpoint returns, so employee My Hours and the manager
+ * dashboard always treat the LATEST upload (`files[0]`) as the active week.
+ *
+ * The accounting surfaces (Payroll Wizard + Accounting Overview) instead follow the
+ * Initialized batch: they re-sort `is_current` first at their own consumption points
+ * (`prefetchAccountingData` server-side, `loadUploadedSourceFiles` client-side). Keep
+ * this function newest-first so the public dashboards are never repointed by Initialize.
  */
 export async function listHubstaffUploads(): Promise<
   {
@@ -491,6 +495,133 @@ export async function listHubstaffUploads(): Promise<
   }[];
 }
 
+/**
+ * Renames an upload's `source_file` across every table that keys a payroll week by
+ * filename, so the upload stays the single source of truth after the rename:
+ *   - hubstaff_uploads.source_file          (the batch metadata row)
+ *   - hubstaff_hours.source_file            (every data row in the batch)
+ *   - disbursement_records.source_file      (Reports tab rows for the cycle)
+ *   - payment_dispatches.cycle_source_file  (dispatched payments for the cycle)
+ *   - app_settings 'payroll.wizard.final_pay.<file>' (Employee Dashboard snapshot)
+ *
+ * disbursement_records is renamed BEFORE payment_dispatches on purpose: the
+ * sync trigger on payment_dispatches matches disbursement_records on
+ * cycle_source_file, so the disbursement rows must already carry the new name
+ * by the time that trigger fires.
+ */
+export async function renameHubstaffSourceFile(
+  from: string,
+  to: string,
+): Promise<{
+  uploads: number;
+  hours: number;
+  disbursements: number;
+  dispatches: number;
+  finalPayMoved: boolean;
+}> {
+  const supabase = requireServiceRole();
+  const hoursTable = getTableName();
+
+  // Collision guard: the new name must not already belong to another batch.
+  const { data: clashUpload } = await supabase
+    .from(HUBSTAFF_UPLOADS_TABLE)
+    .select("id")
+    .eq("source_file", to)
+    .limit(1);
+  if (clashUpload && clashUpload.length > 0) {
+    throw new Error(`An upload named "${to}" already exists.`);
+  }
+  const { data: clashHours } = await supabase
+    .from(hoursTable)
+    .select("id")
+    .eq("source_file", to)
+    .limit(1);
+  if (clashHours && clashHours.length > 0) {
+    throw new Error(`Rows tagged "${to}" already exist in ${hoursTable}.`);
+  }
+
+  // hubstaff_uploads (metadata row)
+  const { data: upRows, error: upErr } = await supabase
+    .from(HUBSTAFF_UPLOADS_TABLE)
+    .update({ source_file: to })
+    .eq("source_file", from)
+    .select("id");
+  if (upErr) throw new Error(`Rename failed on hubstaff_uploads: ${upErr.message}`);
+
+  // hubstaff_hours (data rows)
+  const { error: hErr, count: hCount } = await supabase
+    .from(hoursTable)
+    .update({ source_file: to }, { count: "exact" })
+    .eq("source_file", from);
+  if (hErr) throw new Error(`Rename failed on ${hoursTable}: ${hErr.message}`);
+
+  const tableMissing = (msg: string) => /relation .* does not exist/i.test(msg);
+
+  // disbursement_records (before payment_dispatches -- see note above)
+  let disbursements = 0;
+  {
+    const { error, count } = await supabase
+      .from("disbursement_records")
+      .update({ source_file: to }, { count: "exact" })
+      .eq("source_file", from);
+    if (error && !tableMissing(error.message)) {
+      throw new Error(`Rename failed on disbursement_records: ${error.message}`);
+    }
+    disbursements = count ?? 0;
+  }
+
+  // payment_dispatches.cycle_source_file
+  let dispatches = 0;
+  {
+    const { error, count } = await supabase
+      .from("payment_dispatches")
+      .update({ cycle_source_file: to }, { count: "exact" })
+      .eq("cycle_source_file", from);
+    if (error && !tableMissing(error.message)) {
+      throw new Error(`Rename failed on payment_dispatches: ${error.message}`);
+    }
+    dispatches = count ?? 0;
+  }
+
+  // app_settings: migrate the final-pay snapshot key the Employee Dashboard reads.
+  let finalPayMoved = false;
+  {
+    const fromKey = `payroll.wizard.final_pay.${from}`;
+    const toKey = `payroll.wizard.final_pay.${to}`;
+    const { data: snap } = await supabase
+      .from("app_settings")
+      .select("value")
+      .eq("key", fromKey)
+      .maybeSingle();
+    const raw = (snap as { value?: string } | null)?.value;
+    if (raw) {
+      let value = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          (parsed as { source_file?: string }).source_file = to;
+          value = JSON.stringify(parsed);
+        }
+      } catch {
+        // Leave the value untouched if it isn't JSON.
+      }
+      await supabase
+        .from("app_settings")
+        .upsert({ key: toKey, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+      await supabase.from("app_settings").delete().eq("key", fromKey);
+      finalPayMoved = true;
+    }
+  }
+
+  return {
+    uploads: upRows?.length ?? 0,
+    hours: hCount ?? 0,
+    disbursements,
+    dispatches,
+    finalPayMoved,
+  };
+}
+
 /** Flips all other uploads to `is_current=false` and sets this one to `true`. */
 async function promoteHubstaffUploadToCurrent(
   supabase: SupabaseClient,
@@ -508,6 +639,34 @@ async function promoteHubstaffUploadToCurrent(
     .update({ is_current: true })
     .eq("id", newUploadId);
   if (setErr) throw new Error(`Failed to mark upload ${newUploadId} current: ${setErr.message}`);
+}
+
+/**
+ * Initialize: promotes an already-uploaded batch to be the active source of truth
+ * (`is_current=true`, all others cleared) by its filename. Because `listHubstaffUploads`
+ * returns the current batch first, this re-points every single-week dashboard
+ * (employee My Hours, Payroll Wizard, Accounting Overview) at the chosen week.
+ * Returns the promoted upload id. Throws if no upload row carries that filename.
+ */
+export async function setHubstaffUploadCurrentBySourceFile(
+  sourceFile: string,
+): Promise<{ uploadId: string; sourceFile: string }> {
+  const supabase = requireServiceRole();
+  // If several rows share the filename, pick the newest — that's the live batch.
+  const { data, error } = await supabase
+    .from(HUBSTAFF_UPLOADS_TABLE)
+    .select("id")
+    .eq("source_file", sourceFile)
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Could not look up upload "${sourceFile}": ${error.message}`);
+  const id = (data as { id?: string } | null)?.id;
+  if (!id) {
+    throw new Error(`No hubstaff_uploads row found for "${sourceFile}". Re-upload the CSV to register it.`);
+  }
+  await promoteHubstaffUploadToCurrent(supabase, id);
+  return { uploadId: id, sourceFile };
 }
 
 /**

@@ -47,6 +47,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
@@ -132,6 +133,8 @@ function AnimatedSelect({
   className = '',
   disabled = false,
   ariaLabel,
+  searchable = false,
+  searchPlaceholder = 'Search...',
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -140,12 +143,20 @@ function AnimatedSelect({
   className?: string;
   disabled?: boolean;
   ariaLabel?: string;
+  /** Show a filter box at the top of the dropdown (good for long lists). */
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setQuery('');
+      return;
+    }
     const onDocClick = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
@@ -154,13 +165,23 @@ function AnimatedSelect({
     };
     document.addEventListener('mousedown', onDocClick);
     document.addEventListener('keydown', onKey);
+    // Focus the filter box so you can type a name immediately.
+    if (searchable) requestAnimationFrame(() => searchRef.current?.focus());
     return () => {
       document.removeEventListener('mousedown', onDocClick);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, searchable]);
 
   const selected = options.find((o) => o.value === value);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!searchable || !q) return options;
+    return options.filter(
+      (o) => o.label.toLowerCase().includes(q) || (o.hint ?? '').toLowerCase().includes(q),
+    );
+  }, [options, query, searchable]);
 
   return (
     <div ref={ref} className={`relative ${className}`}>
@@ -185,51 +206,68 @@ function AnimatedSelect({
 
       <AnimatePresence>
         {open && (
-          <motion.ul
-            role="listbox"
+          <motion.div
             initial={{ opacity: 0, y: -6, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -6, scale: 0.98 }}
             transition={{ duration: 0.16, ease: EASE }}
-            className="absolute z-30 mt-1 max-h-64 w-full origin-top overflow-auto rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+            className="absolute z-30 mt-1 flex max-h-72 w-full origin-top flex-col overflow-hidden rounded-md border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
           >
-            {options.length === 0 ? (
-              <li className="px-3 py-2 text-xs text-zinc-400">No options</li>
-            ) : (
-              options.map((o, i) => {
-                const active = o.value === value;
-                return (
-                  <motion.li
-                    key={o.value || `opt-${i}`}
-                    initial={{ opacity: 0, x: -6 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.14, delay: Math.min(i * 0.018, 0.14), ease: EASE }}
-                  >
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={active}
-                      onClick={() => {
-                        onChange(o.value);
-                        setOpen(false);
-                      }}
-                      className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm transition-colors ${
-                        active
-                          ? 'bg-orange-50 font-medium text-orange-900 dark:bg-blue-950/50 dark:text-white'
-                          : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
-                      }`}
-                    >
-                      <span className="min-w-0 truncate">
-                        {o.label}
-                        {o.hint && <span className="ml-1 text-[11px] text-zinc-400">{o.hint}</span>}
-                      </span>
-                      {active && <Check className="h-3.5 w-3.5 shrink-0 text-orange-500" />}
-                    </button>
-                  </motion.li>
-                );
-              })
+            {searchable && (
+              <div className="shrink-0 border-b border-zinc-100 p-1.5 dark:border-zinc-800">
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                  <input
+                    ref={searchRef}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={searchPlaceholder}
+                    className="w-full rounded border border-zinc-200 bg-white py-1.5 pl-7 pr-2 text-sm text-zinc-900 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-200 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:ring-blue-900/40"
+                  />
+                </div>
+              </div>
             )}
-          </motion.ul>
+            <ul role="listbox" className="min-h-0 flex-1 overflow-auto py-1">
+              {filtered.length === 0 ? (
+                <li className="px-3 py-2 text-xs text-zinc-400">
+                  {query.trim() ? 'No matches' : 'No options'}
+                </li>
+              ) : (
+                filtered.map((o, i) => {
+                  const active = o.value === value;
+                  return (
+                    <motion.li
+                      key={o.value || `opt-${i}`}
+                      initial={{ opacity: 0, x: -6 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.14, delay: Math.min(i * 0.018, 0.14), ease: EASE }}
+                    >
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        onClick={() => {
+                          onChange(o.value);
+                          setOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm transition-colors ${
+                          active
+                            ? 'bg-orange-50 font-medium text-orange-900 dark:bg-blue-950/50 dark:text-white'
+                            : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                        }`}
+                      >
+                        <span className="min-w-0 truncate">
+                          {o.label}
+                          {o.hint && <span className="ml-1 text-[11px] text-zinc-400">{o.hint}</span>}
+                        </span>
+                        {active && <Check className="h-3.5 w-3.5 shrink-0 text-orange-500" />}
+                      </button>
+                    </motion.li>
+                  );
+                })
+              )}
+            </ul>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
@@ -426,7 +464,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   );
 
   const upsertPay = useCallback(
-    async (s: PayStructure) => {
+    async (s: PayStructure, effectiveDate?: string) => {
       setPayStructures((prev) =>
         prev.some((p) => p.id === s.id)
           ? prev.map((p) => (p.id === s.id ? { ...p, ...s } : p))
@@ -436,7 +474,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
         const res = await fetch('/api/payment-catalog/pay-structures', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ structure: s }),
+          body: JSON.stringify({ structure: s, effectiveDate: effectiveDate ?? null }),
         });
         const json = (await res.json()) as { row?: PayStructure; error: string | null };
         if (json.error) throw new Error(json.error);
@@ -726,7 +764,7 @@ function PayStructureTab({
 }: {
   structures: PayStructure[];
   roster: RosterEntry[];
-  onUpsert: (s: PayStructure) => void;
+  onUpsert: (s: PayStructure, effectiveDate?: string) => void;
   onDelete: (id: string) => void;
 }) {
   const [selectedDept, setSelectedDept] = useState<string>(DEPARTMENTS[0]?.key ?? '');
@@ -911,9 +949,10 @@ function PayStructureTab({
         >
           <IndividualPayAdder
             roster={roster}
+            deptKey={selectedDept}
             deptName={dept?.name ?? ''}
             existingEmails={new Set(individualForDept.map((s) => (s.employeeEmail ?? '').toLowerCase()))}
-            onAdd={(emp, regular, ot, currency) =>
+            onAdd={(emp, regular, ot, currency, effectiveDate) =>
               onUpsert({
                 id: newPayId(),
                 scope: 'employee',
@@ -923,7 +962,7 @@ function PayStructureTab({
                 regularRate: regular,
                 otRate: ot,
                 currency,
-              })
+              }, effectiveDate)
             }
           />
           {individualForDept.length === 0 ? (
@@ -942,8 +981,8 @@ function PayStructureTab({
                   >
                     <IndividualPayRow
                       structure={s}
-                      onSave={(regular, ot, currency) =>
-                        onUpsert({ ...s, regularRate: regular, otRate: ot, currency })
+                      onSave={(regular, ot, currency, effectiveDate) =>
+                        onUpsert({ ...s, regularRate: regular, otRate: ot, currency }, effectiveDate)
                       }
                       onRemove={() => onDelete(s.id)}
                     />
@@ -967,41 +1006,86 @@ function RateStat({ label, value }: { label: string; value: string }) {
   );
 }
 
+function nextMondayIso(): string {
+  const d = new Date();
+  const dow = d.getDay();
+  const daysToMon = ((1 - dow + 7) % 7) || 7;
+  d.setDate(d.getDate() + daysToMon);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function IndividualPayAdder({
   roster,
+  deptKey,
   deptName,
   existingEmails,
   onAdd,
 }: {
   roster: RosterEntry[];
+  deptKey: string;
   deptName: string;
   existingEmails: Set<string>;
-  onAdd: (emp: RosterEntry, regular: number, ot: number | undefined, currency: PayCurrency) => void;
+  onAdd: (emp: RosterEntry, regular: number, ot: number | undefined, currency: PayCurrency, effectiveDate: string) => void;
 }) {
   const [empEmail, setEmpEmail] = useState('');
   const [open, setOpen] = useState(false);
+  const [filterByDept, setFilterByDept] = useState(true);
+  const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
 
-  const normDept = deptName.trim().toLowerCase();
+  const deptMatched = useMemo(
+    () => roster.filter((r) => normalizeDeptToKey(r.department) === deptKey),
+    [roster, deptKey],
+  );
   const list = useMemo(() => {
-    const matched = roster.filter((r) => r.department.trim().toLowerCase() === normDept);
-    const base = matched.length > 0 ? matched : roster;
+    const base = filterByDept ? deptMatched : roster;
     return base.filter((r) => !existingEmails.has(r.email.toLowerCase()));
-  }, [roster, normDept, existingEmails]);
+  }, [roster, deptMatched, existingEmails, filterByDept]);
 
   const emp = roster.find((r) => r.email === empEmail);
 
   return (
     <div className="mb-3">
+      {/* Dept filter toggle */}
+      <button
+        type="button"
+        onClick={() => { setFilterByDept((v) => !v); setEmpEmail(''); }}
+        className="mb-2 flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+      >
+        <span
+          className={`relative inline-flex h-4 w-7 shrink-0 rounded-full transition-colors duration-200 ${
+            filterByDept ? 'bg-orange-500 dark:bg-blue-500' : 'bg-zinc-300 dark:bg-zinc-600'
+          }`}
+        >
+          <motion.span
+            layout
+            transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+            className="absolute top-0.5 h-3 w-3 rounded-full bg-white shadow"
+            style={{ left: filterByDept ? '14px' : '2px' }}
+          />
+        </span>
+        Show employees under this department
+        {filterByDept && deptName && (
+          <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold ${
+            deptMatched.length > 0
+              ? 'bg-orange-100 text-orange-700 dark:bg-blue-900/50 dark:text-blue-300'
+              : 'bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500'
+          }`}>
+            {deptMatched.length > 0 ? deptName : `${deptName} — no employees found`}
+          </span>
+        )}
+      </button>
       <div className="flex flex-wrap items-center gap-2">
         <AnimatedSelect
           ariaLabel="Select an employee"
-          className="min-w-[14rem]"
+          className="w-full max-w-sm"
+          searchable
+          searchPlaceholder="Search by name or department..."
           value={empEmail}
           onChange={(v) => {
             setEmpEmail(v);
             setOpen(true);
           }}
-          placeholder="Select an employee..."
+          placeholder="Search for a person..."
           options={list.map((r) => ({
             value: r.email,
             label: r.name,
@@ -1029,22 +1113,110 @@ function IndividualPayAdder({
             <p className="mb-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">
               Rate for <span className="font-semibold">{emp.name}</span>
             </p>
-            <PayRateEditor
-              initial={{}}
-              saveLabel="Add override"
-              onCancel={() => {
-                setOpen(false);
-                setEmpEmail('');
-              }}
-              onSave={(regular, ot, currency) => {
-                onAdd(emp, regular, ot, currency);
-                setOpen(false);
-                setEmpEmail('');
-              }}
-            />
+            <div className="flex flex-col gap-4 sm:flex-row">
+              <div className="flex-1">
+                <div className="mb-3 flex flex-col gap-1">
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                    Effective from
+                  </p>
+                  <Input
+                    type="date"
+                    value={effectiveDate}
+                    onChange={(e) => setEffectiveDate(e.target.value)}
+                    className="h-9 w-40 border-zinc-200 bg-white tabular-nums text-sm font-medium text-zinc-900 transition-colors hover:border-zinc-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                  />
+                </div>
+                <PayRateEditor
+                  initial={{}}
+                  saveLabel="Add override"
+                  onCancel={() => {
+                    setOpen(false);
+                    setEmpEmail('');
+                  }}
+                  onSave={(regular, ot, currency) => {
+                    onAdd(emp, regular, ot, currency, effectiveDate);
+                    setOpen(false);
+                    setEmpEmail('');
+                  }}
+                />
+              </div>
+              <div className="w-full sm:w-52">
+                <RateHistoryPanel email={emp.email} />
+              </div>
+            </div>
           </div>
         )}
       </Expand>
+    </div>
+  );
+}
+
+type RawHistoryRow = {
+  regular_rate: string | null;
+  ot_rate: string | null;
+  effective_from: string;
+  note: string | null;
+  created_by: string | null;
+};
+
+function RateHistoryPanel({ email }: { email: string }) {
+  const [rows, setRows] = useState<RawHistoryRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!email) return;
+    setLoading(true);
+    fetch(`/api/employee-rate-history?email=${encodeURIComponent(email)}`)
+      .then((r) => r.json())
+      .then((json: { rows?: RawHistoryRow[] }) => setRows(json.rows ?? []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [email]);
+
+  return (
+    <div className="min-w-0 flex-1">
+      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+        Rate history
+      </p>
+      {loading ? (
+        <p className="text-xs text-zinc-400">Loading...</p>
+      ) : rows.length === 0 ? (
+        <p className="text-xs text-zinc-400">No history yet.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {rows.map((r, i) => (
+            <div
+              key={i}
+              className={`rounded border px-2.5 py-1.5 text-xs ${
+                i === 0
+                  ? 'border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20'
+                  : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold tabular-nums text-zinc-800 dark:text-zinc-200">
+                  {r.regular_rate ?? '—'}
+                  {r.ot_rate ? (
+                    <span className="ml-1.5 font-normal text-zinc-500">/ OT {r.ot_rate}</span>
+                  ) : null}
+                </span>
+                {i === 0 && (
+                  <span className="rounded-full bg-emerald-100 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
+                    current
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5 text-[10px] text-zinc-400">
+                {r.effective_from}
+                {r.created_by && <span> &middot; {r.created_by}</span>}
+                {r.note && r.note !== 'Set via Payment Catalog' && (
+                  <span> &middot; {r.note}</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1055,10 +1227,11 @@ function IndividualPayRow({
   onRemove,
 }: {
   structure: PayStructure;
-  onSave: (regular: number, ot: number | undefined, currency: PayCurrency) => void;
+  onSave: (regular: number, ot: number | undefined, currency: PayCurrency, effectiveDate: string) => void;
   onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
   return (
     <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="flex items-center justify-between gap-3">
@@ -1090,15 +1263,35 @@ function IndividualPayRow({
       </div>
       <Expand show={editing}>
         <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-          <PayRateEditor
-            initial={structure}
-            saveLabel="Update"
-            onCancel={() => setEditing(false)}
-            onSave={(regular, ot, currency) => {
-              onSave(regular, ot, currency);
-              setEditing(false);
-            }}
-          />
+          <div className="flex flex-col gap-4 sm:flex-row">
+            <div className="flex-1">
+              <div className="mb-3 flex flex-col gap-1">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                  Effective from
+                </p>
+                <Input
+                  type="date"
+                  value={effectiveDate}
+                  onChange={(e) => setEffectiveDate(e.target.value)}
+                  className="h-9 w-40 border-zinc-200 bg-white tabular-nums text-sm font-medium text-zinc-900 transition-colors hover:border-zinc-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-800 dark:bg-zinc-900 dark:text-white"
+                />
+              </div>
+              <PayRateEditor
+                initial={structure}
+                saveLabel="Update"
+                onCancel={() => setEditing(false)}
+                onSave={(regular, ot, currency) => {
+                  onSave(regular, ot, currency, effectiveDate);
+                  setEditing(false);
+                }}
+              />
+            </div>
+            {structure.employeeEmail && (
+              <div className="w-full sm:w-52">
+                <RateHistoryPanel email={structure.employeeEmail} />
+              </div>
+            )}
+          </div>
         </div>
       </Expand>
     </div>
@@ -2209,10 +2402,12 @@ function EmployeeBonusAdder({
       <div className="flex flex-wrap items-center gap-2">
         <AnimatedSelect
           ariaLabel="Select an employee"
-          className="min-w-[12rem]"
+          className="min-w-[14rem]"
+          searchable
+          searchPlaceholder="Search by name or department..."
           value={empEmail}
           onChange={setEmpEmail}
-          placeholder="Select an employee..."
+          placeholder="Search for a person..."
           options={list.map((r) => ({
             value: r.email,
             label: r.name,

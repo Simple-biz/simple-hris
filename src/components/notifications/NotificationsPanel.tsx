@@ -17,6 +17,7 @@ interface EmployeeNotification {
     after?:  { regular_rate?: string | number | null; ot_rate?: string | number | null };
     before_title?: string | null;
     after_title?: string | null;
+    submitted_at?: string | null;
   } | null;
   read_at: string | null;
   created_at: string;
@@ -502,7 +503,7 @@ export default function NotificationsPanel({
 
                         <div className="mt-3 border-t border-zinc-100 pt-2 dark:border-zinc-800">
                           <span className="text-[11.5px] text-zinc-400 dark:text-zinc-500">
-                            {formatRelative(n.created_at)}
+                            {formatRelative(n.details?.submitted_at ?? n.created_at)}
                           </span>
                         </div>
                       </div>

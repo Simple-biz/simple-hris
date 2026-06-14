@@ -78,6 +78,7 @@ export async function POST() {
     title: string;
     message: string;
     details: Record<string, unknown>;
+    created_at?: string;
   }[] = [];
 
   for (const sub of submissions as {
@@ -106,6 +107,7 @@ export async function POST() {
           department: dept,
           submitted_at: sub.submitted_at ?? null,
         },
+        ...(sub.submitted_at ? { created_at: sub.submitted_at } : {}),
       });
     }
   }

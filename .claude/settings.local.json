@@ -241,7 +241,13 @@
       "PowerShell(Head -20)",
       "Bash(git rev-list *)",
       "PowerShell(Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, StartTime | Format-Table; \\(Get-Content package.json | ConvertFrom-Json\\).scripts.dev)",
-      "PowerShell($f = \"src\\\\components\\\\Rates.tsx\"; \\(Get-Item $f\\).LastWriteTime = Get-Date; \"touched $f at $\\(\\(Get-Item $f\\).LastWriteTime\\)\")"
+      "PowerShell($f = \"src\\\\components\\\\Rates.tsx\"; \\(Get-Item $f\\).LastWriteTime = Get-Date; \"touched $f at $\\(\\(Get-Item $f\\).LastWriteTime\\)\")",
+      "Bash(tasklist)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //PID 24552 //F)",
+      "Bash(rm -rf .next)",
+      "Bash(echo \"removed .next: $?\")",
+      "Bash(ls .next)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",
