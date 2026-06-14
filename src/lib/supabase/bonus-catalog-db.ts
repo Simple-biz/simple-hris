@@ -28,6 +28,8 @@ type AssignmentRow = {
   department_key: string;
   employee_email: string | null;
   employee_name: string | null;
+  excluded_emails: string[] | null;
+  shared_team: boolean | null;
   created_by: string | null;
   created_at: string | null;
 };
@@ -55,6 +57,8 @@ function mapAssignment(r: AssignmentRow): BonusAssignment {
     departmentKey: r.department_key,
     employeeEmail: r.employee_email ?? undefined,
     employeeName: r.employee_name ?? undefined,
+    excludedEmails: r.excluded_emails ?? [],
+    sharedTeam: r.shared_team ?? false,
     createdBy: r.created_by,
     createdAt: r.created_at,
   };
@@ -117,6 +121,9 @@ export async function addAssignment(
 ): Promise<{ row: BonusAssignment | null; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { row: null, error: 'Supabase client unavailable' };
+  // Upsert (not insert): editing a common bonus's exclusion list reuses the same
+  // assignment id, so it must update the existing row. The touch trigger keeps
+  // created_by/created_at immutable across those edits.
   const payload = {
     id: assignment.id,
     bonus_id: assignment.bonusId,
@@ -124,11 +131,16 @@ export async function addAssignment(
     department_key: assignment.departmentKey,
     employee_email: assignment.employeeEmail ?? null,
     employee_name: assignment.employeeName ?? null,
+    excluded_emails:
+      assignment.scope === 'department'
+        ? (assignment.excludedEmails ?? []).map((e) => e.toLowerCase())
+        : [],
+    shared_team: assignment.scope === 'department' ? !!assignment.sharedTeam : false,
     created_by: actor,
   };
   const { data, error } = await supabase
     .from(ASSIGNMENTS)
-    .insert(payload)
+    .upsert(payload, { onConflict: 'id' })
     .select('*')
     .maybeSingle();
   if (error) return { row: null, error: error.message };

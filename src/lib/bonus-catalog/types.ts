@@ -46,6 +46,14 @@ export interface BonusAssignment {
   employeeEmail?: string;
   /** Display name captured at assignment time. */
   employeeName?: string;
+  /** For scope === 'department' only: lower-cased emails of department members
+   *  who should NOT receive this common bonus. Empty/absent = applies to all. */
+  excludedEmails?: string[];
+  /** For scope === 'department' only: when true the common bonus is a "team
+   *  effort" -- the manager enters its formula inputs ONCE for the whole
+   *  department and every (non-excluded) member receives the result. When false
+   *  (default) each member has their own inputs/amount. */
+  sharedTeam?: boolean;
   /** Author attribution (set server-side from the session). */
   createdBy?: string | null;
   createdAt?: string | null;

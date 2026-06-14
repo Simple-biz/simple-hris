@@ -7,9 +7,12 @@
 //   - "Common" bonuses (assigned to the whole department) apply to every member.
 //   - "Individual" bonuses (assigned to one employee in the department) show on
 //     that person only.
-// The manager decides which bonuses pay out this week. Flat bonuses are a simple
-// on/off; formula bonuses collect their variable inputs per employee and compute
-// live via the catalog formula engine. Applied rows are saved to
+// On a fresh week, "Common" bonuses are pre-applied to everyone in the
+// department (minus anyone excluded in the catalog) so the manager doesn't have
+// to tick each person; once the week is saved, the saved selection is
+// authoritative (a manual untick persists). Flat bonuses are a simple on/off;
+// formula bonuses collect their variable inputs per employee and compute live
+// via the catalog formula engine. Applied rows are saved to
 // bonus_catalog_applied (one row per member x applied bonus) and, once the week
 // is marked Ready, feed the Payroll Wizard "KPI Sub." column.
 //
@@ -24,6 +27,8 @@ import {
   CheckCheck,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Lock,
   RefreshCw,
@@ -52,6 +57,7 @@ type BonusStatus = 'draft' | 'ready' | 'locked';
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 const PESO = '₱';
+const MEMBER_PAGE_SIZE = 8;
 
 /** Per-member, per-bonus applied state. `vars` holds formula inputs as strings. */
 interface AppliedState {
@@ -67,6 +73,9 @@ interface MemberState {
 
 interface DeptState {
   members: MemberState[];
+  /** Team-effort ("shared") common bonuses: entered once for the whole dept,
+   *  keyed by bonusId. Every non-excluded member receives the computed amount. */
+  shared: Record<string, AppliedState>;
   status: BonusStatus;
   dirty: boolean;
   saving: boolean;
@@ -260,6 +269,36 @@ export default function DeptBonusCalculator({
     return map;
   }, [assignments, bonusById]);
 
+  // dept key -> set of bonusIds that are "team effort" (shared) common bonuses:
+  // entered once for the whole dept, everyone non-excluded receives the result.
+  const sharedCommonByDept = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const a of assignments) {
+      if (a.scope !== 'department' || !a.sharedTeam) continue;
+      const key = normalizeDeptToKey(a.departmentKey) ?? a.departmentKey;
+      const set = map.get(key) ?? new Set<string>();
+      set.add(a.bonusId);
+      map.set(key, set);
+    }
+    return map;
+  }, [assignments]);
+
+  // dept key -> (bonusId -> set of excluded member emails). A common bonus skips
+  // anyone the accountant excluded for it (Payment Catalog -> Assignments).
+  const commonExclusionsByDept = useMemo(() => {
+    const map = new Map<string, Map<string, Set<string>>>();
+    for (const a of assignments) {
+      if (a.scope !== 'department' || !a.excludedEmails?.length) continue;
+      const key = normalizeDeptToKey(a.departmentKey) ?? a.departmentKey;
+      const byBonus = map.get(key) ?? new Map<string, Set<string>>();
+      const set = byBonus.get(a.bonusId) ?? new Set<string>();
+      for (const e of a.excludedEmails) set.add(e.toLowerCase());
+      byBonus.set(a.bonusId, set);
+      map.set(key, byBonus);
+    }
+    return map;
+  }, [assignments]);
+
   const individualByDept = useMemo(() => {
     // dept key -> (employee email -> BonusDef[])
     const map = new Map<string, Map<string, BonusDef[]>>();
@@ -310,11 +349,17 @@ export default function DeptBonusCalculator({
   const [state, setState] = useState<AllState>({});
   const [wallpapers, setWallpapers] = useState<Record<string, Wallpaper>>({});
   const [activeFilter, setActiveFilter] = useState<string>('all');
-  const [search, setSearch] = useState('');
+  // Per-department member search + pagination (standard list controls).
+  const [cardSearch, setCardSearch] = useState<Record<string, string>>({});
+  const [cardPage, setCardPage] = useState<Record<string, number>>({});
   const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
 
   function patchDept(key: string, patch: Partial<DeptState>) {
-    setState((prev) => ({ ...prev, [key]: { ...prev[key]!, ...patch } }));
+    setState((prev) => {
+      const cur = prev[key];
+      if (!cur) return prev; // never create a partial (members-less) dept state
+      return { ...prev, [key]: { ...cur, ...patch } };
+    });
   }
 
   /** Bonuses applicable to one member: dept-common + that person's individual ones. */
@@ -322,16 +367,26 @@ export default function DeptBonusCalculator({
     (deptKey: string, email: string): BonusDef[] => {
       const common = commonByDept.get(deptKey) ?? [];
       const indiv = individualByDept.get(deptKey)?.get(email) ?? [];
+      const excludedFor = commonExclusionsByDept.get(deptKey);
+      const lower = email.toLowerCase();
       const seen = new Set<string>();
       const out: BonusDef[] = [];
-      for (const b of [...common, ...indiv]) {
+      // Common bonuses, minus anyone explicitly excluded from them.
+      for (const b of common) {
+        if (excludedFor?.get(b.id)?.has(lower)) continue;
+        if (seen.has(b.id)) continue;
+        seen.add(b.id);
+        out.push(b);
+      }
+      // Individual assignments always apply (and override a common exclusion).
+      for (const b of indiv) {
         if (seen.has(b.id)) continue;
         seen.add(b.id);
         out.push(b);
       }
       return out;
     },
-    [commonByDept, individualByDept],
+    [commonByDept, individualByDept, commonExclusionsByDept],
   );
 
   // -- Load existing applied rows + status for a department ----------------------
@@ -353,6 +408,7 @@ export default function DeptBonusCalculator({
           }[];
         };
         const statusJson = (await statusRes.json()) as { rows?: { status: BonusStatus }[] };
+        const savedRows = appliedJson.rows ?? [];
 
         // Seed members from roster, then overlay anyone who has saved applied rows.
         const byEmail = new Map<string, MemberState>();
@@ -364,28 +420,66 @@ export default function DeptBonusCalculator({
             if (!byEmail.has(email)) byEmail.set(email, { email, name: email, applied: {} });
           }
         }
-        for (const row of appliedJson.rows ?? []) {
+        const sharedSet = sharedCommonByDept.get(key);
+        const shared: Record<string, AppliedState> = {};
+        for (const row of savedRows) {
           const em = (row.employee_email ?? '').toLowerCase();
           if (!em) continue;
+          const vars: Record<string, string> = {};
+          if (row.vars) for (const [k, v] of Object.entries(row.vars)) vars[k] = String(v);
+          // Team-effort bonuses are stored per-member but are identical across the
+          // dept -- collapse them into one shared entry instead of per-member.
+          if (sharedSet?.has(row.bonus_id)) {
+            if (!shared[row.bonus_id]) shared[row.bonus_id] = { on: true, vars };
+            continue;
+          }
           const member =
             byEmail.get(em) ?? { email: em, name: row.employee_name ?? em, applied: {} };
           if (!byEmail.has(em)) byEmail.set(em, member);
-          const vars: Record<string, string> = {};
-          if (row.vars) for (const [k, v] of Object.entries(row.vars)) vars[k] = String(v);
           member.applied[row.bonus_id] = { on: true, vars };
         }
 
-        const members = Array.from(byEmail.values()).sort((a, b) => a.name.localeCompare(b.name));
         const status: BonusStatus = statusJson.rows?.[0]?.status ?? 'draft';
+
+        // Pre-apply common bonuses: on a fresh (never-saved, still-draft) week a
+        // common bonus set to "everyone" should already be ticked, so the manager
+        // doesn't have to apply it by hand. Once the week has been saved, the
+        // saved selection is authoritative (a manual untick persists). Excluded
+        // members are skipped here and by applicableBonuses regardless.
+        let preApplied = false;
+        if (savedRows.length === 0 && status === 'draft') {
+          const common = commonByDept.get(key) ?? [];
+          const exMap = commonExclusionsByDept.get(key);
+          for (const b of common) {
+            if (sharedSet?.has(b.id)) {
+              // Team-effort bonus: one shared entry, default on.
+              shared[b.id] = { on: true, vars: {} };
+              preApplied = true;
+              continue;
+            }
+            for (const member of byEmail.values()) {
+              const lower = member.email.toLowerCase();
+              if (exMap?.get(b.id)?.has(lower)) continue;
+              if (member.applied[b.id]) continue;
+              member.applied[b.id] = { on: true, vars: {} };
+              preApplied = true;
+            }
+          }
+        }
+
+        const members = Array.from(byEmail.values()).sort((a, b) => a.name.localeCompare(b.name));
         setState((prev) => ({
+          // Pre-applied defaults are unsaved -- mark dirty so Save (then Mark
+          // Ready) persists them into bonus_catalog_applied for the Wizard.
           ...prev,
-          [key]: { members, status, dirty: false, saving: false, loaded: true },
+          [key]: { members, shared, status, dirty: preApplied, saving: false, loaded: true },
         }));
       } catch {
         setState((prev) => ({
           ...prev,
           [key]: {
             members: roster.map((e) => ({ email: e.email, name: e.name, applied: {} })),
+            shared: {},
             status: 'draft',
             dirty: false,
             saving: false,
@@ -394,7 +488,7 @@ export default function DeptBonusCalculator({
         }));
       }
     },
-    [rosterByDept, individualByDept, weekStart],
+    [rosterByDept, individualByDept, commonByDept, commonExclusionsByDept, sharedCommonByDept, weekStart],
   );
 
   useEffect(() => {
@@ -464,21 +558,28 @@ export default function DeptBonusCalculator({
   // -- Live bonus computation ----------------------------------------------------
 
   const memberTotal = useCallback(
-    (deptKey: string, member: MemberState): number => {
+    (deptKey: string, member: MemberState, shared: Record<string, AppliedState> | undefined): number => {
+      const sharedSet = sharedCommonByDept.get(deptKey);
       let sum = 0;
       for (const bonus of applicableBonuses(deptKey, member.email)) {
+        // Team-effort bonus: every member gets the single shared amount.
+        if (sharedSet?.has(bonus.id)) {
+          const sh = shared?.[bonus.id];
+          if (sh?.on) sum += computeAmount(bonus, sh.vars);
+          continue;
+        }
         const st = member.applied[bonus.id];
         if (st?.on) sum += computeAmount(bonus, st.vars);
       }
       return sum;
     },
-    [applicableBonuses],
+    [applicableBonuses, sharedCommonByDept],
   );
 
   const deptTotal = useCallback(
     (deptKey: string, st: DeptState | undefined): number => {
       if (!st) return 0;
-      return st.members.reduce((s, m) => s + memberTotal(deptKey, m), 0);
+      return st.members.reduce((s, m) => s + memberTotal(deptKey, m, st.shared), 0);
     },
     [memberTotal],
   );
@@ -487,7 +588,8 @@ export default function DeptBonusCalculator({
 
   function toggleBonus(deptKey: string, email: string, bonusId: string, on: boolean) {
     setState((prev) => {
-      const d = prev[deptKey]!;
+      const d = prev[deptKey];
+      if (!d) return prev; // dept not loaded yet -- ignore
       return {
         ...prev,
         [deptKey]: {
@@ -505,7 +607,8 @@ export default function DeptBonusCalculator({
 
   function setVar(deptKey: string, email: string, bonusId: string, varName: string, value: string) {
     setState((prev) => {
-      const d = prev[deptKey]!;
+      const d = prev[deptKey];
+      if (!d) return prev; // dept not loaded yet -- ignore
       return {
         ...prev,
         [deptKey]: {
@@ -524,10 +627,41 @@ export default function DeptBonusCalculator({
     });
   }
 
+  /** Turn a team-effort (shared) bonus on/off for the whole department. */
+  function toggleShared(deptKey: string, bonusId: string, on: boolean) {
+    setState((prev) => {
+      const d = prev[deptKey];
+      if (!d) return prev;
+      const cur = d.shared[bonusId] ?? { on: false, vars: {} };
+      return {
+        ...prev,
+        [deptKey]: { ...d, dirty: true, shared: { ...d.shared, [bonusId]: { ...cur, on } } },
+      };
+    });
+  }
+
+  /** Set a shared formula variable for a team-effort bonus (entered once). */
+  function setSharedVar(deptKey: string, bonusId: string, varName: string, value: string) {
+    setState((prev) => {
+      const d = prev[deptKey];
+      if (!d) return prev;
+      const cur = d.shared[bonusId] ?? { on: true, vars: {} };
+      return {
+        ...prev,
+        [deptKey]: {
+          ...d,
+          dirty: true,
+          shared: { ...d.shared, [bonusId]: { on: true, vars: { ...cur.vars, [varName]: value } } },
+        },
+      };
+    });
+  }
+
   /** Toggle a common bonus on/off for every member of the department at once. */
   function applyToAll(deptKey: string, bonusId: string, on: boolean) {
     setState((prev) => {
-      const d = prev[deptKey]!;
+      const d = prev[deptKey];
+      if (!d) return prev; // dept not loaded yet -- ignore
       return {
         ...prev,
         [deptKey]: {
@@ -549,10 +683,14 @@ export default function DeptBonusCalculator({
     if (!d) return;
     patchDept(key, { saving: true });
     try {
+      const sharedSet = sharedCommonByDept.get(key);
       const rows = [] as Array<Record<string, unknown>>;
       for (const m of d.members) {
         for (const bonus of applicableBonuses(key, m.email)) {
-          const st = m.applied[bonus.id];
+          // Team-effort bonuses pull from the single shared entry; everyone who
+          // is applicable gets an identical row (so the Wizard pays each member).
+          const isShared = sharedSet?.has(bonus.id);
+          const st = isShared ? d.shared[bonus.id] : m.applied[bonus.id];
           if (!st?.on) continue;
           const numVars: Record<string, number> = {};
           for (const v of bonusVariables(bonus)) numVars[v] = Number(st.vars?.[v] ?? '') || 0;
@@ -652,8 +790,6 @@ export default function DeptBonusCalculator({
 
   if (visibleDeptKeys.length === 0) return null;
 
-  const q = search.trim().toLowerCase();
-
   // Weekly KPI deadline: managers submit before the current week's payroll.
   const now = new Date();
   const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -704,9 +840,9 @@ export default function DeptBonusCalculator({
           </motion.div>
         </div>
 
-        {/* Filter row */}
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {visibleDeptKeys.length > 1 && (
+        {/* Filter row (department pills; member search lives per-card) */}
+        {visibleDeptKeys.length > 1 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <LayoutGroup id="dept-filter">
               <div className="-mx-1 flex max-w-full items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
                 <FilterPill active={activeFilter === 'all'} onClick={() => setActiveFilter('all')} label="All" count={visibleDeptKeys.length} />
@@ -722,18 +858,8 @@ export default function DeptBonusCalculator({
                 ))}
               </div>
             </LayoutGroup>
-          )}
-          <div className="relative w-full sm:ml-auto sm:w-auto">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
-            <Input
-              type="search"
-              placeholder="Find member..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-8 w-full pl-8 text-xs sm:w-44"
-            />
           </div>
-        </div>
+        )}
 
         <DeadlineBanner
           weekStart={weekStart}
@@ -764,7 +890,21 @@ export default function DeptBonusCalculator({
           const total = deptTotal(key, d);
           const open = isOpen(key);
           const common = commonByDept.get(key) ?? [];
-          const members = (d?.members ?? []).filter((e) => !q || e.name.toLowerCase().includes(q));
+          const sharedSet = sharedCommonByDept.get(key);
+          const normalCommon = common.filter((b) => !sharedSet?.has(b.id));
+          const sharedCommon = common.filter((b) => sharedSet?.has(b.id));
+          const allMembers = d?.members ?? [];
+          const cq = (cardSearch[key] ?? '').trim().toLowerCase();
+          const members = cq
+            ? allMembers.filter(
+                (e) => e.name.toLowerCase().includes(cq) || e.email.toLowerCase().includes(cq),
+              )
+            : allMembers;
+          // Pagination (per department) -- clamp the page to the filtered set.
+          const totalPages = Math.max(1, Math.ceil(members.length / MEMBER_PAGE_SIZE));
+          const curPage = Math.min(cardPage[key] ?? 1, totalPages);
+          const pageStart = (curPage - 1) * MEMBER_PAGE_SIZE;
+          const pagedMembers = members.slice(pageStart, pageStart + MEMBER_PAGE_SIZE);
           const hasAnyBonus =
             common.length > 0 || (individualByDept.get(key)?.size ?? 0) > 0;
 
@@ -782,12 +922,14 @@ export default function DeptBonusCalculator({
                 !readOnly && daysLeft <= 2 && 'ring-1 ring-amber-400/70 dark:ring-amber-500/40',
               )}
             >
-              {/* Hero header (toggles open/closed) */}
+              {/* Header row -- the wallpaper is now a compact thumbnail accent,
+                  not a full-bleed hero. The whole row toggles open/closed. */}
+              <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: color }} aria-hidden />
               <motion.div
                 role="button"
                 tabIndex={0}
                 aria-expanded={open}
-                whileTap={{ scale: 0.992 }}
+                whileTap={{ scale: 0.994 }}
                 onClick={() => setManualOpen((m) => ({ ...m, [key]: !open }))}
                 onKeyDown={(ev) => {
                   if (ev.key === 'Enter' || ev.key === ' ') {
@@ -795,73 +937,64 @@ export default function DeptBonusCalculator({
                     setManualOpen((m) => ({ ...m, [key]: !open }));
                   }
                 }}
-                className="relative block h-32 w-full cursor-pointer overflow-hidden outline-none"
+                className="relative flex w-full cursor-pointer items-center gap-3 p-3 outline-none sm:gap-3.5 sm:p-3.5"
               >
-                <div
-                  className="absolute inset-0 bg-cover bg-center group-hover:scale-[1.06]"
-                  style={{
-                    backgroundImage: wp?.url ? `url("${wp.url}")` : fallbackBg(color),
-                    backgroundPosition: wp?.position ?? '50% 50%',
-                    transitionProperty: 'transform',
-                    transitionDuration: '700ms',
-                    transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
-                  }}
-                  aria-hidden
-                />
-                <div
-                  className="absolute inset-0"
-                  style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.45) 48%, rgba(0,0,0,0.1) 100%)' }}
-                  aria-hidden
-                />
-                <div
-                  className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/15 to-transparent group-hover:translate-x-full"
-                  style={{ transitionProperty: 'transform', transitionDuration: '900ms', transitionTimingFunction: 'ease-out' }}
-                  aria-hidden
-                />
-                <div className="pointer-events-none absolute inset-0 opacity-[0.15] mix-blend-overlay" style={{ backgroundImage: HERO_NOISE }} aria-hidden />
-                <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: color }} aria-hidden />
+                {/* Image thumbnail (a portion of the card, not the whole header) */}
+                <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-xl ring-1 ring-black/5 dark:ring-white/10 sm:h-[68px] sm:w-24">
+                  <div
+                    className="absolute inset-0 bg-cover bg-center group-hover:scale-110"
+                    style={{
+                      backgroundImage: wp?.url ? `url("${wp.url}")` : fallbackBg(color),
+                      backgroundPosition: wp?.position ?? '50% 50%',
+                      transitionProperty: 'transform',
+                      transitionDuration: '700ms',
+                      transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                    }}
+                    aria-hidden
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/45 to-transparent" aria-hidden />
+                  <div className="pointer-events-none absolute inset-0 opacity-[0.12] mix-blend-overlay" style={{ backgroundImage: HERO_NOISE }} aria-hidden />
+                  <div className="absolute bottom-1 left-1 flex items-center gap-1 rounded-full bg-black/45 px-1.5 py-0.5 text-white/90 backdrop-blur-sm">
+                    <Users className="h-2.5 w-2.5" aria-hidden />
+                    <span className="tabular-nums font-mono text-[10px]">{d?.members.length ?? 0}</span>
+                  </div>
+                </div>
 
-                <div className="relative flex h-full flex-col justify-between p-3 sm:p-4">
-                  <div className="flex items-start justify-between gap-2">
+                {/* Title + description */}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="truncate text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{dept?.name ?? key}</h3>
                     <HeroBadge status={d?.status ?? 'draft'} warn={!readOnly && daysLeft <= 2} />
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      {d?.dirty && (
-                        <motion.span
-                          className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_6px] shadow-amber-400"
-                          title="Unsaved changes"
-                          aria-hidden
-                          animate={{ opacity: [1, 0.35, 1] }}
-                          transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-                        />
-                      )}
-                      <div className="flex items-center gap-1 text-white/70">
-                        <Users className="h-3 w-3" aria-hidden />
-                        <span className="tabular-nums font-mono text-xs">{d?.members.length ?? 0}</span>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-mono text-[8px] uppercase tracking-[0.18em] text-white/55">Projected</div>
-                        <div className="tabular-nums font-mono text-sm font-bold leading-none text-emerald-300">
-                          <AnimatedPeso value={total} />
-                        </div>
-                      </div>
-                    </div>
+                    {d?.dirty && (
+                      <motion.span
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400 shadow-[0_0_6px] shadow-amber-400"
+                        title="Unsaved changes"
+                        aria-hidden
+                        animate={{ opacity: [1, 0.35, 1] }}
+                        transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+                      />
+                    )}
                   </div>
+                  <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+                    {DEPT_DESCRIPTION[key] ?? ''}
+                  </p>
+                </div>
 
-                  <div className="flex items-end justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="truncate text-lg font-bold tracking-tight text-white drop-shadow-sm">{dept?.name ?? key}</h3>
-                      <p className="mt-0.5 line-clamp-2 max-w-[48ch] text-[11px] leading-snug text-white/75">
-                        {DEPT_DESCRIPTION[key] ?? ''}
-                      </p>
+                {/* Projected + chevron */}
+                <div className="flex shrink-0 items-center gap-2.5">
+                  <div className="text-right">
+                    <div className="font-mono text-[8px] uppercase tracking-[0.18em] text-zinc-400">Projected</div>
+                    <div className="tabular-nums font-mono text-sm font-bold leading-none text-emerald-600 dark:text-emerald-400">
+                      <AnimatedPeso value={total} />
                     </div>
-                    <motion.span
-                      className="shrink-0 rounded-full bg-white/15 p-1 text-white/90 backdrop-blur-sm"
-                      animate={{ rotate: open ? 180 : 0 }}
-                      transition={{ type: 'spring', stiffness: 320, damping: 20 }}
-                    >
-                      <ChevronDown className="h-4 w-4" aria-hidden />
-                    </motion.span>
                   </div>
+                  <motion.span
+                    className="shrink-0 rounded-full bg-zinc-100 p-1 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-300"
+                    animate={{ rotate: open ? 180 : 0 }}
+                    transition={{ type: 'spring', stiffness: 320, damping: 20 }}
+                  >
+                    <ChevronDown className="h-4 w-4" aria-hidden />
+                  </motion.span>
                 </div>
               </motion.div>
 
@@ -873,12 +1006,21 @@ export default function DeptBonusCalculator({
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.34, ease: EASE }}
-                    className="overflow-hidden"
+                    transition={{
+                      height: { duration: 0.42, ease: EASE },
+                      opacity: { duration: 0.22, ease: 'easeOut' },
+                    }}
+                    style={{ overflow: 'hidden', willChange: 'height' }}
                   >
-                    <div className="border-t border-zinc-100 dark:border-zinc-800/70">
+                    <motion.div
+                      className="border-t border-zinc-100 dark:border-zinc-800/70"
+                      initial={{ y: -8 }}
+                      animate={{ y: 0 }}
+                      exit={{ y: -8 }}
+                      transition={{ duration: 0.42, ease: EASE }}
+                    >
                       {/* Common-bonus legend with one-tap apply-to-all */}
-                      {common.length > 0 && (
+                      {normalCommon.length > 0 && (
                         <div className="flex flex-wrap items-center gap-2 px-3.5 pt-3">
                           <span
                             className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
@@ -886,11 +1028,11 @@ export default function DeptBonusCalculator({
                           >
                             <Building2 className="h-3 w-3" /> Common
                           </span>
-                          {common.map((b) => (
+                          {normalCommon.map((b) => (
                             <button
                               key={b.id}
                               type="button"
-                              disabled={readOnly}
+                              disabled={readOnly || !d?.loaded}
                               onClick={() => applyToAll(key, b.id, true)}
                               title={`Apply "${b.name}" to all members`}
                               className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
@@ -899,6 +1041,122 @@ export default function DeptBonusCalculator({
                               {b.name}
                             </button>
                           ))}
+                        </div>
+                      )}
+
+                      {/* Team-effort (shared) common bonuses: one entry for everyone */}
+                      {sharedCommon.length > 0 && d?.loaded && (
+                        <div className="space-y-2 px-3.5 pt-3">
+                          {sharedCommon.map((b) => {
+                            const sh = d.shared[b.id];
+                            const on = !!sh?.on;
+                            const vars = bonusVariables(b);
+                            const perPerson = on ? computeAmount(b, sh?.vars) : 0;
+                            return (
+                              <div
+                                key={b.id}
+                                className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 dark:border-violet-900/50 dark:bg-violet-950/20"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <label className="flex min-w-0 items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      className="h-4 w-4 shrink-0 rounded accent-violet-600"
+                                      disabled={readOnly}
+                                      checked={on}
+                                      onChange={(ev) => toggleShared(key, b.id, ev.target.checked)}
+                                    />
+                                    <span className="truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">{b.name}</span>
+                                    <span className="inline-flex items-center gap-0.5 rounded bg-violet-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                                      <Users className="h-2.5 w-2.5" /> Team
+                                    </span>
+                                  </label>
+                                  <span
+                                    className={cn(
+                                      'shrink-0 font-mono text-[12px] tabular-nums',
+                                      perPerson > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                    )}
+                                  >
+                                    {peso(perPerson)} <span className="text-[9px] text-zinc-400">/ person</span>
+                                  </span>
+                                </div>
+                                {on && b.kind === 'formula' && vars.length > 0 && (
+                                  <div className="mt-1.5 pl-6">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      {vars.map((v) => (
+                                        <label key={v} className="flex items-center gap-1">
+                                          <span className="font-mono text-[10px] text-zinc-400">{v}</span>
+                                          <Input
+                                            type="number"
+                                            inputMode="decimal"
+                                            aria-label={`${v} for the whole team`}
+                                            disabled={readOnly}
+                                            value={sh?.vars?.[v] ?? ''}
+                                            onChange={(ev) => setSharedVar(key, b.id, v, ev.target.value)}
+                                            className="h-7 w-20 text-center text-sm tabular-nums"
+                                          />
+                                        </label>
+                                      ))}
+                                    </div>
+                                    <p className="mt-1 text-[10px] text-zinc-400">entered once &middot; everyone gets {peso(perPerson)}</p>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Member search + pagination toolbar (standard list controls) */}
+                      {d?.loaded && hasAnyBonus && allMembers.length > 0 && (
+                        <div className="flex flex-col gap-2 px-2.5 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="relative min-w-0 flex-1 sm:max-w-xs">
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+                            <input
+                              type="search"
+                              placeholder="Search name or email..."
+                              value={cardSearch[key] ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setCardSearch((prev) => ({ ...prev, [key]: v }));
+                                setCardPage((prev) => ({ ...prev, [key]: 1 }));
+                              }}
+                              className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
+                            />
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+                            <span className="font-mono text-[10px] text-zinc-500">
+                              {members.length === 0
+                                ? '0 of 0'
+                                : `${pageStart + 1}-${Math.min(pageStart + MEMBER_PAGE_SIZE, members.length)} of ${members.length}`}
+                              {cq && members.length !== allMembers.length && (
+                                <span className="text-zinc-400"> &middot; filtered from {allMembers.length}</span>
+                              )}
+                            </span>
+                            <div className="flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                              <button
+                                type="button"
+                                className="rounded p-1 text-zinc-600 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                disabled={curPage <= 1}
+                                onClick={() => setCardPage((prev) => ({ ...prev, [key]: Math.max(1, curPage - 1) }))}
+                                aria-label="Previous page"
+                              >
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                              </button>
+                              <span className="min-w-[3rem] text-center font-mono text-[10px] tabular-nums text-zinc-600 dark:text-zinc-400">
+                                {curPage} / {totalPages}
+                              </span>
+                              <button
+                                type="button"
+                                className="rounded p-1 text-zinc-600 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                disabled={curPage >= totalPages}
+                                onClick={() => setCardPage((prev) => ({ ...prev, [key]: Math.min(totalPages, curPage + 1) }))}
+                                aria-label="Next page"
+                              >
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )}
 
@@ -913,7 +1171,7 @@ export default function DeptBonusCalculator({
                         </div>
                       ) : members.length === 0 ? (
                         <div className="px-3.5 py-5 text-center text-xs text-zinc-400">
-                          {q ? 'No members match your search.' : 'No team members in this department.'}
+                          {cq ? 'No members match your search.' : 'No team members in this department.'}
                         </div>
                       ) : (
                         <motion.div
@@ -922,9 +1180,13 @@ export default function DeptBonusCalculator({
                           animate="show"
                           variants={{ show: { transition: { staggerChildren: 0.028, delayChildren: 0.06 } } }}
                         >
-                          {members.map((m) => {
-                            const mBonuses = applicableBonuses(key, m.email);
-                            const mTotal = memberTotal(key, m);
+                          {pagedMembers.map((m) => {
+                            // Team-effort bonuses are shown/edited once at the top, not per member.
+                            const mBonuses = applicableBonuses(key, m.email).filter((b) => !sharedSet?.has(b.id));
+                            const mTotal = memberTotal(key, m, d.shared);
+                            const sharedForMember = applicableBonuses(key, m.email).filter(
+                              (b) => sharedSet?.has(b.id) && d.shared[b.id]?.on,
+                            );
                             return (
                               <motion.div
                                 key={m.email}
@@ -1011,6 +1273,33 @@ export default function DeptBonusCalculator({
                                       </div>
                                     );
                                   })}
+
+                                  {/* Team-effort bonuses this member shares in (read-only here) */}
+                                  {sharedForMember.map((b) => {
+                                    const sh = d.shared[b.id];
+                                    const amt = computeAmount(b, sh?.vars);
+                                    return (
+                                      <div
+                                        key={b.id}
+                                        className="flex items-center justify-between gap-2 rounded-lg border border-violet-100 bg-violet-50/40 px-2 py-1.5 dark:border-violet-900/40 dark:bg-violet-950/10"
+                                      >
+                                        <span className="flex min-w-0 items-center gap-2">
+                                          <span className="truncate text-[12.5px] text-zinc-600 dark:text-zinc-300">{b.name}</span>
+                                          <span className="inline-flex items-center gap-0.5 rounded bg-violet-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                                            <Users className="h-2.5 w-2.5" /> Team
+                                          </span>
+                                        </span>
+                                        <span
+                                          className={cn(
+                                            'shrink-0 font-mono text-[12px] tabular-nums',
+                                            amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                          )}
+                                        >
+                                          {peso(amt)}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </motion.div>
                             );
@@ -1052,7 +1341,7 @@ export default function DeptBonusCalculator({
                           )}
                         </div>
                       </div>
-                    </div>
+                    </motion.div>
                   </motion.section>
                 )}
               </AnimatePresence>
@@ -1198,16 +1487,16 @@ function DeadlineBanner({
 function HeroBadge({ status, warn }: { status: BonusStatus; warn?: boolean }) {
   const map: Record<BonusStatus, { label: string; cls: string; icon?: React.ReactNode }> = {
     draft: warn
-      ? { label: 'Action needed', cls: 'bg-amber-400/30 text-amber-50 ring-1 ring-amber-200/40', icon: <AlertTriangle className="h-3 w-3" /> }
-      : { label: 'Draft', cls: 'bg-white/15 text-white/90', icon: <Sparkles className="h-3 w-3" /> },
-    ready: { label: 'Ready', cls: 'bg-emerald-400/25 text-emerald-100', icon: <CheckCircle2 className="h-3 w-3" /> },
-    locked: { label: 'Locked', cls: 'bg-amber-400/25 text-amber-100', icon: <Lock className="h-3 w-3" /> },
+      ? { label: 'Action needed', cls: 'bg-amber-100 text-amber-700 ring-1 ring-amber-300/70 dark:bg-amber-950/50 dark:text-amber-300 dark:ring-amber-700/50', icon: <AlertTriangle className="h-3 w-3" /> }
+      : { label: 'Draft', cls: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400', icon: <Sparkles className="h-3 w-3" /> },
+    ready: { label: 'Ready', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300', icon: <CheckCircle2 className="h-3 w-3" /> },
+    locked: { label: 'Locked', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300', icon: <Lock className="h-3 w-3" /> },
   };
   const s = map[status];
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide backdrop-blur-sm',
+        'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
         s.cls,
       )}
     >

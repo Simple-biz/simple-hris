@@ -36,6 +36,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs as TabsPrimitive } from '@base-ui/react/tabs';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -587,8 +588,43 @@ export default function HrOnboardingForm() {
       {/* Submissions table */}
       <div className="overflow-hidden rounded-xl border border-emerald-100/80 bg-white shadow-sm ring-1 ring-emerald-500/5 dark:border-emerald-950/40 dark:bg-zinc-950">
         {loading ? (
-          <div className="flex items-center justify-center py-12 text-zinc-400">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm sm:min-w-[860px]">
+              <thead className="border-b border-emerald-100/60 bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:border-emerald-900/40 dark:from-emerald-950/40 dark:via-zinc-950 dark:to-emerald-950/30 dark:text-zinc-400">
+                <tr>
+                  <th className="w-10 px-4 py-3" />
+                  <th className="px-4 py-3 font-semibold">Invitee</th>
+                  <th className="px-4 py-3 font-semibold">Department</th>
+                  <th className="px-4 py-3 font-semibold">Status</th>
+                  <th className="px-4 py-3 font-semibold">Created</th>
+                  <th className="px-4 py-3 font-semibold">Submitted</th>
+                  <th className="px-4 py-3 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-emerald-100/60 dark:divide-emerald-900/30">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i} className="align-top">
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-4 w-4 rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="mt-1.5 h-3 w-40" />
+                    </td>
+                    <td className="px-4 py-3"><Skeleton className="h-3.5 w-20" /></td>
+                    <td className="px-4 py-3"><Skeleton className="h-5 w-20 rounded-full" /></td>
+                    <td className="px-4 py-3"><Skeleton className="h-3.5 w-16" /></td>
+                    <td className="px-4 py-3"><Skeleton className="h-3.5 w-16" /></td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex justify-end gap-1.5">
+                        <Skeleton className="h-7 w-16 rounded-md" />
+                        <Skeleton className="h-7 w-7 rounded-md" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-12 text-center">

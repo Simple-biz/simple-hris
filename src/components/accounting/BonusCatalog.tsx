@@ -428,7 +428,11 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 
   const addAssignment = useCallback(
     async (a: BonusAssignment) => {
-      setAssignments((prev) => [...prev, a]);
+      // Upsert in state: a brand-new assignment appends; editing a common
+      // bonus's exclusion list reuses the same id and replaces it in place.
+      setAssignments((prev) =>
+        prev.some((x) => x.id === a.id) ? prev.map((x) => (x.id === a.id ? a : x)) : [...prev, a],
+      );
       try {
         const res = await fetch('/api/bonus-catalog', {
           method: 'POST',
@@ -2164,6 +2168,12 @@ function AssignmentsTab({
     (a) => a.scope === 'employee' && a.departmentKey === selectedDept,
   );
 
+  // Members of the selected department -- the pool a common bonus can exclude from.
+  const deptRoster = useMemo(
+    () => roster.filter((r) => normalizeDeptToKey(r.department) === selectedDept),
+    [roster, selectedDept],
+  );
+
   const addAssignment = (a: BonusAssignment) => onAdd(a);
   const removeAssignment = (id: string) => onRemove(id);
 
@@ -2246,7 +2256,7 @@ function AssignmentsTab({
         <Section
           icon={Building2}
           title="Common bonuses"
-          subtitle="Applied to everyone in this department."
+          subtitle="Applied to everyone in this department -- unless you exclude specific people."
         >
           <CommonBonusAdder
             bonuses={bonuses}
@@ -2269,9 +2279,11 @@ function AssignmentsTab({
                     exit={{ opacity: 0, x: 12, scale: 0.96 }}
                     transition={{ duration: 0.2, ease: EASE }}
                   >
-                    <AssignmentRow
+                    <CommonAssignmentRow
                       bonus={bonusById.get(a.bonusId)}
-                      by={a.createdBy}
+                      assignment={a}
+                      deptRoster={deptRoster}
+                      onUpdate={addAssignment}
                       onRemove={() => removeAssignment(a.id)}
                     />
                   </motion.div>
@@ -2483,6 +2495,243 @@ function AssignmentRow({
       <IconButton title="Remove" onClick={onRemove} danger>
         <Trash2 className="h-3.5 w-3.5" />
       </IconButton>
+    </div>
+  );
+}
+
+/**
+ * A common (department-wide) bonus row with an "applies to all / exclude some"
+ * switch. When excluding, a searchable checklist of department members lets the
+ * accountant tick the people who should NOT receive this bonus.
+ */
+function CommonAssignmentRow({
+  bonus,
+  assignment,
+  deptRoster,
+  onUpdate,
+  onRemove,
+}: {
+  bonus: BonusDef | undefined;
+  assignment: BonusAssignment;
+  deptRoster: RosterEntry[];
+  onUpdate: (a: BonusAssignment) => void;
+  onRemove: () => void;
+}) {
+  const excluded = useMemo(
+    () => new Set((assignment.excludedEmails ?? []).map((e) => e.toLowerCase())),
+    [assignment.excludedEmails],
+  );
+  const [excludeMode, setExcludeMode] = useState(excluded.size > 0);
+  const [query, setQuery] = useState('');
+
+  // Reflect realtime/remote changes: if exclusions appear, open the picker.
+  useEffect(() => {
+    if (excluded.size > 0) setExcludeMode(true);
+  }, [excluded.size]);
+
+  const total = deptRoster.length;
+  const includedCount = deptRoster.filter((r) => !excluded.has(r.email.toLowerCase())).length;
+
+  const commit = (next: Set<string>) =>
+    onUpdate({ ...assignment, excludedEmails: Array.from(next) });
+
+  const toggleEmail = (email: string) => {
+    const key = email.toLowerCase();
+    const next = new Set(excluded);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    commit(next);
+  };
+
+  const setMode = (exclude: boolean) => {
+    setExcludeMode(exclude);
+    // Switching back to "everyone" clears the exclusion list.
+    if (!exclude && excluded.size > 0) commit(new Set());
+  };
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return deptRoster;
+    return deptRoster.filter(
+      (r) => r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q),
+    );
+  }, [deptRoster, query]);
+
+  return (
+    <div className="overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+      {/* Summary row */}
+      <div className="flex items-center justify-between gap-3 px-3 py-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
+              {bonus?.name ?? '(deleted bonus)'}
+            </span>
+            {bonus && <KindBadge kind={bonus.kind} />}
+          </div>
+          <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
+            {bonus?.kind === 'flat' && (
+              <span className="font-medium text-emerald-600 dark:text-emerald-400">{money(bonus.amount ?? 0)}</span>
+            )}
+            {bonus?.kind === 'formula' && (
+              <code className="truncate font-mono text-[11px] text-zinc-500">{bonus.formula}</code>
+            )}
+            <ByLine who={assignment.createdBy} />
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+              excludeMode && excluded.size > 0
+                ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'
+                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+            }`}
+            title={
+              excludeMode && excluded.size > 0
+                ? `${includedCount} of ${total} receive this`
+                : 'Everyone in the department receives this'
+            }
+          >
+            <Users className="h-3 w-3" />
+            {excludeMode && excluded.size > 0 ? `${includedCount}/${total}` : 'All'}
+          </span>
+          <IconButton title="Remove" onClick={onRemove} danger>
+            <Trash2 className="h-3.5 w-3.5" />
+          </IconButton>
+        </div>
+      </div>
+
+      {/* Applies-to switch */}
+      <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
+        <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
+          {([
+            { v: false, label: 'Everyone' },
+            { v: true, label: 'Exclude some' },
+          ] as const).map((opt) => (
+            <button
+              key={String(opt.v)}
+              type="button"
+              onClick={() => setMode(opt.v)}
+              className={`relative rounded px-2.5 py-1 text-xs font-semibold transition-colors ${
+                excludeMode === opt.v
+                  ? 'text-white'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+              }`}
+            >
+              {excludeMode === opt.v && (
+                <motion.span
+                  layoutId={`appliesPill-${assignment.id}`}
+                  className={`absolute inset-0 rounded ${opt.v ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                  transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+                />
+              )}
+              <span className="relative z-10">{opt.label}</span>
+            </button>
+          ))}
+        </div>
+        <span className="text-[11px] text-zinc-400">
+          {excludeMode
+            ? excluded.size > 0
+              ? `${excluded.size} excluded — they won't receive this bonus`
+              : 'Tick the people who should NOT receive this bonus'
+            : 'All department members receive this bonus'}
+        </span>
+      </div>
+
+      {/* Team-effort toggle: one shared entry for the whole team vs per-person */}
+      <label className="flex flex-wrap items-center gap-2 border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
+        <input
+          type="checkbox"
+          className="h-4 w-4 shrink-0 rounded accent-orange-500"
+          checked={!!assignment.sharedTeam}
+          onChange={(e) => onUpdate({ ...assignment, sharedTeam: e.target.checked })}
+        />
+        <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Team effort</span>
+        <span className="text-[11px] text-zinc-400">
+          {assignment.sharedTeam
+            ? 'Entered once for the whole team in the KPI Calculator — if achieved, every member gets it'
+            : 'Each member is entered individually in the KPI Calculator'}
+        </span>
+      </label>
+
+      {/* Exclusion picker */}
+      <Expand show={excludeMode}>
+        <div className="border-t border-zinc-100 px-3 py-2.5 dark:border-zinc-800">
+          {total === 0 ? (
+            <p className="text-xs text-zinc-400">No employees found for this department.</p>
+          ) : (
+            <>
+              <div className="relative mb-2">
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search people in this department..."
+                  className="w-full rounded-md border border-zinc-200 bg-white py-1.5 pl-8 pr-8 text-sm text-zinc-900 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:ring-blue-900/40"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                    aria-label="Clear search"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              <div className="max-h-56 space-y-0.5 overflow-y-auto pr-0.5">
+                {filtered.length === 0 ? (
+                  <p className="px-1 py-2 text-xs text-zinc-400">No matches.</p>
+                ) : (
+                  filtered.map((r) => {
+                    const isExcluded = excluded.has(r.email.toLowerCase());
+                    return (
+                      <button
+                        key={r.email}
+                        type="button"
+                        onClick={() => toggleEmail(r.email)}
+                        className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                          isExcluded
+                            ? 'bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200'
+                            : 'text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-900'
+                        }`}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span
+                            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                              isExcluded
+                                ? 'border-amber-500 bg-amber-500 text-white'
+                                : 'border-zinc-300 dark:border-zinc-600'
+                            }`}
+                            aria-hidden
+                          >
+                            {isExcluded && <Check className="h-3 w-3" />}
+                          </span>
+                          <span className="truncate">{r.name}</span>
+                        </span>
+                        {isExcluded && (
+                          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                            excluded
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              {excluded.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => commit(new Set())}
+                  className="mt-2 text-[11px] font-medium text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline dark:hover:text-zinc-200"
+                >
+                  Clear all exclusions
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </Expand>
     </div>
   );
 }

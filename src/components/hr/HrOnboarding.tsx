@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import React from 'react';
 import DeptFilter from './DeptFilter';
@@ -86,8 +87,6 @@ export default function HrOnboarding() {
   const [pending, setPending] = useState<HrPendingEmployeeRow[]>([]);
   const [pendingLoading, setPendingLoading] = useState(true);
 
-  const [deptRates, setDeptRates] = useState<Map<string, { regular_rate: string | null; ot_rate: string | null }>>(new Map());
-
   const [search, setSearch] = useState('');
   const [dept, setDept] = useState('');
   const [tab, setTab] = useState<TabFilter>('pending');
@@ -103,6 +102,7 @@ export default function HrOnboarding() {
   // Multi-select promote (Ready tab). Holds the ids ticked in the table.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [promotingSelected, setPromotingSelected] = useState(false);
+  const [confirmPromoteRows, setConfirmPromoteRows] = useState<HrPendingEmployeeRow[] | null>(null);
   // Live state for the bulk-promote progress modal (null when closed). Updated
   // after every chunk so the bar + the Promoted/Failed KPI counters move in
   // real time as the batch lands.
@@ -135,16 +135,6 @@ export default function HrOnboarding() {
 
   useEffect(() => {
     void fetchPending();
-    fetch('/api/hr/department-rates', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { departments?: { department: string; regular_rate: string | null; ot_rate: string | null }[] }) => {
-        const m = new Map<string, { regular_rate: string | null; ot_rate: string | null }>();
-        for (const d of j.departments ?? []) {
-          m.set(d.department.trim().toLowerCase(), { regular_rate: d.regular_rate, ot_rate: d.ot_rate });
-        }
-        setDeptRates(m);
-      })
-      .catch(() => {/* non-critical */});
   }, [fetchPending]);
 
   const fetchPendingRef = useRef(fetchPending);
@@ -672,7 +662,7 @@ export default function HrOnboarding() {
                 <Button
                   size="sm"
                   className="h-7 gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white hover:opacity-90"
-                  onClick={() => void promoteSelected()}
+                  onClick={() => setConfirmPromoteRows(pending.filter((r) => selected.has(r.id)))}
                   disabled={promotingSelected}
                   title="Promote all selected hires to the master list"
                 >
@@ -689,8 +679,41 @@ export default function HrOnboarding() {
             </div>
           )}
           {pendingLoading ? (
-            <div className="flex items-center justify-center py-10 text-zinc-500">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading pending hires…
+            <div className="overflow-x-auto rounded-xl border border-emerald-100/90 ring-1 ring-emerald-500/10 dark:border-emerald-900/60 dark:ring-emerald-400/10">
+              <table className="w-full text-left text-sm sm:min-w-[860px]">
+                <thead className="bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:from-emerald-950/50 dark:via-zinc-950 dark:to-emerald-950/40 dark:text-zinc-400">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Name</th>
+                    <th className="px-4 py-3 font-semibold">Department</th>
+                    <th className="px-4 py-3 font-semibold">Personal</th>
+                    <th className="px-4 py-3 font-semibold">Work email</th>
+                    <th className="px-4 py-3 font-semibold">Start</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 font-semibold text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-emerald-100/70 bg-white/85 dark:divide-emerald-900/35 dark:bg-zinc-950/40">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <tr key={i} className="align-top">
+                      <td className="px-4 py-3">
+                        <Skeleton className="h-4 w-28" />
+                        <Skeleton className="mt-1.5 h-3 w-20" />
+                      </td>
+                      <td className="px-4 py-3"><Skeleton className="h-3.5 w-20" /></td>
+                      <td className="px-4 py-3"><Skeleton className="h-3.5 w-36" /></td>
+                      <td className="px-4 py-3"><Skeleton className="h-3.5 w-36" /></td>
+                      <td className="px-4 py-3"><Skeleton className="h-3.5 w-16" /></td>
+                      <td className="px-4 py-3"><Skeleton className="h-5 w-24 rounded-full" /></td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex justify-end gap-1.5">
+                          <Skeleton className="h-7 w-16 rounded-md" />
+                          <Skeleton className="h-7 w-16 rounded-md" />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : filteredPending.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-emerald-200/80 bg-white/70 py-10 text-center dark:border-emerald-900/50 dark:bg-zinc-950/40">
@@ -726,7 +749,6 @@ export default function HrOnboarding() {
                     <th className="px-4 py-3 font-semibold">Personal</th>
                     <th className="px-4 py-3 font-semibold">Work email</th>
                     <th className="px-4 py-3 font-semibold">Start</th>
-                    <th className="px-4 py-3 font-semibold">Rate</th>
                     <th className="px-4 py-3 font-semibold">Status</th>
                     <th className="px-4 py-3 font-semibold text-right">Actions</th>
                   </tr>
@@ -816,30 +838,6 @@ export default function HrOnboarding() {
                           </td>
                           <td data-label="Start" className="px-4 py-3 text-xs text-zinc-600 dark:text-zinc-400">
                             {formatDate(row.start_date)}
-                          </td>
-                          <td data-label="Rate" className="px-4 py-3 text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
-                            {(() => {
-                              const reg = row.regular_rate;
-                              const ot = row.ot_rate;
-                              const fallback = deptRates.get((row.department ?? '').trim().toLowerCase());
-                              if (reg) {
-                                return (
-                                  <>
-                                    <span>₱{reg}</span>
-                                    {ot && <span className="text-zinc-400"> · OT ₱{ot}</span>}
-                                  </>
-                                );
-                              }
-                              if (fallback?.regular_rate) {
-                                return (
-                                  <span className="italic text-zinc-400 dark:text-zinc-500" title="Dept. typical rate — not yet confirmed for this hire">
-                                    ₱{fallback.regular_rate}
-                                    {fallback.ot_rate && <> · OT ₱{fallback.ot_rate}</>}
-                                  </span>
-                                );
-                              }
-                              return '—';
-                            })()}
                           </td>
                           <td data-label="Status" className="px-4 py-3">
                             <div className="flex flex-col items-start gap-1">
@@ -1077,6 +1075,17 @@ export default function HrOnboarding() {
         </DialogContent>
       </Dialog>
 
+      {/* Bulk-promote confirmation dialog */}
+      <BulkPromoteConfirmDialog
+        rows={confirmPromoteRows}
+        isFailedTab={tab === 'failed'}
+        onClose={() => setConfirmPromoteRows(null)}
+        onConfirm={() => {
+          setConfirmPromoteRows(null);
+          void promoteSelected();
+        }}
+      />
+
       {/* Bulk-promote progress modal */}
       <BulkPromoteProgressDialog
         state={promoteModal}
@@ -1088,6 +1097,128 @@ export default function HrOnboarding() {
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Confirmation dialog shown before a multi-select bulk promote runs.
+ * Rows are grouped by department; when more than one department is present
+ * each gets its own tab so the reviewer can verify per-department before committing.
+ */
+function BulkPromoteConfirmDialog({
+  rows,
+  isFailedTab,
+  onClose,
+  onConfirm,
+}: {
+  rows: HrPendingEmployeeRow[] | null;
+  isFailedTab: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const verb = isFailedTab ? 'Retry' : 'Promote';
+
+  const deptGroups = useMemo(() => {
+    if (!rows) return [];
+    const map = new Map<string, HrPendingEmployeeRow[]>();
+    for (const r of rows) {
+      const key = r.department ?? '(No department)';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(r);
+    }
+    return Array.from(map.entries()).map(([dept, members]) => ({ dept, members }));
+  }, [rows]);
+
+  const [activeDept, setActiveDept] = useState<string>('');
+
+  useEffect(() => {
+    if (deptGroups.length > 0) setActiveDept(deptGroups[0].dept);
+  }, [deptGroups]);
+
+  const activeMembers = deptGroups.find((g) => g.dept === activeDept)?.members ?? [];
+  const total = rows?.length ?? 0;
+
+  return (
+    <Dialog open={!!rows} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            {verb} {total} hire{total !== 1 ? 's' : ''}?
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            Review the hires below, then confirm to write them to the master list and Google Sheet.
+          </DialogDescription>
+        </DialogHeader>
+
+        {deptGroups.length > 1 && (
+          <div className="flex flex-wrap gap-1 border-b border-zinc-100 pb-3 dark:border-zinc-800">
+            {deptGroups.map(({ dept, members }) => (
+              <button
+                key={dept}
+                type="button"
+                onClick={() => setActiveDept(dept)}
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11.5px] font-medium transition-colors',
+                  activeDept === dept
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700',
+                )}
+              >
+                {dept}
+                <span className={cn(
+                  'rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                  activeDept === dept
+                    ? 'bg-white/20 text-white'
+                    : 'bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400',
+                )}>
+                  {members.length}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="max-h-64 overflow-y-auto rounded-lg border border-zinc-100 dark:border-zinc-800">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-zinc-50 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400">
+              <tr>
+                <th className="px-3 py-2 font-medium">Name</th>
+                {deptGroups.length === 1 && <th className="px-3 py-2 font-medium">Department</th>}
+                <th className="px-3 py-2 font-medium">Work email</th>
+                <th className="px-3 py-2 font-medium">Start</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              {(deptGroups.length === 1 ? (rows ?? []) : activeMembers).map((r) => (
+                <tr key={r.id} className="bg-white dark:bg-zinc-950">
+                  <td className="px-3 py-2 font-medium text-zinc-800 dark:text-zinc-100">{r.name}</td>
+                  {deptGroups.length === 1 && (
+                    <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">{r.department ?? '—'}</td>
+                  )}
+                  <td className="px-3 py-2 font-mono text-zinc-600 dark:text-zinc-400">{r.work_email ?? '—'}</td>
+                  <td className="px-3 py-2 text-zinc-500 dark:text-zinc-400">{formatDate(r.start_date)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="bg-gradient-to-r from-emerald-500 to-teal-700 text-white hover:opacity-90"
+            onClick={onConfirm}
+          >
+            <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+            {verb} all {total}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
