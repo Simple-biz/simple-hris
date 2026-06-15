@@ -1567,18 +1567,33 @@ export default function HrOnboardingForm() {
                               <Archive className="h-3 w-3" />
                             </Button>
                           ) : (
-                            // Gmail trash-bin pattern: hard-delete only reachable from the
-                            // Archived view, so accidental one-clicks can't nuke a live link.
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                              onClick={() => setDeleteTarget(r)}
-                              disabled={isBusy}
-                              title="Permanently delete this archived submission"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
+                            <>
+                              {/* Archived hires who actually submitted their form can
+                                  still be reviewed — same View as the Submitted tab. */}
+                              {r.submitted_at && (
+                                <Button
+                                  size="sm"
+                                  className="h-7 bg-gradient-to-r from-emerald-500 to-teal-700 px-3 text-xs text-white hover:opacity-90"
+                                  onClick={() => setViewRow(r)}
+                                  title="View this submission's details"
+                                >
+                                  <Eye className="mr-1 h-3 w-3" />
+                                  View
+                                </Button>
+                              )}
+                              {/* Gmail trash-bin pattern: hard-delete only reachable from the
+                                  Archived view, so accidental one-clicks can't nuke a live link. */}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                                onClick={() => setDeleteTarget(r)}
+                                disabled={isBusy}
+                                title="Permanently delete this archived submission"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </>
                           )}
                         </div>
                       </td>
