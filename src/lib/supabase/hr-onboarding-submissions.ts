@@ -73,6 +73,14 @@ export type HrOnboardingSubmissionRow = {
 
   archived_at: string | null;
   notes: string | null;
+
+  /**
+   * DERIVED (not a column): status of the linked `hr_pending_employees` row, so
+   * the UI can show "Archived/Complete" for an archived submission whose hire was
+   * promoted to the master list. Populated by listHrOnboardingSubmissions; null
+   * when there's no linked hire or it couldn't be read.
+   */
+  pending_status?: string | null;
 };
 
 /**
@@ -150,7 +158,33 @@ export async function listHrOnboardingSubmissions(): Promise<{
     .order("created_at", { ascending: false })
     .range(0, 999);
   if (error) return { rows: [], error: error.message };
-  return { rows: (data ?? []) as HrOnboardingSubmissionRow[], error: null };
+  const rows = (data ?? []) as HrOnboardingSubmissionRow[];
+
+  // Attach the linked pending hire's status so the UI can mark an archived
+  // submission whose hire was promoted as "Archived/Complete". Best-effort.
+  const pendingIds = Array.from(
+    new Set(
+      rows
+        .map((r) => r.pending_employee_id)
+        .filter((v): v is number => typeof v === "number"),
+    ),
+  );
+  const statusById = new Map<number, string>();
+  if (pendingIds.length > 0) {
+    const { data: pend } = await sb
+      .from("hr_pending_employees")
+      .select("id, status")
+      .in("id", pendingIds);
+    for (const p of (pend ?? []) as Array<{ id: number; status: string }>) {
+      statusById.set(p.id, p.status);
+    }
+  }
+  for (const r of rows) {
+    r.pending_status =
+      r.pending_employee_id != null ? statusById.get(r.pending_employee_id) ?? null : null;
+  }
+
+  return { rows, error: null };
 }
 
 export async function getHrOnboardingSubmissionById(

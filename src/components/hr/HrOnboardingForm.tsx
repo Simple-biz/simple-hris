@@ -147,6 +147,9 @@ type SubmissionRow = {
   workspace_account_status: number | null;
   workspace_account_error: string | null;
   workspace_account_at: string | null;
+  // Status of the linked pending hire (derived server-side) — used to show
+  // "Archived/Complete" for an archived submission whose hire was promoted.
+  pending_status?: string | null;
 };
 
 type StatusFilter = 'all' | HrOnboardingStatus;
@@ -654,6 +657,20 @@ const STATUS_LABEL: Record<HrOnboardingStatus, string> = {
   submitted: 'Submitted',
   archived: 'Archived',
 };
+
+/** Status pill label + classes. An archived submission whose linked hire was
+ *  promoted to the master list reads "Archived/Complete" (sky) instead of a
+ *  plain grey "Archived". */
+function submissionStatusPill(r: SubmissionRow): { label: string; className: string } {
+  if (r.status === 'archived' && r.pending_status === 'promoted') {
+    return {
+      label: 'Archived/Complete',
+      className:
+        'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100',
+    };
+  }
+  return { label: STATUS_LABEL[r.status], className: STATUS_BADGE[r.status] };
+}
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '—';
@@ -1441,9 +1458,14 @@ export default function HrOnboardingForm() {
                         {r.invite_department ?? '—'}
                       </td>
                       <td data-label="Status" className="px-4 py-3">
-                        <Badge variant="outline" className={cn('text-[10px] font-medium', STATUS_BADGE[r.status])}>
-                          {STATUS_LABEL[r.status]}
-                        </Badge>
+                        {(() => {
+                          const pill = submissionStatusPill(r);
+                          return (
+                            <Badge variant="outline" className={cn('text-[10px] font-medium', pill.className)}>
+                              {pill.label}
+                            </Badge>
+                          );
+                        })()}
                       </td>
                       <td data-label="Created" className="px-4 py-3 text-xs text-zinc-500">
                         {fmtDateTime(r.created_at)}
