@@ -87,6 +87,18 @@ export async function createWorkspaceAccount(
     .map((p) => String(p).trim())
     .filter(Boolean);
 
+  // Hubstaff's invite API REJECTS a pay rate of 0 ("Pay rate must be greater
+  // than or equal to 0.01"). Since compensation is now owned by Accounting and
+  // can be unset at staging time (rate null -> 0), floor the Hubstaff pay_rate
+  // to this minimum placeholder so the invite still succeeds. It's only the
+  // Hubstaff-side rate; real pay comes from the Payment Catalog / payroll, and
+  // the pending hire's stored rate stays null until Accounting sets it.
+  const HUBSTAFF_MIN_PAY_RATE = 0.01;
+  const rawRate =
+    typeof input.payRate === "number" && Number.isFinite(input.payRate) && input.payRate > 0
+      ? input.payRate
+      : HUBSTAFF_MIN_PAY_RATE;
+
   // n8n's bulk-capable Workspace provisioning workflow reads snake_case
   // identity fields (first_name / last_name / work_email / personal_email).
   // The internal TS input stays camelCase; only the wire payload is snake_case.
@@ -98,10 +110,7 @@ export async function createWorkspaceAccount(
     organization_id: ORGANIZATION_ID,
     project_names: projectNames,
     role: input.role ?? DEFAULT_ROLE,
-    pay_rate:
-      typeof input.payRate === "number" && Number.isFinite(input.payRate)
-        ? input.payRate
-        : 0,
+    pay_rate: rawRate,
     trackable: input.trackable ?? true,
   };
 

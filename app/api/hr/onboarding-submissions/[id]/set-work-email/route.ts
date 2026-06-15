@@ -217,12 +217,31 @@ export async function POST(
     payRate,
   });
 
+  // Resolve the outcome we'll persist. A create that reports failure does NOT
+  // necessarily mean there's no account: a retry after a transient/license
+  // failure, or an account the pending-license queue provisioned out of band,
+  // already EXISTS — and the create API can't create a duplicate, so it errors
+  // and the row would wrongly stay "Account Creation Failed" forever. So when
+  // create fails, ask the read-only verify webhook whether the account actually
+  // exists; if it does, treat this as a CONFIRMED designated work email.
+  let workspaceOk = workspace.ok;
+  let workspaceStatus = workspace.status;
+  let workspaceError: string | undefined = workspace.error;
+  if (!workspace.ok) {
+    const verified = await verifyWorkspaceAccount(workEmail);
+    if (verified.state === "exists") {
+      workspaceOk = true;
+      workspaceStatus = verified.httpStatus ?? workspace.status;
+      workspaceError = undefined;
+    }
+  }
+
   // (Re-)link the submission so it always reflects the latest work_email, and
-  // stamp the webhook outcome alongside it.
+  // stamp the (verify-resolved) webhook outcome alongside it.
   const { error: linkErr } = await linkOnboardingToPendingHire(row.id, {
     work_email: workEmail,
     pending_employee_id: pending!.id,
-    workspace: { ok: workspace.ok, status: workspace.status, error: workspace.error },
+    workspace: { ok: workspaceOk, status: workspaceStatus, error: workspaceError },
   });
   if (linkErr) {
     return NextResponse.json(
@@ -249,8 +268,10 @@ export async function POST(
       project_names: projectNames,
       regular_rate: regularRateStr,
       ot_rate: otRateStr,
-      workspace_account_ok: workspace.ok,
-      workspace_account_error: workspace.ok ? null : workspace.error ?? null,
+      workspace_account_ok: workspaceOk,
+      workspace_account_error: workspaceOk ? null : workspaceError ?? null,
+      // Note when the account was confirmed via verify after a create failure.
+      workspace_confirmed_via_verify: !workspace.ok && workspaceOk,
     },
   });
 
@@ -259,6 +280,11 @@ export async function POST(
     pending_employee_id: pending.id,
     work_email: workEmail,
     status: pending.status,
-    workspace_account: workspace,
+    workspace_account: {
+      ok: workspaceOk,
+      status: workspaceStatus,
+      error: workspaceError,
+      confirmed_via_verify: !workspace.ok && workspaceOk,
+    },
   });
 }

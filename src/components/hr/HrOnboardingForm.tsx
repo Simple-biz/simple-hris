@@ -843,7 +843,12 @@ export default function HrOnboardingForm() {
   // rows from the selection so we never carry them into the modal.
   const selWorkEmailable = selectedRows.filter((r) => r.status === 'submitted');
   // Any selected row that has a minted address can be verified (read-only).
+  // The bulk "Verify" button is only offered when NONE of the selected rows are
+  // work-emailable (i.e. nothing to set) — so in the normal Submitted-tab flow
+  // HR sees a single, unambiguous "Set work email" primary action and never
+  // mixes it up with Verify. Per-row Verify still lives in the column.
   const selVerifiable = selectedRows.filter((r) => !!r.work_email);
+  const showBulkVerify = selVerifiable.length > 0 && selWorkEmailable.length === 0;
 
   function openBulkWorkEmail() {
     const eligible = selectedRows.filter((r) => r.status === 'submitted');
@@ -1270,7 +1275,7 @@ export default function HrOnboardingForm() {
                 Set work email ({selWorkEmailable.length})
               </Button>
             )}
-            {selVerifiable.length > 0 && (
+            {showBulkVerify && (
               <Button
                 size="sm"
                 variant="outline"

@@ -69,17 +69,25 @@ export async function inviteHubstaffUser(
     };
   }
 
+  // Hubstaff rejects a pay rate of 0 / missing ("Pay rate must be greater than
+  // or equal to 0.01"). Compensation is owned by Accounting (Payment Catalog)
+  // and can be unset at promote time, so floor to this minimum placeholder; the
+  // real pay lives in payroll, not Hubstaff.
+  const HUBSTAFF_MIN_PAY_RATE = 0.01;
+  const payRate =
+    typeof input.payRate === "number" && Number.isFinite(input.payRate) && input.payRate > 0
+      ? input.payRate
+      : HUBSTAFF_MIN_PAY_RATE;
+
   const payload: Record<string, unknown> = {
     username,
     email,
     organizationId: ORGANIZATION_ID,
     projectNames,
     role: ROLE,
+    pay_rate: payRate,
     trackable: TRACKABLE,
   };
-  if (typeof input.payRate === "number" && Number.isFinite(input.payRate)) {
-    payload.pay_rate = input.payRate;
-  }
 
   let url: string;
   try {
