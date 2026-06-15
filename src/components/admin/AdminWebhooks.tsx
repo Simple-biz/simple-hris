@@ -46,6 +46,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
       'Used by HR Onboarding "Save and stage hire" to provision the Hubstaff workspace account.',
   },
   {
+    slug: 'verify_workspace_account',
+    label: 'Verify Workspace Account (n8n)',
+    description:
+      'Read-only lookup used by the HR Onboarding "Verify" button to check whether a hire\'s Google Workspace account exists (POST { work_email } -> { exists: true|false }). Never creates anything.',
+  },
+  {
     slug: 'hubstaff_invite_user',
     label: 'Hubstaff Invite User (n8n)',
     description:

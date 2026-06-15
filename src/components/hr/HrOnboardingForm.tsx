@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
+  AlertTriangle,
   Archive,
   CheckCircle2,
   CheckIcon,
@@ -21,6 +22,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  ShieldCheck,
   Sparkles,
   Trash2,
   User,
@@ -31,6 +33,7 @@ import {
 } from 'lucide-react';
 import { Select as SelectPrimitive } from '@base-ui/react/select';
 import { splitFullName } from '@/lib/hr/work-email';
+import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -136,9 +139,506 @@ type SubmissionRow = {
   contract_date: string | null;
   work_email: string | null;
   pending_employee_id: number | null;
+  // Outcome of the create-workspace-account webhook (see set-work-email route).
+  // ok === true  -> the address is a CONFIRMED designated work email (200).
+  // ok === false -> minted but the automation failed; needs a retry.
+  // ok == null   -> never attempted / legacy row (status unknown).
+  workspace_account_ok: boolean | null;
+  workspace_account_status: number | null;
+  workspace_account_error: string | null;
+  workspace_account_at: string | null;
 };
 
 type StatusFilter = 'all' | HrOnboardingStatus;
+
+/**
+ * Designated-work-email state for a submission. Keeps the "do we have a real,
+ * provisioned @simple.biz address" question in one place so the column, the
+ * "needs work email" toggle, and the action buttons all agree.
+ *
+ *   'confirmed'  - work email minted AND the workspace webhook returned 200.
+ *   'failed'     - work email minted but the webhook failed; retry needed.
+ *   'unverified' - work email minted before we tracked the outcome (unknown).
+ *   'none'       - no work email set yet.
+ */
+type WorkEmailState = 'confirmed' | 'failed' | 'unverified' | 'none';
+
+function workEmailState(r: SubmissionRow): WorkEmailState {
+  if (!r.work_email) return 'none';
+  if (r.workspace_account_ok === true) return 'confirmed';
+  if (r.workspace_account_ok === false) return 'failed';
+  return 'unverified';
+}
+
+/**
+ * A submitted hire still needs HR action when there's no work email yet OR the
+ * workspace automation failed. A legacy 'unverified' row (set before we tracked
+ * the outcome) is left alone — we have no signal that it failed.
+ */
+function needsWorkEmailSetup(r: SubmissionRow): boolean {
+  const s = workEmailState(r);
+  return s === 'none' || s === 'failed';
+}
+
+/** One row's outcome in a bulk verify run. */
+type BulkVerifyResult = {
+  id: string;
+  name: string;
+  email: string;
+  state: 'exists' | 'missing' | 'error';
+};
+
+/** Drives the bulk verify modal: live progress, then the per-row results. */
+type BulkVerifyState = {
+  total: number;
+  done: number;
+  running: boolean;
+  results: BulkVerifyResult[];
+};
+
+/** Drives the verify result modal: a loading phase, then the translated webhook
+ *  outcome for the row being checked. */
+type VerifyDialogState = {
+  row: SubmissionRow;
+  loading: boolean;
+  result?: {
+    state: 'exists' | 'missing' | 'error';
+    httpStatus: number | null;
+    detail: string | null;
+  };
+};
+
+/**
+ * Renders the "Designated Work Email" column. The address is shown as a real,
+ * designated work email ONLY when the workspace webhook returned 200. A
+ * minted-but-failed address is shown struck-through with a loud "Automation
+ * failed" pill so HR never mistakes it for a provisioned account.
+ *
+ * Every row that has an address also gets a read-only "Verify" button — it
+ * looks up the live Google Workspace account WITHOUT recreating it, so an
+ * "Unverified" legacy row can be resolved to confirmed/failed with zero risk of
+ * a duplicate account.
+ */
+function DesignatedWorkEmailCell({
+  row,
+  onVerify,
+  verifying,
+}: {
+  row: SubmissionRow;
+  onVerify: () => void;
+  verifying: boolean;
+}) {
+  const state = workEmailState(row);
+
+  if (state === 'none') {
+    return <span className="text-xs text-zinc-400">Not set</span>;
+  }
+
+  let statusNode: ReactNode;
+  if (state === 'confirmed') {
+    statusNode = (
+      <span
+        className="inline-flex min-w-0 max-w-full items-center gap-1 break-all rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 font-mono text-[11px] font-medium text-emerald-900 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100"
+        title="Workspace account created - the onboarding webhook returned 200."
+      >
+        <CheckCircle2 className="h-3 w-3 shrink-0" />
+        {row.work_email}
+      </span>
+    );
+  } else if (state === 'failed') {
+    statusNode = (
+      <>
+        <span
+          className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+          title={
+            row.workspace_account_error
+              ? `Account creation failed: ${row.workspace_account_error}`
+              : 'The onboarding webhook did not return 200.'
+          }
+        >
+          <XCircle className="h-3 w-3 shrink-0" />
+          Account Creation Failed
+        </span>
+        <span className="break-all font-mono text-[11px] text-zinc-500 line-through decoration-rose-400/70">
+          {row.work_email}
+        </span>
+        <span className="text-[10px] text-rose-600 dark:text-rose-400">
+          Retry setup to provision the account.
+        </span>
+      </>
+    );
+  } else {
+    // 'unverified' - minted before we tracked the webhook outcome.
+    statusNode = (
+      <>
+        <span
+          className="inline-flex min-w-0 max-w-full items-center gap-1 break-all rounded-md border border-amber-300 bg-amber-50 px-2 py-1 font-mono text-[11px] font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+          title="This address was set before the workspace outcome was tracked - status unknown. Click Verify to check Google Workspace."
+        >
+          <Mail className="h-3 w-3 shrink-0" />
+          {row.work_email}
+        </span>
+        <span className="text-[10px] text-amber-600 dark:text-amber-400">
+          Unverified - click Verify to check
+        </span>
+      </>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      {statusNode}
+      <button
+        type="button"
+        onClick={onVerify}
+        disabled={verifying}
+        title="Look up the Google Workspace account (read-only - never recreates it)"
+        className="inline-flex w-fit items-center gap-1 rounded-md border border-zinc-200 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+      >
+        {verifying ? (
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+        ) : (
+          <ShieldCheck className="h-3 w-3 shrink-0" />
+        )}
+        {verifying ? 'Verifying' : state === 'confirmed' ? 'Re-verify' : 'Verify'}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Result modal for the Verify button. Opens with a loading state, then shows the
+ * webhook outcome translated into plain language (verified / not found / could
+ * not verify) plus the raw detail. Offers the right follow-up per outcome,
+ * including a manual "Mark as verified" override for when HR has confirmed the
+ * account exists in Google Admin themselves (the webhook got it wrong).
+ */
+function VerifyResultDialog({
+  dialog,
+  onClose,
+  onTryAgain,
+  onManualConfirm,
+  onRetrySetup,
+}: {
+  dialog: VerifyDialogState | null;
+  onClose: () => void;
+  onTryAgain: (row: SubmissionRow) => void;
+  onManualConfirm: (row: SubmissionRow) => void;
+  onRetrySetup: (row: SubmissionRow) => void;
+}) {
+  const open = !!dialog;
+  const row = dialog?.row ?? null;
+  const loading = dialog?.loading ?? false;
+  const result = dialog?.result;
+  const workEmail = row?.work_email ?? '';
+  const state = result?.state ?? 'error';
+
+  const tone =
+    state === 'exists'
+      ? {
+          Icon: CheckCircle2,
+          iconWrap: 'from-emerald-500 to-teal-700',
+          header:
+            'border-emerald-100/80 from-emerald-50 via-white to-teal-50/60 dark:border-emerald-950/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20',
+          title: 'Account verified',
+        }
+      : state === 'missing'
+        ? {
+            Icon: XCircle,
+            iconWrap: 'from-rose-500 to-rose-700',
+            header:
+              'border-rose-100/80 from-rose-50 via-white to-rose-50/60 dark:border-rose-950/40 dark:from-rose-950/30 dark:via-zinc-950 dark:to-rose-950/20',
+            title: 'Account not found',
+          }
+        : {
+            Icon: AlertTriangle,
+            iconWrap: 'from-amber-500 to-orange-600',
+            header:
+              'border-amber-100/80 from-amber-50 via-white to-orange-50/60 dark:border-amber-950/40 dark:from-amber-950/30 dark:via-zinc-950 dark:to-orange-950/20',
+            title: 'Could not verify',
+          };
+  const ToneIcon = tone.Icon;
+
+  const summary =
+    state === 'exists'
+      ? `${workEmail} exists in Google Workspace.`
+      : state === 'missing'
+        ? `${workEmail} was not found in Google Workspace.`
+        : `We could not confirm the status of ${workEmail}.`;
+
+  // A 404 / "not registered" means the n8n verify workflow isn't published yet -
+  // call that out instead of just echoing the raw message.
+  const notRegistered =
+    state === 'error' &&
+    (result?.httpStatus === 404 || /not registered/i.test(result?.detail ?? ''));
+  const sub =
+    state === 'exists'
+      ? 'It is now marked as a designated work email.'
+      : state === 'missing'
+        ? 'It has not been provisioned yet - use Retry setup to create it, or mark it verified if you know it already exists.'
+        : notRegistered
+          ? 'The verify webhook is not set up in n8n yet (slug verify_workspace_account). Build it to enable automated checks - meanwhile, use Mark as verified if you have confirmed the account in Google Admin.'
+          : (result?.detail ?? 'The verify webhook did not return a clear answer.');
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        {loading ? (
+          <div className="flex flex-col items-center gap-3 py-10 text-center">
+            <Loader2 className="h-8 w-8 animate-spin text-emerald-500" />
+            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
+              Checking Google Workspace...
+            </p>
+            {workEmail && (
+              <p className="break-all font-mono text-xs text-zinc-500">{workEmail}</p>
+            )}
+          </div>
+        ) : (
+          <>
+            <div
+              className={cn(
+                '-mx-6 -mt-6 mb-4 overflow-hidden rounded-t-lg border-b bg-gradient-to-br px-6 py-5',
+                tone.header,
+              )}
+            >
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
+                  <span
+                    className={cn(
+                      'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white shadow-md',
+                      tone.iconWrap,
+                    )}
+                  >
+                    <ToneIcon className="h-4 w-4" />
+                  </span>
+                  {tone.title}
+                </DialogTitle>
+              </DialogHeader>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <p className="text-sm text-zinc-800 dark:text-zinc-100">{summary}</p>
+              <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{sub}</p>
+
+              {(result?.detail || result?.httpStatus != null) && (
+                <div className="mt-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
+                    Details
+                  </p>
+                  {result?.httpStatus != null && (
+                    <p className="text-[11px] text-zinc-600 dark:text-zinc-300">
+                      HTTP status: <span className="font-mono">{result.httpStatus}</span>
+                    </p>
+                  )}
+                  {result?.detail && (
+                    <p className="break-words font-mono text-[11px] text-zinc-600 dark:text-zinc-300">
+                      {result.detail}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <DialogFooter className="mt-4 flex-wrap gap-2">
+              {state === 'error' && row && (
+                <Button variant="outline" size="sm" onClick={() => onTryAgain(row)}>
+                  <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                  Try again
+                </Button>
+              )}
+              {state === 'missing' && row && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                  onClick={() => onRetrySetup(row)}
+                >
+                  <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                  Retry setup
+                </Button>
+              )}
+              {state !== 'exists' && row && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
+                  onClick={() => onManualConfirm(row)}
+                  title="I checked Google Admin myself - this account exists"
+                >
+                  <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                  Mark as verified
+                </Button>
+              )}
+              <Button size="sm" onClick={onClose}>
+                {state === 'exists' ? 'Done' : 'Close'}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Bulk verify modal — shows live progress while the selected accounts are looked
+ * up (read-only), then a per-row results list with a confirmed / not-found /
+ * unchecked breakdown. Never recreates anything.
+ */
+function BulkVerifyDialog({
+  state,
+  onClose,
+}: {
+  state: BulkVerifyState | null;
+  onClose: () => void;
+}) {
+  const open = !!state;
+  const running = state?.running ?? false;
+  const total = state?.total ?? 0;
+  const doneCount = state?.done ?? 0;
+  const results = state?.results ?? [];
+
+  const [query, setQuery] = useState('');
+  // Clear the filter when the modal closes so the next run starts fresh.
+  useEffect(() => {
+    if (!open) setQuery('');
+  }, [open]);
+
+  // Totals (for the summary) vs filtered (for the columns).
+  const exists = results.filter((r) => r.state === 'exists').length;
+  const missing = results.filter((r) => r.state === 'missing').length;
+  const errored = results.filter((r) => r.state === 'error').length;
+
+  const q = query.trim().toLowerCase();
+  const matchesQuery = (r: BulkVerifyResult) =>
+    !q || r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q);
+  const verified = results.filter((r) => r.state === 'exists' && matchesQuery(r));
+  const unverified = results.filter((r) => r.state !== 'exists' && matchesQuery(r));
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && !running && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <div className="-mx-4 -mt-4 mb-3 overflow-hidden rounded-t-xl border-b border-sky-100/80 bg-gradient-to-br from-sky-50 via-white to-indigo-50/60 px-4 py-3 dark:border-sky-950/40 dark:from-sky-950/30 dark:via-zinc-950 dark:to-indigo-950/20">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm font-semibold">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-sky-500 to-indigo-700 text-white shadow-sm shadow-sky-600/25">
+                <ShieldCheck className="h-3.5 w-3.5" />
+              </span>
+              {running ? 'Verifying accounts' : 'Verify complete'}
+            </DialogTitle>
+            <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+              {running ? (
+                `Looking up ${doneCount} of ${total} in Google Workspace...`
+              ) : (
+                <>
+                  <span className="font-semibold text-emerald-700 dark:text-emerald-400">{exists} confirmed</span>
+                  {missing > 0 && <>, <span className="font-semibold text-amber-600 dark:text-amber-400">{missing} not found</span></>}
+                  {errored > 0 && <>, <span className="font-semibold text-rose-600 dark:text-rose-400">{errored} unchecked</span></>}
+                </>
+              )}
+            </p>
+          </DialogHeader>
+        </div>
+
+        {running && (
+          <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-sky-500 to-indigo-600 transition-all"
+              style={{ width: `${total > 0 ? Math.round((doneCount / total) * 100) : 0}%` }}
+            />
+          </div>
+        )}
+
+        {results.length > 0 && (
+          <div className="relative mb-3">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or email..."
+              className="h-8 pl-9 text-xs"
+            />
+          </div>
+        )}
+
+        {results.length > 0 && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {/* Left: verified */}
+            <div className="flex max-h-[55vh] flex-col overflow-hidden rounded-xl border border-emerald-200/80 dark:border-emerald-900/40">
+              <div className="flex shrink-0 items-center gap-1.5 border-b border-emerald-200/80 bg-emerald-50/70 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-400">
+                <CheckCircle2 className="h-3 w-3" />
+                Verified ({verified.length})
+              </div>
+              <div className="overflow-y-auto">
+                {verified.length === 0 ? (
+                  <p className="px-3 py-4 text-center text-[11px] text-zinc-400">{q ? 'No matches' : 'None yet'}</p>
+                ) : (
+                  verified.map((r) => (
+                    <div key={r.id} className="border-b border-zinc-100 px-3 py-2 text-xs last:border-b-0 dark:border-zinc-800/70">
+                      <p className="truncate font-medium text-zinc-800 dark:text-zinc-200">{r.name}</p>
+                      <p className="truncate font-mono text-[10.5px] text-zinc-500">{r.email}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Right: unverified (not found + unchecked) */}
+            <div className="flex max-h-[55vh] flex-col overflow-hidden rounded-xl border border-amber-200/80 dark:border-amber-900/40">
+              <div className="flex shrink-0 items-center gap-1.5 border-b border-amber-200/80 bg-amber-50/70 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-400">
+                <XCircle className="h-3 w-3" />
+                Unverified ({unverified.length})
+              </div>
+              <div className="overflow-y-auto">
+                {unverified.length === 0 ? (
+                  <p className="px-3 py-4 text-center text-[11px] text-zinc-400">{q ? 'No matches' : 'None'}</p>
+                ) : (
+                  unverified.map((r) => (
+                    <div key={r.id} className="flex items-start gap-2 border-b border-zinc-100 px-3 py-2 text-xs last:border-b-0 dark:border-zinc-800/70">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium text-zinc-800 dark:text-zinc-200">{r.name}</p>
+                        <p className="truncate font-mono text-[10.5px] text-zinc-500">{r.email}</p>
+                      </div>
+                      <span
+                        className={cn(
+                          'shrink-0 text-[10px] font-medium',
+                          r.state === 'missing'
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-rose-600 dark:text-rose-400',
+                        )}
+                      >
+                        {r.state === 'missing' ? 'Not found' : 'Unchecked'}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!running && missing > 0 && (
+          <p className="mt-3 text-[11px] text-amber-600 dark:text-amber-400">
+            The "not found" accounts haven't been provisioned - use Retry setup on those rows.
+          </p>
+        )}
+
+        <DialogFooter className="mt-4">
+          <Button size="sm" onClick={onClose} disabled={running}>
+            {running ? (
+              <>
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                Verifying...
+              </>
+            ) : (
+              'Done'
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 const STATUS_BADGE: Record<HrOnboardingStatus, string> = {
   pending:
@@ -188,6 +688,8 @@ export default function HrOnboardingForm() {
   // Submitted tab only: when on, hide rows whose work email is already set so HR
   // can focus on the hires that still need an @simple.biz address minted.
   const [hideEmailSet, setHideEmailSet] = useState(false);
+  // Submitted tab only: when on, show only hires whose account creation failed.
+  const [showFailedOnly, setShowFailedOnly] = useState(false);
 
   const [generateOpen, setGenerateOpen] = useState(false);
   const [linkCreated, setLinkCreated] = useState<SubmissionRow | null>(null);
@@ -196,6 +698,10 @@ export default function HrOnboardingForm() {
   const [archiveTarget, setArchiveTarget] = useState<SubmissionRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SubmissionRow | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Verify modal — opens on "Verify", shows a loading state, then the translated
+  // webhook outcome (exists / not found / could not verify). Also drives the
+  // cell button's spinner.
+  const [verifyDialog, setVerifyDialog] = useState<VerifyDialogState | null>(null);
 
   // Multi-select for bulk actions. Selection is scoped to the rows currently
   // visible under the active filter + search; an effect prunes it whenever the
@@ -208,6 +714,8 @@ export default function HrOnboardingForm() {
   const [bulkBusy, setBulkBusy] = useState(false);
   // Bulk set-work-email: the submitted hires handed to the grouped modal.
   const [bulkWorkEmail, setBulkWorkEmail] = useState<SubmissionRow[] | null>(null);
+  // Bulk verify: drives a progress + results modal for multi-selected rows.
+  const [bulkVerify, setBulkVerify] = useState<BulkVerifyState | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -238,9 +746,14 @@ export default function HrOnboardingForm() {
     const q = search.trim().toLowerCase();
     const result = rows.filter((r) => {
       if (filter !== 'all' && r.status !== filter) return false;
-      // "Needs work email" toggle — scoped to the Submitted tab so switching
-      // away from it doesn't silently hide rows elsewhere.
-      if (filter === 'submitted' && hideEmailSet && r.work_email) return false;
+      // "Needs setup" toggle — scoped to the Submitted tab so switching away
+      // from it doesn't silently hide rows elsewhere. A row still needs setup
+      // when it has no work email yet OR its workspace automation failed — a
+      // minted-but-failed address must not be mistaken for a finished one.
+      if (filter === 'submitted' && hideEmailSet && !needsWorkEmailSetup(r)) return false;
+      // "Account Creation Failed" toggle — show only minted addresses whose
+      // workspace account creation failed (a definite failure, not just unset).
+      if (filter === 'submitted' && showFailedOnly && workEmailState(r) !== 'failed') return false;
       if (!q) return true;
       return [r.invite_name, r.invite_personal_email, r.invite_department, r.full_name, r.email]
         .filter(Boolean)
@@ -254,12 +767,18 @@ export default function HrOnboardingForm() {
       });
     }
     return result;
-  }, [rows, filter, search, hideEmailSet]);
+  }, [rows, filter, search, hideEmailSet, showFailedOnly]);
 
-  // How many submitted hires still need a work email — shown on the toggle and
-  // used to decide whether the toggle is worth rendering at all.
+  // How many submitted hires still need setup — no work email yet, OR a minted
+  // address whose account creation failed. Shown on the toggle and used to
+  // decide whether the toggle is worth rendering at all.
   const submittedNeedingEmail = useMemo(
-    () => rows.filter((r) => r.status === 'submitted' && !r.work_email).length,
+    () => rows.filter((r) => r.status === 'submitted' && needsWorkEmailSetup(r)).length,
+    [rows],
+  );
+  // How many submitted hires had their account creation fail (definite failure).
+  const submittedFailed = useMemo(
+    () => rows.filter((r) => r.status === 'submitted' && workEmailState(r) === 'failed').length,
     [rows],
   );
 
@@ -270,24 +789,37 @@ export default function HrOnboardingForm() {
   const safePage = Math.min(page, totalPages - 1);
   const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
-  // Drop any selected id that's no longer visible (filter/search changed, or a
-  // row was archived/deleted). `filtered` is memoized, so this only fires when
-  // the visible set actually changes.
+  // Keep ticks across search/filter changes so HR can curate a selection by
+  // searching one name at a time (add) and unticking (remove). We only drop ids
+  // for rows that no longer EXIST at all (deleted/reloaded away) — a row merely
+  // hidden by the current search or status tab stays selected.
   useEffect(() => {
     setSelectedIds((prev) => {
       if (prev.size === 0) return prev;
+      const live = new Set(rows.map((r) => r.id));
       const next = new Set<string>();
-      for (const r of filtered) if (prev.has(r.id)) next.add(r.id);
+      for (const id of prev) if (live.has(id)) next.add(id);
       return next.size === prev.size ? prev : next;
     });
-  }, [filtered]);
+  }, [rows]);
 
+  // The curated selection spans ALL loaded rows, not just the visible ones, so
+  // bulk actions act on everything ticked even after the search box is cleared
+  // or changed.
   const selectedRows = useMemo(
-    () => filtered.filter((r) => selectedIds.has(r.id)),
+    () => rows.filter((r) => selectedIds.has(r.id)),
+    [rows, selectedIds],
+  );
+  // Header checkbox reflects only the currently-visible (filtered) rows.
+  const visibleSelectedCount = useMemo(
+    () => filtered.reduce((n, r) => n + (selectedIds.has(r.id) ? 1 : 0), 0),
     [filtered, selectedIds],
   );
-  const allVisibleSelected = filtered.length > 0 && selectedRows.length === filtered.length;
-  const someVisibleSelected = selectedRows.length > 0 && !allVisibleSelected;
+  const allVisibleSelected = filtered.length > 0 && visibleSelectedCount === filtered.length;
+  const someVisibleSelected = visibleSelectedCount > 0 && !allVisibleSelected;
+  // How many ticked rows are currently hidden by the search/filter — surfaced in
+  // the bulk bar so HR knows the action will include them.
+  const hiddenSelectedCount = selectedRows.length - visibleSelectedCount;
   const selSendable = selectedRows.filter((r) => r.status === 'pending');
   const selArchivable = selectedRows.filter((r) => r.status !== 'archived');
   const selDeletable = selectedRows.filter((r) => r.status === 'archived');
@@ -295,6 +827,8 @@ export default function HrOnboardingForm() {
   // work email. The button shows this count; clicking it drops any non-submitted
   // rows from the selection so we never carry them into the modal.
   const selWorkEmailable = selectedRows.filter((r) => r.status === 'submitted');
+  // Any selected row that has a minted address can be verified (read-only).
+  const selVerifiable = selectedRows.filter((r) => !!r.work_email);
 
   function openBulkWorkEmail() {
     const eligible = selectedRows.filter((r) => r.status === 'submitted');
@@ -356,6 +890,112 @@ export default function HrOnboardingForm() {
     } finally {
       setBusyId(null);
     }
+  }
+
+  // Read-only verify — looks up the live Google Workspace account WITHOUT
+  // recreating it, opens the result modal, then refreshes the row so the
+  // Designated Work Email column reflects the real state.
+  async function verifyWorkEmail(r: SubmissionRow) {
+    if (!r.work_email) return;
+    setVerifyDialog({ row: r, loading: true });
+    try {
+      const res = await fetch(`/api/hr/onboarding-submissions/${r.id}/verify-work-email`, {
+        method: 'POST',
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        state?: 'exists' | 'missing' | 'error';
+        http_status?: number | null;
+        detail?: string | null;
+        error?: string;
+      };
+      const state = json.state ?? 'error';
+      const detail =
+        json.detail ?? json.error ?? (res.ok ? null : `Request failed (${res.status})`);
+      setVerifyDialog({
+        row: r,
+        loading: false,
+        result: { state, httpStatus: json.http_status ?? null, detail: detail ?? null },
+      });
+      if (res.ok) await load();
+    } catch (e) {
+      setVerifyDialog({
+        row: r,
+        loading: false,
+        result: {
+          state: 'error',
+          httpStatus: null,
+          detail: e instanceof Error ? e.message : 'Verify failed',
+        },
+      });
+    }
+  }
+
+  // Manual override — HR checked Google Admin themselves and sets the truth the
+  // webhook got wrong (e.g. a "create failed" that actually means the account
+  // already exists). No webhook call; just stamps the stored status.
+  async function markWorkspace(r: SubmissionRow, ok: boolean) {
+    setVerifyDialog((p) => (p ? { ...p, loading: true } : p));
+    try {
+      const res = await fetch(`/api/hr/onboarding-submissions/${r.id}/workspace-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ok }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? 'Failed to update status');
+      setVerifyDialog({
+        row: r,
+        loading: false,
+        result: {
+          state: ok ? 'exists' : 'missing',
+          httpStatus: null,
+          detail: ok
+            ? 'Manually marked as verified by HR.'
+            : 'Manually marked as not provisioned by HR.',
+        },
+      });
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update status');
+      setVerifyDialog((p) => (p ? { ...p, loading: false } : p));
+    }
+  }
+
+  // Bulk verify the multi-selected rows (read-only lookups, 5 at a time). Opens
+  // a progress + results modal and refreshes the table when done.
+  async function runBulkVerify(targets: SubmissionRow[]) {
+    const list = targets.filter((r) => !!r.work_email);
+    if (list.length === 0) {
+      toast.info('Select rows that have a work email to verify.');
+      return;
+    }
+    setBulkVerify({ total: list.length, done: 0, running: true, results: [] });
+    const results: BulkVerifyResult[] = [];
+    let done = 0;
+    await runPooled(list, 5, async (r) => {
+      let state: 'exists' | 'missing' | 'error' = 'error';
+      try {
+        const res = await fetch(`/api/hr/onboarding-submissions/${r.id}/verify-work-email`, {
+          method: 'POST',
+        });
+        const j = (await res.json().catch(() => ({}))) as { state?: 'exists' | 'missing' | 'error' };
+        state = res.ok ? (j.state ?? 'error') : 'error';
+      } catch {
+        state = 'error';
+      }
+      results.push({
+        id: r.id,
+        name: r.full_name?.trim() || r.invite_name?.trim() || '(no name)',
+        email: r.work_email ?? '',
+        state,
+      });
+      done += 1;
+      // Update progress + the per-row list live as each lookup lands.
+      setBulkVerify((p) => (p ? { ...p, done, results: [...results] } : p));
+    });
+    setBulkVerify((p) => (p ? { ...p, running: false, results } : p));
+    setSelectedIds(new Set());
+    await load();
   }
 
   async function runBulkAction() {
@@ -483,7 +1123,7 @@ export default function HrOnboardingForm() {
                 type="button"
                 onClick={() => setHideEmailSet((v) => !v)}
                 aria-pressed={hideEmailSet}
-                title="Show only submissions that still need a work email — hides the ones whose @simple.biz address is already set"
+                title="Show only submissions that still need setup — no work email yet, or a minted address whose account creation failed. Hides hires with a confirmed designated work email."
                 className={cn(
                   'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
                   hideEmailSet
@@ -492,7 +1132,7 @@ export default function HrOnboardingForm() {
                 )}
               >
                 {hideEmailSet ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                Needs work email
+                Needs setup
                 <span
                   className={cn(
                     'rounded-full px-1.5 text-[10px] tabular-nums',
@@ -502,6 +1142,31 @@ export default function HrOnboardingForm() {
                   {submittedNeedingEmail}
                 </span>
               </button>
+              {submittedFailed > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowFailedOnly((v) => !v)}
+                  aria-pressed={showFailedOnly}
+                  title="Show only hires whose Google Workspace account creation failed — these need a retry."
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
+                    showFailedOnly
+                      ? 'bg-gradient-to-r from-rose-500 to-rose-700 text-white shadow-sm shadow-rose-600/25'
+                      : 'text-rose-600 hover:bg-rose-50 hover:text-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30 dark:hover:text-rose-100',
+                  )}
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  Account Creation Failed
+                  <span
+                    className={cn(
+                      'rounded-full px-1.5 text-[10px] tabular-nums',
+                      showFailedOnly ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300',
+                    )}
+                  >
+                    {submittedFailed}
+                  </span>
+                </button>
+              )}
             </>
           )}
         </div>
@@ -516,12 +1181,18 @@ export default function HrOnboardingForm() {
         </div>
       </div>
 
-      {/* Bulk action bar — appears once one or more visible rows are selected.
-          Each action only targets the eligible subset of the selection. */}
+      {/* Bulk action bar — appears once one or more rows are selected. Selection
+          persists across search/filter, so this can include rows not currently
+          shown. Each action only targets the eligible subset of the selection. */}
       {selectedRows.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-2.5 dark:border-emerald-900/50 dark:bg-emerald-950/25">
           <span className="text-sm font-medium text-emerald-900 dark:text-emerald-200">
             {selectedRows.length} selected
+            {hiddenSelectedCount > 0 && (
+              <span className="ml-1 font-normal text-emerald-700/80 dark:text-emerald-300/70">
+                ({hiddenSelectedCount} hidden by search/filter)
+              </span>
+            )}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
             {selSendable.length > 0 && (
@@ -546,6 +1217,19 @@ export default function HrOnboardingForm() {
               >
                 <Mail className="h-3 w-3" />
                 Set work email ({selWorkEmailable.length})
+              </Button>
+            )}
+            {selVerifiable.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 px-2 text-xs text-sky-800 hover:bg-sky-50 dark:text-sky-200 dark:hover:bg-sky-950/30"
+                onClick={() => void runBulkVerify(selVerifiable)}
+                disabled={bulkBusy || bulkVerify?.running}
+                title="Look up each selected account in Google Workspace (read-only - never recreates)"
+              >
+                <ShieldCheck className="h-3 w-3" />
+                Verify ({selVerifiable.length})
               </Button>
             )}
             {selArchivable.length > 0 && (
@@ -589,7 +1273,7 @@ export default function HrOnboardingForm() {
       <div className="overflow-hidden rounded-xl border border-emerald-100/80 bg-white shadow-sm ring-1 ring-emerald-500/5 dark:border-emerald-950/40 dark:bg-zinc-950">
         {loading ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm sm:min-w-[860px]">
+            <table className="w-full text-left text-sm sm:min-w-[1040px]">
               <thead className="border-b border-emerald-100/60 bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:border-emerald-900/40 dark:from-emerald-950/40 dark:via-zinc-950 dark:to-emerald-950/30 dark:text-zinc-400">
                 <tr>
                   <th className="w-10 px-4 py-3" />
@@ -598,6 +1282,7 @@ export default function HrOnboardingForm() {
                   <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="px-4 py-3 font-semibold">Created</th>
                   <th className="px-4 py-3 font-semibold">Submitted</th>
+                  <th className="px-4 py-3 font-semibold">Designated Work Email</th>
                   <th className="px-4 py-3 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
@@ -615,6 +1300,7 @@ export default function HrOnboardingForm() {
                     <td className="px-4 py-3"><Skeleton className="h-5 w-20 rounded-full" /></td>
                     <td className="px-4 py-3"><Skeleton className="h-3.5 w-16" /></td>
                     <td className="px-4 py-3"><Skeleton className="h-3.5 w-16" /></td>
+                    <td className="px-4 py-3"><Skeleton className="h-5 w-40 rounded-md" /></td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex justify-end gap-1.5">
                         <Skeleton className="h-7 w-16 rounded-md" />
@@ -637,7 +1323,7 @@ export default function HrOnboardingForm() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm sm:min-w-[860px]">
+            <table className="w-full text-left text-sm sm:min-w-[1040px]">
               <thead className="border-b border-emerald-100/60 bg-gradient-to-r from-emerald-50 via-white to-emerald-50/80 text-xs text-zinc-600 dark:border-emerald-900/40 dark:from-emerald-950/40 dark:via-zinc-950 dark:to-emerald-950/30 dark:text-zinc-400">
                 <tr>
                   <th className="w-10 px-4 py-3">
@@ -653,12 +1339,14 @@ export default function HrOnboardingForm() {
                   <th className="px-4 py-3 font-semibold">Status</th>
                   <th className="px-4 py-3 font-semibold">Created</th>
                   <th className="px-4 py-3 font-semibold">Submitted</th>
+                  <th className="px-4 py-3 font-semibold">Designated Work Email</th>
                   <th className="px-4 py-3 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-emerald-100/60 dark:divide-emerald-900/30">
                 {pageRows.map((r, i) => {
                   const isBusy = busyId === r.id;
+                  const wstate = workEmailState(r);
                   return (
                     // Keyed by filter so every row remounts and re-runs its
                     // stagger-in when you switch Awaiting/Submitted/Archived/All.
@@ -701,6 +1389,15 @@ export default function HrOnboardingForm() {
                       <td data-label="Submitted" className="px-4 py-3 text-xs text-zinc-500">
                         {fmtDateTime(r.submitted_at)}
                       </td>
+                      <td data-label="Designated Work Email" className="px-4 py-3">
+                        <DesignatedWorkEmailCell
+                          row={r}
+                          onVerify={() => void verifyWorkEmail(r)}
+                          verifying={
+                            verifyDialog?.loading === true && verifyDialog.row.id === r.id
+                          }
+                        />
+                      </td>
                       <td data-label="Actions" className="px-4 py-3 text-right max-sm:flex-col max-sm:items-stretch max-sm:text-left">
                         <div className="flex flex-wrap justify-end gap-1.5 max-sm:justify-start">
                           {r.status === 'pending' && (
@@ -737,24 +1434,39 @@ export default function HrOnboardingForm() {
                           )}
                           {r.status === 'submitted' && (
                             <>
-                              {r.pending_employee_id && r.work_email && (
-                                <span
-                                  className="inline-flex min-w-0 max-w-full items-center gap-1 break-all rounded-md border border-sky-300 bg-sky-50 px-2 py-1 font-mono text-[11px] font-medium text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100 max-sm:w-full"
-                                  title="Currently staged in Pending Hires"
-                                >
-                                  <UserCheck className="h-3 w-3 shrink-0" />
-                                  {r.work_email}
-                                </span>
-                              )}
+                              {/* The minted address now lives in the dedicated
+                                  "Designated Work Email" column, so no inline
+                                  badge here. The button below is state-aware:
+                                  a failed automation reads "Retry setup" and
+                                  goes loud so HR can tell it apart. */}
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-7 gap-1 px-2 text-xs text-emerald-800 hover:bg-emerald-50 dark:text-emerald-200 dark:hover:bg-emerald-950/30"
+                                className={cn(
+                                  'h-7 gap-1 px-2 text-xs',
+                                  wstate === 'failed'
+                                    ? 'border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-300 dark:hover:bg-rose-950/30'
+                                    : 'text-emerald-800 hover:bg-emerald-50 dark:text-emerald-200 dark:hover:bg-emerald-950/30',
+                                )}
                                 onClick={() => setWorkEmailFor(r)}
-                                title={r.pending_employee_id ? 'Re-send workspace setup with updated details' : 'Mint an @simple.biz address and stage this hire'}
+                                title={
+                                  wstate === 'failed'
+                                    ? 'Account creation failed - retry to create the account + Hubstaff invite'
+                                    : r.pending_employee_id
+                                      ? 'Re-send workspace setup with updated details'
+                                      : 'Mint an @simple.biz address and stage this hire'
+                                }
                               >
-                                <Mail className="h-3 w-3" />
-                                {r.pending_employee_id ? 'Update setup' : 'Set work email'}
+                                {wstate === 'failed' ? (
+                                  <RefreshCw className="h-3 w-3" />
+                                ) : (
+                                  <Mail className="h-3 w-3" />
+                                )}
+                                {wstate === 'failed'
+                                  ? 'Retry setup'
+                                  : r.pending_employee_id
+                                    ? 'Update setup'
+                                    : 'Set work email'}
                               </Button>
                               <Button
                                 size="sm"
@@ -875,6 +1587,22 @@ export default function HrOnboardingForm() {
         rows={bulkWorkEmail}
         onClose={() => setBulkWorkEmail(null)}
         reload={() => void load()}
+      />
+
+      <VerifyResultDialog
+        dialog={verifyDialog}
+        onClose={() => setVerifyDialog(null)}
+        onTryAgain={(row) => void verifyWorkEmail(row)}
+        onManualConfirm={(row) => void markWorkspace(row, true)}
+        onRetrySetup={(row) => {
+          setVerifyDialog(null);
+          setWorkEmailFor(row);
+        }}
+      />
+
+      <BulkVerifyDialog
+        state={bulkVerify}
+        onClose={() => setBulkVerify(null)}
       />
 
       <Dialog open={!!archiveTarget} onOpenChange={(o) => !o && setArchiveTarget(null)}>
@@ -1396,15 +2124,19 @@ function SetOnboardingWorkEmailDialog({
   const [suggesting, setSuggesting] = useState(false);
   const [checking, setChecking] = useState(false);
   const [available, setAvailable] = useState<boolean | null>(null);
+  // True when the address is free only because Workspace verify found no real
+  // account (a stale prior claim) — shown as a reassuring hint.
+  const [reclaimed, setReclaimed] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Compensation is owned by Accounting (Payment Catalog). HR never sees the
+  // figures — these are populated from the catalog only and used to gate save +
+  // send on submit. The UI shows only a readiness checkmark.
   const [regularRate, setRegularRate] = useState('');
   const [otRate, setOtRate] = useState('');
+  const [ratesRefreshing, setRatesRefreshing] = useState(false);
   const [projectNames, setProjectNames] = useState<string[]>([]);
   const [projectOptions, setProjectOptions] = useState<string[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
-  // Track which dept we last prefilled rates for so we only prefill on real
-  // dept changes, not every time deptRates finishes loading.
-  const lastPrefillDept = useRef<string>('');
 
   const fullName = row?.full_name?.trim() || row?.invite_name?.trim() || '';
   const { first, last } = useMemo(() => splitFullName(fullName), [fullName]);
@@ -1417,7 +2149,9 @@ function SetOnboardingWorkEmailDialog({
       const res = await fetch('/api/hr/work-email/suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName }),
+        // verify: reclaim an ideal address that's only locked by a stale prior
+        // claim (no real Workspace account) instead of bumping to a variant.
+        body: JSON.stringify({ fullName, verify: true }),
       });
       const j = (await res.json()) as {
         suggestion?: { email: string } | null;
@@ -1440,10 +2174,10 @@ function SetOnboardingWorkEmailDialog({
   // Seed the form (and a fresh suggestion) whenever a row opens.
   useEffect(() => {
     if (!row) return;
-    lastPrefillDept.current = ''; // reset so the initial dept always gets prefilled
     setDept(row.invite_department?.trim() ?? '');
     setWorkEmail('');
     setAvailable(null);
+    setReclaimed(false);
     setRegularRate('');
     setOtRate('');
     setProjectNames([]);
@@ -1454,49 +2188,83 @@ function SetOnboardingWorkEmailDialog({
     setProjectNames((prev) => prev.filter((p) => p !== name));
   }, []);
 
-  // Department list + department rates — fetched together when the dialog opens.
+  // Re-pull the Payment Catalog rates. Called on open, by the Refresh button,
+  // and by the realtime subscription when Accounting saves a pay structure.
+  const loadDeptRates = useCallback(async () => {
+    setRatesRefreshing(true);
+    try {
+      const rj = (await fetch('/api/hr/department-rates', { cache: 'no-store' }).then((r) =>
+        r.json(),
+      )) as { departments?: Array<DeptRateApi>; error?: string };
+      if (rj.error) throw new Error(rj.error);
+      const m = new Map<string, DeptRate>();
+      for (const d of rj.departments ?? []) {
+        m.set(d.department.trim().toLowerCase(), {
+          regular_rate: d.regular_rate,
+          ot_rate: d.ot_rate,
+          source: d.source,
+          currency: d.currency,
+        });
+      }
+      setDeptRates(m);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not load compensation status');
+    } finally {
+      setRatesRefreshing(false);
+    }
+  }, []);
+
+  // Department list (once) + initial compensation status when the dialog opens.
   useEffect(() => {
     if (!row) return;
-    if (departments.length > 0 || deptsLoading) return;
-    setDeptsLoading(true);
-    Promise.all([
-      fetch('/api/departments', { cache: 'no-store' }).then((r) => r.json()),
-      fetch('/api/hr/department-rates', { cache: 'no-store' }).then((r) => r.json()),
-    ])
-      .then(([dj, rj]: [
-        { departments?: string[]; error?: string },
-        { departments?: Array<DeptRateApi>; error?: string },
-      ]) => {
-        if (dj.error) throw new Error(dj.error);
-        setDepartments(dj.departments ?? []);
-        const m = new Map<string, DeptRate>();
-        for (const d of rj.departments ?? []) {
-          m.set(d.department.trim().toLowerCase(), {
-            regular_rate: d.regular_rate,
-            ot_rate: d.ot_rate,
-            source: d.source,
-            currency: d.currency,
-          });
-        }
-        setDeptRates(m);
-      })
-      .catch((e) =>
-        toast.error(e instanceof Error ? e.message : 'Could not load departments'),
-      )
-      .finally(() => setDeptsLoading(false));
-  }, [row, departments.length, deptsLoading]);
+    if (departments.length === 0 && !deptsLoading) {
+      setDeptsLoading(true);
+      fetch('/api/departments', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((dj: { departments?: string[]; error?: string }) => {
+          if (dj.error) throw new Error(dj.error);
+          setDepartments(dj.departments ?? []);
+        })
+        .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not load departments'))
+        .finally(() => setDeptsLoading(false));
+    }
+    void loadDeptRates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row, loadDeptRates]);
 
-  // Prefill rates when dept changes. Uses a ref to distinguish a real dept
-  // change from deptRates finishing loading (to avoid stomping user edits).
+  // Live updates: when Accounting saves a Payment Catalog pay structure, re-pull
+  // so the compensation checkmark flips without reopening the dialog.
+  useEffect(() => {
+    if (!row) return;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const channel = supabase
+      .channel('onboarding-pay-structures-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'payment_catalog_pay_structures' },
+        () => void loadDeptRates(),
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [row, loadDeptRates]);
+
+  // Sync the hidden compensation from the Payment Catalog for the chosen dept.
+  // Only an authoritative catalog rate counts — the observed heuristic is
+  // ignored, so the figures stay blank (and save stays gated) until Accounting
+  // sets them.
   useEffect(() => {
     const key = dept.trim().toLowerCase();
-    if (!key || key === lastPrefillDept.current) return;
-    const rates = deptRates.get(key);
-    if (!rates) return;
-    lastPrefillDept.current = key;
-    if (rates.regular_rate) setRegularRate(rates.regular_rate);
-    if (rates.ot_rate) setOtRate(rates.ot_rate);
-    else setOtRate('');
+    const rates = key ? deptRates.get(key) : undefined;
+    if (rates && rates.source === 'catalog') {
+      setRegularRate(rates.regular_rate ?? '');
+      setOtRate(rates.ot_rate ?? '');
+    } else {
+      setRegularRate('');
+      setOtRate('');
+    }
   }, [dept, deptRates]);
 
   // Hubstaff project list — from the secondary Supabase `hubstaff_projects` table.
@@ -1525,6 +2293,7 @@ function SetOnboardingWorkEmailDialog({
     const email = workEmail.trim().toLowerCase();
     if (!email) {
       setAvailable(null);
+      setReclaimed(false);
       setChecking(false);
       return;
     }
@@ -1535,14 +2304,22 @@ function SetOnboardingWorkEmailDialog({
         const res = await fetch('/api/hr/work-email/suggest', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ candidate: email }),
+          // verify: a roster-taken address with no real Workspace account is
+          // freed up (stale claim), so a previously-burned address is usable.
+          body: JSON.stringify({ candidate: email, verify: true }),
         });
         const j = (await res.json()) as {
-          candidate?: { available: boolean } | null;
+          candidate?: { available: boolean; verifiedFree?: boolean } | null;
         };
-        if (active) setAvailable(j.candidate ? j.candidate.available : null);
+        if (active) {
+          setAvailable(j.candidate ? j.candidate.available : null);
+          setReclaimed(!!j.candidate?.verifiedFree);
+        }
       } catch {
-        if (active) setAvailable(null);
+        if (active) {
+          setAvailable(null);
+          setReclaimed(false);
+        }
       } finally {
         if (active) setChecking(false);
       }
@@ -1555,20 +2332,19 @@ function SetOnboardingWorkEmailDialog({
 
   const emailNorm = workEmail.trim().toLowerCase();
   const emailValid = isPlausibleEmail(emailNorm) && emailNorm.endsWith('@simple.biz');
-  const regularRateNum = Number(regularRate);
-  const regularRateValid =
-    regularRate.trim() !== '' && Number.isFinite(regularRateNum) && regularRateNum > 0;
-  const otRateNum = Number(otRate);
-  const otRateValid =
-    otRate.trim() === '' || (Number.isFinite(otRateNum) && otRateNum >= 0);
+  const deptKey = dept.trim().toLowerCase();
+  const deptRate = deptKey ? deptRates.get(deptKey) : undefined;
+  // HR never sees the figures — only whether Accounting has set an authoritative
+  // Payment Catalog rate for this department. That readiness gates save.
+  const compReady = deptRate?.source === 'catalog';
+  // Compensation readiness is informational only — a hire can be staged before
+  // Accounting sets the Payment Catalog (the rate stays null until they do).
   const canSave =
     !!row &&
     !busy &&
     emailValid &&
     available === true &&
     dept.trim().length > 0 &&
-    regularRateValid &&
-    otRateValid &&
     projectNames.length > 0;
 
   async function save() {
@@ -1596,7 +2372,7 @@ function SetOnboardingWorkEmailDialog({
       };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to set work email');
       if (json.workspace_account && json.workspace_account.ok === false) {
-        toast.warning(`${emailNorm} staged — workspace setup failed`, {
+        toast.warning(`${emailNorm} staged — account creation failed`, {
           description: json.workspace_account.error
             ? `${json.workspace_account.error}. Create the Workspace account and Hubstaff invite manually.`
             : 'The onboarding webhook did not fire. Create the Workspace account and Hubstaff invite manually.',
@@ -1620,19 +2396,6 @@ function SetOnboardingWorkEmailDialog({
   }
 
   if (!row) return null;
-
-  const deptKey = dept.trim().toLowerCase();
-  const deptRate = deptKey ? deptRates.get(deptKey) : undefined;
-  const typicalRegular = deptRate?.regular_rate ?? null;
-  const typicalOt = deptRate?.ot_rate ?? null;
-  const rateFromCatalog = deptRate?.source === 'catalog';
-  const rateSym = deptRate?.currency === 'PHP' ? CURRENCY_PESO : '$';
-  const regularHint = typicalRegular
-    ? `${rateFromCatalog ? 'Catalog rate' : 'Dept. typical'}: ${rateSym}${typicalRegular}`
-    : 'Required';
-  const otHint = typicalOt
-    ? `${rateFromCatalog ? 'Catalog rate' : 'Dept. typical'}: ${rateSym}${typicalOt}`
-    : 'Optional';
 
   return (
     <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
@@ -1727,7 +2490,9 @@ function SetOnboardingWorkEmailDialog({
                   {available === false
                     ? 'Already in use — try another.'
                     : available === true
-                      ? 'Available.'
+                      ? reclaimed
+                        ? 'Available — was claimed before but has no Workspace account.'
+                        : 'Available.'
                       : emailNorm && !emailValid
                         ? 'Must be a valid @simple.biz address.'
                         : 'Checking availability as you type.'}
@@ -1748,43 +2513,41 @@ function SetOnboardingWorkEmailDialog({
           {/* ── Right column: rates + projects ── */}
           <div className="flex flex-col gap-4">
 
-            {/* Rates */}
+            {/* Compensation — owned by Accounting via the Payment Catalog. HR
+                only sees whether it's ready, never the figures. Updates live and
+                a Refresh button re-checks on demand. */}
             <div className="flex flex-col gap-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">Compensation</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Regular rate (USD/hr)</label>
-                  <Input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.01"
-                    value={regularRate}
-                    onChange={(e) => setRegularRate(e.target.value)}
-                    placeholder="35.50"
-                    aria-invalid={regularRate.trim() !== '' && !regularRateValid ? true : undefined}
-                  />
-                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    {regularHint}
-                  </p>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">OT rate (USD/hr)</label>
-                  <Input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.01"
-                    value={otRate}
-                    onChange={(e) => setOtRate(e.target.value)}
-                    placeholder="53.25"
-                    aria-invalid={otRate.trim() !== '' && !otRateValid ? true : undefined}
-                  />
-                  <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                    {otHint}
-                  </p>
-                </div>
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">Compensation</p>
+                <button
+                  type="button"
+                  onClick={() => void loadDeptRates()}
+                  disabled={ratesRefreshing}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:underline disabled:opacity-50 dark:text-emerald-300"
+                  title="Re-check whether Accounting has set this department's pay in the Payment Catalog"
+                >
+                  <RefreshCw className={cn('h-3 w-3', ratesRefreshing && 'animate-spin')} />
+                  Refresh
+                </button>
               </div>
+              {!deptKey ? (
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[11px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40">
+                  Pick a department to check its compensation.
+                </div>
+              ) : compReady ? (
+                <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-xs font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/25 dark:text-emerald-200">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  Compensation ready — set by Accounting in the Payment Catalog.
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    Not set yet — Accounting will set this department's pay in the Payment Catalog.
+                    You can still stage the hire now; pay applies once they set it. Use Refresh to re-check.
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Projects — takes all remaining space so the dropdown opens downward with room */}
@@ -1873,6 +2636,7 @@ function BulkSetWorkEmailDialog({
   const [deptRates, setDeptRates] = useState<Map<string, BulkDeptRate>>(new Map());
   const [projectOptions, setProjectOptions] = useState<string[]>([]);
   const [metaLoading, setMetaLoading] = useState(false);
+  const [ratesRefreshing, setRatesRefreshing] = useState(false);
 
   // Email state lives at the parent so duplicate detection spans the whole
   // batch (across departments), not just one group.
@@ -1880,10 +2644,15 @@ function BulkSetWorkEmailDialog({
   const [avail, setAvail] = useState<Record<string, boolean | null>>({});
   const [suggesting, setSuggesting] = useState(false);
   const [doneIds, setDoneIds] = useState<Set<string>>(new Set());
-  const [results, setResults] = useState<Record<string, { ok: boolean; error?: string }>>({});
+  // `warn` = the work email was saved but the workspace automation failed; the
+  // hire is staged but not provisioned, so the table will flag it for a retry.
+  // `verify` = result of the read-only Workspace lookup run after setting.
+  const [results, setResults] = useState<
+    Record<string, { ok: boolean; warn?: boolean; error?: string; verify?: 'exists' | 'missing' | 'error' }>
+  >({});
   const [groupBusy, setGroupBusy] = useState<Record<string, boolean>>({});
   const [groupProgress, setGroupProgress] = useState<
-    Record<string, { done: number; total: number } | null>
+    Record<string, { done: number; total: number; phase?: 'set' | 'verify' } | null>
   >({});
 
   // Group rows by submission department; blank departments fall into a single
@@ -1900,33 +2669,46 @@ function BulkSetWorkEmailDialog({
     return [...m.entries()].map(([key, v]) => ({ key, dept: v.dept, rows: v.rows }));
   }, [rows]);
 
-  // Load shared setup data (departments, typical rates, Hubstaff projects).
+  // Re-pull the Payment Catalog rates (compensation status). Called on open, by
+  // the Refresh button, and by realtime when Accounting saves a pay structure.
+  const loadDeptRates = useCallback(async () => {
+    setRatesRefreshing(true);
+    try {
+      const rj = (await fetch('/api/hr/department-rates', { cache: 'no-store' }).then((r) =>
+        r.json(),
+      )) as { departments?: Array<DeptRateApi>; error?: string };
+      if (rj.error) throw new Error(rj.error);
+      const m = new Map<string, BulkDeptRate>();
+      for (const d of rj.departments ?? []) {
+        m.set(d.department.trim().toLowerCase(), {
+          regular_rate: d.regular_rate,
+          ot_rate: d.ot_rate,
+          source: d.source,
+          currency: d.currency,
+        });
+      }
+      setDeptRates(m);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not load compensation status');
+    } finally {
+      setRatesRefreshing(false);
+    }
+  }, []);
+
+  // Load shared setup data (departments, Hubstaff projects) + compensation.
   useEffect(() => {
     if (!open) return;
     setMetaLoading(true);
     Promise.all([
       fetch('/api/departments', { cache: 'no-store' }).then((r) => r.json()),
-      fetch('/api/hr/department-rates', { cache: 'no-store' }).then((r) => r.json()),
       fetch('/api/secondary/hubstaff-projects', { cache: 'no-store' }).then((r) => r.json()),
     ])
       .then(
-        ([dj, rj, pj]: [
+        ([dj, pj]: [
           { departments?: string[]; error?: string },
-          {
-            departments?: Array<{ department: string; regular_rate: string | null; ot_rate: string | null }>;
-            error?: string;
-          },
           { projects?: Array<{ name?: string | null }>; error?: string },
         ]) => {
           setDepartments(dj.departments ?? []);
-          const m = new Map<string, BulkDeptRate>();
-          for (const d of rj.departments ?? []) {
-            m.set(d.department.trim().toLowerCase(), {
-              regular_rate: d.regular_rate,
-              ot_rate: d.ot_rate,
-            });
-          }
-          setDeptRates(m);
           const names = (pj.projects ?? [])
             .map((p) => (p?.name ?? '').trim())
             .filter(Boolean);
@@ -1935,7 +2717,26 @@ function BulkSetWorkEmailDialog({
       )
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not load setup data'))
       .finally(() => setMetaLoading(false));
-  }, [open]);
+    void loadDeptRates();
+  }, [open, loadDeptRates]);
+
+  // Live: flip the compensation checkmarks when Accounting saves a pay structure.
+  useEffect(() => {
+    if (!open) return;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const channel = supabase
+      .channel('bulk-onboarding-pay-structures-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'payment_catalog_pay_structures' },
+        () => void loadDeptRates(),
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [open, loadDeptRates]);
 
   // Auto-suggest a UNIQUE @simple.biz address for every hire when the modal
   // opens. Runs sequentially, threading the addresses already assigned earlier
@@ -2032,57 +2833,138 @@ function BulkSetWorkEmailDialog({
     },
   ) {
     const { rows: targets, department, regularRate, otRate, projects } = args;
-    if (targets.length === 0) return;
     setGroupBusy((p) => ({ ...p, [groupKey]: true }));
-    setGroupProgress((p) => ({ ...p, [groupKey]: { done: 0, total: targets.length } }));
-    const newResults: Record<string, { ok: boolean; error?: string }> = {};
+
+    const newResults: Record<string, { ok: boolean; warn?: boolean; error?: string }> = {};
     const succeeded: string[] = [];
-    let done = 0;
-    // 5 concurrent max — each hire fires the workspace-account creation webhook.
-    await runPooled(targets, 5, async (r) => {
-      try {
-        const res = await fetch(`/api/hr/onboarding-submissions/${r.id}/set-work-email`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            work_email: (emails[r.id] ?? '').trim().toLowerCase(),
-            department,
-            project_names: projects,
-            regular_rate: regularRate.trim(),
-            ot_rate: otRate.trim() || null,
-          }),
+    let automationFailed = 0;
+
+    // ── Phase 1: set work email for the rows that still need one. ──
+    if (targets.length > 0) {
+      setGroupProgress((p) => ({ ...p, [groupKey]: { done: 0, total: targets.length, phase: 'set' } }));
+      let done = 0;
+      // 5 concurrent max — each hire fires the workspace-account creation webhook.
+      await runPooled(targets, 5, async (r) => {
+        try {
+          const res = await fetch(`/api/hr/onboarding-submissions/${r.id}/set-work-email`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              work_email: (emails[r.id] ?? '').trim().toLowerCase(),
+              department,
+              project_names: projects,
+              regular_rate: regularRate.trim(),
+              ot_rate: otRate.trim() || null,
+            }),
+          });
+          const j = (await res.json().catch(() => ({}))) as {
+            ok?: boolean;
+            error?: string;
+            workspace_account?: { ok?: boolean; error?: string };
+          };
+          if (!res.ok || j.error) throw new Error(j.error ?? 'Failed to set work email');
+          // The email saved, but the workspace webhook may still have failed —
+          // the verify pass below will sort the truth (e.g. "already exists").
+          const wsFailed = j.workspace_account ? j.workspace_account.ok === false : false;
+          if (wsFailed) automationFailed += 1;
+          newResults[r.id] = wsFailed
+            ? {
+                ok: true,
+                warn: true,
+                error: j.workspace_account?.error ?? 'Workspace automation failed - verifying...',
+              }
+            : { ok: true };
+          succeeded.push(r.id);
+        } catch (e) {
+          newResults[r.id] = { ok: false, error: e instanceof Error ? e.message : String(e) };
+        } finally {
+          done += 1;
+          setGroupProgress((p) => ({ ...p, [groupKey]: { done, total: targets.length, phase: 'set' } }));
+        }
+      });
+      setResults((p) => ({ ...p, ...newResults }));
+      if (succeeded.length > 0) {
+        setDoneIds((p) => {
+          const n = new Set(p);
+          for (const id of succeeded) n.add(id);
+          return n;
         });
-        const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-        if (!res.ok || j.error) throw new Error(j.error ?? 'Failed to set work email');
-        newResults[r.id] = { ok: true };
-        succeeded.push(r.id);
-      } catch (e) {
-        newResults[r.id] = { ok: false, error: e instanceof Error ? e.message : String(e) };
-      } finally {
-        done += 1;
-        setGroupProgress((p) => ({ ...p, [groupKey]: { done, total: targets.length } }));
       }
+    }
+
+    // ── Phase 2: verify the accounts that aren't confirmed yet — the ones just
+    // set whose create webhook failed (often "already exists") PLUS any row that
+    // already had an address but was never verified. Read-only; never recreates. ──
+    const group = groups.find((g) => g.key === groupKey);
+    const groupRows = group?.rows ?? targets;
+    const verifyTargets = groupRows.filter((r) => {
+      const created = newResults[r.id];
+      // Freshly created + confirmed by the create webhook -> already green.
+      if (created && created.ok && !created.warn) return false;
+      // Need an address to verify (pre-existing, or just saved this run).
+      if (!r.work_email && !succeeded.includes(r.id)) return false;
+      // Pre-existing row that's already confirmed -> nothing to do.
+      if (!created && r.workspace_account_ok === true) return false;
+      return true;
     });
-    setResults((p) => ({ ...p, ...newResults }));
-    setGroupBusy((p) => ({ ...p, [groupKey]: false }));
-    setGroupProgress((p) => ({ ...p, [groupKey]: null }));
-    if (succeeded.length > 0) {
+
+    let vExists = 0;
+    let vMissing = 0;
+    let vError = 0;
+    if (verifyTargets.length > 0) {
+      setGroupProgress((p) => ({ ...p, [groupKey]: { done: 0, total: verifyTargets.length, phase: 'verify' } }));
+      let vdone = 0;
+      await runPooled(verifyTargets, 5, async (r) => {
+        let state: 'exists' | 'missing' | 'error' = 'error';
+        try {
+          const res = await fetch(`/api/hr/onboarding-submissions/${r.id}/verify-work-email`, {
+            method: 'POST',
+          });
+          const j = (await res.json().catch(() => ({}))) as { state?: 'exists' | 'missing' | 'error' };
+          state = res.ok ? (j.state ?? 'error') : 'error';
+        } catch {
+          state = 'error';
+        }
+        if (state === 'exists') vExists += 1;
+        else if (state === 'missing') vMissing += 1;
+        else vError += 1;
+        setResults((p) => ({ ...p, [r.id]: { ...(p[r.id] ?? { ok: true }), verify: state } }));
+        vdone += 1;
+        setGroupProgress((p) => ({ ...p, [groupKey]: { done: vdone, total: verifyTargets.length, phase: 'verify' } }));
+      });
+      // Mark verified rows processed so they leave the pending set.
       setDoneIds((p) => {
         const n = new Set(p);
-        for (const id of succeeded) n.add(id);
+        for (const r of verifyTargets) n.add(r.id);
         return n;
       });
-      reload();
     }
-    const ok = succeeded.length;
-    const failed = targets.length - ok;
+
+    setGroupBusy((p) => ({ ...p, [groupKey]: false }));
+    setGroupProgress((p) => ({ ...p, [groupKey]: null }));
+    if (succeeded.length > 0 || verifyTargets.length > 0) reload();
+
+    // ── Toasts ──
     const label = department || 'department';
-    if (ok > 0 && failed === 0) {
-      toast.success(`${ok} work email${ok === 1 ? '' : 's'} set for ${label}`);
-    } else if (ok > 0) {
-      toast.warning(`${label}: ${ok} set, ${failed} failed`);
-    } else {
-      toast.error(`${label}: ${failed} failed - check and retry`);
+    if (targets.length > 0) {
+      const ok = succeeded.length;
+      const failed = targets.length - ok;
+      if (ok > 0 && failed === 0) {
+        toast.success(`${ok} work email${ok === 1 ? '' : 's'} set for ${label}`);
+      } else if (ok > 0) {
+        toast.warning(`${label}: ${ok} set, ${failed} failed - check and retry`);
+      } else {
+        toast.error(`${label}: ${failed} failed - check and retry`);
+      }
+    }
+    if (verifyTargets.length > 0) {
+      if (vMissing === 0 && vError === 0) {
+        toast.success(`${vExists} account${vExists === 1 ? '' : 's'} verified for ${label}`);
+      } else {
+        toast.warning(
+          `${label} verify: ${vExists} confirmed, ${vMissing} not found${vError > 0 ? `, ${vError} unchecked` : ''} - retry the not-found from the table`,
+        );
+      }
     }
   }
 
@@ -2119,6 +3001,19 @@ function BulkSetWorkEmailDialog({
             </span>
           </div>
         )}
+
+        <div className="mb-3 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={() => void loadDeptRates()}
+            disabled={ratesRefreshing}
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:underline disabled:opacity-50 dark:text-emerald-300"
+            title="Re-check which departments have compensation set by Accounting in the Payment Catalog"
+          >
+            <RefreshCw className={cn('h-3 w-3', ratesRefreshing && 'animate-spin')} />
+            Refresh compensation
+          </button>
+        </div>
 
         <div className="flex flex-col gap-4">
           {groups.map((g) => (
@@ -2194,7 +3089,7 @@ function BulkDeptGroup({
   avail: Record<string, boolean | null>;
   dupIds: Set<string>;
   doneIds: Set<string>;
-  results: Record<string, { ok: boolean; error?: string }>;
+  results: Record<string, { ok: boolean; warn?: boolean; error?: string; verify?: 'exists' | 'missing' | 'error' }>;
   suggesting: boolean;
   onEmailChange: (id: string, v: string) => void;
   onAvail: (id: string, v: boolean | null) => void;
@@ -2206,38 +3101,35 @@ function BulkDeptGroup({
     projects: string[];
   }) => void;
   busy: boolean;
-  progress: { done: number; total: number } | null;
+  progress: { done: number; total: number; phase?: 'set' | 'verify' } | null;
 }) {
   const needsDept = groupKey === '__none__';
   const [dept, setDept] = useState(initialDept);
+  // Hidden compensation, sourced from the Payment Catalog only — HR never sees
+  // the figures; they're sent on submit and gate it via `compReady`.
   const [regularRate, setRegularRate] = useState('');
   const [otRate, setOtRate] = useState('');
   const [projects, setProjects] = useState<string[]>([]);
-  const lastPrefillDept = useRef('');
-
-  // Prefill the shared rates from the department's typical rates — only on a
-  // real dept change, not when deptRates finishes loading.
-  useEffect(() => {
-    const key = dept.trim().toLowerCase();
-    if (!key || key === lastPrefillDept.current) return;
-    const r = deptRates.get(key);
-    if (!r) return;
-    lastPrefillDept.current = key;
-    if (r.regular_rate) setRegularRate(r.regular_rate);
-    if (r.ot_rate) setOtRate(r.ot_rate);
-    else setOtRate('');
-  }, [dept, deptRates]);
 
   const deptKey = dept.trim().toLowerCase();
   const typical = deptKey ? deptRates.get(deptKey) : undefined;
+  const compReady = typical?.source === 'catalog';
 
-  const regularNum = Number(regularRate);
-  const regularValid =
-    regularRate.trim() !== '' && Number.isFinite(regularNum) && regularNum > 0;
-  const otNum = Number(otRate);
-  const otValid = otRate.trim() === '' || (Number.isFinite(otNum) && otNum >= 0);
-  const configValid =
-    dept.trim().length > 0 && regularValid && otValid && projects.length > 0;
+  // Sync the hidden rate from the catalog for the chosen dept; blank unless an
+  // authoritative Payment Catalog rate exists (observed heuristic is ignored).
+  useEffect(() => {
+    if (typical && typical.source === 'catalog') {
+      setRegularRate(typical.regular_rate ?? '');
+      setOtRate(typical.ot_rate ?? '');
+    } else {
+      setRegularRate('');
+      setOtRate('');
+    }
+  }, [typical]);
+
+  // Compensation readiness is informational only — a group can be set before
+  // Accounting fills the Payment Catalog (rate stays null until they do).
+  const configValid = dept.trim().length > 0 && projects.length > 0;
 
   const usableRows = rows.filter((r) => {
     if (doneIds.has(r.id)) return false;
@@ -2248,7 +3140,13 @@ function BulkDeptGroup({
   });
   const pendingCount = rows.filter((r) => !doneIds.has(r.id)).length;
   const allDone = pendingCount === 0;
-  const canSubmit = configValid && usableRows.length > 0 && !busy;
+  // Rows that already have an address but aren't confirmed yet — these can be
+  // verified (read-only) even when there's nothing new to set, so a group of
+  // already-staged-but-unverified hires can still be reconciled in one click.
+  const verifiableRows = rows.filter((r) => !!r.work_email && r.workspace_account_ok !== true);
+  const canSet = configValid && usableRows.length > 0;
+  const canVerifyOnly = usableRows.length === 0 && verifiableRows.length > 0;
+  const canSubmit = !busy && (canSet || canVerifyOnly);
 
   return (
     <div className="rounded-xl border border-emerald-100/80 bg-white p-4 shadow-sm ring-1 ring-emerald-500/5 dark:border-emerald-950/40 dark:bg-zinc-950">
@@ -2280,45 +3178,29 @@ function BulkDeptGroup({
         )}
       </div>
 
-      {/* Shared config: one rate + project set for everyone in this department */}
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+      {/* Shared config: compensation readiness (from Accounting's Payment
+          Catalog — figures hidden) + the project set for everyone here. */}
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div className="flex flex-col gap-1">
           <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
-            Regular rate (USD/hr)
+            Compensation
           </label>
-          <Input
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.01"
-            value={regularRate}
-            onChange={(e) => setRegularRate(e.target.value)}
-            placeholder="35.50"
-            className="h-8 text-xs"
-            aria-invalid={regularRate.trim() !== '' && !regularValid ? true : undefined}
-          />
-          <p className="text-[10.5px] text-zinc-400">
-            {typical?.regular_rate ? `Dept. typical: $${typical.regular_rate}` : 'Required'}
-          </p>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
-            OT rate (USD/hr)
-          </label>
-          <Input
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.01"
-            value={otRate}
-            onChange={(e) => setOtRate(e.target.value)}
-            placeholder="53.25"
-            className="h-8 text-xs"
-            aria-invalid={otRate.trim() !== '' && !otValid ? true : undefined}
-          />
-          <p className="text-[10.5px] text-zinc-400">
-            {typical?.ot_rate ? `Dept. typical: $${typical.ot_rate}` : 'Optional'}
-          </p>
+          {!deptKey ? (
+            <div className="flex h-8 items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-[11px] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40">
+              Pick a department.
+            </div>
+          ) : compReady ? (
+            <div className="flex h-8 items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50/70 px-2.5 text-[11px] font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/25 dark:text-emerald-200">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              Ready (set by Accounting)
+            </div>
+          ) : (
+            <div className="flex h-8 items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50/70 px-2.5 text-[11px] font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-200">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              Not set in Payment Catalog
+            </div>
+          )}
+          <p className="text-[10.5px] text-zinc-400">Set by Accounting — not editable here.</p>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
@@ -2358,14 +3240,41 @@ function BulkDeptGroup({
                 {personal && (
                   <p className="truncate font-mono text-[10.5px] text-zinc-500">{personal}</p>
                 )}
-                {done && (
+                {res?.verify === 'exists' ? (
+                  <span className="mt-0.5 inline-flex items-center gap-1 text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Verified in Workspace
+                  </span>
+                ) : res?.verify === 'missing' ? (
+                  <span className="mt-0.5 inline-flex items-center gap-1 text-[10.5px] font-medium text-amber-600 dark:text-amber-400">
+                    <XCircle className="h-3 w-3" />
+                    Account not found - retry from table
+                  </span>
+                ) : res?.verify === 'error' ? (
+                  <span className="mt-0.5 inline-flex items-center gap-1 text-[10.5px] font-medium text-zinc-500">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Saved (verify unavailable)
+                  </span>
+                ) : done && res?.warn ? (
+                  <span className="mt-0.5 inline-flex items-center gap-1 text-[10.5px] font-medium text-amber-600 dark:text-amber-400">
+                    <XCircle className="h-3 w-3" />
+                    Saved, verifying...
+                  </span>
+                ) : done ? (
                   <span className="mt-0.5 inline-flex items-center gap-1 text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400">
                     <CheckCircle2 className="h-3 w-3" />
                     {preExisting ? 'Already had a work email' : 'Work email set'}
                   </span>
-                )}
-                {res && !res.ok && (
-                  <span className="mt-0.5 block text-[10.5px] text-rose-600 dark:text-rose-400">
+                ) : null}
+                {res && (!res.ok || res.warn) && !res.verify && res.error && (
+                  <span
+                    className={cn(
+                      'mt-0.5 block text-[10.5px]',
+                      res.ok
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-rose-600 dark:text-rose-400',
+                    )}
+                  >
                     {res.error}
                   </span>
                 )}
@@ -2388,7 +3297,9 @@ function BulkDeptGroup({
         <div className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-[11px] text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/25 dark:text-emerald-200">
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
           <span>
-            Creating Google Workspace accounts + Hubstaff invites
+            {progress?.phase === 'verify'
+              ? 'Verifying Workspace accounts'
+              : 'Creating Google Workspace accounts + Hubstaff invites'}
             {progress ? ` (${progress.done}/${progress.total})` : ''}... this can take a moment
             per hire - please keep this window open.
           </span>
@@ -2398,7 +3309,7 @@ function BulkDeptGroup({
       <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
         {!configValid && pendingCount > 0 && (
           <span className="text-[11px] text-amber-600 dark:text-amber-400">
-            Set a department, rate, and project first.
+            {dept.trim().length === 0 ? 'Pick a department first.' : 'Pick a project first.'}
           </span>
         )}
         <Button
@@ -2421,10 +3332,14 @@ function BulkDeptGroup({
             <UserCheck className="mr-1 h-3.5 w-3.5" />
           )}
           {busy && progress
-            ? `Setting ${progress.done}/${progress.total}...`
-            : allDone
-              ? 'All set'
-              : `Set ${usableRows.length} work email${usableRows.length === 1 ? '' : 's'}`}
+            ? progress.phase === 'verify'
+              ? `Verifying ${progress.done}/${progress.total}...`
+              : `Setting ${progress.done}/${progress.total}...`
+            : canVerifyOnly
+              ? `Verify ${verifiableRows.length} account${verifiableRows.length === 1 ? '' : 's'}`
+              : allDone
+                ? 'All set'
+                : `Set ${usableRows.length} & verify`}
         </Button>
       </div>
     </div>

@@ -48,6 +48,31 @@ export type WorkEmailSuggestion = {
 };
 
 /**
+ * The ordered, most-preferred-first list of base candidate addresses for a name
+ * (first + progressive last-name slices), BEFORE any taken filtering. Lets a
+ * caller walk them and apply its own availability test — e.g. a Google
+ * Workspace verify lookup that reclaims an address claimed by a stale pending
+ * row whose account was never actually created. Does NOT include the numeric
+ * fallback (use suggestWorkEmail for that).
+ */
+export function workEmailCandidates(
+  first: string,
+  last: string,
+  domain: string = WORK_EMAIL_DOMAIN,
+): WorkEmailSuggestion[] {
+  const f = normalizeNamePart(first);
+  const l = normalizeNamePart(last);
+  if (!f) return [];
+  const locals: string[] = [];
+  if (l) {
+    for (let i = 1; i <= l.length; i++) locals.push(f + l.slice(0, i));
+  } else {
+    locals.push(f);
+  }
+  return locals.map((local) => ({ email: `${local}@${domain}`, localPart: local }));
+}
+
+/**
  * Suggest the shortest available <first><lastSlice>@domain address.
  *
  * @param first        First name (raw; will be normalized).

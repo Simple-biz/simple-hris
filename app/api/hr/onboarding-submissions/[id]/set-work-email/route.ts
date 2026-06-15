@@ -14,7 +14,7 @@ import {
 import { loadTakenWorkEmails } from "@/lib/hr/work-email-server";
 import { WORK_EMAIL_DOMAIN, splitFullName } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
-import { createWorkspaceAccount } from "@/lib/hr/workspace-account";
+import { createWorkspaceAccount, verifyWorkspaceAccount } from "@/lib/hr/workspace-account";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -118,10 +118,17 @@ export async function POST(
     );
   }
   if (taken.has(workEmail) && workEmail !== currentWorkEmail) {
-    return NextResponse.json(
-      { error: `${workEmail} is already in use. Pick another address.` },
-      { status: 409 },
-    );
+    // The roster says it's taken — but a prior failed attempt can leave an
+    // address claimed with no real Google Workspace account behind it. Ask the
+    // verify webhook: only block when an account actually exists (or we can't
+    // tell). A definite "missing" means the claim is stale, so allow reclaiming.
+    const v = await verifyWorkspaceAccount(workEmail);
+    if (v.state !== "missing") {
+      return NextResponse.json(
+        { error: `${workEmail} is already in use. Pick another address.` },
+        { status: 409 },
+      );
+    }
   }
 
   const toRateStr = (v: string | number | null | undefined): string | null => {
@@ -186,27 +193,16 @@ export async function POST(
     pending = created;
   }
 
-  // (Re-)link the submission so it always reflects the latest work_email.
-  const { error: linkErr } = await linkOnboardingToPendingHire(row.id, {
-    work_email: workEmail,
-    pending_employee_id: pending!.id,
-  });
-  if (linkErr) {
-    return NextResponse.json(
-      {
-        error: `Pending hire ${isUpdate ? "updated" : "created"}, but linking the submission failed: ${linkErr}`,
-        pending_employee_id: pending!.id,
-        work_email: workEmail,
-      },
-      { status: 500 },
-    );
-  }
-
   // Best-effort: fire the combined onboarding webhook — creates the Workspace
   // account, invites to Hubstaff, sends the Roboform + Hubstaff overview emails.
   // A failure here does NOT roll back the staged hire — report it so HR can
   // retry or handle manually. pay_rate defaults to 0 (prevents the "USD" bug
   // in Hubstaff; the real rate is stored on the pending row for payroll).
+  //
+  // The webhook fires BEFORE the link write so its outcome can be persisted in
+  // the same UPDATE. That's what lets the Submitted tab tell a CONFIRMED
+  // designated work email (200) apart from a minted-but-failed one. A retry
+  // that finally succeeds re-runs this and flips the row to confirmed.
   const { first, last } = splitFullName(name);
   const payRate =
     regularRateStr != null && Number.isFinite(Number(regularRateStr))
@@ -220,6 +216,24 @@ export async function POST(
     projectNames,
     payRate,
   });
+
+  // (Re-)link the submission so it always reflects the latest work_email, and
+  // stamp the webhook outcome alongside it.
+  const { error: linkErr } = await linkOnboardingToPendingHire(row.id, {
+    work_email: workEmail,
+    pending_employee_id: pending!.id,
+    workspace: { ok: workspace.ok, status: workspace.status, error: workspace.error },
+  });
+  if (linkErr) {
+    return NextResponse.json(
+      {
+        error: `Pending hire ${isUpdate ? "updated" : "created"}, but linking the submission failed: ${linkErr}`,
+        pending_employee_id: pending!.id,
+        work_email: workEmail,
+      },
+      { status: 500 },
+    );
+  }
 
   void insertAuditLog({
     user_name: authz.sessionEmail,

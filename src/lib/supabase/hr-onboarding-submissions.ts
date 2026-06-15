@@ -56,8 +56,34 @@ export type HrOnboardingSubmissionRow = {
   /** FK to the hr_pending_employees row spun up at conversion; null until then. */
   pending_employee_id: number | null;
 
+  /**
+   * Outcome of the create-workspace-account webhook fired when the work email
+   * was set. `true` = webhook returned 2xx (the address is a CONFIRMED
+   * designated work email); `false` = it failed / never fired (the address was
+   * still minted but the account/Hubstaff invite was NOT provisioned);
+   * `null` = never attempted, or a legacy row from before this was tracked.
+   */
+  workspace_account_ok: boolean | null;
+  /** Raw HTTP status the webhook returned (for debugging). */
+  workspace_account_status: number | null;
+  /** Friendly error message when the webhook failed. */
+  workspace_account_error: string | null;
+  /** When the webhook was last attempted. */
+  workspace_account_at: string | null;
+
   archived_at: string | null;
   notes: string | null;
+};
+
+/**
+ * Outcome of the create-workspace-account webhook, persisted onto the
+ * submission so the Submitted tab can distinguish a confirmed designated work
+ * email (200) from a minted-but-failed one.
+ */
+export type WorkspaceAccountOutcome = {
+  ok: boolean;
+  status?: number | null;
+  error?: string | null;
 };
 
 /** Fields the public form route accepts on submit. Token comes from the URL. */
@@ -288,18 +314,55 @@ export async function rotateHrOnboardingToken(
 /**
  * Stamp a submitted form with the minted work email and the staged-hire id it
  * was converted into. Called by the set-work-email route after the matching
- * `hr_pending_employees` row is created.
+ * `hr_pending_employees` row is created AND the workspace-account webhook has
+ * fired, so the webhook outcome is persisted in the same write. Persisting the
+ * outcome is what lets the Submitted tab show a "Designated Work Email" only
+ * when the webhook returned a 200 (vs a minted-but-failed address).
  */
 export async function linkOnboardingToPendingHire(
   id: string,
-  args: { work_email: string; pending_employee_id: number },
+  args: {
+    work_email: string;
+    pending_employee_id: number;
+    workspace?: WorkspaceAccountOutcome | null;
+  },
+): Promise<{ error: string | null }> {
+  const sb = client();
+  const update: Record<string, unknown> = {
+    work_email: args.work_email.trim().toLowerCase() || null,
+    pending_employee_id: args.pending_employee_id,
+  };
+  // Only stamp the webhook outcome when we actually attempted it. Leaving these
+  // untouched (when `workspace` is omitted) preserves a prior successful result.
+  if (args.workspace) {
+    update.workspace_account_ok = args.workspace.ok;
+    update.workspace_account_status = args.workspace.status ?? null;
+    update.workspace_account_error = args.workspace.ok
+      ? null
+      : args.workspace.error ?? null;
+    update.workspace_account_at = new Date().toISOString();
+  }
+  const { error } = await sb.from(TABLE).update(update).eq("id", id);
+  return { error: error?.message ?? null };
+}
+
+/**
+ * Overwrite just the workspace-account outcome columns on a submission. Used by
+ * the read-only verify flow (and any re-check) to flip a row to confirmed /
+ * failed without touching the minted work_email or the pending-hire link.
+ */
+export async function setOnboardingWorkspaceOutcome(
+  id: string,
+  outcome: WorkspaceAccountOutcome,
 ): Promise<{ error: string | null }> {
   const sb = client();
   const { error } = await sb
     .from(TABLE)
     .update({
-      work_email: args.work_email.trim().toLowerCase() || null,
-      pending_employee_id: args.pending_employee_id,
+      workspace_account_ok: outcome.ok,
+      workspace_account_status: outcome.status ?? null,
+      workspace_account_error: outcome.ok ? null : outcome.error ?? null,
+      workspace_account_at: new Date().toISOString(),
     })
     .eq("id", id);
   return { error: error?.message ?? null };

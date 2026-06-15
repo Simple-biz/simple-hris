@@ -1,0 +1,71 @@
+{
+  "_comment": "Importable n8n nodes for the read-only verify-workspace-account webhook used by the HRIS 'Verify' button. Paste into the HRIS Onboarding Automation workflow (n8n: select canvas > Ctrl/Cmd+V, or 'Import from clipboard'). It looks up the Google Workspace user by work_email via the Directory API and responds { exists: true|false }. It NEVER creates anything. Make sure the workflow is ACTIVE so the production webhook registers.",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "verify-workspace-account",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "verify-webhook-0001",
+      "name": "Verify Workspace Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-4768, 700]
+    },
+    {
+      "parameters": {
+        "url": "=https://admin.googleapis.com/admin/directory/v1/users/{{ encodeURIComponent(($json.body && $json.body.work_email) || '') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gSuiteAdminOAuth2Api",
+        "options": {}
+      },
+      "id": "verify-lookup-0002",
+      "name": "Lookup Workspace User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-4544, 700],
+      "continueOnFail": true,
+      "credentials": {
+        "gSuiteAdminOAuth2Api": {
+          "id": "SQLxaSBSyRgH41TP",
+          "name": "Google Workspace Admin account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Translate the Directory lookup into { exists: bool }.\n// 200 with an id/primaryEmail => the account exists.\n// 404 / error (continueOnFail) => it does not.\nconst webhook = $('Verify Workspace Webhook').first().json;\nconst body = webhook.body || webhook.query || {};\nconst workEmail = String(body.work_email || '').trim().toLowerCase();\n\nconst r = $json || {};\nconst exists = !r.error && !!(r.id || r.primaryEmail);\n\nreturn [{\n  json: {\n    ok: true,\n    exists,\n    work_email: workEmail,\n    primaryEmail: r.primaryEmail || null,\n    suspended: typeof r.suspended === 'boolean' ? r.suspended : null\n  }\n}];"
+      },
+      "id": "verify-build-0003",
+      "name": "Build Verify Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-4320, 700]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "verify-respond-0004",
+      "name": "Respond Verify",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [-4096, 700]
+    }
+  ],
+  "connections": {
+    "Verify Workspace Webhook": {
+      "main": [[{ "node": "Lookup Workspace User", "type": "main", "index": 0 }]]
+    },
+    "Lookup Workspace User": {
+      "main": [[{ "node": "Build Verify Response", "type": "main", "index": 0 }]]
+    },
+    "Build Verify Response": {
+      "main": [[{ "node": "Respond Verify", "type": "main", "index": 0 }]]
+    }
+  }
+}

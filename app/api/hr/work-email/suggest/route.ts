@@ -6,10 +6,17 @@ import {
 import {
   splitFullName,
   suggestWorkEmail,
+  workEmailCandidates,
   WORK_EMAIL_DOMAIN,
   type WorkEmailSuggestion,
 } from "@/lib/hr/work-email";
 import { loadTakenWorkEmails } from "@/lib/hr/work-email-server";
+import { verifyWorkspaceAccount } from "@/lib/hr/workspace-account";
+
+// Cap on how many roster-taken candidates we'll verify against Google Workspace
+// per request, so a name whose ideal addresses are genuinely in use can't fan
+// out into a burst of Directory lookups.
+const MAX_VERIFY_LOOKUPS = 4;
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -46,6 +53,11 @@ export async function POST(req: Request) {
     last?: string;
     candidate?: string;
     also_taken?: string[];
+    // When true, an address that's "taken" only by the roster is double-checked
+    // against Google Workspace (verify webhook); if no real account exists, it's
+    // treated as available again. Used by the single Set/Retry dialog so a stale
+    // prior claim doesn't permanently burn an otherwise-free address.
+    verify?: boolean;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -82,18 +94,55 @@ export async function POST(req: Request) {
     last = s.last;
   }
 
+  const verifyEnabled = body.verify === true;
+
   let suggestion: WorkEmailSuggestion | null = null;
   if (first || last) {
-    suggestion = suggestWorkEmail(first, last, taken);
+    if (verifyEnabled) {
+      // Walk the preferred candidates in order. Take the first that's free in
+      // the roster; for an earlier (more ideal) candidate that's only
+      // roster-taken, ask Google Workspace — if there's no real account, the
+      // claim is stale and we reclaim that address. Falls back to the normal
+      // numeric-suffix suggester if everything is genuinely in use.
+      let lookups = 0;
+      for (const cand of workEmailCandidates(first, last)) {
+        if (!taken.has(cand.email)) {
+          suggestion = cand;
+          break;
+        }
+        if (lookups >= MAX_VERIFY_LOOKUPS) continue;
+        lookups += 1;
+        const v = await verifyWorkspaceAccount(cand.email);
+        if (v.state === "missing") {
+          suggestion = cand; // taken by a stale claim only — reclaim it
+          break;
+        }
+      }
+      if (!suggestion) suggestion = suggestWorkEmail(first, last, taken);
+    } else {
+      suggestion = suggestWorkEmail(first, last, taken);
+    }
   }
 
-  let candidate: { email: string; available: boolean } | null = null;
+  let candidate: { email: string; available: boolean; verifiedFree?: boolean } | null = null;
   const raw = body.candidate?.trim().toLowerCase();
   if (raw) {
     // Accept either a bare local part or a full address; normalize to a full
     // address on the company domain for the availability lookup.
     const email = raw.includes("@") ? raw : `${raw}@${WORK_EMAIL_DOMAIN}`;
-    candidate = { email, available: !taken.has(email) };
+    let available = !taken.has(email);
+    let verifiedFree = false;
+    // Roster says taken — but if it's a stale claim with no real Workspace
+    // account, free it up. Only flips on a definite "missing" (never on a
+    // webhook error), so a real account or an outage keeps it locked.
+    if (!available && verifyEnabled && email.endsWith(`@${WORK_EMAIL_DOMAIN}`)) {
+      const v = await verifyWorkspaceAccount(email);
+      if (v.state === "missing") {
+        available = true;
+        verifiedFree = true;
+      }
+    }
+    candidate = { email, available, verifiedFree };
   }
 
   return NextResponse.json({ suggestion, candidate });
