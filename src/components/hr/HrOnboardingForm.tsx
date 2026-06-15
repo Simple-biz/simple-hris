@@ -716,6 +716,14 @@ export default function HrOnboardingForm() {
   const [bulkWorkEmail, setBulkWorkEmail] = useState<SubmissionRow[] | null>(null);
   // Bulk verify: drives a progress + results modal for multi-selected rows.
   const [bulkVerify, setBulkVerify] = useState<BulkVerifyState | null>(null);
+  // License info display
+  const [licenseInfo, setLicenseInfo] = useState<{
+    available_licenses: number | null;
+    total_licenses: number | null;
+    last_updated: string | null;
+    note?: string;
+    error?: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -735,6 +743,13 @@ export default function HrOnboardingForm() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    fetch('/api/hr/workspace-license-info', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => setLicenseInfo(j))
+      .catch(() => setLicenseInfo({ available_licenses: null, total_licenses: null, last_updated: null, error: 'Could not fetch license info' }));
+  }, []);
 
   const counts = useMemo(() => {
     const c = { pending: 0, submitted: 0, archived: 0 };
@@ -1107,6 +1122,42 @@ export default function HrOnboardingForm() {
             </Button>
           </div>
         </div>
+
+        {licenseInfo && (
+          <div className={'mt-4 rounded-lg border px-3 py-2.5 text-xs ' + (licenseInfo.available_licenses === null ? 'border-amber-200/60 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/20' : licenseInfo.available_licenses === 0 ? 'border-red-200/60 bg-red-50/60 dark:border-red-900/40 dark:bg-red-950/20' : licenseInfo.available_licenses <= 2 ? 'border-orange-200/60 bg-orange-50/60 dark:border-orange-900/40 dark:bg-orange-950/20' : 'border-emerald-200/60 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20')}>
+            <div className="mb-2 flex items-center gap-1.5 font-medium">
+              {licenseInfo.available_licenses === null && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />}
+              {licenseInfo.available_licenses === 0 && <XCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />}
+              {licenseInfo.available_licenses && licenseInfo.available_licenses <= 2 && <AlertTriangle className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />}
+              {licenseInfo.available_licenses && licenseInfo.available_licenses > 2 && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />}
+              <span className={licenseInfo.available_licenses === null ? 'text-amber-900 dark:text-amber-100' : licenseInfo.available_licenses === 0 ? 'text-red-900 dark:text-red-100' : licenseInfo.available_licenses <= 2 ? 'text-orange-900 dark:text-orange-100' : 'text-emerald-900 dark:text-emerald-100'}>
+                {licenseInfo.available_licenses === null ? 'License info unavailable' : licenseInfo.available_licenses === 0 ? 'No licenses available' : licenseInfo.available_licenses <= 2 ? 'Low on licenses' : 'Licenses available'}
+              </span>
+            </div>
+            {licenseInfo.available_licenses !== null && licenseInfo.total_licenses && (
+              <div className="text-zinc-600 dark:text-zinc-400">
+                <div className="mb-2 flex items-baseline gap-2">
+                  <strong className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{licenseInfo.available_licenses}</strong>
+                  <span className="text-[10px]">of {licenseInfo.total_licenses} available</span>
+                </div>
+                <div className="mb-1.5 h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
+                  <div
+                    className={licenseInfo.available_licenses === 0 ? 'h-full bg-red-500 dark:bg-red-600' : licenseInfo.available_licenses <= 2 ? 'h-full bg-orange-500 dark:bg-orange-600' : 'h-full bg-emerald-500 dark:bg-emerald-600'}
+                    style={{ width: ((licenseInfo.total_licenses - licenseInfo.available_licenses) / licenseInfo.total_licenses) * 100 + '%' }}
+                  />
+                </div>
+                <div className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                  {licenseInfo.total_licenses - licenseInfo.available_licenses} used, {licenseInfo.available_licenses} free
+                </div>
+              </div>
+            )}
+            {licenseInfo.available_licenses === null && (
+              <div className="text-[10px] text-zinc-600 dark:text-zinc-400">
+                {licenseInfo.note || licenseInfo.error || 'Check Google Workspace Admin console'}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Filter + search */}
@@ -2654,6 +2705,32 @@ function BulkSetWorkEmailDialog({
   const [groupProgress, setGroupProgress] = useState<
     Record<string, { done: number; total: number; phase?: 'set' | 'verify' } | null>
   >({});
+  const [licenseInfo, setLicenseInfo] = useState<{
+    available_licenses: number | null;
+    total_licenses: number | null;
+    last_updated: string | null;
+    note?: string;
+    error?: string;
+  } | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Pin the modal to the top when it opens. A single scrollTop reset isn't
+  // enough: Radix auto-focuses an element on open (often a button near the
+  // bottom) which scrolls it into view, and async content (license info,
+  // grouped rows) lays out after the effect runs. Reset across two animation
+  // frames so we win after focus + layout settle.
+  useEffect(() => {
+    if (!open) return;
+    const reset = () => {
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+    };
+    reset();
+    const r1 = requestAnimationFrame(() => {
+      reset();
+      requestAnimationFrame(reset);
+    });
+    return () => cancelAnimationFrame(r1);
+  }, [open]);
 
   // Group rows by submission department; blank departments fall into a single
   // bucket that forces HR to pick one before that group can be set.
@@ -2718,6 +2795,10 @@ function BulkSetWorkEmailDialog({
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not load setup data'))
       .finally(() => setMetaLoading(false));
     void loadDeptRates();
+    fetch('/api/hr/workspace-license-info', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => setLicenseInfo(j))
+      .catch(() => setLicenseInfo({ available_licenses: null, total_licenses: null, last_updated: null, error: 'Could not fetch license info' }));
   }, [open, loadDeptRates]);
 
   // Live: flip the compensation checkmarks when Accounting saves a pay structure.
@@ -2975,21 +3056,72 @@ function BulkSetWorkEmailDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
+      <DialogContent
+        ref={scrollContainerRef}
+        // Focus the popup root (top) instead of letting Base UI focus the first
+        // focusable control, which can be below the fold and scroll the modal
+        // down on open. The rAF reset in the open effect is the backstop.
+        initialFocus={scrollContainerRef}
+        className="max-h-[92vh] overflow-y-auto sm:max-w-3xl"
+      >
         <div className="-mx-6 -mt-6 mb-4 overflow-hidden rounded-t-lg border-b border-emerald-100/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 px-6 py-5 dark:border-emerald-950/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25">
-                <Mail className="h-4 w-4" />
-              </span>
-              Set work emails
-            </DialogTitle>
-            <p className="mt-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-              {totalRows} submitted {totalRows === 1 ? 'hire' : 'hires'}, grouped by department.
-              Each address is auto-suggested and unique - review them, then set each department on
-              its own.
-            </p>
-          </DialogHeader>
+          <div className="flex items-start gap-4">
+            <div className="flex-1 min-w-0">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25">
+                    <Mail className="h-4 w-4" />
+                  </span>
+                  Set work emails
+                </DialogTitle>
+                <p className="mt-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                  {totalRows} submitted {totalRows === 1 ? 'hire' : 'hires'}, grouped by department.
+                  Each address is auto-suggested and unique - review them, then set each department on
+                  its own.
+                </p>
+              </DialogHeader>
+            </div>
+            {licenseInfo && (
+              <div className={'shrink-0 rounded-lg border px-3 py-2.5 text-xs w-56 ' + (licenseInfo.available_licenses === null ? 'border-amber-200/60 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/20' : licenseInfo.available_licenses === 0 ? 'border-red-200/60 bg-red-50/60 dark:border-red-900/40 dark:bg-red-950/20' : licenseInfo.available_licenses <= 2 ? 'border-orange-200/60 bg-orange-50/60 dark:border-orange-900/40 dark:bg-orange-950/20' : 'border-emerald-200/60 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20')}>
+                <div className="mb-2 flex items-center gap-1.5 font-medium text-xs">
+                  {licenseInfo.available_licenses === null && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />}
+                  {licenseInfo.available_licenses === 0 && <XCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />}
+                  {licenseInfo.available_licenses && licenseInfo.available_licenses <= 2 && <AlertTriangle className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />}
+                  {licenseInfo.available_licenses && licenseInfo.available_licenses > 2 && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />}
+                  <span className={licenseInfo.available_licenses === null ? 'text-amber-900 dark:text-amber-100' : licenseInfo.available_licenses === 0 ? 'text-red-900 dark:text-red-100' : licenseInfo.available_licenses <= 2 ? 'text-orange-900 dark:text-orange-100' : 'text-emerald-900 dark:text-emerald-100'}>
+                    Licenses
+                  </span>
+                </div>
+                {licenseInfo.available_licenses !== null && licenseInfo.total_licenses && (
+                  <div>
+                    <div className="mb-2">
+                      <div className="flex items-baseline gap-1">
+                        <strong className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{licenseInfo.available_licenses}</strong>
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">/ {licenseInfo.total_licenses}</span>
+                      </div>
+                      <div className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-500">
+                        {licenseInfo.total_licenses - licenseInfo.available_licenses} assigned
+                      </div>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-300 dark:bg-zinc-600">
+                      <div
+                        className={licenseInfo.available_licenses === 0 ? 'h-full bg-red-500 dark:bg-red-600' : licenseInfo.available_licenses <= 2 ? 'h-full bg-orange-500 dark:bg-orange-600' : 'h-full bg-emerald-500 dark:bg-emerald-600'}
+                        style={{ width: ((licenseInfo.total_licenses - licenseInfo.available_licenses) / licenseInfo.total_licenses) * 100 + '%' }}
+                      />
+                    </div>
+                  </div>
+                )}
+                {licenseInfo.available_licenses === null && (
+                  <div className="text-[9px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                    <div className="mb-1.5 font-medium text-zinc-900 dark:text-zinc-100">Not configured</div>
+                    <div className="text-[8px] text-zinc-500 dark:text-zinc-500">
+                      See "How do I configure it?" in onboarding
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {suggesting && (

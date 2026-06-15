@@ -8,6 +8,7 @@ import AdminRoles from '@/components/admin/AdminRoles';
 import AdminEmployees from '@/components/admin/AdminEmployees';
 import AdminWebhooks from '@/components/admin/AdminWebhooks';
 import AdminCsvImports from '@/components/admin/AdminCsvImports';
+import AdminWorkspace from '@/components/admin/AdminWorkspace';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
 import SystemDiagnostics from '@/components/SystemDiagnostics';
 import { Construction, Menu } from 'lucide-react';
@@ -143,6 +144,12 @@ function AdminPageInner() {
         return (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <AdminCsvImports />
+          </div>
+        );
+      case 'workspace':
+        return (
+          <div className="flex min-h-0 flex-1 flex-col overflow-auto px-6">
+            <AdminWorkspace />
           </div>
         );
       case 'audit':

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence, useSpring, useTransform } from 'motion/react';
 import { toast } from 'sonner';
 import {
+  AlertTriangle,
   CheckCircle2,
   ClipboardList,
   Loader2,
@@ -1754,9 +1755,33 @@ function SetWorkEmailDialog({
   busy: boolean;
 }) {
   const [val, setVal] = useState('');
+  const [licenseInfo, setLicenseInfo] = useState<{
+    available_licenses: number | null;
+    total_licenses: number | null;
+    last_updated: string | null;
+    note?: string;
+    error?: string;
+  } | null>(null);
+
   useEffect(() => {
     setVal(row?.work_email ?? '');
   }, [row]);
+
+  useEffect(() => {
+    if (!row) return;
+    fetch('/api/hr/workspace-license-info', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => setLicenseInfo(j))
+      .catch(() => setLicenseInfo({ available_licenses: null, total_licenses: null, last_updated: null, error: 'Could not fetch license info' }));
+  }, [row]);
+
+  const licenseColor = licenseInfo === null ? 'border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/40' : licenseInfo.available_licenses === null
+    ? 'border-amber-200/60 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/20'
+    : licenseInfo.available_licenses === 0
+      ? 'border-red-200/60 bg-red-50/60 dark:border-red-900/40 dark:bg-red-950/20'
+      : licenseInfo.available_licenses <= 2
+        ? 'border-orange-200/60 bg-orange-50/60 dark:border-orange-900/40 dark:bg-orange-950/20'
+        : 'border-emerald-200/60 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20';
 
   return (
     <Dialog open={!!row} onOpenChange={(o) => !o && onClose()}>
@@ -1764,10 +1789,83 @@ function SetWorkEmailDialog({
         <DialogHeader>
           <DialogTitle className="text-base">Set work email</DialogTitle>
           <DialogDescription className="text-xs">
-            Once Payroll mints {row?.name}'s @simple.biz address, paste it here.
-            The row will flip to “Ready to promote”.
+            Once Payroll mints the email, paste it here. Check your available licenses below before assigning.
           </DialogDescription>
         </DialogHeader>
+
+        <div className={'rounded-lg border px-3 py-2.5 text-xs ' + licenseColor}>
+          {!licenseInfo && (
+            <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span>Loading license info...</span>
+            </div>
+          )}
+          {licenseInfo && (
+            <>
+              <div className="mb-1 flex items-center gap-1.5 font-medium">
+                {licenseInfo.available_licenses === null && (
+                  <>
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                    <span className="text-amber-900 dark:text-amber-100">License info unavailable</span>
+                  </>
+                )}
+                {licenseInfo.available_licenses === 0 && (
+                  <>
+                    <XCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
+                    <span className="text-red-900 dark:text-red-100">No licenses available</span>
+                  </>
+                )}
+                {licenseInfo.available_licenses && licenseInfo.available_licenses <= 2 && (
+                  <>
+                    <AlertTriangle className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
+                    <span className="text-orange-900 dark:text-orange-100">Low on licenses</span>
+                  </>
+                )}
+                {licenseInfo.available_licenses && licenseInfo.available_licenses > 2 && (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span className="text-emerald-900 dark:text-emerald-100">Licenses available</span>
+                  </>
+                )}
+              </div>
+              {licenseInfo.available_licenses !== null && licenseInfo.total_licenses && (
+                <div>
+                  <div className="mb-2">
+                    <div className="flex items-baseline gap-1.5">
+                      <strong className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">
+                        {licenseInfo.available_licenses}
+                      </strong>
+                      <span className="text-sm text-zinc-600 dark:text-zinc-400">/ {licenseInfo.total_licenses}</span>
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
+                      {licenseInfo.total_licenses - licenseInfo.available_licenses} assigned
+                    </div>
+                  </div>
+                  <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-zinc-300 dark:bg-zinc-600">
+                    <div
+                      className={licenseInfo.available_licenses === 0 ? 'h-full bg-red-500 dark:bg-red-600' : licenseInfo.available_licenses <= 2 ? 'h-full bg-orange-500 dark:bg-orange-600' : 'h-full bg-emerald-500 dark:bg-emerald-600'}
+                      style={{ width: ((licenseInfo.total_licenses - licenseInfo.available_licenses) / licenseInfo.total_licenses) * 100 + '%' }}
+                    />
+                  </div>
+                  {licenseInfo.last_updated && (
+                    <div className="text-[9px] text-zinc-400 dark:text-zinc-500">
+                      Updated: {new Date(licenseInfo.last_updated).toLocaleDateString()}
+                    </div>
+                  )}
+                </div>
+              )}
+              {licenseInfo.available_licenses === null && (
+                <div className="text-[9px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+                  <div className="mb-1 font-medium text-zinc-900 dark:text-zinc-100">Not configured</div>
+                  <div className="text-[8px] text-zinc-500 dark:text-zinc-500">
+                    See "How do I configure it?" for setup instructions
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
         <div className="flex flex-col gap-1.5">
           <Label className="text-xs">Work email</Label>
           <Input

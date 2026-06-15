@@ -60,6 +60,7 @@ const systemNav: Array<{
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'roles', label: 'Roles & permissions', icon: UserCog, badge: 'count' },
   { id: 'employees', label: 'Employees', icon: Users, badge: 'count' },
+  { id: 'workspace', label: 'Google Workspace', icon: Settings },
   { id: 'csv-imports', label: 'CSV imports', icon: FileUp },
   { id: 'webhooks', label: 'Webhooks', icon: Webhook, badge: 'alert' },
   { id: 'notifications', label: 'Notifications', icon: Bell },
