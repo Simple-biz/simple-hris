@@ -15,6 +15,8 @@ import { loadTakenWorkEmails } from "@/lib/hr/work-email-server";
 import { WORK_EMAIL_DOMAIN, splitFullName } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { createWorkspaceAccount, verifyWorkspaceAccount } from "@/lib/hr/workspace-account";
+import { listPayStructures } from "@/lib/supabase/pay-structures-db";
+import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -138,8 +140,34 @@ export async function POST(
     const n = Number(s);
     return Number.isFinite(n) && n >= 0 ? String(n) : null;
   };
-  const regularRateStr = toRateStr(body.regular_rate);
-  const otRateStr = toRateStr(body.ot_rate);
+
+  // Resolve the AUTHORITATIVE compensation from Accounting's Payment Catalog
+  // (department-scoped pay structure). HR never sets/sees the figures, so the
+  // catalog is the source of truth — we look it up server-side and prefer it
+  // over anything the client sent. These flow to the pending hire's payroll
+  // rates AND to the webhook so Hubstaff gets a real Reg/OT rate (it rejects 0).
+  let catalogRegular: string | null = null;
+  let catalogOt: string | null = null;
+  try {
+    const deptLc = department.toLowerCase();
+    const deptKey = DEPARTMENTS.find((d) => d.name.trim().toLowerCase() === deptLc)?.key ?? null;
+    const { structures } = await listPayStructures();
+    const match = structures.find((s) => {
+      if (s.scope !== "department") return false;
+      if (deptKey && s.departmentKey === deptKey) return true;
+      const name = DEPARTMENTS.find((d) => d.key === s.departmentKey)?.name ?? s.departmentKey;
+      return name.trim().toLowerCase() === deptLc;
+    });
+    if (match) {
+      catalogRegular = String(match.regularRate);
+      catalogOt = match.otRate != null ? String(match.otRate) : null;
+    }
+  } catch {
+    // Catalog unreachable — fall back to whatever the client sent (legacy).
+  }
+
+  const regularRateStr = toRateStr(catalogRegular ?? body.regular_rate);
+  const otRateStr = toRateStr(catalogOt ?? body.ot_rate);
 
   const projectNames = Array.isArray(body.project_names)
     ? body.project_names.map((p) => String(p).trim()).filter(Boolean)
@@ -208,6 +236,8 @@ export async function POST(
     regularRateStr != null && Number.isFinite(Number(regularRateStr))
       ? Number(regularRateStr)
       : 0;
+  const otPayRate =
+    otRateStr != null && Number.isFinite(Number(otRateStr)) ? Number(otRateStr) : null;
   const workspace = await createWorkspaceAccount({
     firstName: first,
     lastName: last,
@@ -215,6 +245,7 @@ export async function POST(
     personalEmail,
     projectNames,
     payRate,
+    otRate: otPayRate,
   });
 
   // Resolve the outcome we'll persist. A create that reports failure does NOT

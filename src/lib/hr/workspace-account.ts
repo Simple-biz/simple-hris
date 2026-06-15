@@ -55,8 +55,12 @@ export type CreateWorkspaceAccountInput = {
   personalEmail: string;
   /** Hubstaff project names the hire will be assigned to. */
   projectNames?: string[];
-  /** Hubstaff pay rate. Defaults to 0 (prevents the "USD" display bug). */
+  /** Regular pay rate (from the Payment Catalog). Hubstaff requires >= 0.01, so
+   *  it's floored to a placeholder when unset; the real rate lives in payroll. */
   payRate?: number | null;
+  /** OT pay rate (from the Payment Catalog). Passed through to the webhook for
+   *  Hubstaff/payroll; null when Accounting hasn't set one. */
+  otRate?: number | null;
   /** Hubstaff role. Defaults to "project_user". */
   role?: string;
   /** Whether the hire is trackable in Hubstaff. Defaults to true. */
@@ -98,10 +102,18 @@ export async function createWorkspaceAccount(
     typeof input.payRate === "number" && Number.isFinite(input.payRate) && input.payRate > 0
       ? input.payRate
       : HUBSTAFF_MIN_PAY_RATE;
+  // OT rate is informational for the workflow/payroll — pass the real catalog
+  // value (or null). Hubstaff's invite only validates pay_rate, not OT.
+  const otRate =
+    typeof input.otRate === "number" && Number.isFinite(input.otRate) && input.otRate >= 0
+      ? input.otRate
+      : null;
 
   // n8n's bulk-capable Workspace provisioning workflow reads snake_case
   // identity fields (first_name / last_name / work_email / personal_email).
   // The internal TS input stays camelCase; only the wire payload is snake_case.
+  // pay_rate = the regular rate (floored for Hubstaff); regular_rate + ot_rate
+  // carry the actual Payment Catalog figures set by Accounting.
   const payload: Record<string, unknown> = {
     first_name: input.firstName.trim(),
     last_name: input.lastName.trim(),
@@ -111,6 +123,8 @@ export async function createWorkspaceAccount(
     project_names: projectNames,
     role: input.role ?? DEFAULT_ROLE,
     pay_rate: rawRate,
+    regular_rate: rawRate,
+    ot_rate: otRate,
     trackable: input.trackable ?? true,
   };
 
