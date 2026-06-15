@@ -39,6 +39,20 @@ export const CURRENCY_SYMBOL: Record<PayCurrency, string> = {
   USD: '$',
 };
 
+/** OT pay defaults to 1.5x the regular rate; a "custom" OT rate may override it. */
+export const OT_MULTIPLIER = 1.5;
+
+/** Default OT rate derived from the regular rate (1.5x), rounded to cents. */
+export function defaultOtRate(regularRate: number): number {
+  return Math.round(regularRate * OT_MULTIPLIER * 100) / 100;
+}
+
+/** True when `otRate` is effectively the auto 1.5x value (within a cent). */
+export function isAutoOtRate(regularRate: number, otRate: number | null | undefined): boolean {
+  if (otRate == null || !Number.isFinite(otRate)) return false;
+  return Math.abs(otRate - defaultOtRate(regularRate)) <= 0.005;
+}
+
 /** Format a rate in its currency, e.g. "$35.50/hr". */
 export function formatRate(amount: number | null | undefined, currency: PayCurrency): string {
   if (amount == null || !Number.isFinite(amount)) return '-';

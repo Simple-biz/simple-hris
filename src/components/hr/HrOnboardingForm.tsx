@@ -744,12 +744,18 @@ export default function HrOnboardingForm() {
     void load();
   }, [load]);
 
-  useEffect(() => {
+  // Re-pull the license meter — on mount and after a set consumes seats, so the
+  // "available" count reflects newly-provisioned accounts.
+  const refreshLicenseInfo = useCallback(() => {
     fetch('/api/hr/workspace-license-info', { cache: 'no-store' })
       .then((r) => r.json())
       .then((j) => setLicenseInfo(j))
       .catch(() => setLicenseInfo({ available_licenses: null, total_licenses: null, last_updated: null, error: 'Could not fetch license info' }));
   }, []);
+
+  useEffect(() => {
+    refreshLicenseInfo();
+  }, [refreshLicenseInfo]);
 
   const counts = useMemo(() => {
     const c = { pending: 0, submitted: 0, archived: 0 };
@@ -1636,6 +1642,7 @@ export default function HrOnboardingForm() {
         onConverted={() => {
           setWorkEmailFor(null);
           void load();
+          refreshLicenseInfo();
         }}
       />
 
@@ -2719,6 +2726,22 @@ function BulkSetWorkEmailDialog({
   } | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // Re-pull the license meter — called on open and after a set consumes seats,
+  // so the "available" count reflects the newly-provisioned accounts.
+  const refreshLicenseInfo = useCallback(() => {
+    fetch('/api/hr/workspace-license-info', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => setLicenseInfo(j))
+      .catch(() =>
+        setLicenseInfo({
+          available_licenses: null,
+          total_licenses: null,
+          last_updated: null,
+          error: 'Could not fetch license info',
+        }),
+      );
+  }, []);
+
   // Pin the modal to the top when it opens. A single scrollTop reset isn't
   // enough: Radix auto-focuses an element on open (often a button near the
   // bottom) which scrolls it into view, and async content (license info,
@@ -2800,11 +2823,8 @@ function BulkSetWorkEmailDialog({
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not load setup data'))
       .finally(() => setMetaLoading(false));
     void loadDeptRates();
-    fetch('/api/hr/workspace-license-info', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j) => setLicenseInfo(j))
-      .catch(() => setLicenseInfo({ available_licenses: null, total_licenses: null, last_updated: null, error: 'Could not fetch license info' }));
-  }, [open, loadDeptRates]);
+    refreshLicenseInfo();
+  }, [open, loadDeptRates, refreshLicenseInfo]);
 
   // Live: flip the compensation checkmarks when Accounting saves a pay structure.
   useEffect(() => {
@@ -3033,6 +3053,8 @@ function BulkSetWorkEmailDialog({
     setGroupBusy((p) => ({ ...p, [groupKey]: false }));
     setGroupProgress((p) => ({ ...p, [groupKey]: null }));
     if (succeeded.length > 0 || verifyTargets.length > 0) reload();
+    // Seats just got consumed — refresh the license meter so "available" drops.
+    if (succeeded.length > 0) refreshLicenseInfo();
 
     // ── Toasts ──
     const label = department || 'department';

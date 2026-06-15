@@ -65,6 +65,9 @@ import {
   newPayId,
   formatRate,
   CURRENCY_SYMBOL,
+  OT_MULTIPLIER,
+  defaultOtRate,
+  isAutoOtRate,
   type PayStructure,
   type PayCurrency,
 } from '@/lib/payment-catalog/pay-structure';
@@ -684,7 +687,48 @@ function CurrencyToggle({
   );
 }
 
-/** Shared Regular + OT + currency form used by both dept and individual rows. */
+/** Animated "1.5x regular" / "Custom" segmented toggle for the OT rate. */
+function OtModeToggle({
+  value,
+  onChange,
+  idSuffix,
+}: {
+  value: 'auto' | 'custom';
+  onChange: (m: 'auto' | 'custom') => void;
+  idSuffix: string;
+}) {
+  const opts: { key: 'auto' | 'custom'; label: string }[] = [
+    { key: 'auto', label: `${OT_MULTIPLIER}x regular` },
+    { key: 'custom', label: 'Custom' },
+  ];
+  return (
+    <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
+      {opts.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          onClick={() => onChange(o.key)}
+          className={`relative rounded px-2.5 py-1 text-xs font-semibold transition-colors ${
+            value === o.key ? 'text-white' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+          }`}
+        >
+          {value === o.key && (
+            <motion.span
+              layoutId={`otModePill-${idSuffix}`}
+              className="absolute inset-0 rounded bg-orange-500"
+              transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+            />
+          )}
+          <span className="relative z-10">{o.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Shared Regular + OT + currency form used by both dept and individual rows.
+ *  OT defaults to 1.5x the regular rate (auto, live-updating); "Custom" mode
+ *  unlocks the field for a manual override. */
 function PayRateEditor({
   initial,
   onSave,
@@ -697,16 +741,30 @@ function PayRateEditor({
   saveLabel?: string;
 }) {
   const [regular, setRegular] = useState(initial.regularRate != null ? String(initial.regularRate) : '');
-  const [ot, setOt] = useState(initial.otRate != null ? String(initial.otRate) : '');
   const [currency, setCurrency] = useState<PayCurrency>(initial.currency ?? 'PHP');
 
+  // Start in custom mode only when the stored OT rate isn't the auto 1.5x value.
+  const initialCustom =
+    initial.otRate != null &&
+    !(initial.regularRate != null && isAutoOtRate(initial.regularRate, initial.otRate));
+  const [otMode, setOtMode] = useState<'auto' | 'custom'>(initialCustom ? 'custom' : 'auto');
+  const [customOt, setCustomOt] = useState(
+    initialCustom && initial.otRate != null ? String(initial.otRate) : '',
+  );
+
   const regularNum = Number(regular);
-  const otNum = ot.trim() === '' ? undefined : Number(ot);
-  const valid =
-    regular.trim() !== '' &&
-    Number.isFinite(regularNum) &&
-    regularNum >= 0 &&
-    (otNum === undefined || (Number.isFinite(otNum) && otNum >= 0));
+  const regularValid = regular.trim() !== '' && Number.isFinite(regularNum) && regularNum >= 0;
+
+  const autoOt = regularValid ? defaultOtRate(regularNum) : undefined;
+  const customOtNum = customOt.trim() === '' ? undefined : Number(customOt);
+  const otNum = otMode === 'auto' ? autoOt : customOtNum;
+
+  const customValid =
+    customOtNum === undefined || (Number.isFinite(customOtNum) && customOtNum >= 0);
+  const valid = regularValid && (otMode === 'auto' || customValid);
+
+  // What the OT input shows: the live auto value when locked, the typed value otherwise.
+  const otDisplay = otMode === 'auto' ? (autoOt != null ? String(autoOt) : '') : customOt;
 
   return (
     <div className="space-y-3">
@@ -724,16 +782,20 @@ function PayRateEditor({
           />
         </Field>
         <Field label={`OT rate (${CURRENCY_SYMBOL[currency]}/hr)`}>
-          <Input
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.01"
-            value={ot}
-            onChange={(e) => setOt(e.target.value)}
-            placeholder="optional"
-            className="w-32"
-          />
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.01"
+              value={otDisplay}
+              onChange={(e) => setCustomOt(e.target.value)}
+              disabled={otMode === 'auto'}
+              placeholder={otMode === 'auto' ? `${OT_MULTIPLIER}x regular` : '0.00'}
+              className={`w-28 ${otMode === 'auto' ? 'bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400' : ''}`}
+            />
+            <OtModeToggle value={otMode} onChange={setOtMode} idSuffix={saveLabel} />
+          </div>
         </Field>
         <div className="flex flex-col gap-1">
           <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Currency</span>

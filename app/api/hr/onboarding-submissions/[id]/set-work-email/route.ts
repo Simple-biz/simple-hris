@@ -17,6 +17,10 @@ import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { createWorkspaceAccount, verifyWorkspaceAccount } from "@/lib/hr/workspace-account";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
+import {
+  consumeAvailableLicenses,
+  isLicenseAutoCountConfigured,
+} from "@/lib/google-workspace/licenses";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -285,6 +289,23 @@ export async function POST(
     );
   }
 
+  // A newly-provisioned account consumes a Workspace license. Decrement the
+  // cached available count ONLY when this row transitions into confirmed (it
+  // wasn't already confirmed before) — so a retry/re-set on an already-confirmed
+  // row never double-counts. Skipped in live mode: there the GET recomputes
+  // available = total - assigned from the Google API, which already reflects the
+  // new assignment, so a manual decrement would be redundant (and invisible).
+  const newlyConsumedLicense = workspaceOk && row.workspace_account_ok !== true;
+  let availableLicenses: number | null = null;
+  if (newlyConsumedLicense && !isLicenseAutoCountConfigured()) {
+    try {
+      const res = await consumeAvailableLicenses(1);
+      availableLicenses = res?.available ?? null;
+    } catch {
+      // Best-effort — never block the set on the license bookkeeping.
+    }
+  }
+
   void insertAuditLog({
     user_name: authz.sessionEmail,
     user_role: "HR",
@@ -303,6 +324,7 @@ export async function POST(
       workspace_account_error: workspaceOk ? null : workspaceError ?? null,
       // Note when the account was confirmed via verify after a create failure.
       workspace_confirmed_via_verify: !workspace.ok && workspaceOk,
+      license_consumed: newlyConsumedLicense,
     },
   });
 
@@ -311,6 +333,7 @@ export async function POST(
     pending_employee_id: pending.id,
     work_email: workEmail,
     status: pending.status,
+    available_licenses: availableLicenses,
     workspace_account: {
       ok: workspaceOk,
       status: workspaceStatus,

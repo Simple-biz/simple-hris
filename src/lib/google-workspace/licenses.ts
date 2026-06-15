@@ -1,4 +1,68 @@
 import { getServiceAccountAccessToken } from '@/lib/google-sheets/auth';
+import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+
+const LICENSE_INFO_KEY = 'workspace.license_info';
+
+interface StoredLicenseInfo {
+  available_licenses?: number;
+  total_licenses?: number;
+  last_updated?: string;
+}
+
+/**
+ * Optimistically decrements the cached `available_licenses` after a license is
+ * consumed (a Workspace account was successfully provisioned). This only moves
+ * the MANUAL number stored in app_settings — in live mode the GET recomputes
+ * available = total - assigned from the Google API and ignores it, so callers
+ * should skip this when `isLicenseAutoCountConfigured()` is true.
+ *
+ * Best-effort + clamped to [0, total]. Returns the new available count, or null
+ * if there's nothing to adjust (not configured / unreadable / no DB).
+ *
+ * Note: read-modify-write, so a burst of concurrent sets can under-count the
+ * decrement. Acceptable because it's only the manual fallback estimate; the
+ * Google live count is the source of truth when configured.
+ */
+export async function consumeAvailableLicenses(
+  by = 1,
+): Promise<{ available: number; total: number | null } | null> {
+  if (by <= 0) return null;
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('value')
+    .eq('key', LICENSE_INFO_KEY)
+    .maybeSingle();
+  if (error || !data?.value) return null;
+
+  let info: StoredLicenseInfo = {};
+  const raw = data.value as unknown;
+  if (typeof raw === 'string') {
+    try {
+      info = JSON.parse(raw) as StoredLicenseInfo;
+    } catch {
+      return null;
+    }
+  } else if (raw && typeof raw === 'object') {
+    info = raw as StoredLicenseInfo;
+  }
+  if (typeof info.available_licenses !== 'number') return null;
+
+  const next = Math.max(0, info.available_licenses - by);
+  if (next === info.available_licenses) return { available: next, total: info.total_licenses ?? null };
+
+  const updated: StoredLicenseInfo = { ...info, available_licenses: next };
+  const { error: upErr } = await supabase
+    .from('app_settings')
+    .upsert(
+      { key: LICENSE_INFO_KEY, value: JSON.stringify(updated), updated_at: new Date().toISOString() },
+      { onConflict: 'key' },
+    );
+  if (upErr) return null;
+  return { available: next, total: info.total_licenses ?? null };
+}
 
 /**
  * Live "assigned licenses" count from the Google Enterprise License Manager API.
