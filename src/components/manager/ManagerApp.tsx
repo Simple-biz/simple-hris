@@ -2002,72 +2002,10 @@ interface TeamSkillSet {
   current_projects: string[];
 }
 
-function AnimatedRate({
-  value,
-  hidden,
-  formatPhp,
-}: {
-  value: number | null | undefined;
-  hidden: boolean;
-  formatPhp: (v: number | null | undefined) => string;
-}) {
-  // opacity + translate only — `filter: blur` is GPU-expensive on mid-tier mobile
-  // and stutters when many rows toggle at once. Translate alone reads as a swap.
-  const transition = { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const };
-  return (
-    <span className="inline-block transform-gpu">
-      <AnimatePresence mode="wait" initial={false}>
-        {hidden ? (
-          <motion.span
-            key="hidden"
-            initial={{ opacity: 0, y: -3 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 3 }}
-            transition={transition}
-            className="inline-block select-none tracking-widest text-zinc-400 dark:text-zinc-600"
-          >
-            ••••••
-          </motion.span>
-        ) : value != null ? (
-          <motion.span
-            key="shown"
-            initial={{ opacity: 0, y: -3 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 3 }}
-            transition={transition}
-            className="inline-block"
-          >
-            {formatPhp(value)}
-          </motion.span>
-        ) : (
-          <motion.span
-            key="empty"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.14 }}
-            className="inline-block text-zinc-300 dark:text-zinc-700"
-          >
-            —
-          </motion.span>
-        )}
-      </AnimatePresence>
-    </span>
-  );
-}
-
 const TEAM_PAGE_SIZE = 8;
 
-function memberHourlyRate(member: EmployeeRow): number | null {
-  return member.hsl_hourly_rate ?? member.regular_rate ?? null;
-}
-
-function memberOtRate(member: EmployeeRow): number | null {
-  return member.hsl_ot_rate ?? member.ot_rate ?? null;
-}
-
 function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusConsumed }: TeamPanelProps) {
-  const { draggedMedal, dragOverEmail, setDragOverEmail, openAwardForDrop } = useMedalCtx();
+  const { medals, draggedMedal, dragOverEmail, setDragOverEmail, openAwardForDrop } = useMedalCtx();
 
   // Inner tab toggle: Roster (existing) | Newly Hired (HR pending hires routed
   // here by department_managers) | AI Team (embedded ai-team.simple.biz site).
@@ -2075,7 +2013,6 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
   const [innerTab, setInnerTab] = useState<'roster' | 'newly-hired' | 'ai-team'>('roster');
   const unassigned = teamGate.kind === 'department' && teamGate.departments.length === 0;
   const scoped = teamGate.kind === 'department' && teamGate.departments.length > 0;
-  const [ratesHidden, setRatesHidden] = useState(true);
   // Live presence — drives the green "online" dots on roster rows and the
   // "Active now" panel. Sourced from the app-wide PresenceProvider so it
   // reflects everyone signed in to the HRIS, same as the employee My Team tab.
@@ -2754,51 +2691,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
           </h2>
           {members.length > 0 && (
             <div className="flex items-center gap-2">
-            <ActiveNowButton members={members} onlineEmails={onlineEmails} />
-            <motion.div whileTap={{ scale: 0.96 }} transition={{ duration: 0.12 }}>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setRatesHidden((v) => !v)}
-                className="h-7 gap-1.5 overflow-hidden border-blue-200 text-xs text-blue-700 transition-colors hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
-                aria-pressed={!ratesHidden}
-                title={ratesHidden ? 'Show hourly and OT rates' : 'Hide hourly and OT rates'}
-              >
-                <span className="relative inline-flex h-3.5 w-3.5 items-center justify-center">
-                  <AnimatePresence mode="wait" initial={false}>
-                    <motion.span
-                      key={ratesHidden ? 'eye' : 'eye-off'}
-                      initial={{ rotate: -45, scale: 0.6, opacity: 0 }}
-                      animate={{ rotate: 0, scale: 1, opacity: 1 }}
-                      exit={{ rotate: 45, scale: 0.6, opacity: 0 }}
-                      transition={{ duration: 0.16, ease: 'easeOut' }}
-                      className="absolute inline-flex"
-                    >
-                      {ratesHidden ? (
-                        <Eye className="h-3.5 w-3.5" />
-                      ) : (
-                        <EyeOff className="h-3.5 w-3.5" />
-                      )}
-                    </motion.span>
-                  </AnimatePresence>
-                </span>
-                <span className="relative block h-4 w-[68px] overflow-hidden text-left">
-                  <AnimatePresence mode="wait" initial={false}>
-                    <motion.span
-                      key={ratesHidden ? 'show' : 'hide'}
-                      initial={{ y: 8, opacity: 0 }}
-                      animate={{ y: 0, opacity: 1 }}
-                      exit={{ y: -8, opacity: 0 }}
-                      transition={{ duration: 0.18, ease: 'easeOut' }}
-                      className="absolute inset-0"
-                    >
-                      {ratesHidden ? 'Show rates' : 'Hide rates'}
-                    </motion.span>
-                  </AnimatePresence>
-                </span>
-              </Button>
-            </motion.div>
+              <ActiveNowButton members={members} onlineEmails={onlineEmails} />
             </div>
           )}
         </div>
@@ -3037,10 +2930,6 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
             </div>
           ) : (
             (() => {
-              const formatPhp = (v: number | null | undefined): string => {
-                if (v == null) return '—';
-                return `₱${v.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-              };
               const filterKey = `${deptFilter}|${searchQuery.trim()}`;
               return (
                 <>
@@ -3051,7 +2940,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                     transition={{ duration: 0.2, ease: 'easeOut' }}
                   >
                   {/* Roster card grid — mirrors the employee My Team view,
-                      with manager rates + actions layered on. Medal drag-drop
+                      with manager actions layered on. Medal drag-drop
                       is wired at the grid level via each card's data-email. */}
                   <div
                     className="grid grid-cols-1 gap-4 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3 xl:grid-cols-4"
@@ -3169,13 +3058,9 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                             </div>
                           </div>
 
-                          {/* Subtle footer detail line — rates + email kept quiet */}
-                          <div className="flex items-center justify-between gap-2 px-4 pb-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-                            <span className="inline-flex items-center gap-1 font-mono tabular-nums">
-                              <AnimatedRate value={memberHourlyRate(m)} hidden={ratesHidden} formatPhp={formatPhp} />
-                              <span className="text-zinc-300 dark:text-zinc-600">·</span>
-                              OT <AnimatedRate value={memberOtRate(m)} hidden={ratesHidden} formatPhp={formatPhp} />
-                            </span>
+                          {/* Subtle footer detail line — email kept quiet (rates
+                              removed: managers no longer see pay rates) */}
+                          <div className="flex items-center gap-2 px-4 pb-1 text-[11px] text-zinc-400 dark:text-zinc-500">
                             <span className="inline-flex min-w-0 items-center gap-1">
                               <Mail className="h-3 w-3 shrink-0" />
                               <span className="truncate font-mono" title={m.work_email ?? m.personal_email ?? undefined}>
@@ -3192,7 +3077,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
                               variant="outline"
                               onClick={() => setSelectedMember(m)}
                               className="h-7 gap-1.5 border-blue-200 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
-                              title="View profile and payment history"
+                              title="View profile and recognition"
                             >
                               <UserRound className="h-3.5 w-3.5" />
                               View
@@ -3271,6 +3156,7 @@ function TeamPanelInner({ members, teamGate, viewerEmail, focusEmail, onFocusCon
         member={selectedMember}
         onClose={() => setSelectedMember(null)}
         skillSet={selectedMember ? skillSetFor(selectedMember) : undefined}
+        medals={selectedMember ? medals[selectedMember.personal_email ?? selectedMember.work_email ?? ''] ?? [] : []}
         initialMemberNotes={selectedMember ? skillSetFor(selectedMember)?.member_notes ?? '' : ''}
         onMemberNotesSaved={(notes) => {
           const w = normEmail(selectedMember?.work_email ?? '');

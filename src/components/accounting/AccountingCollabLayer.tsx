@@ -49,6 +49,9 @@ import { useCobrowse } from '@/hooks/useCobrowse';
 const CHANNEL = 'accounting-collab';
 const MOVE_THROTTLE_MS = 16; // ~60 fps
 const CURSOR_TTL_MS = 4500;
+// Max avatars shown in the right-edge rail before collapsing the rest into a
+// "+N" chip. Keeps the (scrollbar-free) rail from running off short screens.
+const MAX_RAIL_AVATARS = 9;
 
 const SECTION_LABELS: Record<string, string> = {
   'overview': 'Overview',
@@ -209,6 +212,10 @@ function RemoteCursor({
 }
 
 // --- avatar rail item ---------------------------------------------------------
+// Spring used for the avatar pop-in when a peer joins / the rail mounts. Tuned
+// to overshoot slightly so the avatar "pops" into place rather than easing in.
+const POP_SPRING = { type: 'spring' as const, stiffness: 520, damping: 24, mass: 0.7 };
+
 function RailAvatar({
   peer,
   sameSection,
@@ -217,6 +224,7 @@ function RailAvatar({
   observing,
   onObserve,
   onStopObserve,
+  index,
 }: {
   peer: PeerMeta;
   sameSection: boolean;
@@ -225,6 +233,7 @@ function RailAvatar({
   observing: boolean;
   onObserve: () => void;
   onStopObserve: () => void;
+  index: number;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
   const { bg: color, glow } = hashEmail(peer.email);
@@ -235,12 +244,25 @@ function RailAvatar({
   useEffect(() => { setImgFailed(false); }, [url]);
 
   return (
-    <div className="group pointer-events-auto relative flex items-center justify-end">
+    <motion.div
+      layout="position"
+      initial={{ opacity: 0, scale: 0.2, x: 24 }}
+      animate={{
+        opacity: 1,
+        scale: 1,
+        x: 0,
+        // Stagger the entrance so a fresh roster cascades in instead of popping
+        // all at once; capped so a big team never feels sluggish.
+        transition: { ...POP_SPRING, delay: Math.min(index * 0.06, 0.42) },
+      }}
+      exit={{ opacity: 0, scale: 0.2, x: 24, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] } }}
+      className="group pointer-events-auto relative flex items-center justify-end"
+    >
       {/* Name card to the left -- shown on hover, and pinned open on click. */}
       <AnimatePresence>
         {open && (
           <motion.div
-            className="absolute right-full mr-2 max-w-[60vw] whitespace-nowrap rounded-lg bg-zinc-900/95 px-3 py-2 text-right shadow-xl ring-1 ring-white/10 backdrop-blur-md"
+            className="absolute right-full mr-3 max-w-[60vw] whitespace-nowrap rounded-xl bg-zinc-900/95 px-3.5 py-2.5 text-right shadow-2xl ring-1 ring-white/10 backdrop-blur-md"
             initial={{ opacity: 0, x: 8, scale: 0.92 }}
             animate={{ opacity: 1, x: 0, scale: 1 }}
             exit={{ opacity: 0, x: 8, scale: 0.92 }}
@@ -270,7 +292,7 @@ function RailAvatar({
       </AnimatePresence>
       {/* Lightweight hover hint (only when not pinned open) */}
       {!open && (
-        <div className="pointer-events-none absolute right-full mr-2 hidden whitespace-nowrap rounded-lg bg-zinc-900/95 px-2.5 py-1.5 text-right shadow-lg backdrop-blur-md group-hover:block">
+        <div className="pointer-events-none absolute right-full mr-3 hidden whitespace-nowrap rounded-xl bg-zinc-900/95 px-3 py-2 text-right shadow-xl ring-1 ring-white/10 backdrop-blur-md group-hover:block">
           <div className="text-[11px] font-semibold leading-tight text-white">{display}</div>
           <div
             className="text-[9px] uppercase leading-tight tracking-widest"
@@ -282,25 +304,29 @@ function RailAvatar({
       )}
 
       <div className="relative">
-      <button
+      <motion.button
         type="button"
         onClick={onToggle}
         aria-label={`Show ${display}`}
         aria-expanded={open}
-        className="relative block cursor-pointer rounded-full outline-none transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-orange-400"
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.94 }}
+        transition={POP_SPRING}
+        className="relative block cursor-pointer rounded-full outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
       >
         <div
-          className="h-9 w-9 overflow-hidden rounded-full transition-all"
+          className="h-11 w-11 overflow-hidden rounded-full bg-white transition-shadow duration-300 dark:bg-zinc-900"
           style={{
             // While actively observing this peer, pin a bold orange ring so the
             // followed person stands out. Otherwise same-section peers (mouse
             // observable right now) get a glowing ring in their own cursor
-            // color; others get the neutral ring rendered below.
+            // color; everyone else gets a soft neutral ring + drop shadow so the
+            // avatar reads as a raised chip floating over the page.
             boxShadow: observing
-              ? '0 0 0 2px #f97316, 0 0 12px rgba(249,115,22,0.7)'
+              ? '0 0 0 2.5px #f97316, 0 0 16px rgba(249,115,22,0.75), 0 4px 12px rgba(0,0,0,0.28)'
               : sameSection
-                ? `0 0 0 2px ${color}, 0 0 10px ${glow}`
-                : undefined,
+                ? `0 0 0 2.5px ${color}, 0 0 14px ${glow}, 0 4px 12px rgba(0,0,0,0.25)`
+                : '0 0 0 2px rgba(255,255,255,0.9), 0 4px 12px rgba(0,0,0,0.22)',
           }}
         >
           {showImg ? (
@@ -314,7 +340,7 @@ function RailAvatar({
             />
           ) : (
             <div
-              className="flex h-full w-full items-center justify-center rounded-full text-[11px] font-bold text-white"
+              className="flex h-full w-full items-center justify-center rounded-full text-[13px] font-bold text-white"
               style={{ background: `linear-gradient(135deg, ${color}, #1e3a8a)` }}
               aria-hidden
             >
@@ -322,18 +348,22 @@ function RailAvatar({
             </div>
           )}
         </div>
-        {/* Neutral base ring so non-same-section avatars still read as a chip */}
-        {!sameSection && (
-          <span className="pointer-events-none absolute inset-0 rounded-full ring-2 ring-white/70 dark:ring-zinc-700/70" />
-        )}
-        {/* Online badge */}
-        <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-emerald-500 shadow dark:border-zinc-900" />
-      </button>
+        {/* Online badge with a soft live pulse halo */}
+        <span className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5 items-center justify-center">
+          <motion.span
+            className="absolute inline-flex h-full w-full rounded-full bg-emerald-400"
+            initial={{ opacity: 0.55, scale: 1 }}
+            animate={{ opacity: 0, scale: 2.1 }}
+            transition={{ duration: 1.9, repeat: Infinity, ease: 'easeOut', delay: Math.min(index * 0.2, 1) }}
+          />
+          <span className="relative h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500 shadow dark:border-zinc-900" />
+        </span>
+      </motion.button>
 
       {/* Always-visible Observe affordance: an eye badge pinned to the avatar's
           bottom-left (mirrors the online dot). Click to start/stop following
           this person -- no need to open the name card first. */}
-      <button
+      <motion.button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
@@ -343,15 +373,18 @@ function RailAvatar({
         title={observing ? `Stop observing ${display}` : `Observe ${display}`}
         aria-label={observing ? `Stop observing ${display}` : `Observe ${display}`}
         aria-pressed={observing}
+        whileHover={{ scale: 1.18 }}
+        whileTap={{ scale: 0.9 }}
+        transition={POP_SPRING}
         className={
-          'absolute -bottom-1 -left-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white shadow outline-none transition-transform hover:scale-110 focus-visible:ring-2 focus-visible:ring-orange-400 dark:border-zinc-900 ' +
+          'absolute -bottom-1 -left-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white shadow-md outline-none focus-visible:ring-2 focus-visible:ring-orange-400 dark:border-zinc-900 ' +
           (observing ? 'bg-rose-500 text-white' : 'bg-orange-500 text-white')
         }
       >
         {observing ? <EyeOff className="h-2.5 w-2.5" /> : <Eye className="h-2.5 w-2.5" />}
-      </button>
+      </motion.button>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -662,31 +695,53 @@ export default function AccountingCollabLayer({ selfEmail, section, containerRef
         </AnimatePresence>
       </div>
 
-      {/* Floating right-edge avatar rail (everyone in Accounting) */}
+      {/* Floating right-edge avatar rail (everyone in Accounting).
+          NOTE: the rail intentionally has NO overflow/scroll. `overflow-y-auto`
+          would (a) show a scrollbar and (b) clip every avatar's decorations --
+          the name card pops out to the LEFT (`right-full`) and the online/eye
+          badges sit outside the avatar box -- so the rail must render its
+          children fully. To stay on-screen without a scrollbar we cap the
+          visible avatars and surface the rest as a "+N" chip. */}
       <AnimatePresence>
         {peers.length > 0 && (
           <motion.div
-            className="pointer-events-none absolute right-2 top-1/2 z-[60] hidden max-h-[72vh] -translate-y-1/2 flex-col items-end gap-2 overflow-y-auto py-2 pr-0.5 md:flex"
+            className="pointer-events-none absolute right-2.5 top-1/2 z-[60] hidden -translate-y-1/2 flex-col items-end gap-3 py-2 md:flex"
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 16 }}
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           >
-            {peers.map((p) => (
-              <RailAvatar
-                key={p.email}
-                peer={p}
-                sameSection={p.section === section}
-                open={openPeer === p.email}
-                onToggle={() => setOpenPeer((cur) => (cur === p.email ? null : p.email))}
-                observing={observedEmail === p.email}
-                onObserve={() => {
-                  setObservedEmail(p.email);
-                  setOpenPeer(null);
-                }}
-                onStopObserve={() => setObservedEmail(null)}
-              />
-            ))}
+            <AnimatePresence mode="popLayout" initial>
+              {peers.slice(0, MAX_RAIL_AVATARS).map((p, i) => (
+                <RailAvatar
+                  key={p.email}
+                  index={i}
+                  peer={p}
+                  sameSection={p.section === section}
+                  open={openPeer === p.email}
+                  onToggle={() => setOpenPeer((cur) => (cur === p.email ? null : p.email))}
+                  observing={observedEmail === p.email}
+                  onObserve={() => {
+                    setObservedEmail(p.email);
+                    setOpenPeer(null);
+                  }}
+                  onStopObserve={() => setObservedEmail(null)}
+                />
+              ))}
+              {peers.length > MAX_RAIL_AVATARS && (
+                <motion.div
+                  key="rail-overflow"
+                  layout="position"
+                  initial={{ opacity: 0, scale: 0.2, x: 24 }}
+                  animate={{ opacity: 1, scale: 1, x: 0, transition: POP_SPRING }}
+                  exit={{ opacity: 0, scale: 0.2, x: 24, transition: { duration: 0.18 } }}
+                  className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full bg-zinc-900/90 text-[12px] font-bold text-white shadow-md ring-2 ring-white/70 backdrop-blur-md dark:ring-zinc-700/70"
+                  title={`${peers.length - MAX_RAIL_AVATARS} more in Accounting`}
+                >
+                  +{peers.length - MAX_RAIL_AVATARS}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>

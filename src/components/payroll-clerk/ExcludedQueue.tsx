@@ -2,15 +2,55 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { Banknote, Clock, DollarSign, Search, SearchX, ShieldOff, X } from 'lucide-react';
+import { Ban, Banknote, CheckCircle2, ChevronDown, Clock, DollarSign, Layers, Search, SearchX, Send, ShieldOff, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { formatPHP, formatUSD, type ExcludedRow, type ExclusionReason } from './mock-queue';
+import {
+  formatPHP,
+  formatUSD,
+  PROCESSORS,
+  processorIdFromBankPreferred,
+  type ArrearsInfo,
+  type ExcludedRow,
+  type ExclusionReason,
+  type ProcessorId,
+  type QueueRow,
+} from './mock-queue';
 import QueuePagination from './QueuePagination';
+
+const PROCESSOR_LABEL: Record<ProcessorId, string> = PROCESSORS.reduce(
+  (acc, p) => {
+    acc[p.id] = p.label;
+    return acc;
+  },
+  {} as Record<ProcessorId, string>,
+);
+
+/** The processor this excluded row routes to (chosen processor wins; else the raw Bank Preferred). */
+function rowProcessor(row: ExcludedRow): ProcessorId | null {
+  return row.payable?.processor ?? processorIdFromBankPreferred(row.bankPreferredRaw);
+}
+
+/** Human bank/processor label for an excluded row. */
+function bankLabel(row: ExcludedRow): string {
+  const p = rowProcessor(row);
+  if (p) return PROCESSOR_LABEL[p];
+  const raw = (row.bankPreferredRaw ?? '').trim();
+  return raw || 'No bank';
+}
+
+type BankFilter = 'all' | ProcessorId | 'other';
 
 interface ExcludedQueueProps {
   rows: ExcludedRow[];
+  /**
+   * Pay a wizard-excluded ("do not pay") person from the Excluded tab once
+   * accounting clears them. Opens the same Mark Paid dialog as the main queue;
+   * confirming settles their full cross-cycle balance (one payment + paystub
+   * per unpaid held cycle).
+   */
+  onMarkPaid?: (row: QueueRow, arrears?: ArrearsInfo) => void;
 }
 
 const REASON_META: Record<
@@ -42,7 +82,15 @@ const REASON_META: Record<
     tone: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300',
     activeTone: 'border-rose-500 bg-rose-500 text-white shadow-sm shadow-rose-500/30 dark:border-rose-400 dark:bg-rose-500 dark:text-white',
   },
+  do_not_pay: {
+    label: 'Excluded in wizard',
+    Icon: Ban,
+    tone: 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300',
+    activeTone: 'border-violet-500 bg-violet-500 text-white shadow-sm shadow-violet-500/30 dark:border-violet-400 dark:bg-violet-500 dark:text-white',
+  },
 };
+
+const REASON_ORDER: ExclusionReason[] = ['no_bank', 'no_pay', 'no_hours', 'do_not_pay'];
 
 function avatarColors(seed: string) {
   const palettes = [
@@ -83,35 +131,84 @@ function ReasonChip({ reason }: { reason: ExclusionReason }) {
 
 type ReasonFilter = 'all' | ExclusionReason;
 
-export default function ExcludedQueue({ rows }: ExcludedQueueProps) {
+export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) {
   const [query, setQuery] = useState('');
   const [reasonFilter, setReasonFilter] = useState<ReasonFilter>('all');
+  const [bankFilter, setBankFilter] = useState<BankFilter>('all');
   const debounced = useDebouncedValue(query, 250);
 
   // Aggregate counts per reason for the header summary chips.
   const counts = useMemo(() => {
-    const c: Record<ExclusionReason, number> = { no_bank: 0, no_pay: 0, no_hours: 0 };
+    const c: Record<ExclusionReason, number> = { no_bank: 0, no_pay: 0, no_hours: 0, do_not_pay: 0 };
     for (const r of rows) for (const reason of r.reasons) c[reason] += 1;
     return c;
   }, [rows]);
+
+  // Bank/processor counts → which bank pills to show (only present ones).
+  const bankCounts = useMemo(() => {
+    const c = new Map<BankFilter, number>();
+    for (const r of rows) {
+      const key: BankFilter = rowProcessor(r) ?? 'other';
+      c.set(key, (c.get(key) ?? 0) + 1);
+    }
+    return c;
+  }, [rows]);
+  const presentBanks = useMemo(
+    () => PROCESSORS.filter((p) => (bankCounts.get(p.id) ?? 0) > 0),
+    [bankCounts],
+  );
+  const otherBankCount = bankCounts.get('other') ?? 0;
 
   const filtered = useMemo(() => {
     const q = debounced.trim().toLowerCase();
     return rows.filter((r) => {
       if (reasonFilter !== 'all' && !r.reasons.includes(reasonFilter)) return false;
+      if (bankFilter !== 'all') {
+        const p = rowProcessor(r);
+        if (bankFilter === 'other' ? p !== null : p !== bankFilter) return false;
+      }
       if (!q) return true;
       return (
         r.name.toLowerCase().includes(q) ||
         r.email.toLowerCase().includes(q) ||
+        bankLabel(r).toLowerCase().includes(q) ||
         (r.bankPreferredRaw ?? '').toLowerCase().includes(q)
       );
     });
-  }, [rows, debounced, reasonFilter]);
+  }, [rows, debounced, reasonFilter, bankFilter]);
+
+  // Total owed across the (filtered) excluded list + how many held cycles it
+  // spans — "what we owe just in case they don't get paid this week".
+  const owed = useMemo(() => {
+    let php = 0;
+    let usd = 0;
+    let cycles = 0;
+    let people = 0;
+    for (const r of filtered) {
+      if (r.amountPHP != null) {
+        php += r.amountPHP;
+        people += 1;
+      }
+      if (r.amountUSD != null) usd += r.amountUSD;
+      if (r.arrears) cycles += r.arrears.cycles.length;
+    }
+    return { php, usd, cycles, people };
+  }, [filtered]);
+
+  // Which rows have their per-cycle arrears breakdown expanded.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const PAGE_SIZE = 25;
   const [page, setPage] = useState(1);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  useEffect(() => { setPage(1); }, [debounced, reasonFilter]);
+  useEffect(() => { setPage(1); }, [debounced, reasonFilter, bankFilter]);
   useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
   const pagedRows = useMemo(
     () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
@@ -126,20 +223,36 @@ export default function ExcludedQueue({ rows }: ExcludedQueueProps) {
           <div>
             <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight text-zinc-900 dark:text-white">
               <Banknote className="h-4 w-4 text-zinc-400" aria-hidden />
-              No bank · No current pay · No hours
+              Excluded &amp; held
             </h2>
             <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-              Employees who can&apos;t be paid this cycle because at least one of the three signals is missing. Visible here so they don&apos;t silently disappear from the queue.
+              People held out of this cycle&apos;s pay — missing bank / pay / hours, or marked
+              <span className="font-medium text-violet-600 dark:text-violet-400"> do not pay</span> in the Payroll Wizard.
+              Wizard-excluded people who are otherwise good can be paid here once cleared — that sends their paystub.
             </p>
           </div>
-          <motion.span
-            key={`exc-count-${filtered.length}`}
-            initial={{ opacity: 0, y: -3 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="rounded-full border border-zinc-200 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 backdrop-blur-md dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300"
-          >
-            {filtered.length} {filtered.length === 1 ? 'person' : 'people'}
-          </motion.span>
+          <div className="flex flex-wrap items-center gap-2">
+            {owed.php > 0 && (
+              <motion.span
+                key={`owed-${Math.round(owed.php)}`}
+                initial={{ opacity: 0, y: -3 }}
+                animate={{ opacity: 1, y: 0 }}
+                title={`${owed.people} ${owed.people === 1 ? 'person' : 'people'} owed${owed.cycles > 0 ? ` · ${owed.cycles} held cycle${owed.cycles === 1 ? '' : 's'}` : ''}`}
+                className="inline-flex items-center gap-1.5 rounded-full border border-violet-300 bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700 dark:border-violet-500/40 dark:bg-violet-950/30 dark:text-violet-300"
+              >
+                Owed {formatPHP(owed.php)}
+                <span className="font-normal text-violet-500/80 dark:text-violet-400/70">({formatUSD(owed.usd)})</span>
+              </motion.span>
+            )}
+            <motion.span
+              key={`exc-count-${filtered.length}`}
+              initial={{ opacity: 0, y: -3 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="rounded-full border border-zinc-200 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 backdrop-blur-md dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300"
+            >
+              {filtered.length} {filtered.length === 1 ? 'person' : 'people'}
+            </motion.span>
+          </div>
         </div>
 
         {/* Reason filter rail — single-select pills */}
@@ -151,7 +264,7 @@ export default function ExcludedQueue({ rows }: ExcludedQueueProps) {
             onClick={() => setReasonFilter('all')}
             tone="neutral"
           />
-          {(['no_bank', 'no_pay', 'no_hours'] as const).map((r) => {
+          {REASON_ORDER.map((r) => {
             const meta = REASON_META[r];
             return (
               <FilterPill
@@ -179,6 +292,59 @@ export default function ExcludedQueue({ rows }: ExcludedQueueProps) {
             </button>
           )}
         </div>
+
+        {/* Bank filter rail — single-select pills, scoped to this tab */}
+        {(presentBanks.length > 0 || otherBankCount > 0) && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Filter by bank">
+            <span className="mr-0.5 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+              <Banknote className="h-3 w-3" />
+              Bank
+            </span>
+            <FilterPill
+              label="All"
+              count={rows.length}
+              active={bankFilter === 'all'}
+              onClick={() => setBankFilter('all')}
+              tone="neutral"
+            />
+            {presentBanks.map((p) => (
+              <FilterPill
+                key={p.id}
+                label={p.label}
+                count={bankCounts.get(p.id) ?? 0}
+                active={bankFilter === p.id}
+                onClick={() => setBankFilter((prev) => (prev === p.id ? 'all' : p.id))}
+                tone="reason"
+                Icon={Banknote}
+                activeClass="border-emerald-500 bg-emerald-500 text-white shadow-sm shadow-emerald-500/30 dark:border-emerald-400 dark:bg-emerald-500 dark:text-white"
+                inactiveClass="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+              />
+            ))}
+            {otherBankCount > 0 && (
+              <FilterPill
+                label="No bank"
+                count={otherBankCount}
+                active={bankFilter === 'other'}
+                onClick={() => setBankFilter((prev) => (prev === 'other' ? 'all' : 'other'))}
+                tone="reason"
+                Icon={ShieldOff}
+                activeClass="border-zinc-700 bg-zinc-800 text-white shadow-sm dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900"
+                inactiveClass="border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+              />
+            )}
+            {bankFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setBankFilter('all')}
+                className="ml-1 inline-flex h-7 items-center gap-1 rounded-full px-2 text-[10.5px] font-medium text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                aria-label="Clear bank filter"
+              >
+                <X className="h-3 w-3" />
+                Clear
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Search */}
         <div className="mt-3 flex items-center gap-2">
@@ -237,9 +403,33 @@ export default function ExcludedQueue({ rows }: ExcludedQueueProps) {
                       {row.email}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-1">
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                        title="Preferred bank / processor"
+                      >
+                        <Banknote className="h-2.5 w-2.5" />
+                        {bankLabel(row)}
+                      </span>
                       {row.reasons.map((r) => (
                         <ReasonChip key={r} reason={r} />
                       ))}
+                      {row.arrears && row.arrears.cycles.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(row.id)}
+                          aria-expanded={expanded.has(row.id)}
+                          className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300"
+                        >
+                          <Layers className="h-2.5 w-2.5" />
+                          {row.arrears.cycles.length} weeks pending
+                          <ChevronDown
+                            className={cn(
+                              'h-2.5 w-2.5 transition-transform',
+                              expanded.has(row.id) && 'rotate-180',
+                            )}
+                          />
+                        </button>
+                      )}
                     </div>
                   </div>
                   <div className="shrink-0 text-right">
@@ -268,7 +458,66 @@ export default function ExcludedQueue({ rows }: ExcludedQueueProps) {
                       {row.totalHours != null ? `${row.totalHours.toFixed(2)} hrs` : '— hrs'}
                     </div>
                   </div>
+                  {/* Reconcile action — only wizard-excluded people who are
+                      otherwise dispatchable can be paid straight from here. */}
+                  {row.payable && onMarkPaid && (
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onMarkPaid(row.payable!, row.arrears ?? undefined)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm shadow-emerald-500/20 transition-transform hover:from-emerald-600 hover:to-teal-700 active:scale-[0.97]"
+                      >
+                        <Send className="h-3 w-3" />
+                        {row.arrears && row.arrears.cycles.length > 1 ? `Settle ${formatPHP(row.arrears.totalPHP)}` : 'Pay now'}
+                      </button>
+                      {row.paystubSentAt && (
+                        <span className="inline-flex items-center gap-1 text-[9.5px] font-medium text-emerald-600 dark:text-emerald-400">
+                          <CheckCircle2 className="h-2.5 w-2.5" />
+                          Paystub sent
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {/* Owed but not payable from here (no bank / not on rates this
+                      cycle) — explain instead of silently dropping the action. */}
+                  {!row.payable && row.arrears && (
+                    <span
+                      title="No bank details for this person this cycle — pay them once they're back in a payroll cycle."
+                      className="shrink-0 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[9.5px] font-medium text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-500"
+                    >
+                      Can&apos;t pay here
+                    </span>
+                  )}
                 </div>
+                {/* Per-cycle arrears breakdown — what we owe, week by week. */}
+                {row.arrears && row.arrears.cycles.length > 1 && expanded.has(row.id) && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="overflow-hidden border-t border-dashed border-violet-200/70 bg-violet-50/40 px-4 py-2 sm:px-6 dark:border-violet-500/20 dark:bg-violet-950/10"
+                  >
+                    <div className="mb-1 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-violet-600/80 dark:text-violet-400/70">
+                      Pending by cycle
+                    </div>
+                    <ul className="space-y-0.5">
+                      {row.arrears.cycles.map((c) => (
+                        <li key={c.sourceFile} className="flex items-center justify-between gap-3 text-[11px]">
+                          <span className="truncate text-zinc-600 dark:text-zinc-300">{c.label}</span>
+                          <span className="flex shrink-0 items-center gap-2">
+                            {c.lastError ? (
+                              <span className="text-[9px] font-semibold uppercase text-rose-500" title={c.lastError}>
+                                send failed
+                              </span>
+                            ) : null}
+                            <span className="font-mono tabular-nums text-zinc-700 dark:text-zinc-300">
+                              {formatPHP(c.amountPHP)}
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </motion.div>
+                )}
               </motion.li>
             ))}
           </ul>

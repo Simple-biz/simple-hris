@@ -56,7 +56,7 @@ export const PROCESSORS: ProcessorMeta[] = [
  * No Current Pay / No Hours" tab so Lenny can see why someone is missing from
  * the active queue rather than them silently disappearing.
  */
-export type ExclusionReason = 'no_bank' | 'no_pay' | 'no_hours';
+export type ExclusionReason = 'no_bank' | 'no_pay' | 'no_hours' | 'do_not_pay';
 
 export interface ExcludedRow {
   id: string;
@@ -67,6 +67,70 @@ export interface ExcludedRow {
   amountPHP: number | null;
   bankPreferredRaw: string | null;
   reasons: ExclusionReason[];
+  /**
+   * Present when this person was excluded from pay in the Payroll Wizard
+   * ('do_not_pay') but is otherwise dispatchable (has bank + pay + hours). The
+   * Excluded tab can still pay them — which logs the dispatch and sends their
+   * staged paystub — once accounting clears them.
+   */
+  payable?: QueueRow | null;
+  /** ISO timestamp the paystub for this person was last sent (from staging). */
+  paystubSentAt?: string | null;
+  /**
+   * Cumulative pending pay across every UNPAID held cycle (the arrears ledger).
+   * Present for 'do_not_pay' rows. `amountUSD/PHP` on the row mirror the total.
+   */
+  arrears?: ArrearsInfo | null;
+}
+
+/** One unpaid held cycle in the arrears breakdown (client view). */
+export interface ArrearsCycleView {
+  sourceFile: string;
+  label: string;
+  amountPHP: number | null;
+  amountUSD: number | null;
+  paystubSentAt: string | null;
+  lastError: string | null;
+}
+
+/** An employee's cumulative pending across all unpaid held cycles. */
+export interface ArrearsInfo {
+  totalPHP: number;
+  totalUSD: number;
+  cycles: ArrearsCycleView[];
+}
+
+/**
+ * ISO period start/end parsed from a Hubstaff source filename
+ * (`..._2026-06-08_to_2026-06-14.csv`). Nulls when the range can't be parsed —
+ * used to stamp prior-cycle arrears payments with real cycle dates.
+ */
+export function parseCyclePeriodFromFile(sourceFile: string): { start: string | null; end: string | null } {
+  const m = /(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})/.exec(sourceFile);
+  return m ? { start: m[1], end: m[2] } : { start: null, end: null };
+}
+
+/**
+ * Human cycle label from a Hubstaff source filename
+ * (`..._2026-06-08_to_2026-06-14.csv` → "Jun 8 – 14, 2026"). Falls back to the
+ * filename minus `.csv` when the date range can't be parsed.
+ */
+export function formatCycleLabelFromFile(sourceFile: string): string {
+  const m = /(\d{4})-(\d{2})-(\d{2})_to_(\d{4})-(\d{2})-(\d{2})/.exec(sourceFile);
+  const fallback = sourceFile.replace(/\.csv$/i, '');
+  if (!m) return fallback;
+  const s = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  const e = new Date(Date.UTC(+m[4], +m[5] - 1, +m[6]));
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return fallback;
+  const mon = (d: Date) => d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+  const day = (d: Date) => d.getUTCDate();
+  if (s.getUTCMonth() === e.getUTCMonth() && s.getUTCFullYear() === e.getUTCFullYear()) {
+    return `${mon(s)} ${day(s)} – ${day(e)}, ${e.getUTCFullYear()}`;
+  }
+  if (s.getUTCFullYear() === e.getUTCFullYear()) {
+    return `${mon(s)} ${day(s)} – ${mon(e)} ${day(e)}, ${e.getUTCFullYear()}`;
+  }
+  return `${mon(s)} ${day(s)}, ${s.getUTCFullYear()} – ${mon(e)} ${day(e)}, ${e.getUTCFullYear()}`;
 }
 
 export interface QueueRow {

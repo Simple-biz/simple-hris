@@ -862,8 +862,9 @@ All files are in `references/`. Run in this order in the Supabase SQL Editor:
 2. **`seed_payment_dispatches.sql`** — required for Mark paid persistence and the Start/Stop processing button.
 3. **`seed_disbursement_records.sql`** *(new 2026-04-28)* — required for the Reports tab. Creates `public.disbursement_records` and backfills one row per (week, employee) from existing `hubstaff_hours` × `employee_hourly_rates` × `payment_dispatches` data.
 4. **`seed_disbursement_records_sync.sql`** *(new 2026-04-28)* — required so Mark Paid keeps the Reports tab live. Adds the four `payment_dispatches → disbursement_records` triggers and runs a one-time backfill UPDATE for any existing dispatches.
+5. **`seed_paystub_dispatch_queue.sql`** *(new — per-employee paystub dispatch)* — required for paystub emails to send. The Payroll Wizard's **Lock in Values & Send to Payment Dispatch** stages each employee's authoritative paystub payload here; `POST /api/payment-dispatches` fires the n8n paystub webhook for that one person when Lenny marks them **Paid**. Also carries the wizard's **Exclude** ("do not pay") flag, which surfaces those people in the **Excluded** tab. See [paystub-dispatch.md](./paystub-dispatch.md).
 
-All four are idempotent — safe to re-run if you're unsure whether they executed cleanly.
+All five are idempotent — safe to re-run if you're unsure whether they executed cleanly.
 
 For Realtime to fire (vs. the 30-second poll fallback), migration #2's Step 3 must succeed. If it doesn't (e.g. RLS blocks the anon role from selecting `app_settings`), the lock UI still works — just with up-to-30-second latency instead of instant.
 

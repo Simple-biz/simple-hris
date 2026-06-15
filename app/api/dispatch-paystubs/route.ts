@@ -1,36 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { resolveWebhookUrl } from '@/lib/webhooks/resolve-webhook';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { forwardPaystubDispatch } from '@/lib/payroll/paystub-dispatch';
+import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
 
 /**
  * Forwards a paystub dispatch to the n8n workflow webhook.
  * Keeps the webhook URL server-side (N8N_DISPATCH_WEBHOOK_URL env var).
  *
+ * As of the per-employee dispatch change, the Payroll Wizard no longer calls
+ * this in a batch — it stages paystubs to `paystub_dispatch_queue` instead, and
+ * POST /api/payment-dispatches fires this same webhook one employee at a time
+ * (server-side, via the shared `forwardPaystubDispatch` helper) as Lenny marks
+ * each person Paid. This route remains for manual / preview / re-sends.
+ *
  * Expected body:
- * - pay_period?: { currency: 'PHP'; hubstaff_source_file: string | null; pab_evaluation: { month_label, range_start, range_end } }
- * - employees: Array<{
- *     name, email, personal_email,
- *     department_key, department_name,
- *     hours: { total, regular, ot },
- *     rates_php: { regular, ot },
- *     pay_php: { regular, ot, initial, bonuses_total, perfect_attendance_bonus, tech_bonus, other_bonuses, final }
- *   }>
+ * - pay_period?: { currency: 'PHP'; hubstaff_source_file: string | null; pab_evaluation: {...} }
+ * - employees: Array<{ name, email, personal_email, department_*, hours, rates_php, pay_php }>
  * - cycle?: { source_file, period_start, period_end, fx_rate, cycle_id }
- *     Optional audit-only context; the wizard passes this so the cycle Reports
- *     drill-down can surface the dispatch event without time-window guessing.
  */
 export async function POST(req: NextRequest) {
-  const webhookUrl = await resolveWebhookUrl('paystub_dispatch', {
-    envVars: ['N8N_DISPATCH_WEBHOOK_URL'],
-  });
-  if (!webhookUrl) {
-    return NextResponse.json(
-      { error: 'No paystub_dispatch webhook configured (Admin -> Webhooks) and N8N_DISPATCH_WEBHOOK_URL env var unset' },
-      { status: 500 },
-    );
-  }
+  // Manual / re-send path — elevated only (the wizard no longer calls this; it
+  // stages to paystub_dispatch_queue and the per-employee send runs inside
+  // /api/payment-dispatches). Without a gate this would let any authenticated
+  // user fire arbitrary paystub emails through the n8n webhook.
+  const authz = await requireElevatedSession();
+  if (!authz.ok) return deniedResponse(authz);
 
   let body: Record<string, unknown>;
   try {
@@ -53,10 +48,7 @@ export async function POST(req: NextRequest) {
   const employees = Array.isArray(body.employees) ? (body.employees as unknown[]) : [];
   const payPeriod = (body.pay_period ?? null) as Record<string, unknown> | null;
 
-  const writeAudit = (
-    success: boolean,
-    extra: Record<string, unknown>,
-  ): void => {
+  const writeAudit = (success: boolean, extra: Record<string, unknown>): void => {
     void insertAuditLog({
       user_name: operatorEmail,
       user_role: operatorRole,
@@ -67,46 +59,35 @@ export async function POST(req: NextRequest) {
         success,
         employee_count: employees.length,
         pay_period: payPeriod,
-        cycle: cycle,
+        cycle,
         ...extra,
       },
     });
   };
 
-  try {
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      writeAudit(false, {
-        http_status: res.status,
-        n8n_error_excerpt: text.slice(0, 500),
-      });
-      return NextResponse.json(
-        { error: `n8n webhook returned ${res.status}`, detail: text },
-        { status: 502 },
-      );
-    }
-    writeAudit(true, { http_status: res.status });
-    return NextResponse.json({ ok: true, n8n: safeParse(text) });
-  } catch (err) {
+  const result = await forwardPaystubDispatch({
+    pay_period: payPeriod,
+    employees,
+    cycle,
+  });
+
+  if (result.notConfigured) {
+    return NextResponse.json({ error: result.detail }, { status: 500 });
+  }
+  if (!result.ok) {
     writeAudit(false, {
-      transport_error: err instanceof Error ? err.message : String(err),
+      http_status: result.status,
+      n8n_error_excerpt: result.detail,
     });
     return NextResponse.json(
-      { error: 'Failed to reach n8n', detail: err instanceof Error ? err.message : String(err) },
+      {
+        error: result.status ? `n8n webhook returned ${result.status}` : 'Failed to reach n8n',
+        detail: result.detail,
+      },
       { status: 502 },
     );
   }
-}
 
-function safeParse(s: string): unknown {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return s;
-  }
+  writeAudit(true, { http_status: result.status });
+  return NextResponse.json({ ok: true, n8n: result.parsed });
 }

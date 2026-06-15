@@ -11,9 +11,13 @@ import { updateEmployeeRates } from '@/lib/supabase/employee-hourly-rates';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { normEmail } from '@/lib/email/norm-email';
 import { updateEmployeeRateInSheet } from '@/lib/google-sheets/update-rates-sheet';
+import { updateHslPayPlanRate } from '@/lib/google-sheets/update-hsl-pay-plan-sheet';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+/** Canonical department key for Hogan Smith Law (see normalize-dept-key.ts). */
+const HOGAN_DEPT_KEY = 'hogan_smith_law';
 
 function todayMidnight(): Date {
   const n = new Date();
@@ -75,6 +79,20 @@ async function syncRateHistory(s: PayStructure, actor: string, effectiveDateIso?
   }).catch((err: unknown) => {
     console.warn('[pay-structures] sheet rate sync failed:', err);
   });
+
+  // Mirror the Hourly Rate + OT rate into the Hogan Agents Pay Plan sheet for
+  // Hogan agents only. Surgical (matched by Email; never touches the curated
+  // KPI/Scoreboard/Notes columns). Gated on department so non-Hogan saves don't
+  // pay to read the large Hogan sheet for a guaranteed no-op.
+  if (s.departmentKey === HOGAN_DEPT_KEY) {
+    void updateHslPayPlanRate({
+      workEmail: email,
+      regularRate: s.regularRate,
+      otRate: s.otRate ?? null,
+    }).catch((err: unknown) => {
+      console.warn('[pay-structures] HSL pay plan sync failed:', err);
+    });
+  }
 
   if (supabase) {
     void supabase

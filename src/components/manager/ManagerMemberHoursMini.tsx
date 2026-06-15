@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Wallet } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { normEmail } from '@/lib/email/norm-email';
 import {
   buildCalendarMonthWeeksIncludingWeekends,
@@ -14,8 +14,6 @@ import {
   resolveCanonicalColumnsToIso,
   type PabCalendarDay,
 } from '@/lib/hubstaff/calendar-column-dedupe';
-import { phpHourlyPayFromSeconds } from '@/lib/payroll/money-php';
-import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import { cn } from '@/lib/utils';
 import {
   getEnabledHolidayMap,
@@ -125,66 +123,8 @@ function getFieldFromRow(row: Record<string, unknown>, keys: string[]): unknown 
   return undefined;
 }
 
-function mondayOfWeekContaining(d: Date): Date {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const dow = x.getDay();
-  const daysBack = dow === 0 ? 6 : dow - 1;
-  x.setDate(x.getDate() - daysBack);
-  return x;
-}
-
-function formatPhp(n: number | null | undefined): string {
-  if (n == null) return '—';
-  return '₱' + n.toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function parseRate(v: string | null | undefined): number | null {
-  if (v == null) return null;
-  const n = parseFloat(String(v).replace(/,/g, ''));
-  return Number.isFinite(n) ? n : null;
-}
-
 const SLIDE_TRANSITION = { duration: 0.18, ease: [0.22, 1, 0.36, 1] as const };
 const LABEL_TRANSITION = { duration: 0.14, ease: 'easeOut' as const };
-
-/** Slim shape of `/api/manager/member-monthly-pay` — only the fields the
- *  modal needs to render. Kept inline so the component file is self-contained. */
-type MemberMonthlyPaySummary = {
-  hasRate: boolean;
-  startDate: string | null;
-  department: string | null;
-  totals: {
-    regularSec: number;
-    otSec: number;
-    regularPayPHP: number | null;
-    otPayPHP: number | null;
-    weekendSec: number;
-    weekendRegularSec: number;
-    weekendOtSec: number;
-    weekendPayPHP: number | null;
-    pabBonusPHP: number;
-    techBonusPHP: number;
-    bonusTotalPHP: number;
-    mesaDeductionPHP: number;
-    mesaMember: boolean;
-    grandTotalPayPHP: number | null;
-  };
-  weeks: {
-    weekStart: string;
-    weekEnd: string;
-    isFinalPabWeek: boolean;
-    isTechBonusWeek: boolean;
-    isPabEligible: boolean;
-    hasThirtyDays: boolean;
-    pabMonthComplete: boolean;
-    techSalaryReached: boolean;
-    pabBonusPHP: number;
-    techBonusPHP: number;
-  }[];
-};
 
 interface ManagerMemberHoursMiniProps {
   workEmail: string | null;
@@ -195,7 +135,9 @@ interface ManagerMemberHoursMiniProps {
    *  set or the hours calendar comes up empty. */
   alternateWorkEmail?: string | null;
   alternateWorkEmail2?: string | null;
-  ratesHidden?: boolean;
+  /** Department — drives the HSL-specific PAB attendance rule (weekend / overnight
+   *  qualification) for the calendar cell colouring. */
+  department?: string | null;
 }
 
 export default function ManagerMemberHoursMini({
@@ -203,7 +145,7 @@ export default function ManagerMemberHoursMini({
   personalEmail,
   alternateWorkEmail = null,
   alternateWorkEmail2 = null,
-  ratesHidden = false,
+  department = null,
 }: ManagerMemberHoursMiniProps) {
   const aliasNorms = useMemo(() => {
     const set = new Set<string>();
@@ -216,19 +158,9 @@ export default function ManagerMemberHoursMini({
 
   const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
   const [mergedColumns, setMergedColumns] = useState<string[]>([]);
-  const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
-  const [rateHistory, setRateHistory] = useState<Array<{
-    effectiveFrom: Date;
-    regularRate: number | null;
-    otRate: number | null;
-  }>>([]);
   const [usHolidayDates, setUsHolidayDates] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Authoritative server-side pay summary including PAB + Tech bonus gates.
-  // Loaded per-month; the client-side calendar still drives navigation.
-  const [serverPay, setServerPay] = useState<MemberMonthlyPaySummary | null>(null);
-  const [serverPayLoading, setServerPayLoading] = useState(false);
 
   const init = useMemo(() => getCurrentPabMonth(), []);
   const [viewYear, setViewYear] = useState(init.year);
@@ -236,7 +168,7 @@ export default function ManagerMemberHoursMini({
   // +1 when navigating forward, -1 when going back; drives slide direction.
   const [navDirection, setNavDirection] = useState<1 | -1>(1);
 
-  // Fetch hubstaff merged data + rate ONCE per member open. Month navigation is
+  // Fetch hubstaff merged hours ONCE per member open. Month navigation is
   // purely derived state — no refetches → instant transitions.
   useEffect(() => {
     if (aliasNorms.size === 0) {
@@ -250,23 +182,8 @@ export default function ManagerMemberHoursMini({
     setError(null);
     (async () => {
       try {
-        const [filesRes, ratesRes] = await Promise.all([
-          fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' }),
-          fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
-        ]);
+        const filesRes = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
         const filesJson = (await filesRes.json()) as { files?: string[] };
-        const ratesJson = (await ratesRes.json()) as {
-          rows?: EmployeeHourlyRateRow[];
-        };
-
-        const allRates = ratesJson.rows ?? [];
-        const myRate = allRates.find((r) => {
-          const we = normEmail(r.work_email);
-          const pe = normEmail(r.personal_email);
-          return (we && aliasNorms.has(we)) || (pe && aliasNorms.has(pe));
-        });
-        if (cancelled) return;
-        setRate(myRate ?? null);
 
         const files = filesJson.files ?? [];
         if (files.length === 0) {
@@ -330,45 +247,6 @@ export default function ManagerMemberHoursMini({
     };
   }, [aliasNorms]);
 
-  // Fetch the member's rate-history once per opened employee. Drives the
-  // per-day rate badge on the calendar cells so the manager can see exactly
-  // which day a mid-cycle rate change took effect (matches My Hours).
-  useEffect(() => {
-    const lookupEmail = workEmail?.trim() || personalEmail?.trim() || '';
-    if (!lookupEmail) {
-      setRateHistory([]);
-      return;
-    }
-    let cancelled = false;
-    // Use the manager-namespaced endpoint — the generic /api/employee-rate-
-    // history is self-or-elevated and 403s for plain manager sessions. This
-    // one mirrors /api/manager/member-monthly-pay's session-only model.
-    fetch(`/api/manager/member-rate-history?email=${encodeURIComponent(lookupEmail)}`, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { rows?: Array<{ regular_rate: string | null; ot_rate: string | null; effective_from: string }> }) => {
-        if (cancelled) return;
-        const parsed: typeof rateHistory = [];
-        for (const r of j.rows ?? []) {
-          const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.effective_from ?? '');
-          if (!m) continue;
-          const num = (s: string | null) => {
-            if (s == null) return null;
-            const v = parseFloat(String(s).replace(/,/g, ''));
-            return Number.isFinite(v) ? v : null;
-          };
-          parsed.push({
-            effectiveFrom: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
-            regularRate: num(r.regular_rate),
-            otRate: num(r.ot_rate),
-          });
-        }
-        parsed.sort((a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime());
-        setRateHistory(parsed);
-      })
-      .catch(() => { if (!cancelled) setRateHistory([]); });
-    return () => { cancelled = true; };
-  }, [workEmail, personalEmail]);
-
   // Fetch holiday settings once — drives the violet holiday cells on the calendar.
   useEffect(() => {
     let cancelled = false;
@@ -394,46 +272,6 @@ export default function ManagerMemberHoursMini({
     })();
     return () => { cancelled = true; };
   }, []);
-
-  // Fetch the authoritative server-side pay summary (regular + OT + PAB +
-  // Tech bonus + 40h overtime cap, all gated against dispatch logic). Re-runs
-  // on month change because bonus eligibility is per-week-per-month.
-  useEffect(() => {
-    const lookupEmail = workEmail?.trim() || personalEmail?.trim() || '';
-    if (!lookupEmail) {
-      setServerPay(null);
-      return;
-    }
-    let cancelled = false;
-    // Clear previous month/server snapshot immediately so we never render stale
-    // bonus/pay values while a different month is loading.
-    setServerPay(null);
-    setServerPayLoading(true);
-    const params = new URLSearchParams({
-      email: lookupEmail,
-      year: String(viewYear),
-      month: String(viewMonth),
-    });
-    fetch(`/api/manager/member-monthly-pay?${params.toString()}`, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((json: { data?: MemberMonthlyPaySummary | null; error?: string | null }) => {
-        if (cancelled) return;
-        if (json.error || !json.data) {
-          setServerPay(null);
-        } else {
-          setServerPay(json.data);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setServerPay(null);
-      })
-      .finally(() => {
-        if (!cancelled) setServerPayLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workEmail, personalEmail, viewYear, viewMonth]);
 
   // Derived per-day map — recomputed only when raw merged data changes, never on
   // month nav.
@@ -471,7 +309,7 @@ export default function ManagerMemberHoursMini({
     [viewYear, viewMonth],
   );
 
-  const isHslMember = (serverPay?.department ?? '').trim().toLowerCase() === 'hsl';
+  const isHslMember = (department ?? '').trim().toLowerCase() === 'hsl';
 
   const calendarWeeks = useMemo<PabCalendarDay[][] | null>(() => {
     const w = buildCalendarMonthWeeksIncludingWeekends(monthStart, monthEnd, hoursByDateKey);
@@ -488,94 +326,6 @@ export default function ManagerMemberHoursMini({
     }
     return s;
   }, [monthStart, monthEnd, hoursByDateKey]);
-
-  const monthPay = useMemo(() => {
-    const regularRate = parseRate(rate?.regular_rate);
-    const otRate = parseRate(rate?.ot_rate);
-
-    // Bucket each day's seconds by week (Monday-anchored). We later iterate each
-    // week chronologically so the 40h regular cap is filled in day-of-week order
-    // (Mon → Sun) — that way Saturday/Sunday seconds correctly attribute to OT
-    // when Mon-Fri already filled the cap.
-    const daysByWeek = new Map<number, { date: Date; seconds: number }[]>();
-    const cur = new Date(monthStart);
-    while (cur.getTime() <= monthEnd.getTime()) {
-      const key = pabDateKey(cur);
-      const sec = hoursByDateKey.get(key) ?? 0;
-      const wk = mondayOfWeekContaining(cur).getTime();
-      const arr = daysByWeek.get(wk) ?? [];
-      arr.push({ date: new Date(cur), seconds: sec });
-      daysByWeek.set(wk, arr);
-      cur.setDate(cur.getDate() + 1);
-    }
-
-    let regularSec = 0;
-    let otSec = 0;
-    let weekendRegularSec = 0;
-    let weekendOtSec = 0;
-    let weekdayRegularSec = 0;
-    let weekdayOtSec = 0;
-    let weekendTotalSec = 0;
-
-    const REGULAR_WEEK_CAP_SEC = 40 * 3600;
-    for (const days of daysByWeek.values()) {
-      const sortedDays = [...days].sort((a, b) => a.date.getTime() - b.date.getTime());
-      let usedThisWeek = 0;
-      for (const d of sortedDays) {
-        if (d.seconds <= 0) continue;
-        const isWeekend = d.date.getDay() === 0 || d.date.getDay() === 6;
-        if (isWeekend) weekendTotalSec += d.seconds;
-        const remaining = Math.max(0, REGULAR_WEEK_CAP_SEC - usedThisWeek);
-        const dayRegular = Math.min(d.seconds, remaining);
-        const dayOt = d.seconds - dayRegular;
-        regularSec += dayRegular;
-        otSec += dayOt;
-        if (isWeekend) {
-          weekendRegularSec += dayRegular;
-          weekendOtSec += dayOt;
-        } else {
-          weekdayRegularSec += dayRegular;
-          weekdayOtSec += dayOt;
-        }
-        usedThisWeek += d.seconds;
-      }
-    }
-
-    const regularPay =
-      regularRate != null ? phpHourlyPayFromSeconds(regularRate, regularSec) : null;
-    const otPay =
-      otSec > 0 ? (otRate != null ? phpHourlyPayFromSeconds(otRate, otSec) : null) : 0;
-    const totalPay =
-      regularPay != null && otPay != null
-        ? Math.round((regularPay + otPay) * 100) / 100
-        : null;
-
-    const weekendPay =
-      regularRate != null
-        ? phpHourlyPayFromSeconds(regularRate, weekendRegularSec) +
-          (otRate != null ? phpHourlyPayFromSeconds(otRate, weekendOtSec) : 0)
-        : null;
-    const weekdayPay =
-      regularRate != null
-        ? phpHourlyPayFromSeconds(regularRate, weekdayRegularSec) +
-          (otRate != null ? phpHourlyPayFromSeconds(otRate, weekdayOtSec) : 0)
-        : null;
-
-    return {
-      regularSec,
-      otSec,
-      regularPay,
-      otPay,
-      totalPay,
-      weekendTotalSec,
-      weekendRegularSec,
-      weekendOtSec,
-      weekendPay: weekendPay != null ? Math.round(weekendPay * 100) / 100 : null,
-      weekdayPay: weekdayPay != null ? Math.round(weekdayPay * 100) / 100 : null,
-      hasHours: monthAllDaysTotalSeconds > 0,
-      hasRate: regularRate != null || otRate != null,
-    };
-  }, [rate, hoursByDateKey, monthStart, monthEnd, monthAllDaysTotalSeconds]);
 
   const goPrev = useCallback(() => {
     setNavDirection(-1);
@@ -679,8 +429,6 @@ export default function ManagerMemberHoursMini({
                 weeks={calendarWeeks}
                 viewYear={viewYear}
                 viewMonth={viewMonth}
-                rateHistory={rateHistory}
-                ratesHidden={ratesHidden}
                 usHolidayDates={usHolidayDates}
                 isHsl={isHslMember}
                 hoursByDateKey={hoursByDateKey}
@@ -688,301 +436,6 @@ export default function ManagerMemberHoursMini({
             )}
           </motion.div>
         </AnimatePresence>
-      </div>
-
-      {/* Pay summary */}
-      <div className="overflow-hidden rounded-xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50/50 to-white p-3 dark:border-emerald-900/40 dark:from-emerald-950/20 dark:to-zinc-950/40">
-        <AnimatePresence mode="wait" initial={false} custom={navDirection}>
-          <motion.div
-            key={loading ? 'pay-loading' : `pay-${monthKey}`}
-            custom={navDirection}
-            initial={loading ? false : { opacity: 0, x: navDirection * 14 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: navDirection * -14 }}
-            transition={SLIDE_TRANSITION}
-            className="transform-gpu"
-          >
-            {loading || serverPayLoading ? (
-              <PaySummarySkeleton />
-            ) : !monthPay.hasHours ? (
-              <p className="py-3 text-center text-[11px] text-zinc-500 dark:text-zinc-400">
-                No hours yet for this month.
-              </p>
-            ) : (
-              (() => {
-                // Server-side numbers are authoritative (regular/OT split + PAB
-                // + Tech bonus gates). Fall back to client-side numbers while
-                // the server fetch is in flight or if it failed.
-                const sp = serverPay;
-                // Server total already nets out MESA contributions across all
-                // active weeks; only fall back to client-side flat-100 when
-                // server data isn't loaded yet.
-                const clientMesaFallback = rate?.mesa_member ? 100 : 0;
-                const mesaDeduction = sp ? sp.totals.mesaDeductionPHP : clientMesaFallback;
-                const isMesaMember = sp ? sp.totals.mesaMember : rate?.mesa_member === true;
-                const totalPayPhp = sp
-                  ? sp.totals.grandTotalPayPHP
-                  : monthPay.totalPay != null
-                    ? monthPay.totalPay - clientMesaFallback
-                    : null;
-                const regularSec = sp?.totals.regularSec ?? monthPay.regularSec;
-                const otSec = sp?.totals.otSec ?? monthPay.otSec;
-                const weekendSec = sp?.totals.weekendSec ?? monthPay.weekendTotalSec;
-                const weekendRegSec =
-                  sp?.totals.weekendRegularSec ?? monthPay.weekendRegularSec;
-                const weekendOtSec = sp?.totals.weekendOtSec ?? monthPay.weekendOtSec;
-                const weekendPay = sp?.totals.weekendPayPHP ?? monthPay.weekendPay;
-                const pabPhp = sp?.totals.pabBonusPHP ?? 0;
-                const techPhp = sp?.totals.techBonusPHP ?? 0;
-                const hasRate = sp?.hasRate ?? monthPay.hasRate;
-
-                // Per-week PAB / Tech context for the bonus rows so we can
-                // explain *why* it's missing (e.g. "not eligible — perfect
-                // attendance failed" vs "this month has no final PAB week").
-                const pabWeek = sp?.weeks.find((w) => w.isFinalPabWeek);
-                const techWeek = sp?.weeks.find((w) => w.isTechBonusWeek);
-                const isHsl = (sp?.department ?? '').trim().toLowerCase() === 'hsl';
-
-                return (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-emerald-700/80 dark:text-emerald-400/80">
-                        Estimated pay
-                      </span>
-                      <Wallet className="h-3.5 w-3.5 text-emerald-600/70 dark:text-emerald-400/70" />
-                    </div>
-                    <div className="flex items-baseline gap-2 font-mono text-xl font-bold tabular-nums tracking-tight text-emerald-800 dark:text-emerald-300">
-                      <span>{ratesHidden ? <span className="tracking-widest text-zinc-400 dark:text-zinc-600">••••••</span> : (totalPayPhp != null ? formatPhp(totalPayPhp) : '—')}</span>
-                      <AnimatePresence>
-                        {serverPayLoading && (
-                          <motion.span
-                            initial={{ opacity: 0, scale: 0.85 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.85 }}
-                            transition={{ duration: 0.18 }}
-                            className="inline-flex items-center gap-1 rounded-full border border-emerald-200/70 bg-white/80 px-2 py-0.5 text-[9.5px] font-medium uppercase tracking-wider text-emerald-700/80 shadow-sm dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-300/80"
-                          >
-                            <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                            Syncing
-                          </motion.span>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                    <dl className="grid grid-cols-3 gap-1 border-t border-emerald-200/60 pt-2 text-[10.5px] dark:border-emerald-900/40">
-                      <Stat label="Total" value={`${(monthAllDaysTotalSeconds / 3600).toFixed(2)}h`} />
-                      <Stat label="Reg" value={`${(regularSec / 3600).toFixed(2)}h`} />
-                      <Stat label="OT" value={`${(otSec / 3600).toFixed(2)}h`} />
-                    </dl>
-
-                    {/* Bonuses — PAB + Tech. Always shown when the modal can
-                        speak to the server, so the manager sees both
-                        "earned" and "didn't earn" cases with the gate reason.
-                        Hidden when serverPay is unavailable (no point
-                        guessing at bonuses client-side). */}
-                    {sp && (
-                      <div className="rounded-lg border border-violet-200/70 bg-gradient-to-br from-violet-50/70 to-fuchsia-50/30 p-2 dark:border-violet-900/40 dark:from-violet-950/20 dark:to-fuchsia-950/15">
-                        <div className="mb-1.5 flex items-center justify-between gap-2">
-                          <span className="text-[10px] font-medium uppercase tracking-wider text-violet-700/85 dark:text-violet-300/85">
-                            Bonuses
-                          </span>
-                          <span className="font-mono text-[11px] font-bold tabular-nums text-violet-800 dark:text-violet-200">
-                            {ratesHidden ? <span className="tracking-widest text-zinc-400 dark:text-zinc-600">••••</span> : formatPhp(sp.totals.bonusTotalPHP)}
-                          </span>
-                        </div>
-                        <BonusRow
-                          label="PAB"
-                          amount={pabPhp}
-                          hidden={ratesHidden}
-                          reason={
-                            !pabWeek
-                              ? 'No final PAB week falls in this month'
-                              : !pabWeek.pabMonthComplete
-                                ? 'Month in progress — PAB finalizes at month end'
-                                : !pabWeek.isPabEligible
-                                  ? isHsl
-                                    ? 'Not eligible — needs 5 days ≥7h in the Mon–Sun window'
-                                    : 'Not eligible — perfect-attendance check failed'
-                                  : null
-                          }
-                        />
-                        <BonusRow
-                          label="Tech"
-                          amount={techPhp}
-                          hidden={ratesHidden}
-                          reason={
-                            !techWeek
-                              ? 'No 3rd-week salary date falls in this month'
-                              : !techWeek.techSalaryReached
-                                ? 'Pending — salary date not yet reached'
-                                : !sp.startDate
-                                  ? 'Not eligible — no start date on file'
-                                  : !techWeek.hasThirtyDays
-                                    ? `Not eligible — under 30 days of service (started ${sp.startDate})`
-                                    : null
-                          }
-                        />
-                        {isMesaMember && (
-                          <div className="mt-1 flex items-center justify-between gap-2 rounded-md bg-teal-50/60 px-2 py-1 dark:bg-teal-950/30">
-                            <span className="text-[10px] font-medium uppercase tracking-wider text-teal-700/85 dark:text-teal-300/80">
-                              MESA <span className="text-[9px] font-normal normal-case tracking-normal text-teal-600/70 dark:text-teal-400/70">(₱100/wk)</span>
-                            </span>
-                            <span className="font-mono text-[10.5px] font-semibold tabular-nums text-teal-800 dark:text-teal-200">
-                              {ratesHidden ? <span className="tracking-widest text-zinc-400 dark:text-zinc-600">••••</span> : `−${formatPhp(mesaDeduction)}`}
-                            </span>
-                          </div>
-                        )}
-                        {!hasRate && (
-                          <p className="mt-1 rounded-md bg-amber-50/70 px-2 py-1 text-[9.5px] text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                            No hourly rate on file — bonuses suppressed.
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Weekend breakdown — Sat+Sun hours and pay. Authoritative
-                        when serverPay loaded, falls back to client-side. */}
-                    {weekendSec > 0 && (
-                      <div className="rounded-lg border border-orange-200/70 bg-gradient-to-br from-orange-50/70 to-amber-50/40 p-2 dark:border-orange-900/40 dark:from-orange-950/20 dark:to-amber-950/15">
-                        <div className="mb-1 flex items-center justify-between gap-2">
-                          <span className="text-[10px] font-medium uppercase tracking-wider text-orange-700/85 dark:text-orange-400/85">
-                            Weekend (Sat + Sun)
-                          </span>
-                          <span className="font-mono text-[11px] font-bold tabular-nums text-orange-800 dark:text-orange-300">
-                            {weekendPay != null ? formatPhp(weekendPay) : '—'}
-                          </span>
-                        </div>
-                        <dl className="grid grid-cols-3 gap-1 text-[10.5px]">
-                          <Stat label="Hrs" value={`${(weekendSec / 3600).toFixed(2)}h`} />
-                          <Stat label="Reg" value={`${(weekendRegSec / 3600).toFixed(2)}h`} />
-                          <Stat label="OT" value={`${(weekendOtSec / 3600).toFixed(2)}h`} />
-                        </dl>
-                      </div>
-                    )}
-
-                    {!hasRate && (
-                      <p className="rounded-md bg-amber-50/70 px-2 py-1 text-[10px] text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                        No hourly rate on file — PHP totals unavailable.
-                      </p>
-                    )}
-                  </div>
-                );
-              })()
-            )}
-          </motion.div>
-        </AnimatePresence>
-      </div>
-    </div>
-  );
-}
-
-function BonusRow({
-  label,
-  amount,
-  reason,
-  hidden,
-}: {
-  label: string;
-  amount: number;
-  reason: string | null;
-  hidden?: boolean;
-}) {
-  const earned = amount > 0;
-  return (
-    <div className="flex items-baseline justify-between gap-2 py-0.5">
-      <div className="min-w-0 flex-1">
-        <span
-          className={cn(
-            'font-mono text-[10px] font-medium tabular-nums',
-            earned
-              ? 'text-violet-800 dark:text-violet-200'
-              : 'text-zinc-500 dark:text-zinc-400',
-          )}
-        >
-          {label}
-        </span>
-        {reason && (
-          <span className="ml-1.5 text-[9.5px] italic text-zinc-500 dark:text-zinc-500">
-            · {reason}
-          </span>
-        )}
-      </div>
-      <span
-        className={cn(
-          'font-mono text-[10.5px] tabular-nums',
-          earned
-            ? 'font-semibold text-violet-800 dark:text-violet-200'
-            : 'text-zinc-400 dark:text-zinc-600',
-        )}
-      >
-        {hidden ? <span className="tracking-widest text-zinc-400 dark:text-zinc-600">••••</span> : (earned ? formatPhp(amount) : '—')}
-      </span>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-[9.5px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-        {label}
-      </dt>
-      <dd className="font-mono tabular-nums text-zinc-800 dark:text-zinc-200">{value}</dd>
-    </div>
-  );
-}
-
-function PaySummarySkeleton() {
-  return (
-    <div className="relative space-y-2">
-      {/* Spinner overlay — sits over the shimmering bars so the user sees both
-          "we're loading" and "here's the layout to come". */}
-      <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-        <div className="flex items-center gap-1.5 rounded-full border border-emerald-200/80 bg-white/90 px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-emerald-700 shadow-sm backdrop-blur-sm dark:border-emerald-800/60 dark:bg-emerald-950/70 dark:text-emerald-300">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          Loading payment
-        </div>
-      </div>
-
-      {/* Header line */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="h-2.5 w-20 animate-pulse rounded bg-emerald-200/70 dark:bg-emerald-900/50" />
-        <div className="h-3 w-3 animate-pulse rounded-full bg-emerald-200/70 dark:bg-emerald-900/50" />
-      </div>
-      {/* Big total */}
-      <div className="h-7 w-40 animate-pulse rounded bg-emerald-200/70 dark:bg-emerald-900/50" />
-      {/* 3-up stats */}
-      <div className="grid grid-cols-3 gap-1 border-t border-emerald-200/60 pt-2 dark:border-emerald-900/40">
-        {Array.from({ length: 3 }, (_, i) => (
-          <div key={i} className="space-y-1">
-            <div
-              className="h-1.5 w-8 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
-              style={{ animationDelay: `${i * 60}ms` }}
-            />
-            <div
-              className="h-2.5 w-10 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
-              style={{ animationDelay: `${i * 60 + 30}ms` }}
-            />
-          </div>
-        ))}
-      </div>
-      {/* Bonuses tile */}
-      <div className="rounded-lg border border-violet-200/60 bg-gradient-to-br from-violet-50/60 to-fuchsia-50/30 p-2 dark:border-violet-900/40 dark:from-violet-950/20 dark:to-fuchsia-950/15">
-        <div className="mb-1.5 flex items-center justify-between gap-2">
-          <div className="h-2 w-12 animate-pulse rounded bg-violet-200/80 dark:bg-violet-900/60" />
-          <div className="h-2.5 w-14 animate-pulse rounded bg-violet-200/80 dark:bg-violet-900/60" />
-        </div>
-        {Array.from({ length: 2 }, (_, i) => (
-          <div key={i} className="flex items-center justify-between gap-2 py-0.5">
-            <div
-              className="h-2 w-32 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
-              style={{ animationDelay: `${i * 80}ms` }}
-            />
-            <div
-              className="h-2 w-10 animate-pulse rounded bg-zinc-200 dark:bg-zinc-800"
-              style={{ animationDelay: `${i * 80 + 40}ms` }}
-            />
-          </div>
-        ))}
       </div>
     </div>
   );
@@ -1025,8 +478,6 @@ function CalendarBody({
   weeks,
   viewYear,
   viewMonth,
-  rateHistory,
-  ratesHidden,
   usHolidayDates,
   isHsl,
   hoursByDateKey,
@@ -1034,8 +485,6 @@ function CalendarBody({
   weeks: PabCalendarDay[][];
   viewYear: number;
   viewMonth: number;
-  rateHistory: Array<{ effectiveFrom: Date; regularRate: number | null; otRate: number | null }>;
-  ratesHidden: boolean;
   usHolidayDates: Map<string, string>;
   isHsl: boolean;
   hoursByDateKey: Map<string, number>;
@@ -1044,25 +493,6 @@ function CalendarBody({
   const todayMid = useMemo(() => {
     const t = new Date();
     return new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
-  }, []);
-
-  const resolveRate = useCallback(
-    (date: Date): { reg: number | null; ot: number | null; isFlipDay: boolean } => {
-      const t = date.getTime();
-      for (let i = 0; i < rateHistory.length; i += 1) {
-        const row = rateHistory[i];
-        if (row.effectiveFrom.getTime() <= t) {
-          const isFlipDay = row.effectiveFrom.getTime() === t && i < rateHistory.length - 1;
-          return { reg: row.regularRate, ot: row.otRate, isFlipDay };
-        }
-      }
-      return { reg: null, ot: null, isFlipDay: false };
-    },
-    [rateHistory],
-  );
-  const fmtRate = useCallback((n: number | null): string => {
-    if (n == null) return '—';
-    return '₱' + n.toLocaleString('en-PH', { maximumFractionDigits: 0 });
   }, []);
 
   return (
@@ -1165,18 +595,6 @@ function CalendarBody({
               hourText = 'text-rose-600 dark:text-rose-400';
             }
 
-            const dayRate = resolveRate(day.date);
-            const rateTooltip = !ratesHidden && (dayRate.reg != null || dayRate.ot != null)
-              ? ` · Rate ${fmtRate(dayRate.reg)} / OT ${fmtRate(dayRate.ot)}${dayRate.isFlipDay ? ' (new today)' : ''}`
-              : '';
-            // Faint badge whenever the day has hours; emerald-ringed flip-day
-            // badge always renders, even on empty/today cells, so a brand-new
-            // effective date is immediately visible on the calendar.
-            const showRate =
-              !ratesHidden &&
-              dayRate.reg != null &&
-              (day.hasData || dayRate.isFlipDay);
-
             return (
               <div
                 key={di}
@@ -1186,7 +604,7 @@ function CalendarBody({
                 )}
                 title={`${day.dayLabel} ${day.dateStr}: ${(day.seconds / 3600).toFixed(2)}h${hslOvernightQualifies ? ' · overnight (combined with next day)' : ''}${isHoliday ? ` — ${holidayName}` : ''}${
                   inMonth ? '' : ' · adj. month'
-                }${rateTooltip}`}
+                }`}
               >
                 {isHoliday && (
                   <span className="pointer-events-none absolute left-1 top-1 max-w-[calc(100%-0.25rem)] truncate text-[6px] font-semibold leading-none tracking-tight text-violet-500 dark:text-violet-400">
@@ -1204,18 +622,6 @@ function CalendarBody({
                 >
                   {hours > 0 ? `${hours.toFixed(1)}h` : '—'}
                 </span>
-                {showRate && (
-                  <span
-                    className={cn(
-                      'pointer-events-none absolute -bottom-0.5 right-0.5 rounded px-0.5 text-[7px] font-semibold leading-tight tabular-nums',
-                      dayRate.isFlipDay
-                        ? 'bg-emerald-500/20 text-emerald-700 ring-1 ring-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30'
-                        : 'text-zinc-400 dark:text-zinc-500',
-                    )}
-                  >
-                    {fmtRate(dayRate.reg)}
-                  </span>
-                )}
               </div>
             );
           })}

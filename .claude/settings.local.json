@@ -247,7 +247,20 @@
       "Bash(taskkill //PID 24552 //F)",
       "Bash(rm -rf .next)",
       "Bash(echo \"removed .next: $?\")",
-      "Bash(ls .next)"
+      "Bash(ls .next)",
+      "Bash(echo \"tsc exit code: $?\")",
+      "PowerShell(npx eslint src/components/manager/ManagerMemberHoursMini.tsx src/components/manager/ManagerMemberDialog.tsx src/components/manager/ManagerApp.tsx 2>&1)",
+      "PowerShell(npx next lint --file src/components/manager/ManagerMemberHoursMini.tsx --file src/components/manager/ManagerMemberDialog.tsx --file src/components/manager/ManagerApp.tsx 2>&1)",
+      "PowerShell($out = npm run lint 2>&1; $code = $LASTEXITCODE; $errs = \\($out | Select-String -Pattern \"error TS\"\\); Write-Output \"EXIT=$code\"; Write-Output \"ERROR_COUNT=$\\($errs.Count\\)\"; if \\($errs.Count -gt 0\\) { $errs | Select-Object -First 40 })",
+      "Bash(git --no-pager status)",
+      "Bash(xargs cat)",
+      "Bash(git --no-pager diff src/lib/supabase/paystub-dispatch-queue.ts)",
+      "Bash(git --no-pager diff -- src/components/PayrollWizard.tsx src/components/payroll-clerk/ExcludedQueue.tsx src/components/payroll-clerk/PayrollDispatch.tsx)",
+      "Bash(git --no-pager diff -- src/components/PayrollWizard.tsx)",
+      "Bash(git --no-pager diff src/components/payroll-clerk/useDispatchQueue.ts)",
+      "Bash(git -C \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" log --all --oneline -S \"no_personal_email\")",
+      "PowerShell($out = npm run lint 2>&1; $code = $LASTEXITCODE; $errs = \\($out | Select-String -Pattern \"error TS\"\\); Write-Output \"EXIT=$code\"; Write-Output \"ERROR_COUNT=$\\($errs.Count\\)\"; if \\($errs.Count -gt 0\\) { $errs | Select-Object -First 50 })",
+      "Bash(git --no-pager diff src/components/payroll-clerk/useDispatchQueue.ts src/components/payroll-clerk/PayrollDispatch.tsx src/components/payroll-clerk/ExcludedQueue.tsx)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

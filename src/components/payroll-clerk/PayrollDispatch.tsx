@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useLayoutEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -47,10 +47,11 @@ import {
 import ProcessorCard from './ProcessorCard';
 import AnimatedNumber from './AnimatedNumber';
 import DispatchLoader from './DispatchLoader';
-import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
+import { PROCESSORS, parseCyclePeriodFromFile, type ArrearsInfo, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
 
 type TabId = 'all' | 'urgent' | 'done' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
 
@@ -161,14 +162,32 @@ export default function PayrollDispatch() {
     session?.user?.email,
   ]);
   const [activeTab, setActiveTab] = useState<TabId>('all');
-  const { rows: fetched, excluded, paid, period, loading, error, refresh } = useDispatchQueue();
+  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, refresh } = useDispatchQueue();
   const { state: lockState, setLocked } = useDispatchLock();
+  // Realtime "values locked" flag for this cycle — when the wizard locks/unlocks,
+  // re-pull the queue so it appears/clears live (the queue's own `wizardReady`
+  // mirrors this flag). The lock is owned by the wizard; here we only react.
+  const cycleLock = useWizardDispatchLock(period.sourceFile);
+  const prevCycleLockedRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (cycleLock.loading) return;
+    if (
+      prevCycleLockedRef.current !== null &&
+      prevCycleLockedRef.current !== cycleLock.state.locked
+    ) {
+      void refresh();
+    }
+    prevCycleLockedRef.current = cycleLock.state.locked;
+  }, [cycleLock.state.locked, cycleLock.loading, refresh]);
   const [pending, setPending] = useState<QueueRow[]>([]);
   // Gallery state for the dispatch dialog: a snapshot of the sibling rows taken
   // at open time + the active index, so the user can slide ←/→ between payments.
   const [gallerySiblings, setGallerySiblings] = useState<QueueRow[]>([]);
   const [galleryIdx, setGalleryIdx] = useState<number | null>(null);
   const markPaidRow = galleryIdx != null ? gallerySiblings[galleryIdx] ?? null : null;
+  // When paying from the Excluded tab, the cross-cycle arrears to settle in one
+  // action (one payment + paystub per unpaid held cycle). null = normal pay.
+  const [settleArrears, setSettleArrears] = useState<ArrearsInfo | null>(null);
   const [urgentCount, setUrgentCount] = useState(0);
   const [confirmingLockToggle, setConfirmingLockToggle] = useState(false);
   const [togglingLock, setTogglingLock] = useState(false);
@@ -243,6 +262,14 @@ export default function PayrollDispatch() {
   );
   const handleCloseMarkPaid = useCallback(() => {
     setGalleryIdx(null);
+    setSettleArrears(null);
+  }, []);
+  // Excluded-tab "Pay now": single-row dialog that settles the person's full
+  // cross-cycle balance on confirm.
+  const handleOpenExcludedMarkPaid = useCallback((row: QueueRow, arrears?: ArrearsInfo) => {
+    setGallerySiblings([row]);
+    setGalleryIdx(0);
+    setSettleArrears(arrears ?? null);
   }, []);
   const handleGalleryPrev = useCallback(() => {
     setGalleryIdx((i) => (i == null ? i : Math.max(0, i - 1)));
@@ -254,57 +281,150 @@ export default function PayrollDispatch() {
   }, [gallerySiblings.length]);
 
   const handleConfirmPaid = async (payload: MarkPaidPayload) => {
-    const row = pending.find((r) => r.id === payload.rowId);
+    const wasPending = pending.some((r) => r.id === payload.rowId);
+    // Row can come from the pending queue OR from an Excluded-tab "Pay now"
+    // (in which case it lives only in the gallery snapshot, not `pending`).
+    const row =
+      pending.find((r) => r.id === payload.rowId) ??
+      gallerySiblings.find((r) => r.id === payload.rowId) ??
+      null;
     if (!row) return;
+    const arrears = settleArrears;
 
-    // Optimistically drop the row so the UI feels instant. If the POST fails
-    // we put it back and surface the error.
-    setPending((prev) => prev.filter((r) => r.id !== payload.rowId));
+    // Optimistically drop the row so the UI feels instant (no-op for an
+    // Excluded-tab pay). If the POST fails we put it back and surface the error.
+    if (wasPending) setPending((prev) => prev.filter((r) => r.id !== payload.rowId));
     setGalleryIdx(null);
+    setSettleArrears(null);
 
-    try {
-      const res = await fetch('/api/payment-dispatches', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cycle_id: period.cycleId,
-          cycle_period_start: period.start,
-          cycle_period_end: period.end,
-          cycle_source_file: period.sourceFile,
-          recipient_email: row.email,
-          recipient_name: row.name,
-          processor: row.processor,
-          bank_preferred_raw: row.bankPreferredRaw,
-          recipient_preferred_bank: payload.recipientPreferredBank || null,
-          recipient_account_number: payload.recipientAccountNumber || null,
-          recipient_account_holder: payload.recipientAccountHolder || null,
-          recipient_swift_code: payload.recipientSwiftCode || null,
-          amount_usd: row.amountUSD,
-          amount_php: row.amountPHP,
-          transaction_id: payload.transactionId,
-          bank_used: payload.bankUsed,
-          sent_date: payload.sentDate,
-          arrival_date: payload.arrivalDate || null,
-          status: payload.status,
-          note: payload.note || null,
-        }),
-      });
-      const json = (await res.json()) as { row?: unknown; error?: string };
-      if (!res.ok || json.error) {
-        throw new Error(json.error ?? 'Could not log dispatch');
+    // "Settle full balance" = one action clears every unpaid held cycle: one
+    // payment + one paystub email per cycle (each keyed to its own staged
+    // payload). A normal pay is just the single current cycle. Prior cycles get
+    // their real period dates back from the filename.
+    const cycles =
+      arrears && arrears.cycles.length > 0
+        ? arrears.cycles.map((c) => {
+            const p = parseCyclePeriodFromFile(c.sourceFile);
+            return {
+              sourceFile: c.sourceFile,
+              amountPHP: c.amountPHP,
+              amountUSD: c.amountUSD,
+              cycleId: null as string | null,
+              periodStart: p.start,
+              periodEnd: p.end,
+            };
+          })
+        : [
+            {
+              sourceFile: period.sourceFile,
+              amountPHP: row.amountPHP,
+              amountUSD: row.amountUSD,
+              cycleId: period.cycleId,
+              periodStart: period.start,
+              periodEnd: period.end,
+            },
+          ];
+
+    // Settle cycle-by-cycle but NEVER abort the whole run on one failure: each
+    // successful POST already moved money + emailed a paystub, so we record what
+    // landed, keep going, then reconcile from the server. Failed cycles stay in
+    // arrears (visible for a safe retry — paid cycles won't reappear).
+    let sent = 0;
+    let failedSend = 0;
+    let notStaged = 0;
+    let paidCycles = 0;
+    let failedCycles = 0;
+    let lastSendError: string | null = null;
+    let lastDispatchError: string | null = null;
+    for (const c of cycles) {
+      try {
+        const res = await fetch('/api/payment-dispatches', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cycle_id: c.cycleId,
+            cycle_period_start: c.periodStart,
+            cycle_period_end: c.periodEnd,
+            cycle_source_file: c.sourceFile,
+            recipient_email: row.email,
+            recipient_name: row.name,
+            processor: row.processor,
+            bank_preferred_raw: row.bankPreferredRaw,
+            recipient_preferred_bank: payload.recipientPreferredBank || null,
+            recipient_account_number: payload.recipientAccountNumber || null,
+            recipient_account_holder: payload.recipientAccountHolder || null,
+            recipient_swift_code: payload.recipientSwiftCode || null,
+            amount_usd: c.amountUSD,
+            amount_php: c.amountPHP,
+            transaction_id: payload.transactionId,
+            bank_used: payload.bankUsed,
+            sent_date: payload.sentDate,
+            arrival_date: payload.arrivalDate || null,
+            status: payload.status,
+            note: payload.note || null,
+          }),
+        });
+        const json = (await res.json()) as {
+          row?: unknown;
+          error?: string;
+          paystub?: { staged: boolean; sent: boolean; error: string | null };
+        };
+        if (!res.ok || json.error) throw new Error(json.error ?? `HTTP ${res.status}`);
+        paidCycles += 1;
+        const ps = json.paystub;
+        if (ps?.sent) sent += 1;
+        else if (ps?.staged && ps?.error) {
+          failedSend += 1;
+          lastSendError = ps.error;
+        } else if (ps && !ps.staged) notStaged += 1;
+      } catch (e) {
+        failedCycles += 1;
+        lastDispatchError = e instanceof Error ? e.message : String(e);
       }
-      toast.success(
-        payload.status === 'paid'
-          ? `${row.name} marked paid`
-          : `${row.name} logged · ${payload.status.replace('_', ' ')}`,
-        { icon: payload.status === 'paid' ? '✨' : '📝' },
-      );
-      // Re-pull queue + history so paid count + persistence are accurate.
-      void refresh();
-    } catch (e) {
-      // Restore the row in pending.
-      setPending((prev) => (prev.some((r) => r.id === row.id) ? prev : [row, ...prev]));
-      toast.error(e instanceof Error ? e.message : 'Could not log dispatch');
+    }
+
+    // Always reconcile from the server so the queue reflects exactly what landed.
+    void refresh();
+
+    if (paidCycles === 0) {
+      // Nothing landed — restore the optimistically-removed pending row.
+      if (wasPending) {
+        setPending((prev) => (prev.some((r) => r.id === row.id) ? prev : [row, ...prev]));
+      }
+      toast.error(`Couldn't log ${row.name}'s payment`, {
+        description: lastDispatchError ?? undefined,
+      });
+      return;
+    }
+
+    if (payload.status !== 'paid') {
+      toast.success(`${row.name} logged · ${payload.status.replace('_', ' ')}`, { icon: '📝' });
+    } else if (cycles.length > 1) {
+      const desc =
+        `${sent} paystub${sent === 1 ? '' : 's'} emailed` +
+        (failedSend ? ` · ${failedSend} email failed` : '') +
+        (notStaged ? ` · ${notStaged} not staged` : '') +
+        (failedCycles ? ` · ${failedCycles} cycle${failedCycles === 1 ? '' : 's'} still owed` : '');
+      if (failedCycles) {
+        toast.warning(`${row.name}: ${paidCycles}/${cycles.length} cycles settled`, { description: desc });
+      } else {
+        toast.success(`${row.name} settled · ${paidCycles} cycle${paidCycles === 1 ? '' : 's'}`, {
+          icon: '✨',
+          description: desc,
+        });
+      }
+    } else if (sent) {
+      toast.success(`${row.name} marked paid · paystub emailed`, { icon: '✨' });
+    } else if (failedSend) {
+      toast.warning(`${row.name} marked paid — paystub email failed`, {
+        description: `${lastSendError ?? 'send error'}. Re-send from the Excluded tab.`,
+      });
+    } else if (notStaged) {
+      toast.warning(`${row.name} marked paid — no staged paystub to email`, {
+        description: 'Lock in this cycle from the Payroll Wizard to enable paystub emails.',
+      });
+    } else {
+      toast.success(`${row.name} marked paid`, { icon: '✨' });
     }
   };
 
@@ -318,6 +438,8 @@ export default function PayrollDispatch() {
     if (error) return <ErrorState message={error} />;
     if (loading || !hydrated) return <DispatchLoader />;
     if (!cycleReady) return <NoCycleState />;
+    // No queue data until accounting locks + stages this cycle from the wizard.
+    if (!wizardReady) return <WizardNotReadyState period={period} />;
     if (activeTab === 'done') {
       return (
         <DoneQueue
@@ -329,7 +451,7 @@ export default function PayrollDispatch() {
       );
     }
     if (activeTab === 'excluded') {
-      return <ExcludedQueue rows={excluded} />;
+      return <ExcludedQueue rows={excluded} onMarkPaid={handleOpenExcludedMarkPaid} />;
     }
     return (
       <ProcessorQueue
@@ -840,6 +962,57 @@ function HeroStat({
         >
           <Icon className="h-5 w-5" />
         </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function WizardNotReadyState({
+  period,
+}: {
+  period: { start: string | null; end: string | null; sourceFile: string | null };
+}) {
+  const label = formatPeriodLabel(period.start, period.end);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center"
+    >
+      <motion.div
+        initial={{ scale: 0.8, rotate: -6 }}
+        animate={{ scale: 1, rotate: 0 }}
+        transition={{ type: 'spring', stiffness: 240, damping: 18 }}
+        className="relative flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-xl shadow-indigo-500/30"
+      >
+        <Lock className="h-9 w-9" />
+        <span className="absolute -right-1.5 -top-1.5 flex h-5 w-5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-70" />
+          <span className="relative inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-black text-white">!</span>
+        </span>
+      </motion.div>
+      <div className="max-w-md">
+        <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">
+          Payroll Wizard isn&apos;t ready yet
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+          This cycle&apos;s values haven&apos;t been locked. There&apos;s nothing to pay here until
+          accounting opens the <span className="font-semibold text-indigo-600 dark:text-indigo-400">Payroll Wizard</span> and
+          clicks <span className="font-semibold text-zinc-700 dark:text-zinc-200">&ldquo;Lock in Values &amp; Send to Payment Dispatch&rdquo;</span>.
+          The queue, amounts, and paystubs all appear once it&apos;s locked.
+        </p>
+        {(period.start || period.sourceFile) && (
+          <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-amber-200/80 bg-amber-50/80 px-3 py-1.5 text-[11px] font-medium text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+            <CalendarRange className="h-3.5 w-3.5" />
+            <span>{label}</span>
+            {period.sourceFile && (
+              <span className="border-l border-amber-200 pl-2 font-mono text-amber-700/80 dark:border-amber-800 dark:text-amber-400/70">
+                {period.sourceFile.replace(/\.csv$/i, '')}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </motion.div>
   );

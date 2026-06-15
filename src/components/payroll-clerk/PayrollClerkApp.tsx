@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import AppFooter from '@/components/AppFooter';
-import { Menu } from 'lucide-react';
+import { Lock, Menu } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/sonner';
@@ -21,6 +21,7 @@ import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import UrgentPaymentsQueue from './UrgentPaymentsQueue';
 import { PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import { useDispatchQueue } from './useDispatchQueue';
+import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -36,7 +37,21 @@ export default function PayrollClerkApp() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
 
-  const { rows: fetched, excluded, paid, period, loading, error, refresh } = useDispatchQueue();
+  const { rows: fetched, excluded, paid, period, wizardReady, loading, error, refresh } = useDispatchQueue();
+  // Realtime "values locked" flag — re-pull when the wizard locks/unlocks so the
+  // queue appears/clears live.
+  const cycleLock = useWizardDispatchLock(period.sourceFile);
+  const prevCycleLockedRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (cycleLock.loading) return;
+    if (
+      prevCycleLockedRef.current !== null &&
+      prevCycleLockedRef.current !== cycleLock.state.locked
+    ) {
+      void refresh();
+    }
+    prevCycleLockedRef.current = cycleLock.state.locked;
+  }, [cycleLock.state.locked, cycleLock.loading, refresh]);
   const [pending, setPending] = useState<QueueRow[]>([]);
   const [markPaidRow, setMarkPaidRow] = useState<QueueRow | null>(null);
   const [hydrated, setHydrated] = useState(false);
@@ -144,9 +159,18 @@ export default function PayrollClerkApp() {
           note: payload.note || null,
         }),
       });
-      const json = (await res.json()) as { error?: string };
+      const json = (await res.json()) as {
+        error?: string;
+        paystub?: { staged: boolean; sent: boolean; error: string | null };
+      };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Could not log dispatch');
-      toast.success(`${row.name} marked paid`);
+      if (payload.status === 'paid' && json.paystub?.sent) {
+        toast.success(`${row.name} marked paid · paystub emailed`);
+      } else if (payload.status === 'paid' && json.paystub && !json.paystub.staged) {
+        toast.warning(`${row.name} marked paid — no staged paystub to email`);
+      } else {
+        toast.success(`${row.name} marked paid`);
+      }
       void refresh();
     } catch (e) {
       setPending((prev) => (prev.some((r) => r.id === row.id) ? prev : [row, ...prev]));
@@ -194,6 +218,23 @@ export default function PayrollClerkApp() {
     }
     if (loading || !hydrated) {
       return <DispatchLoader />;
+    }
+    // No queue data until accounting locks + stages this cycle from the wizard.
+    if (!wizardReady) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-4 bg-[#fafaf8] px-6 text-center dark:bg-[#0d1117]">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-500/30">
+            <Lock className="h-7 w-7" />
+          </div>
+          <div className="max-w-md">
+            <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Payroll Wizard isn&apos;t ready yet</h2>
+            <p className="mt-1 text-sm text-[#71717a] dark:text-zinc-500">
+              This cycle&apos;s values haven&apos;t been locked. Nothing to pay here until accounting clicks
+              <span className="font-semibold text-zinc-700 dark:text-zinc-200"> &ldquo;Lock in Values &amp; Send to Payment Dispatch&rdquo;</span> in the Payroll Wizard.
+            </p>
+          </div>
+        </div>
+      );
     }
     if (activeTab === 'history') {
       return (

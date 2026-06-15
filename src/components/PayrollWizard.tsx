@@ -47,6 +47,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
 import { useWizardFollow } from '@/hooks/useWizardFollow';
 import { cn } from '@/lib/utils';
 import { formatMoney, normalizeCurrency, sumByCurrency } from '@/lib/contractor-currency';
@@ -436,6 +437,22 @@ type DispatchEmployee = {
   };
 };
 
+/**
+ * An employee accounting flagged "do not pay" in the Validation step. Staged to
+ * Payment Dispatch as excluded (carrying the full `payload` when a personal
+ * email resolved, so they can still be paid + emailed later from the Excluded
+ * tab once cleared).
+ */
+type ExcludedDispatchEntry = {
+  email: string;
+  personal_email: string | null;
+  name: string;
+  department_key: string | null;
+  amount_php: number | null;
+  payload: DispatchEmployee | null;
+  reason: 'do_not_pay';
+};
+
 function formatPHP(n: number): string {
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -766,6 +783,13 @@ export default function PayrollWizard({
     setPreviewPage(1);
   }, [previewTab, previewSearch]);
   const [isDispatching, setIsDispatching] = useState(false);
+  /**
+   * Work emails (lowercased) accounting flagged "do not pay" in the Validation
+   * step. Dropped from the payable dispatch set and staged to Payment Dispatch
+   * as excluded so they surface in the Excluded tab for later reconciliation.
+   * Persisted per pay-period under `payroll.wizard.exclusions.<sourceFile>`.
+   */
+  const [excludedEmails, setExcludedEmails] = useState<Set<string>>(new Set());
   const [pendingWeekly, setPendingWeekly] = useState<{
     text: string;
     fileName: string;
@@ -845,6 +869,10 @@ export default function PayrollWizard({
   /** Source file selected for Initial Calculation (step 2). Defaults to latest uploaded file. */
   const [calcSourceFile, setCalcSourceFile] = useState<string | null>(null);
   const [calcSourceFileLoading, setCalcSourceFileLoading] = useState(false);
+  // Per-cycle "values locked" flag for Payment Dispatch (realtime). Lock = send
+  // values to dispatch; Unlock = pull them back (dispatch shows nothing).
+  const dispatchValuesLock = useWizardDispatchLock(calcSourceFile);
+  const [togglingValuesLock, setTogglingValuesLock] = useState(false);
   /** The newest upload is the live payroll period. Selecting any older Hubstaff report
    *  enters read-only "replay" mode: the wizard preloads everything saved for that period
    *  (adjustments, notes, bonuses, final pay) for review, but blocks any save/dispatch so a
@@ -1761,6 +1789,46 @@ export default function PayrollWizard({
     if (!calcSourceFile) return;
     void loadAdditionsProgress(calcSourceFile);
   }, [calcSourceFile, loadAdditionsProgress]);
+
+  // ── "Do not pay" exclusions (Validation step) ─────────────────────────────
+  // Per-pay-period set of work emails accounting excluded from payment.
+  const loadExclusions = React.useCallback(async (sourceFile: string) => {
+    try {
+      const res = await fetch(`/api/app-settings?key=payroll.wizard.exclusions.${sourceFile}`);
+      const json = await res.json();
+      const arr: string[] = json.value ? (JSON.parse(json.value) as string[]) : [];
+      setExcludedEmails(new Set(arr.map((e) => normEmail(e) ?? e.trim().toLowerCase()).filter(Boolean)));
+    } catch {
+      setExcludedEmails(new Set());
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!calcSourceFile) { setExcludedEmails(new Set()); return; }
+    void loadExclusions(calcSourceFile);
+  }, [calcSourceFile, loadExclusions]);
+
+  const persistExclusions = React.useCallback(async (next: Set<string>) => {
+    if (!calcSourceFile || isReplay) return;
+    try {
+      await savePabSetting(`payroll.wizard.exclusions.${calcSourceFile}`, JSON.stringify(Array.from(next)));
+    } catch (e) {
+      console.warn('[persistExclusions]', e);
+    }
+  }, [calcSourceFile, isReplay, savePabSetting]);
+
+  /** Toggle an employee in/out of the "do not pay" set (Validation step). */
+  const toggleExcluded = React.useCallback((email: string) => {
+    const key = normEmail(email) ?? email.trim().toLowerCase();
+    if (!key) return;
+    setExcludedEmails((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      void persistExclusions(next);
+      return next;
+    });
+  }, [persistExclusions]);
 
   // When replaying a past period, surface whether it was already dispatched (its
   // final-pay snapshot exists) so the replay banner can label it accordingly.
@@ -2980,35 +3048,30 @@ export default function PayrollWizard({
   }, [calcSourceFile, isReplay, bonusOverrides, bonusOverrideNotes, orphanageAmounts, employeeMetrics, deptMetrics, employeeDepts, employeeBonuses, techBonusManualGrants, techBonusManualRevokes, pabStatusByEmail, savePabSetting]);
 
   /**
-   * US-holiday forgiveness summary scoped to the current PAB month: for each holiday
-   * in the period, which employees had that day waived (zero/under-7h hours that no
-   * longer block PAB). Used by the Validation step to show what was forgiven.
+   * US-holiday forgiveness summary scoped to the current pay-period WEEK: for each
+   * holiday that falls inside the week being dispatched, which employees had that day
+   * waived (zero/under-7h hours that no longer block PAB). Used by the Validation step
+   * to show what was forgiven.
    */
   const usHolidayForgivenSummary = useMemo<
     { iso: string; name: string; date: Date; forgivenEmails: string[]; workedThroughEmails: string[]; isForgivenEnabled: boolean }[]
   >(() => {
     if (!pabMonthRange) return [];
-    // Derive the window from the actual Hubstaff date columns loaded for THIS run,
-    // expanded to the full calendar month(s) they span. This keeps the holidays
-    // aligned with the data being validated even if the active-month setting is
-    // stale (e.g. set to April while a May report is loaded). Falls back to the
-    // active PAB month when no date columns are available yet.
-    let minT = Infinity;
-    let maxT = -Infinity;
-    for (const col of hubstaffColsForPab ?? []) {
-      const cd = parseColDate(col);
-      if (!cd) continue;
-      const ct = cd.getTime();
-      if (ct < minT) minT = ct;
-      if (ct > maxT) maxT = ct;
-    }
+    // Scope to the CURRENT pay-period week, not the whole PAB month: a holiday only
+    // belongs in the Validation banner if it actually falls inside the week being
+    // dispatched. The week's date span comes from the selected Hubstaff source file
+    // (e.g. `...2026-05-24_to_2026-05-30.csv`). Month-wide scoping was the old bug —
+    // e.g. Memorial Day (last Mon of May) kept showing on every later May/June report.
+    // Falls back to the active PAB month only when no source file is selected (no
+    // concrete week to scope to).
+    const weekRange = calcSourceFile ? parseDateRangeFromFilename(calcSourceFile) : null;
     let startT: number;
     let endT: number;
-    if (minT !== Infinity) {
-      const lo = new Date(minT);
-      const hi = new Date(maxT);
-      startT = new Date(lo.getFullYear(), lo.getMonth(), 1).getTime();
-      endT   = new Date(hi.getFullYear(), hi.getMonth() + 1, 0).getTime(); // last day of hi's month
+    if (weekRange) {
+      const lo = weekRange.start;
+      const hi = weekRange.end;
+      startT = new Date(lo.getFullYear(), lo.getMonth(), lo.getDate()).getTime();
+      endT   = new Date(hi.getFullYear(), hi.getMonth(), hi.getDate()).getTime();
     } else {
       startT = new Date(pabMonthRange.year, pabMonthRange.month, 1).getTime();
       endT   = new Date(pabMonthRange.year, pabMonthRange.month + 1, 0).getTime();
@@ -3053,7 +3116,7 @@ export default function PayrollWizard({
       out.push({ ...h, forgivenEmails: forgiven, workedThroughEmails: worked });
     }
     return out;
-  }, [pabMonthRange, hubstaffColsForPab, usHolidaysListFull, usHolidaysMasterEnabled, employeeWeekdayHours, employeeAllDaysHours]);
+  }, [pabMonthRange, calcSourceFile, usHolidaysListFull, usHolidaysMasterEnabled, employeeWeekdayHours, employeeAllDaysHours]);
 
   /**
    * Auto-apply / remove perfect_attendance toggle whenever eligibility is
@@ -3648,6 +3711,16 @@ export default function PayrollWizard({
       const pe = normEmail(emp.personal_email);
       if (we) map.set(we, sd);
       if (pe) map.set(pe, sd);
+      // Bridge alternate work emails the same way ratesByEmail/masterIndex do.
+      // The Global Master List is the source of truth for which addresses
+      // belong to one person, so a Hubstaff row keyed on an alias (e.g.
+      // sheeng@simple.biz when the primary work email is shannong@simple.biz)
+      // still resolves its start date — required for the Tech Bonus
+      // 30-day-service gate. Never overwrites a primary (primary wins).
+      for (const alt of [emp.alternate_work_email, emp.alternate_work_email_2]) {
+        const a = normEmail(alt);
+        if (a && !map.has(a)) map.set(a, sd);
+      }
     }
     return map;
   }, [masterEmployees]);
@@ -4136,18 +4209,11 @@ export default function PayrollWizard({
       return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
     })();
     /**
-     * Build start_date lookup (work_email → Date). Employees need 30 days of
+     * Reuse the component-scoped `startDateByEmail` (work/personal/alternate
+     * work emails → Date) so the 30-day Tech Bonus gate here matches the
+     * Additions table's eligibility set exactly. Employees need 30 days of
      * service before their first Tech Bonus; eligibleFrom = start_date + 30d.
      */
-    const startDateByEmail = new Map<string, Date>();
-    for (const emp of masterEmployees) {
-      const sd = emp.start_date ? new Date(emp.start_date) : null;
-      if (!sd || isNaN(sd.getTime())) continue;
-      const we = normEmail(emp.work_email);
-      const pe = normEmail(emp.personal_email);
-      if (we) startDateByEmail.set(we, sd);
-      if (pe) startDateByEmail.set(pe, sd);
-    }
     const hasThirtyDaysByWeek = (workEmail: string) => {
       if (!weekStartDate) return false;
       const em = normEmail(workEmail);
@@ -4158,11 +4224,28 @@ export default function PayrollWizard({
     };
 
     const rows: DispatchEmployee[] = [];
+    const excludedRows: ExcludedDispatchEntry[] = [];
     const missing: string[] = [];
     for (const r of effectiveCalcResults) {
+      const exclKey = normEmail(r.email) ?? '';
+      const isExcluded = exclKey !== '' && excludedEmails.has(exclKey);
       const pe = resolvePersonalEmail(r);
       if (!pe) {
-        missing.push(r.name || r.email);
+        if (isExcluded) {
+          // Accounting said "do not pay" but we can't email them either — stage
+          // as excluded with no payload so they still show in the Excluded tab.
+          excludedRows.push({
+            email: r.email,
+            personal_email: null,
+            name: r.name,
+            department_key: employeeDepts[r.email] ?? null,
+            amount_php: r.initialPay ?? null,
+            payload: null,
+            reason: 'do_not_pay',
+          });
+        } else {
+          missing.push(r.name || r.email);
+        }
         continue;
       }
       const deptKey = employeeDepts[r.email] ?? null;
@@ -4213,7 +4296,7 @@ export default function PayrollWizard({
 
       const finalPay = (r.initialPay ?? 0) + bonusTotal - mesaDeduction + mesaDisbursement + orphanagePay;
 
-      rows.push({
+      const emp: DispatchEmployee = {
         name: r.name,
         email: r.email,
         personal_email: pe,
@@ -4235,20 +4318,38 @@ export default function PayrollWizard({
           orphanage_pay: orphanagePay,
           final: finalPay,
         },
-      });
+      };
+
+      if (isExcluded) {
+        // Staged with its full payload so a later "Pay now" from the Excluded
+        // tab still emails the right paystub.
+        excludedRows.push({
+          email: r.email,
+          personal_email: pe,
+          name: r.name,
+          department_key: deptKey,
+          amount_php: finalPay,
+          payload: emp,
+          reason: 'do_not_pay',
+        });
+      } else {
+        rows.push(emp);
+      }
     }
-    return { rows, missing, payPeriodPayload };
+    return { rows, excludedRows, missing, payPeriodPayload };
   }, [
     effectiveCalcResults,
     ratesByEmail,
     masterEmployees,
     masterIndex,
+    startDateByEmail,
     employeeDepts,
     employeeBonuses,
     bonusTotals,
     bonusOverrides,
     orphanageAmounts,
     mesaDisbursements,
+    excludedEmails,
     pabMonthRange,
     calcSourceFile,
     hubstaffColsForPab,
@@ -9804,7 +9905,7 @@ export default function PayrollWizard({
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex items-center justify-end gap-2">
-                            {inv.status !== 'approved' && (
+                            {inv.status === 'pending' && (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -9815,7 +9916,7 @@ export default function PayrollWizard({
                                 {contractorInvoicesUpdating === inv.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Approve'}
                               </Button>
                             )}
-                            {inv.status !== 'rejected' && (
+                            {inv.status === 'pending' && (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -9876,16 +9977,21 @@ export default function PayrollWizard({
             bonusTotal: getEffectiveBonus(r.email),
             mesaDeduction: mesaDed,
             orphanagePay,
+            excluded: excludedEmails.has(normEmail(r.email) ?? ''),
             finalPay: (r.initialPay ?? 0) + getEffectiveBonus(r.email) - mesaDed + orphanagePay,
           };
           })
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-        const grandInitial = finalPayRows.reduce((s, r) => s + (r.initialPay ?? 0), 0);
-        const grandBonuses = finalPayRows.reduce((s, r) => s + r.bonusTotal, 0);
-        const grandMesaDeductions = finalPayRows.reduce((s, r) => s + (r.mesaDeduction ?? 0), 0);
-        const grandFinal   = finalPayRows.reduce((s, r) => s + r.finalPay, 0);
-        const unassignedCount = finalPayRows.filter(r => !r.deptKey).length;
+        // Grand totals + outflow count only PAYABLE rows — anyone accounting
+        // flagged "do not pay" is staged to Payment Dispatch → Excluded instead.
+        const payableFinalRows = finalPayRows.filter(r => !r.excluded);
+        const excludedCount = finalPayRows.length - payableFinalRows.length;
+        const grandInitial = payableFinalRows.reduce((s, r) => s + (r.initialPay ?? 0), 0);
+        const grandBonuses = payableFinalRows.reduce((s, r) => s + r.bonusTotal, 0);
+        const grandMesaDeductions = payableFinalRows.reduce((s, r) => s + (r.mesaDeduction ?? 0), 0);
+        const grandFinal   = payableFinalRows.reduce((s, r) => s + r.finalPay, 0);
+        const unassignedCount = payableFinalRows.filter(r => !r.deptKey).length;
 
         // Non-payroll outflows fetched in step 4 (approved budgets, sent/paid gifts,
         // approved orphanage visit wages). All in PHP — gifts converted at the
@@ -9962,8 +10068,13 @@ export default function PayrollWizard({
                     {unassignedCount} unassigned
                   </Badge>
                 )}
+                {excludedCount > 0 && (
+                  <Badge className="border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                    {excludedCount} excluded from pay
+                  </Badge>
+                )}
                 <Badge className="border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                  Ready for Dispatch
+                  {payableFinalRows.length} ready for dispatch
                 </Badge>
               </div>
               </div>
@@ -9978,7 +10089,7 @@ export default function PayrollWizard({
                     {formatPHP(grandInitial)}
                   </div>
                   <div className="mt-1 text-[10px] text-zinc-400">
-                    {finalPayRows.length} employee{finalPayRows.length !== 1 ? 's' : ''}
+                    {payableFinalRows.length} payable employee{payableFinalRows.length !== 1 ? 's' : ''}
                     {' · '}
                     {hubstaffData.reduce((a, c) => a + c.decimalHours, 0).toFixed(1)} total hrs
                   </div>
@@ -9991,7 +10102,7 @@ export default function PayrollWizard({
                     +{formatPHP(grandBonuses)}
                   </div>
                   <div className="mt-1 text-[10px] text-emerald-600/70 dark:text-emerald-400/70">
-                    {finalPayRows.filter(r => r.bonusTotal > 0).length} employees with bonuses
+                    {payableFinalRows.filter(r => r.bonusTotal > 0).length} payable employees with bonuses
                   </div>
                 </CardContent>
               </Card>
@@ -10035,7 +10146,7 @@ export default function PayrollWizard({
               </Card>
             </div>
 
-            {/* US Holidays in this PAB period — always shown when any holiday falls in range */}
+            {/* US Holidays in this pay-period week — shown only when a holiday falls inside the dispatched week */}
             {usHolidayForgivenSummary.length > 0 && (() => {
               const enabledHolidays = usHolidayForgivenSummary.filter((h) => h.isForgivenEnabled);
               const totalForgiven = enabledHolidays.reduce((s, h) => s + h.forgivenEmails.length, 0);
@@ -10056,7 +10167,7 @@ export default function PayrollWizard({
                         </div>
                         <div className="min-w-0">
                           <CardTitle className="text-sm font-semibold text-zinc-900 dark:text-white">
-                            US Holidays in this PAB Period
+                            US Holidays in this Pay Period
                           </CardTitle>
                           <CardDescription className="text-[11px] text-zinc-500 dark:text-zinc-400">
                             {`${usHolidayForgivenSummary.length} ${holidayWord}`}
@@ -10240,12 +10351,13 @@ export default function PayrollWizard({
                       <TableHead className="min-w-[110px] px-2 text-right text-xs font-medium text-zinc-600 dark:text-zinc-400">Initial Pay</TableHead>
                       <TableHead className="min-w-[110px] px-2 text-right text-xs font-medium text-emerald-600 dark:text-emerald-400">Bonuses</TableHead>
                       <TableHead className="min-w-[120px] px-2 text-right text-xs font-semibold text-indigo-600 dark:text-indigo-400">Final Pay</TableHead>
+                      <TableHead className="min-w-[80px] px-2 text-center text-xs font-medium text-zinc-600 dark:text-zinc-400">Exclude</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredFinalRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="py-10 text-center text-sm text-zinc-400">
+                        <TableCell colSpan={7} className="py-10 text-center text-sm text-zinc-400">
                           {vNeedle ? <>No employees match &quot;{vNeedle}&quot;</> : 'No Hubstaff data. Complete Steps 1–3 first.'}
                         </TableCell>
                       </TableRow>
@@ -10253,15 +10365,25 @@ export default function PayrollWizard({
                       filteredFinalRows.map((row, i) => (
                         <TableRow
                           key={`${row.email}-${i}`}
-                          className="border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30"
+                          className={cn(
+                            'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30',
+                            row.excluded && 'bg-rose-50/40 dark:bg-rose-950/15',
+                          )}
                         >
-                          <TableCell className="px-3 py-2.5">
-                            <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
-                              {row.name || '—'}
+                          <TableCell className={cn('px-3 py-2.5', row.excluded && 'opacity-55')}>
+                            <div className="flex items-center gap-1.5">
+                              <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
+                                {row.name || '—'}
+                              </div>
+                              {row.excluded && (
+                                <Badge className="shrink-0 border-rose-500/30 bg-rose-500/10 text-[9px] uppercase tracking-wide text-rose-600 dark:text-rose-400">
+                                  Do not pay
+                                </Badge>
+                              )}
                             </div>
                             <div className="font-mono text-[10px] text-zinc-400 truncate">{row.email}</div>
                           </TableCell>
-                          <TableCell className="px-2 py-2.5">
+                          <TableCell className={cn('px-2 py-2.5', row.excluded && 'opacity-55')}>
                             {row.deptKey ? (
                               <Badge
                                 variant="outline"
@@ -10275,21 +10397,32 @@ export default function PayrollWizard({
                               </Badge>
                             )}
                           </TableCell>
-                          <TableCell className="px-2 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
+                          <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-400', row.excluded && 'opacity-55')}>
                             {row.totalHours.toFixed(1)}
                           </TableCell>
-                          <TableCell className="px-2 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
+                          <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300', row.excluded && 'opacity-55')}>
                             {row.initialPay != null ? formatPHP(row.initialPay) : '—'}
                           </TableCell>
-                          <TableCell className="px-2 py-2.5 text-right font-mono text-xs tabular-nums font-semibold">
+                          <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums font-semibold', row.excluded && 'opacity-55')}>
                             {row.bonusTotal > 0 ? (
                               <span className="text-emerald-600 dark:text-emerald-400">+{formatPHP(row.bonusTotal)}</span>
                             ) : (
                               <span className="text-zinc-400">—</span>
                             )}
                           </TableCell>
-                          <TableCell className="px-2 py-2.5 text-right font-mono text-xs tabular-nums font-bold text-indigo-700 dark:text-indigo-300">
+                          <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums font-bold', row.excluded ? 'text-zinc-400 line-through dark:text-zinc-600' : 'text-indigo-700 dark:text-indigo-300')}>
                             {formatPHP(row.finalPay)}
+                          </TableCell>
+                          <TableCell className="px-2 py-2.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={row.excluded}
+                              onChange={() => toggleExcluded(row.email)}
+                              disabled={isReplay}
+                              aria-label={`Exclude ${row.name || row.email} from pay`}
+                              title={row.excluded ? 'Excluded from pay — untick to pay' : 'Tick to exclude from pay (do not pay this cycle)'}
+                              className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600"
+                            />
                           </TableCell>
                         </TableRow>
                       ))
@@ -10300,7 +10433,7 @@ export default function PayrollWizard({
                     <tfoot>
                       <tr className="border-t-2 border-zinc-300 bg-zinc-100/80 dark:border-zinc-700 dark:bg-zinc-900/60">
                         <td colSpan={3} className="px-3 py-2.5 text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                          Grand Total ({finalPayRows.length} employees)
+                          Grand Total ({payableFinalRows.length} payable{excludedCount > 0 ? ` · ${excludedCount} excluded` : ''})
                         </td>
                         <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-zinc-800 dark:text-zinc-200">
                           {formatPHP(grandInitial)}
@@ -10311,6 +10444,7 @@ export default function PayrollWizard({
                         <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-indigo-700 dark:text-indigo-300">
                           {formatPHP(grandFinal)}
                         </td>
+                        <td className="px-2 py-2.5" />
                       </tr>
                     </tfoot>
                   )}
@@ -10404,16 +10538,14 @@ export default function PayrollWizard({
               <Send className="w-10 h-10 text-white" />
             </motion.div>
             <div className="space-y-2">
-              <h3 className="text-2xl font-bold text-zinc-900 dark:text-white">Ready to Dispatch</h3>
+              <h3 className="text-2xl font-bold text-zinc-900 dark:text-white">Lock in Values &amp; Send to Payment Dispatch</h3>
               <p className="max-w-md text-zinc-600 dark:text-zinc-400">
-                This will trigger paystubs for {payrollComparison.withHoursThisWeek} workers with hours this week
-                {payrollComparison.totalOnMaster > 0 ? (
-                  <>
-                    {' '}
-                    ({payrollComparison.withHoursThisWeek}/{payrollComparison.totalOnMaster} against the master list)
-                  </>
-                ) : null}{' '}
-                and initiate bank transfers. An audit log will be created for this session.
+                Locks this cycle&apos;s computed pay and stages each paystub to Payment Dispatch.{' '}
+                <span className="font-semibold text-zinc-800 dark:text-zinc-200">{dispatchData.rows.length}</span> payable
+                {dispatchData.excludedRows.length > 0 && (
+                  <> · <span className="font-semibold text-rose-600 dark:text-rose-400">{dispatchData.excludedRows.length}</span> excluded (do not pay)</>
+                )}.
+                Paystub emails are no longer sent in a batch here — Lenny sends each one as she marks the person Paid. An audit log will be created for this session.
               </p>
             </div>
             <a
@@ -10421,16 +10553,67 @@ export default function PayrollWizard({
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 rounded-full border border-[#ea4b71]/30 bg-[#ea4b71]/10 px-3.5 py-1.5 text-xs font-medium text-[#ea4b71] transition hover:bg-[#ea4b71]/15 hover:shadow-[0_0_12px_rgba(234,75,113,0.25)]"
-              title="Clicking Confirm & Dispatch will trigger the paystub workflow in n8n"
+              title="Paystub emails fire one-by-one as Lenny marks each person Paid in Payment Dispatch"
             >
               <img
                 src="https://n8n.io/favicon.ico"
                 alt="n8n"
                 className="h-4 w-4"
               />
-              <span>Triggers n8n automation</span>
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#ea4b71]/80">· Accounting heads up</span>
+              <span>Paystubs send 1-by-1 from Payment Dispatch</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-[#ea4b71]/80">· n8n on Mark Paid</span>
             </a>
+
+            {/* Realtime lock state for this cycle. Locked → Payment Dispatch is
+                live; Unlock pulls the values back (dispatch empties in realtime). */}
+            {!dispatchValuesLock.loading && (
+              dispatchValuesLock.state.locked ? (
+                <div className="flex w-full max-w-md flex-col items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+                    <Lock className="h-4 w-4" />
+                    Locked — Payment Dispatch is live for this cycle
+                  </div>
+                  <p className="text-center text-xs text-emerald-700/80 dark:text-emerald-300/70">
+                    Lenny can pay + email paystubs now. Unlock to pull the values back —
+                    Payment Dispatch clears in real time.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={togglingValuesLock || isReplay}
+                    onClick={async () => {
+                      setTogglingValuesLock(true);
+                      try {
+                        await dispatchValuesLock.setLocked(false, sessionEmail ?? null);
+                        toast.success('Unlocked — Payment Dispatch cleared', {
+                          description: 'The queue is empty until you lock this cycle again.',
+                        });
+                      } catch (e) {
+                        toast.error('Could not unlock', {
+                          description: e instanceof Error ? e.message : undefined,
+                        });
+                      } finally {
+                        setTogglingValuesLock(false);
+                      }
+                    }}
+                    className="gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                  >
+                    {togglingValuesLock ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <LockOpen className="h-3.5 w-3.5" />
+                    )}
+                    Unlock Payment Dispatch
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 rounded-xl border border-amber-200/80 bg-amber-50/70 px-3.5 py-2 text-xs font-medium text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300">
+                  <LockOpen className="h-3.5 w-3.5" />
+                  Unlocked — Payment Dispatch stays empty until you lock this cycle.
+                </div>
+              )
+            )}
+
             <div className="flex gap-4">
               <Button
                 variant="outline"
@@ -10457,48 +10640,79 @@ export default function PayrollWizard({
                     toast.error('Replaying a past period is view-only', { description: 'Return to the current period to dispatch.' });
                     return;
                   }
-                  const { rows: employees, missing, payPeriodPayload } = dispatchData;
-                  if (employees.length === 0) {
-                    toast.error('Dispatch blocked', {
-                      description: 'No employees have a personal email on file.',
+                  if (!calcSourceFile) {
+                    toast.error('No pay-period file selected');
+                    return;
+                  }
+                  const { rows: employees, excludedRows, missing, payPeriodPayload } = dispatchData;
+                  if (employees.length === 0 && excludedRows.length === 0) {
+                    toast.error('Nothing to send', {
+                      description: 'No employees resolved for this cycle.',
                     });
                     return;
                   }
                   if (missing.length > 0) {
                     toast.warning(
-                      `Skipping ${missing.length} employee${missing.length === 1 ? '' : 's'} without personal email`,
+                      `${missing.length} payable employee${missing.length === 1 ? '' : 's'} without a personal email — no paystub will be emailed`,
                       {
                         description:
                           missing.slice(0, 5).join(', ') + (missing.length > 5 ? '…' : ''),
                       },
                     );
                   }
+                  // Stage each employee's AUTHORITATIVE paystub payload (payable +
+                  // excluded). No batch emails — Payment Dispatch fires each one as
+                  // Lenny marks the person Paid.
+                  const entries = [
+                    ...employees.map((e) => ({
+                      recipient_email: e.email,
+                      personal_email: e.personal_email,
+                      recipient_name: e.name,
+                      department_key: e.department_key,
+                      amount_php: e.pay_php.final,
+                      amount_usd: usdToPhpRate > 0 ? Math.round((e.pay_php.final / usdToPhpRate) * 100) / 100 : null,
+                      payload: e,
+                      excluded: false,
+                    })),
+                    ...excludedRows.map((x) => ({
+                      recipient_email: x.email,
+                      personal_email: x.personal_email,
+                      recipient_name: x.name,
+                      department_key: x.department_key,
+                      amount_php: x.amount_php,
+                      amount_usd: x.amount_php != null && usdToPhpRate > 0 ? Math.round((x.amount_php / usdToPhpRate) * 100) / 100 : null,
+                      payload: x.payload,
+                      excluded: true,
+                      exclude_reason: x.reason,
+                    })),
+                  ];
                   setIsDispatching(true);
                   try {
-                    const res = await fetch('/api/dispatch-paystubs', {
+                    const res = await fetch('/api/paystub-dispatch-queue', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
+                        source_file: calcSourceFile,
                         pay_period: payPeriodPayload,
-                        employees,
-                        cycle: auditCycle,
+                        entries,
                       }),
                     });
                     const data = await res.json();
-                    if (!res.ok) {
-                      const detail =
-                        typeof data?.detail === 'string' && data.detail.trim()
-                          ? data.detail.trim().slice(0, 500)
-                          : undefined;
-                      toast.error('Dispatch failed', {
-                        description: [data?.error ?? `HTTP ${res.status}`, detail]
-                          .filter(Boolean)
-                          .join(' — '),
+                    if (!res.ok || data?.error) {
+                      toast.error('Send to Payment Dispatch failed', {
+                        description: data?.error ?? `HTTP ${res.status}`,
                       });
                       return;
                     }
-                    toast.success('Payroll Dispatched', {
-                      description: `Sent ${employees.length} paystub request${employees.length === 1 ? '' : 's'} to n8n.`,
+                    // Flip the realtime "values locked" flag so Payment Dispatch
+                    // goes live for this cycle (and stays empty until then).
+                    try {
+                      await dispatchValuesLock.setLocked(true, sessionEmail ?? null);
+                    } catch {
+                      /* staging succeeded; lock write is best-effort + retryable */
+                    }
+                    toast.success('Locked in & sent to Payment Dispatch', {
+                      description: `${employees.length} payable paystub${employees.length === 1 ? '' : 's'} staged${excludedRows.length > 0 ? ` · ${excludedRows.length} excluded` : ''}. Lenny emails each one on Mark Paid.`,
                     });
                     void publishFinalPaySnapshot();
                     cursorOverlayRef.current?.broadcastSave();
@@ -10513,7 +10727,7 @@ export default function PayrollWizard({
                     setReportsTab('salaries');
                     setCurrentStep(9);
                   } catch (err) {
-                    toast.error('Dispatch failed', {
+                    toast.error('Send to Payment Dispatch failed', {
                       description: err instanceof Error ? err.message : String(err),
                     });
                   } finally {
@@ -10522,7 +10736,7 @@ export default function PayrollWizard({
                 }}
                 disabled={isDispatching || isReplay}
               >
-                {isDispatching ? 'Dispatching…' : isReplay ? 'View-only (past period)' : 'Confirm & Dispatch'}
+                {isDispatching ? 'Sending to Dispatch…' : isReplay ? 'View-only (past period)' : 'Lock in Values & Send to Payment Dispatch'}
               </Button>
             </div>
           </div>

@@ -1,0 +1,97 @@
+{
+  "name": "Hubstaff Upload Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://YOUR_PROJECT_REF.supabase.co/rest/v1/hubstaff_uploads?select=id,source_file,uploaded_at,uploaded_by,row_count,is_current&order=uploaded_at.desc&limit=50",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "id": "get-latest-uploads",
+      "name": "Get Latest Uploads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_WITH_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase (service role)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reads the latest hubstaff_uploads rows, compares them against a persisted\n// cursor (the newest uploaded_at we've already alerted on), and emits ONLY rows\n// that are newer. On the very first run it silently seeds the cursor so you do\n// NOT get one email per historical upload.\n\nconst store = $getWorkflowStaticData('global');\n\n// --- 1. Collect rows defensively (HTTP node array handling varies by version) ---\nconst rows = [];\nfor (const it of $input.all()) {\n  const j = it.json;\n  if (Array.isArray(j)) rows.push(...j);\n  else if (j && Array.isArray(j.body)) rows.push(...j.body);\n  else if (j && Array.isArray(j.data)) rows.push(...j.data);\n  else if (j && j.id) rows.push(j);\n}\n\nif (rows.length === 0) return [];\n\n// --- 2. Sort newest-first by uploaded_at ---\nrows.sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at));\nconst newestTs = rows[0].uploaded_at;\n\nconst cursor = store.lastSeenUploadedAt || null;\n\n// --- 3. First activation: seed the cursor, alert on nothing ---\nif (!cursor) {\n  store.lastSeenUploadedAt = newestTs;\n  return [];\n}\n\n// --- 4. Keep rows strictly newer than the cursor ---\nconst fresh = rows.filter(r => new Date(r.uploaded_at) > new Date(cursor));\n\n// --- 5. Advance the cursor ---\nstore.lastSeenUploadedAt = newestTs;\n\n// --- 6. Attach a friendly Manila timestamp for the email ---\nreturn fresh.map(r => {\n  let when = r.uploaded_at;\n  try {\n    when = DateTime.fromISO(r.uploaded_at, { zone: 'utc' })\n      .setZone('Asia/Manila')\n      .toFormat(\"LLL d, yyyy '-' h:mm a '(PHT)'\");\n  } catch (e) {}\n  return { json: Object.assign({}, r, { uploaded_at_display: when }) };\n});\n"
+      },
+      "id": "detect-new-uploads",
+      "name": "Detect New Uploads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@simple.biz",
+        "toEmail": "kaner@simple.biz",
+        "subject": "=New Hubstaff report uploaded: {{ $json.source_file || 'unnamed file' }}",
+        "emailFormat": "html",
+        "html": "=<div style=\"font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden\">\n  <div style=\"background:linear-gradient(to top right,#4338ca,#ffffff,#f97316);padding:20px 24px\">\n    <div style=\"font-size:11px;letter-spacing:.14em;font-weight:700;text-transform:uppercase;color:#1e293b\">Simple HRIS - Upload Alert</div>\n    <div style=\"margin-top:6px;font-size:18px;font-weight:700;color:#0f172a\">New Hubstaff report uploaded</div>\n  </div>\n  <div style=\"padding:18px 24px;color:#1f2937;font-size:14px\">\n    <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"font-size:13px\">\n      <tr><td style=\"padding:6px 0;color:#64748b;width:130px\">File</td><td style=\"padding:6px 0;font-weight:600\">{{ $json.source_file || 'unnamed file' }}</td></tr>\n      <tr><td style=\"padding:6px 0;color:#64748b\">Rows</td><td style=\"padding:6px 0;font-weight:600\">{{ $json.row_count != null ? $json.row_count : '-' }}</td></tr>\n      <tr><td style=\"padding:6px 0;color:#64748b\">Uploaded by</td><td style=\"padding:6px 0;font-weight:600\">{{ $json.uploaded_by || 'unknown' }}</td></tr>\n      <tr><td style=\"padding:6px 0;color:#64748b\">Uploaded at</td><td style=\"padding:6px 0;font-weight:600\">{{ $json.uploaded_at_display }}</td></tr>\n      <tr><td style=\"padding:6px 0;color:#64748b\">Current batch</td><td style=\"padding:6px 0;font-weight:600\">{{ $json.is_current ? 'Yes (promoted to current)' : 'No (not yet initialized)' }}</td></tr>\n    </table>\n  </div>\n  <div style=\"background:#f8fafc;padding:12px 24px;font-size:11px;color:#94a3b8;border-top:1px solid #e2e8f0\">Automated alert - Simple HRIS - hubstaff_uploads</div>\n</div>",
+        "options": {}
+      },
+      "id": "send-alert-email",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [900, 300],
+      "credentials": {
+        "smtp": {
+          "id": "REPLACE_WITH_SMTP_CREDENTIAL_ID",
+          "name": "SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [[{ "node": "Get Latest Uploads", "type": "main", "index": 0 }]]
+    },
+    "Get Latest Uploads": {
+      "main": [[{ "node": "Detect New Uploads", "type": "main", "index": 0 }]]
+    },
+    "Detect New Uploads": {
+      "main": [[{ "node": "Send Alert Email", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    { "name": "hris" },
+    { "name": "hubstaff" },
+    { "name": "alert" }
+  ],
+  "meta": {
+    "description": "Polls Supabase hubstaff_uploads every 5 minutes and emails an alert when a new upload row appears. Uses workflow static data as a cursor (lastSeenUploadedAt) so each upload is alerted exactly once; the first run silently seeds the cursor. Set the Supabase project URL in the HTTP node, attach a Supabase API credential (service_role key) and an SMTP credential, then edit fromEmail/toEmail."
+  }
+}

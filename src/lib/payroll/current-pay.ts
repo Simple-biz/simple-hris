@@ -105,6 +105,12 @@ export interface CurrentPayResult {
   approvedBudgetRequestsTotalPHP: number;
   /** Sum of pending/sent gift payments converted to PHP. */
   giftPaymentsTotalPHP: number;
+  /**
+   * Every email (work + personal + alternates, lowercased) present in the
+   * Global Master List (`active_employees`). The dispatch queue filters to these
+   * so it never shows people who aren't on the master list to begin with.
+   */
+  masterEmails: string[];
 }
 
 function parseRateText(v: string | null | undefined): number | null {
@@ -202,6 +208,11 @@ async function mergeApprovedTimeAdjustments(
 interface MasterEmployeeMin {
   work_email: string | null;
   personal_email: string | null;
+  /** Gsuite aliases for the same human (Global Master List columns). Bridged
+   *  into the start-date lookup so a Hubstaff row keyed on an alias still
+   *  resolves the Tech Bonus 30-day-service gate. */
+  alternate_work_email: string | null;
+  alternate_work_email_2: string | null;
   start_date: string | null;
   department: string | null;
 }
@@ -210,10 +221,13 @@ async function fetchMasterMin(
   supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
 ): Promise<MasterEmployeeMin[]> {
   // active_employees view has the master columns we need (Work Email,
-  // Personal Email, Start Date, Department). Quoted PascalCase column names.
+  // Personal Email, Alternate Work Email(s), Start Date, Department).
+  // Quoted PascalCase column names.
   const { data, error } = await supabase
     .from("active_employees")
-    .select('"Work Email", "Personal Email", "Start Date", "Department"');
+    .select(
+      '"Work Email", "Personal Email", "Alternate Work Email", "Alternate Work Email 2", "Start Date", "Department"',
+    );
   if (error || !data) {
     console.warn("[current-pay] fetchMasterMin failed:", error?.message);
     return [];
@@ -222,6 +236,12 @@ async function fetchMasterMin(
     work_email: typeof r["Work Email"] === "string" ? (r["Work Email"] as string) : null,
     personal_email:
       typeof r["Personal Email"] === "string" ? (r["Personal Email"] as string) : null,
+    alternate_work_email:
+      typeof r["Alternate Work Email"] === "string" ? (r["Alternate Work Email"] as string) : null,
+    alternate_work_email_2:
+      typeof r["Alternate Work Email 2"] === "string"
+        ? (r["Alternate Work Email 2"] as string)
+        : null,
     start_date:
       typeof r["Start Date"] === "string" ? (r["Start Date"] as string) : null,
     department:
@@ -492,12 +512,16 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     allHubstaffRows = await fetchAllHubstaffRowsForBonusMonth(supabase);
   }
 
-  // 2. Build HSL email set + start_date map from master.
+  // 2. Build HSL email set + start_date map + master-email set from master.
   const hslEmails = new Set<string>();
+  const masterEmailSet = new Set<string>();
   const startDateByEmail = new Map<string, Date>();
   for (const m of masterRows) {
     const we = normEmail(m.work_email);
     const pe = normEmail(m.personal_email);
+    const altA = normEmail(m.alternate_work_email);
+    const altB = normEmail(m.alternate_work_email_2);
+    for (const e of [we, pe, altA, altB]) if (e) masterEmailSet.add(e);
     if (m.department && m.department.trim().toLowerCase() === "hsl") {
       if (we) hslEmails.add(we);
       if (pe) hslEmails.add(pe);
@@ -506,6 +530,13 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     if (sd) {
       if (we) startDateByEmail.set(we, sd);
       if (pe && !startDateByEmail.has(pe)) startDateByEmail.set(pe, sd);
+      // Bridge alternate work emails (Global Master List is the identity source
+      // of truth) so a Hubstaff/rate row keyed on an alias still resolves the
+      // Tech Bonus 30-day gate. Never overwrites a primary (primary wins).
+      for (const alt of [m.alternate_work_email, m.alternate_work_email_2]) {
+        const a = normEmail(alt);
+        if (a && !startDateByEmail.has(a)) startDateByEmail.set(a, sd);
+      }
     }
   }
 
@@ -706,5 +737,6 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     stashedMesaTotalPHP,
     approvedBudgetRequestsTotalPHP: Math.round(approvedBudgetRequestsTotalPHP * 100) / 100,
     giftPaymentsTotalPHP: Math.round(giftPaymentsTotalPHP * 100) / 100,
+    masterEmails: Array.from(masterEmailSet),
   };
 }

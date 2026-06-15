@@ -5,6 +5,12 @@ import {
   listPaymentDispatches,
   type InsertPaymentDispatchInput,
 } from "@/lib/supabase/payment-dispatches";
+import {
+  getPaystubDispatchEntry,
+  markPaystubSent,
+  markPaystubSendError,
+} from "@/lib/supabase/paystub-dispatch-queue";
+import { forwardPaystubDispatch } from "@/lib/payroll/paystub-dispatch";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
@@ -96,5 +102,73 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({ row, error: null });
+  // ── Per-employee paystub send ──────────────────────────────────────────────
+  // When this dispatch lands as 'paid' and the Payroll Wizard staged an
+  // authoritative paystub for this (cycle, employee), fire the n8n paystub
+  // webhook for JUST this person. Best-effort: a failed send never fails the
+  // payment record (the money already moved) — it's stamped on the queue row so
+  // it can be re-sent from the Excluded tab. MESA disbursements + orphanage
+  // budgets go through their own routes, so they never reach this send path.
+  const paystub: { staged: boolean; sent: boolean; error: string | null } = {
+    staged: false,
+    sent: false,
+    error: null,
+  };
+  if (row.status === "paid" && row.cycle_source_file) {
+    try {
+      const { row: staged } = await getPaystubDispatchEntry(
+        row.cycle_source_file,
+        row.recipient_email,
+      );
+      if (staged?.payload) {
+        paystub.staged = true;
+        const result = await forwardPaystubDispatch({
+          pay_period: staged.pay_period,
+          employees: [staged.payload],
+          cycle: {
+            source_file: row.cycle_source_file,
+            period_start: row.cycle_period_start ?? null,
+            period_end: row.cycle_period_end ?? null,
+            cycle_id: row.cycle_id ?? null,
+          },
+        });
+        if (result.ok) {
+          paystub.sent = true;
+          await markPaystubSent({
+            sourceFile: row.cycle_source_file,
+            recipientEmail: row.recipient_email,
+            sentBy: createdBy,
+            sendCount: (staged.send_count ?? 0) + 1,
+          });
+        } else {
+          paystub.error = result.detail ?? "Paystub send failed";
+          await markPaystubSendError({
+            sourceFile: row.cycle_source_file,
+            recipientEmail: row.recipient_email,
+            error: paystub.error,
+          });
+        }
+        void insertAuditLog({
+          user_name: createdBy ?? "unknown",
+          user_role: createdByRole,
+          action: result.ok ? "paystub.sent" : "paystub.send_failed",
+          resource: "paystub_dispatch_queue",
+          resource_id: row.id,
+          details: {
+            recipient_email: row.recipient_email,
+            source_file: row.cycle_source_file,
+            http_status: result.status,
+            error: result.ok ? undefined : paystub.error,
+          },
+        });
+      } else if (staged) {
+        // Staged but no resolvable personal email → nothing to mail.
+        paystub.staged = true;
+      }
+    } catch (e) {
+      paystub.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  return NextResponse.json({ row, error: null, paystub });
 }

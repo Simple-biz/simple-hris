@@ -3,15 +3,13 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import {
+  Award,
   Briefcase,
-  Eye,
-  EyeOff,
   IdCard,
   Loader2,
   Mail,
   MapPin,
   NotebookPen,
-  ReceiptText,
   Save,
   CalendarDays,
 } from 'lucide-react';
@@ -27,9 +25,10 @@ import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { SkillBlock, TeamAvatar } from '@/components/team/team-ui';
 import { formatCurrentProjects } from '@/lib/skill-set-titles';
+import { MEDALS, type MedalRecord, type MedalType } from '@/components/manager/MedalRecognition';
 import ManagerMemberHoursMini from './ManagerMemberHoursMini';
 
-type TabId = 'work' | 'notes' | 'payments';
+type TabId = 'work' | 'notes' | 'hours';
 
 /** Shared-profile fields the manager can view in the dialog (read-only). */
 interface DialogSkillSet {
@@ -51,6 +50,8 @@ interface ManagerMemberDialogProps {
   initialMemberNotes?: string;
   /** Fired after a successful save so the caller can update its roster cache. */
   onMemberNotesSaved?: (notes: string) => void;
+  /** Commendation / flag medals awarded to this teammate (read-only here). */
+  medals?: MedalRecord[];
 }
 
 const MEMBER_NOTES_MAX = 4000;
@@ -144,22 +145,6 @@ function MemberNotesEditor({
   );
 }
 
-function formatPhp(v: number | null | undefined): string {
-  if (v == null) return '—';
-  return `₱${v.toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function memberHourlyRate(member: EmployeeRow): number | null {
-  return member.hsl_hourly_rate ?? member.regular_rate ?? null;
-}
-
-function memberOtRate(member: EmployeeRow): number | null {
-  return member.hsl_ot_rate ?? member.ot_rate ?? null;
-}
-
 function formatDate(raw: string | null | undefined): string | null {
   if (!raw?.trim()) return null;
   const d = new Date(raw);
@@ -171,56 +156,67 @@ function formatDate(raw: string | null | undefined): string | null {
   });
 }
 
-// Lightweight rate masking: opacity + translate only — no `filter: blur`, which is
-// GPU-expensive on mid-tier mobile and causes janky frames during the swap. The
-// translate carries enough motion to read as a transition.
-function MaskedRate({
-  value,
-  hidden,
-}: {
-  value: number | null | undefined;
-  hidden: boolean;
-}) {
-  const transition = { duration: 0.16, ease: [0.22, 1, 0.36, 1] as const };
+const MEDAL_ORDER: MedalType[] = ['commend', 'flag'];
+
+/**
+ * Recognition card for the identity rail — replaces the old pay-rate card.
+ * Managers no longer see rates or pay here; instead they see the commendation
+ * (green flag) and flag-for-review (red flag) medals awarded to this teammate
+ * from the My Team roster. Read-only; awarding still happens via roster drag-drop.
+ */
+function RecognitionCard({ medals }: { medals: MedalRecord[] }) {
+  // Group by type, preserving newest-first order (API returns newest first).
+  const byType = new Map<MedalType, MedalRecord[]>();
+  for (const m of medals) {
+    const arr = byType.get(m.medal_type) ?? [];
+    arr.push(m);
+    byType.set(m.medal_type, arr);
+  }
+
   return (
-    <span className="relative inline-block transform-gpu">
-      <AnimatePresence mode="wait" initial={false}>
-        {hidden ? (
-          <motion.span
-            key="hidden"
-            initial={{ opacity: 0, y: -3 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 3 }}
-            transition={transition}
-            className="inline-block select-none tracking-widest text-zinc-400 dark:text-zinc-600"
-          >
-            ••••••
-          </motion.span>
-        ) : value != null ? (
-          <motion.span
-            key="shown"
-            initial={{ opacity: 0, y: -3 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 3 }}
-            transition={transition}
-            className="inline-block"
-          >
-            {formatPhp(value)}
-          </motion.span>
-        ) : (
-          <motion.span
-            key="empty"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.14 }}
-            className="inline-block text-zinc-300 dark:text-zinc-700"
-          >
-            —
-          </motion.span>
-        )}
-      </AnimatePresence>
-    </span>
+    <div className="rounded-xl border border-blue-100/80 bg-white/80 p-3 shadow-sm dark:border-blue-950/50 dark:bg-zinc-950/50">
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+        <Award className="h-3 w-3" />
+        Recognition
+      </div>
+
+      {medals.length === 0 ? (
+        <p className="mt-2 text-[12px] italic leading-snug text-zinc-400 dark:text-zinc-600">
+          No commendations or flags yet.
+        </p>
+      ) : (
+        <div className="mt-2 space-y-2">
+          {MEDAL_ORDER.map((type) => {
+            const list = byType.get(type);
+            if (!list || list.length === 0) return null;
+            const { emoji, emojiFilter, label, bgClass, ringClass, textClass } = MEDALS[type];
+            const latest = list[0]!;
+            return (
+              <div key={type} className={cn('rounded-lg p-2 ring-1', bgClass, ringClass)}>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm leading-none" style={{ filter: emojiFilter }}>
+                    {emoji}
+                  </span>
+                  <span className={cn('text-[11px] font-semibold', textClass)}>{label}</span>
+                  <span className="ml-auto inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-white/70 px-1 text-[10px] font-semibold tabular-nums text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300">
+                    {list.length}
+                  </span>
+                </div>
+                {latest.note && (
+                  <p className="mt-1 line-clamp-3 text-[11.5px] leading-snug text-zinc-700 dark:text-zinc-300">
+                    &ldquo;{latest.note}&rdquo;
+                  </p>
+                )}
+                <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-600">
+                  by {latest.awarded_by}
+                  {formatDate(latest.awarded_at) ? ` — ${formatDate(latest.awarded_at)}` : ''}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -228,7 +224,7 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (id: TabId) => 
   const tabs: { id: TabId; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'work', label: 'Work', Icon: Briefcase },
     { id: 'notes', label: 'Notes', Icon: NotebookPen },
-    { id: 'payments', label: 'Payments', Icon: ReceiptText },
+    { id: 'hours', label: 'Hours', Icon: CalendarDays },
   ];
   return (
     <LayoutGroup id="manager-member-tabs">
@@ -347,9 +343,9 @@ export default function ManagerMemberDialog({
   skillSet,
   initialMemberNotes = '',
   onMemberNotesSaved,
+  medals = [],
 }: ManagerMemberDialogProps) {
   const [activeTab, setActiveTab] = useState<TabId>('work');
-  const [ratesHidden, setRatesHidden] = useState(true);
 
   useEffect(() => {
     if (member) setActiveTab('work');
@@ -404,52 +400,9 @@ export default function ManagerMemberDialog({
                 </div>
               </div>
 
-              {/* Pay rates + visibility toggle */}
-              <div className="rounded-xl border border-blue-100/80 bg-white/80 p-3 shadow-sm dark:border-blue-950/50 dark:bg-zinc-950/50">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                    Pay rates
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setRatesHidden((v) => !v)}
-                    title={ratesHidden ? 'Show rates' : 'Hide rates'}
-                    aria-label={ratesHidden ? 'Show rates' : 'Hide rates'}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950/40"
-                  >
-                    <AnimatePresence mode="wait" initial={false}>
-                      <motion.span
-                        key={ratesHidden ? 'eye' : 'eye-off'}
-                        initial={{ rotate: -45, scale: 0.6, opacity: 0 }}
-                        animate={{ rotate: 0, scale: 1, opacity: 1 }}
-                        exit={{ rotate: 45, scale: 0.6, opacity: 0 }}
-                        transition={{ duration: 0.16, ease: 'easeOut' }}
-                        className="inline-flex"
-                      >
-                        {ratesHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                      </motion.span>
-                    </AnimatePresence>
-                  </button>
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <div>
-                    <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                      Hourly
-                    </div>
-                    <div className="font-mono text-[15px] tabular-nums text-zinc-900 dark:text-zinc-100">
-                      <MaskedRate value={memberHourlyRate(member)} hidden={ratesHidden} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                      Overtime
-                    </div>
-                    <div className="font-mono text-[15px] tabular-nums text-zinc-900 dark:text-zinc-100">
-                      <MaskedRate value={memberOtRate(member)} hidden={ratesHidden} />
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {/* Recognition — commendation / flag medals (replaces pay rates;
+                  managers no longer see rates or pay in this dialog) */}
+              <RecognitionCard medals={medals} />
 
               {/* Identity facts */}
               <div className="space-y-3">
@@ -485,13 +438,13 @@ export default function ManagerMemberDialog({
                         onSaved={onMemberNotesSaved}
                       />
                     )}
-                    {activeTab === 'payments' && (
+                    {activeTab === 'hours' && (
                       <ManagerMemberHoursMini
                         workEmail={member.work_email ?? null}
                         personalEmail={member.personal_email ?? null}
                         alternateWorkEmail={member.alternate_work_email ?? null}
                         alternateWorkEmail2={member.alternate_work_email_2 ?? null}
-                        ratesHidden={ratesHidden}
+                        department={member.department ?? null}
                       />
                     )}
                   </motion.div>

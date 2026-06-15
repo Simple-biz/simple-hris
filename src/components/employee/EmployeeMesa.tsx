@@ -39,11 +39,11 @@ interface Props {
 
 type SubTab = 'about' | 'request' | 'history';
 
-// Weekly contribution shape — employee ₱100, company (Simple.biz) ₱400.
-// The "matched four times over" copy in About is the source of truth here:
-// 4× the employee's ₱100 = ₱400 from the company → ₱500 total per week.
+// Weekly contribution shape — employee ₱100, company (Simple.biz) ₱300.
+// The "matched three times over" copy in About is the source of truth here:
+// 3× the employee's ₱100 = ₱300 from the company → ₱400 total per week.
 const WEEKLY_EMPLOYEE_CONTRIB = 100;
-const WEEKLY_COMPANY_MATCH = 400;
+const WEEKLY_COMPANY_MATCH = 300;
 const WEEKLY_TOTAL = WEEKLY_EMPLOYEE_CONTRIB + WEEKLY_COMPANY_MATCH;
 
 const formatPHP = (n: number) =>
@@ -285,7 +285,7 @@ function AboutMesa({
         <Section
           icon={PiggyBank}
           eyebrow="A strong benefit for your future"
-          title="Your savings, matched four times over"
+          title="Your savings, matched three times over"
         >
           <div className="grid gap-3 sm:grid-cols-3">
             <ContribCard
@@ -310,7 +310,7 @@ function AboutMesa({
           <div className="mt-4 flex items-center gap-2 rounded-lg bg-teal-50/60 px-4 py-3 text-sm text-teal-900 dark:bg-teal-950/30 dark:text-teal-100">
             <Sparkles className="h-4 w-4 shrink-0 text-teal-600 dark:text-teal-300" />
             <span>
-              We are matching your effort <strong>four times over</strong>. This reflects our
+              We are matching your effort <strong>three times over</strong>. This reflects our
               commitment to your well-being and long-term security.
             </span>
           </div>
@@ -596,7 +596,7 @@ const DISBURSEMENT_REASONS = [
 const OPT_IN_AGREEMENTS = [
   'I understand the MESA terms provided above.',
   'I understand that PHP 100 will be deducted from my paycheck each week and put into my MESA account.',
-  'I understand that when I contribute, Simple will match my contribution and put PHP 400 each week into my MESA account.',
+  'I understand that when I contribute, Simple will match my contribution and put PHP 300 each week into my MESA account.',
   'I understand that distributions are only for medical emergencies for me or my immediate family, computer repairs for my primary device, or natural disasters. Disbursements outside of these reasons will make me ineligible for program participation.',
   'I understand that distributions are to be infrequent, as this program is intended to have me prepared for emergencies, which are also infrequent. More than one disbursement in a 90 day period will make me ineligible for program participation, even if the disbursements are for qualified reasons. I understand that since I am no longer contributing, Simple will no longer be contributing to my account as well.',
 ];
@@ -1081,7 +1081,7 @@ function RequestStatusBadge({ status }: { status: string }) {
 
 // ── History ────────────────────────────────────────────────────────────────
 //
-// Weekly contribution ledger: ₱100 employee + ₱400 Simple.biz = ₱500 per week
+// Weekly contribution ledger: ₱100 employee + ₱300 Simple.biz = ₱400 per week
 // from the employee's start_date through today. Display-only — the program
 // doesn't persist per-week rows yet, so this is a projection of "what your
 // savings would look like if you've been enrolled since you joined".

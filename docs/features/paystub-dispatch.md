@@ -1,30 +1,152 @@
 # Paystub Dispatch (n8n Integration)
 
-End-to-end pipeline for sending weekly paystubs from the HRIS to employees' personal emails, triggered by the Confirm & Dispatch button in the PayrollWizard's Dispatch step.
+End-to-end pipeline for sending weekly paystubs from the HRIS to employees' personal emails.
+
+> **Changed (per-employee dispatch).** Paystubs are **no longer batch-emailed from the
+> wizard**. The PayrollWizard's Dispatch step now **"Lock in Values & Send to Payment
+> Dispatch"** — it *stages* each employee's authoritative paystub payload to the
+> `paystub_dispatch_queue` table (no emails). The n8n paystub webhook then fires **one
+> employee at a time**, server-side, when the payroll clerk (Lenny) marks that person
+> **Paid** in Payment Dispatch. This spreads sends across the day (kinder to Gmail rate
+> limits) and guarantees the emailed numbers exactly match what the wizard computed.
 
 ## Architecture
 
 ```
-PayrollWizard (Dispatch step)
+PayrollWizard (Dispatch step) — "Lock in Values & Send to Payment Dispatch"
         │
-        │  POST /api/dispatch-paystubs  { pay_period, employees[] }
+        │  POST /api/paystub-dispatch-queue  { source_file, pay_period, entries[] }
         ▼
-Next.js API route  (app/api/dispatch-paystubs/route.ts)
-        │  — reads N8N_DISPATCH_WEBHOOK_URL (server-only)
-        │  — forwards JSON body unchanged
+paystub_dispatch_queue  (one row per (cycle, employee); payable + excluded)
+        │
+        │   …later, per employee…
         ▼
-n8n webhook (production or test)
+Payment Dispatch — Lenny clicks "Mark paid" (status='paid')
+        │
+        │  POST /api/payment-dispatches   (logs the payment)
+        │     └─ server looks up the staged row by (cycle_source_file, recipient_email)
+        │        and calls forwardPaystubDispatch({ pay_period, employees:[payload], cycle })
+        ▼
+Next.js → n8n webhook  (forwardPaystubDispatch, reads N8N_DISPATCH_WEBHOOK_URL server-only)
         │
         ├─ Webhook node
-        ├─ Split Out (fieldsToSplitOut: "employees")
+        ├─ Split Out (fieldsToSplitOut: "employees")   ← 1-element array = single paystub
         ├─ Loop Over Items (batchSize: 1)
         ├─ Set node "pay_vars" (maps webhook fields → template names)
         ├─ Gmail / Resend Send Email node (renders HTML paystub)
-        ├─ Wait 600ms (throttle to avoid Gmail rate limits)
         └─ Respond to Webhook  { status, sent }
 ```
 
-The webhook URL is **kept server-side** in `N8N_DISPATCH_WEBHOOK_URL`. The browser only ever calls `/api/dispatch-paystubs`; it never knows the n8n URL.
+The webhook URL is **kept server-side** in `N8N_DISPATCH_WEBHOOK_URL`. The browser never
+sees it — both `/api/dispatch-paystubs` (manual/preview/re-send) and the per-employee send
+inside `/api/payment-dispatches` forward through the shared `forwardPaystubDispatch` helper
+(`src/lib/payroll/paystub-dispatch.ts`).
+
+### Staging table — `paystub_dispatch_queue`
+
+Migration: `references/seed_paystub_dispatch_queue.sql` (idempotent). One row per
+`(cycle_source_file, recipient_email)`:
+
+- `payload` (JSONB) — the exact per-employee object the old batch posted to n8n. Staged for
+  everyone with a resolvable personal email, **including** the excluded set (so they can be
+  paid + emailed later from the Excluded tab).
+- `excluded` / `exclude_reason` — `true` + `'do_not_pay'` when accounting ticked **Exclude**
+  in the wizard's Validation step. Routes them to Payment Dispatch → Excluded.
+- `sent_at` / `sent_by` / `send_count` / `last_error` — paystub send tracking (stamped by the
+  mark-paid send path; survives a re-stage because those columns are omitted from the upsert).
+- `locked_at` / `locked_by` — when the wizard locked + staged this cycle.
+
+Staging is **replace-for-cycle**: a re-lock upserts the new set and prunes people no longer in
+the run, but never deletes a row whose paystub already went out.
+
+### Wizard Validation — "do not pay" exclusions
+
+The Validation step (step 7) has a per-row **Exclude** tickbox (everyone defaults to Pay).
+The set persists per pay-period at `app_settings` key `payroll.wizard.exclusions.<sourceFile>`.
+Excluded people are dropped from the payable dispatch set (grand totals count payable only)
+and staged as `excluded=true`, so they appear in Payment Dispatch → **Excluded** for
+reconciliation. Lenny can still pay them from there once cleared — which logs the dispatch and
+sends their staged paystub.
+
+### Lock / unlock — realtime gate
+
+Payment Dispatch shows **no queue data until accounting LOCKS the cycle**, and the lock is an
+explicit, realtime, reversible flag:
+
+- A per-cycle flag lives in `app_settings` under `payroll.dispatch_lock.<sourceFile>` (JSON
+  `{ locked, lockedAt, lockedBy }`). `app_settings` is in the Supabase Realtime publication, so
+  changes propagate live to every open dashboard — same mechanism as the dispute-pause lock.
+- The wizard's **"Lock in Values & Send to Payment Dispatch"** stages the payloads **and** sets
+  the flag `true`. The Dispatch step then shows a **"Locked — Payment Dispatch is live"** banner
+  with an **Unlock** button; Unlock sets the flag `false` and **Payment Dispatch empties in real
+  time**. Hook: `useWizardDispatchLock(sourceFile)` (`src/hooks/useWizardDispatchLock.ts`),
+  modeled on `useDispatchLock`; only payroll/admin (elevated) can toggle, the clerk only reads.
+- `useDispatchQueue` derives `wizardReady` from this flag (an **absent flag = not locked**); when
+  false it empties rows/excluded/paid and the UI shows a big **"Payroll Wizard isn't ready yet"**
+  note (Accounting embed + standalone clerk page). The dispatch surfaces also subscribe to the
+  flag and `refresh()` on change, so a lock/unlock appears/clears the queue within ~a second.
+- **Fail-open**: only a *fetch error* leaves it ready, so a transient hiccup never blanks a
+  genuinely-locked run. Reports / Urgent (MESA) / Orphanage tabs are independent and not gated.
+
+### Master-list filter
+
+Payment Dispatch only shows people who are on the **Global Master List** to begin with.
+`computeCurrentPay()` returns `masterEmails` (every work/personal/alternate email in
+`active_employees`, lowercased); `useDispatchQueue` filters both the pending and excluded
+lists to those. Stale / off-boarded / never-mastered rates rows no longer appear. Fail-open:
+if the master set is unavailable the queue isn't filtered (never blanks the whole queue).
+
+### Excluded tab — cross-cycle arrears ledger
+
+The Excluded tab is the reconciliation hub for held ("do not pay") people. It shows **what we
+owe** even if they're not paid this week, and **accumulates across cycles**:
+
+- `GET /api/paystub-dispatch-queue/arrears` (`listExcludedArrears()`) returns, per employee,
+  every `excluded=true` staged cycle that is **not yet settled**, summed into a running
+  `{ totalPhp, totalUsd, cycles[] }`. "Settled" = a `status='paid'` `payment_dispatches` row
+  exists for that `(cycle_source_file, email)` — money actually moved, not just the email.
+- The Excluded tab shows a header **"Owed ₱X (US$Y)"** total, and per held person their
+  cumulative pending with an expandable **per-cycle breakdown** (each week + amount + send
+  status). People owed from prior held cycles who aren't held this cycle still surface (so
+  back-owed money never disappears), unless they're already payable in the pending queue.
+- Each row shows the person's **preferred bank / processor**, and a **bank filter rail**
+  (scoped to this tab only) lets accounting narrow the list by processor (or "No bank").
+- **"Settle ₱X"** pays the full balance in one action: `PayrollDispatch.handleConfirmPaid`
+  loops the unpaid cycles and POSTs one `/api/payment-dispatches` per cycle (same txn / bank /
+  date, each cycle's own amount). Each POST fires that cycle's staged paystub server-side, syncs
+  that cycle's `disbursement_records`, and audits it — so one settlement = a paystub per cycle,
+  per-cycle books stay accurate, and the arrears clears on the next load.
+
+### Audit trail
+
+Everything lands in the Admin Audit log (`audit_log`): `paystubs.staged` (on lock+stage,
+including the `excluded_emails` set held that cycle), `payment.dispatched` (per payment),
+and `paystub.sent` / `paystub.send_failed` (per paystub). The per-cycle Audit panel surfaces
+the same trail per cycle.
+
+### Settle robustness + idempotency
+
+The settle loop never aborts the whole run on one failed cycle: each cycle is posted
+independently, results are tallied, the queue is reconciled from the server (`refresh()`), and
+the toast reports `paid/total` with any failures. Because a successful payment drops its cycle
+from arrears, a retry only re-runs the still-unpaid cycles — paid cycles never re-pay/re-email.
+Within a single dialog the `submitting` flag blocks double-submits.
+
+> **Optional follow-up (not done):** there's no DB unique constraint on `payment_dispatches`, so
+> a pathological retry-before-refresh could in principle duplicate a cycle's payment. A partial
+> unique index on `(cycle_source_file, lower(recipient_email), transaction_id, bank_used,
+> sent_date)` + upsert in `insertPaymentDispatch` would make it bulletproof, but changes the
+> existing insert semantics (which intentionally allows re-pays after an Undo), so it's deferred.
+
+### Why server-side, and why it can't misfire on MESA
+
+The single send lives inside `POST /api/payment-dispatches` (only on `status='paid'`), so it
+covers every weekly-queue caller (`PayrollDispatch`, standalone `PayrollClerkApp`, and the
+Excluded-tab "Pay now") with one code path. MESA disbursements (`/api/mesa-requests/{id}/dispatch`)
+and orphanage budgets (`/api/orphanage-dispatches`) go through their **own** routes and never
+hit this handler, so they can't trigger a salary paystub. The send is best-effort: a failed or
+absent staged payload never fails the payment record — it's stamped on the queue row and the
+clerk gets a warning toast (re-send via the Excluded tab).
 
 ## Environment variables
 
