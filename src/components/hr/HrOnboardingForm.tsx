@@ -2827,8 +2827,10 @@ function BulkSetWorkEmailDialog({
   // Auto-suggest a UNIQUE @simple.biz address for every hire when the modal
   // opens. Runs sequentially, threading the addresses already assigned earlier
   // in the batch through `also_taken`, so two same-named hires never collide on
-  // the same suggestion. A hire who already has a work email keeps it and
-  // starts "done" (we never re-provision them here).
+  // the same suggestion. A hire who already has a work email keeps it; only a
+  // CONFIRMED account starts "done". A minted-but-failed / unverified address
+  // stays settable so HR can bulk-retry provisioning (re-setting the same
+  // address is allowed and auto-verifies server-side).
   useEffect(() => {
     if (!open || !rows) return;
     let cancelled = false;
@@ -2846,7 +2848,9 @@ function BulkSetWorkEmailDialog({
         if (r.work_email) {
           nextEmails[r.id] = r.work_email;
           nextAvail[r.id] = true;
-          initialDone.add(r.id);
+          // Only a confirmed account is "done"; failed/unverified rows stay
+          // settable so they can be bulk-retried.
+          if (r.workspace_account_ok === true) initialDone.add(r.id);
           assigned.push(r.work_email.toLowerCase());
           continue;
         }
@@ -3273,6 +3277,10 @@ function BulkDeptGroup({
     const e = (emails[r.id] ?? '').trim().toLowerCase();
     if (!isPlausibleEmail(e) || !e.endsWith('@simple.biz')) return false;
     if (dupIds.has(r.id)) return false;
+    // Re-setting a row's OWN existing address is always allowed (the route
+    // permits it + auto-verifies), even though the roster reports it "taken".
+    const own = (r.work_email ?? '').trim().toLowerCase();
+    if (own && e === own) return true;
     return avail[r.id] === true;
   });
   const pendingCount = rows.filter((r) => !doneIds.has(r.id)).length;
@@ -3422,6 +3430,7 @@ function BulkDeptGroup({
                 onAvail={(v) => onAvail(r.id, v)}
                 isDup={dupIds.has(r.id)}
                 done={done}
+                ownEmail={r.work_email ?? undefined}
                 suggesting={suggesting}
               />
             </div>
@@ -3476,7 +3485,7 @@ function BulkDeptGroup({
               ? `Verify ${verifiableRows.length} account${verifiableRows.length === 1 ? '' : 's'}`
               : allDone
                 ? 'All set'
-                : `Set ${usableRows.length} & verify`}
+                : `Set ${usableRows.length} work email${usableRows.length === 1 ? '' : 's'}`}
         </Button>
       </div>
     </div>
@@ -3494,6 +3503,7 @@ function BulkWorkEmailField({
   onAvail,
   isDup,
   done,
+  ownEmail,
   suggesting,
 }: {
   value: string;
@@ -3501,6 +3511,10 @@ function BulkWorkEmailField({
   onAvail: (v: boolean | null) => void;
   isDup: boolean;
   done: boolean;
+  /** The row's current work email, if any. Re-selecting it is always allowed
+   *  (the route permits re-setting the same address), so we never report a
+   *  row's own address as "taken". */
+  ownEmail?: string;
   suggesting: boolean;
 }) {
   const [checking, setChecking] = useState(false);
@@ -3511,6 +3525,7 @@ function BulkWorkEmailField({
   onAvailRef.current = onAvail;
 
   const norm = value.trim().toLowerCase();
+  const ownNorm = (ownEmail ?? '').trim().toLowerCase();
   const validFormat = isPlausibleEmail(norm) && norm.endsWith('@simple.biz');
 
   useEffect(() => {
@@ -3518,6 +3533,14 @@ function BulkWorkEmailField({
     if (!norm || !validFormat) {
       setServerAvail(null);
       onAvailRef.current(null);
+      setChecking(false);
+      return;
+    }
+    // A row re-selecting its OWN existing address: it's "taken" by this very
+    // row, so skip the roster check and treat it as available/settable.
+    if (ownNorm && norm === ownNorm) {
+      setServerAvail(true);
+      onAvailRef.current(true);
       setChecking(false);
       return;
     }
@@ -3549,7 +3572,7 @@ function BulkWorkEmailField({
       active = false;
       clearTimeout(t);
     };
-  }, [norm, validFormat, done]);
+  }, [norm, validFormat, done, ownNorm]);
 
   const showSpinner = !done && (checking || (suggesting && !norm));
   const state: 'ok' | 'bad' | 'none' =
