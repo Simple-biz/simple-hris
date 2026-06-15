@@ -15,6 +15,7 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Landmark,
   Link2,
   Loader2,
   Mail,
@@ -4413,25 +4414,15 @@ function SubmissionDetailDialog({
                       </DetailSection>
 
                       <DetailSection title="Payment method">
-                        <DetailRow
-                          label="Method"
-                          value={row.payment_method === 'hurupay' ? 'Hurupay' : row.payment_method === 'wires' ? 'Wire transfer' : '—'}
-                        />
-                        {row.payment_method === 'hurupay' && (
-                          <DetailRow label="Hurupay email" value={row.hurupay_email} />
-                        )}
-                        {row.payment_method === 'wires' && (
-                          <div className="grid gap-1.5 sm:grid-cols-2">
-                            <DetailRow label="Bank" value={row.bank_full_name} />
-                            <DetailRow label="Account name" value={row.bank_account_name} />
-                            <DetailRow label="Account number" value={row.bank_account_number} mono />
-                            <DetailRow label="SWIFT" value={row.bank_swift_code} mono />
-                            <DetailRow label="Street" value={row.bank_street} />
-                            <DetailRow label="City" value={row.bank_city} />
-                            <DetailRow label="Province" value={row.bank_province} />
-                            <DetailRow label="Postal code" value={row.bank_postal_code} />
-                            <DetailRow label="Full address" value={row.bank_full_address} className="sm:col-span-2" />
-                          </div>
+                        {row.payment_method === 'wires' ? (
+                          <WireDetailsCard row={row} />
+                        ) : row.payment_method === 'hurupay' ? (
+                          <>
+                            <DetailRow label="Method" value="Hurupay" />
+                            <DetailRow label="Hurupay email" value={row.hurupay_email} mono copyable />
+                          </>
+                        ) : (
+                          <DetailRow label="Method" value="—" />
                         )}
                       </DetailSection>
                     </div>
@@ -4496,23 +4487,146 @@ function DetailSection({ title, children }: { title: string; children: React.Rea
   );
 }
 
+/** Small copy-to-clipboard button used for sensitive payout fields (account
+ *  number, SWIFT, etc.). Flashes a check on success. */
+function CopyIconButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void navigator.clipboard.writeText(value);
+        setCopied(true);
+        toast.success(`${label} copied`);
+        setTimeout(() => setCopied(false), 1200);
+      }}
+      title={`Copy ${label}`}
+      aria-label={`Copy ${label}`}
+      className="shrink-0 rounded p-0.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+    >
+      {copied ? (
+        <CheckIcon className="h-3 w-3 text-emerald-500" />
+      ) : (
+        <ClipboardCopy className="h-3 w-3" />
+      )}
+    </button>
+  );
+}
+
 function DetailRow({
   label,
   value,
   mono,
   className,
+  copyable,
+  wrap,
 }: {
   label: string;
   value: string | null | undefined;
   mono?: boolean;
   className?: string;
+  /** Show a copy-to-clipboard icon (and never truncate the value). */
+  copyable?: boolean;
+  /** Show the value in full (wrap instead of truncate). */
+  wrap?: boolean;
 }) {
+  const hasValue = value != null && value !== '';
+  const showFull = copyable || wrap;
   return (
-    <div className={cn('flex items-baseline justify-between gap-3 text-xs', className)}>
+    <div className={cn('flex items-start justify-between gap-3 text-xs', className)}>
       <span className="shrink-0 text-zinc-500">{label}</span>
-      <span className={cn('min-w-0 flex-1 truncate text-right text-zinc-800 dark:text-zinc-200', mono && 'font-mono')}>
-        {value ?? '—'}
-      </span>
+      <div className="flex min-w-0 flex-1 items-start justify-end gap-1">
+        <span
+          className={cn(
+            'min-w-0 text-right text-zinc-800 dark:text-zinc-200',
+            mono && 'font-mono',
+            showFull ? 'break-all' : 'truncate',
+          )}
+          title={hasValue ? (value as string) : undefined}
+        >
+          {hasValue ? value : '—'}
+        </span>
+        {copyable && hasValue && <CopyIconButton value={value as string} label={label} />}
+      </div>
+    </div>
+  );
+}
+
+/** Wire-transfer payout details, laid out as a clean "bank card" so long
+ *  account numbers / addresses read in full (no cramped 2-col truncation) and
+ *  the account number + SWIFT are one-click copyable. */
+function WireDetailsCard({ row }: { row: SubmissionRow }) {
+  const address =
+    row.bank_full_address?.trim() ||
+    [row.bank_street, row.bank_city, row.bank_province, row.bank_postal_code]
+      .map((s) => s?.trim())
+      .filter(Boolean)
+      .join(', ');
+
+  const Field = ({
+    label,
+    value,
+    big,
+  }: {
+    label: string;
+    value: string | null;
+    big?: boolean;
+  }) => (
+    <div>
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+        {label}
+      </p>
+      <div className="mt-0.5 flex items-center gap-1.5">
+        <span
+          className={cn(
+            'select-all break-all font-mono font-semibold text-zinc-900 dark:text-zinc-100',
+            big ? 'text-base tracking-wide' : 'text-sm',
+          )}
+        >
+          {value?.trim() || '—'}
+        </span>
+        {value?.trim() && <CopyIconButton value={value.trim()} label={label} />}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50/70 via-white to-teal-50/40 shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20">
+      {/* Header: bank + account holder */}
+      <div className="flex items-center justify-between gap-3 border-b border-emerald-200/60 bg-white/60 px-4 py-2.5 dark:border-emerald-900/40 dark:bg-zinc-950/40">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25">
+            <Landmark className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
+              {row.bank_full_name?.trim() || 'Bank'}
+            </p>
+            <p className="truncate text-[11px] text-zinc-500">
+              {row.bank_account_name?.trim() || '—'}
+            </p>
+          </div>
+        </div>
+        <span className="shrink-0 rounded-full border border-emerald-300/70 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+          Wire
+        </span>
+      </div>
+
+      {/* Account number (hero) + SWIFT */}
+      <div className="grid gap-3 px-4 py-3 sm:grid-cols-2">
+        <Field label="Account number" value={row.bank_account_number} big />
+        <Field label="SWIFT / BIC" value={row.bank_swift_code} />
+      </div>
+
+      {/* Address */}
+      <div className="border-t border-emerald-200/50 px-4 py-2.5 dark:border-emerald-900/30">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+          Address
+        </p>
+        <p className="mt-0.5 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+          {address || '—'}
+        </p>
+      </div>
     </div>
   );
 }
