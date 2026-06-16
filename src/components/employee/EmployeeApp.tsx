@@ -14,6 +14,7 @@ import EmployeeLeaves from './EmployeeLeaves';
 import EmployeeTeam from './EmployeeTeam';
 import EmployeeMesa from './EmployeeMesa';
 import EmployeeMyHours from './EmployeeMyHours';
+import EmployeeKpiResults from './EmployeeKpiResults';
 import SWall from '@/components/swall/SWall';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 // import MyDisputes from './MyDisputes'; // hidden — disputes now go through Orphanage Manager → Accounting flow
@@ -351,6 +352,8 @@ export default function EmployeeApp() {
             // }}
           />
         );
+      case 'kpi':
+        return <EmployeeKpiResults employeeEmail={employeeEmail} />;
       case 'leaves':
         return (
           <EmployeeLeaves

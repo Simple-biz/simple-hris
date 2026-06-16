@@ -20,6 +20,7 @@ import {
   Newspaper,
   Users,
   HeartHandshake,
+  Trophy,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -52,6 +53,7 @@ const navItems = [
   { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
   { id: 'profile', label: 'Profile', icon: UserCircle },
   { id: 'hours', label: 'My Hours', icon: Clock },
+  { id: 'kpi', label: 'KPI Results', icon: Trophy },
   { id: 'leaves', label: 'Leave', icon: CalendarDays },
   // { id: 'disputes', label: 'My Disputes', icon: FileText }, // hidden — disputes now go through Orphanage Manager → Accounting flow (no employee submission)
   { id: 'mesa', label: 'MESA', icon: HeartHandshake },
