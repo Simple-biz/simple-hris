@@ -19,24 +19,26 @@
 // Week = the latest Hubstaff upload (pinned, same key accounting processes).
 // Status (draft/ready/locked) lives in hsl_bonus_period_status (reused).
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, LayoutGroup, motion, useSpring } from 'motion/react';
 import {
   AlertTriangle,
-  Building2,
-  CheckCheck,
+  CalendarDays,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
   Lock,
+  Minus,
   RefreshCw,
   Save,
   Search,
   Sparkles,
   User,
   Users,
+  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -54,6 +56,8 @@ import {
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { validateFormula, evaluateFormula } from '@/lib/bonus-catalog/formula';
 import type { BonusDef, BonusAssignment } from '@/lib/bonus-catalog/types';
+import { OFFICIAL_USD_TO_PHP_RATE, effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
+import { CURRENCY_SYMBOL } from '@/lib/payment-catalog/pay-structure';
 
 // -- Types ---------------------------------------------------------------------
 
@@ -192,22 +196,41 @@ function toCentavos(n: number): number {
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
 }
 
-/** Compute the peso amount a bonus pays for a given set of (string) variable
+/** Compute the PESO amount a bonus pays for a given set of (string) variable
  *  inputs. Flat bonuses use the catalog amount; formula bonuses evaluate the
- *  Payment Catalog formula verbatim (`evaluateFormula`). The result is pinned to
- *  centavos so a fractional formula (e.g. a division) is represented exactly as
- *  it will be stored and paid — never truncated to whole pesos. */
-function computeAmount(bonus: BonusDef, varsStr: Record<string, string> | undefined): number {
-  if (bonus.kind === 'flat') return toCentavos(Number.isFinite(bonus.amount) ? (bonus.amount as number) : 0);
+ *  Payment Catalog formula verbatim (`evaluateFormula`).
+ *
+ *  A USD-denominated bonus is converted to PHP at `fxRate` (PHP per $1) — the
+ *  same USD->PHP-at-FX rule Pay Structures use (resolve-rate.ts). The multiply
+ *  happens BEFORE centavo-pinning so the stored PHP value is exact. Because this
+ *  is the single chokepoint every display + the saved `amount` funnels through,
+ *  converting here keeps bonus_catalog_applied + the Payroll Wizard PHP-only.
+ *  PHP bonuses (and legacy bonuses with no currency) pass through untouched. */
+function computeAmount(
+  bonus: BonusDef,
+  varsStr: Record<string, string> | undefined,
+  fxRate: number,
+): number {
+  const factor = bonus.currency === 'USD' ? fxRate : 1;
+  if (bonus.kind === 'flat') {
+    return toCentavos((Number.isFinite(bonus.amount) ? (bonus.amount as number) : 0) * factor);
+  }
   const check = validateFormula(bonus.formula ?? '');
   if (!check.ok) return 0;
   const nums: Record<string, number> = {};
   for (const v of check.variables) nums[v] = Number(varsStr?.[v] ?? '') || 0;
   try {
-    return toCentavos(evaluateFormula(bonus.formula ?? '', nums));
+    return toCentavos(evaluateFormula(bonus.formula ?? '', nums) * factor);
   } catch {
     return 0;
   }
+}
+
+/** The bonus amount in its OWN currency (no FX) — for showing the native source
+ *  figure next to the converted peso. Flat bonuses only; formula results vary
+ *  with inputs so callers show a plain "USD" tag instead. */
+function nativeFlatAmount(bonus: BonusDef): number {
+  return toCentavos(Number.isFinite(bonus.amount) ? (bonus.amount as number) : 0);
 }
 
 /** Variable names a formula references (empty for flat bonuses / invalid formulas). */
@@ -228,10 +251,48 @@ export default function DeptBonusCalculator({
   const [weekStart, setWeekStart] = useState(() => isoWeekStart(new Date()));
   const weekEnd = useMemo(() => weekEndFromStart(weekStart), [weekStart]);
 
+  // Which weeks the manager can switch between (one per uploaded Hubstaff file)
+  // and which one is the *live* payroll week (the Initialized / is_current batch).
+  const [availableWeeks, setAvailableWeeks] = useState<{ start: string; end: string }[]>([]);
+  const [currentWeekStart, setCurrentWeekStart] = useState<string | null>(null);
+  // Always offer the selected + live weeks even before the upload list resolves.
+  const weekOptions = useMemo(() => {
+    const map = new Map<string, { start: string; end: string }>();
+    for (const w of availableWeeks) map.set(w.start, w);
+    for (const s of [currentWeekStart, weekStart]) {
+      if (s && !map.has(s)) map.set(s, { start: s, end: weekEndFromStart(s) });
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      a.start < b.start ? 1 : a.start > b.start ? -1 : 0,
+    );
+  }, [availableWeeks, currentWeekStart, weekStart]);
+  const isLiveWeek = currentWeekStart == null || weekStart === currentWeekStart;
+
   // Catalog (authored in Accounting -> Bonus Catalog).
   const [bonuses, setBonuses] = useState<BonusDef[]>([]);
   const [assignments, setAssignments] = useState<BonusAssignment[]>([]);
   const [catalogLoaded, setCatalogLoaded] = useState(false);
+
+  // Live USD->PHP rate (PHP per $1). USD-denominated catalog bonuses are
+  // converted to PHP at this rate when applied, mirroring how Pay Structures
+  // convert USD rates (resolve-rate.ts). Read from the benign app_settings key
+  // the Payroll Wizard uses, falling back to the official rate.
+  const [usdToPhpRate, setUsdToPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' });
+        const json = (await res.json()) as { value?: string | null };
+        if (!cancelled) setUsdToPhpRate(effectiveUsdToPhpRateFromStored(json.value));
+      } catch {
+        /* keep the official fallback */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const bonusById = useMemo(() => {
     const m = new Map<string, BonusDef>();
@@ -536,18 +597,39 @@ export default function DeptBonusCalculator({
   // the Payroll Wizard does (pickCurrentSourceFile) to keep the manager's KPI
   // week in lock-step with the week accounting processes.
   useEffect(() => {
+    const toIso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     (async () => {
       try {
         const res = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
         const json = (await res.json()) as HubstaffSourceFilesResponse;
+
+        // Build the week menu: one entry per distinct uploaded Hubstaff week.
+        const seen = new Set<string>();
+        const weeks: { start: string; end: string }[] = [];
+        const allFiles = [
+          ...(json.uploads?.map((u) => u.source_file ?? '') ?? []),
+          ...(json.files ?? []),
+        ];
+        for (const f of allFiles) {
+          const range = f ? parseDateRangeFromFilename(f) : null;
+          if (!range) continue;
+          const startIso = toIso(range.start);
+          if (seen.has(startIso)) continue;
+          seen.add(startIso);
+          weeks.push({ start: startIso, end: weekEndFromStart(startIso) });
+        }
+        weeks.sort((a, b) => (a.start < b.start ? 1 : a.start > b.start ? -1 : 0));
+        setAvailableWeeks(weeks);
+
+        // Pin the *live* week to the batch accounting is dispatching (is_current).
         const latest = pickCurrentSourceFile(json.uploads, json.files);
-        if (latest) {
-          const range = parseDateRangeFromFilename(latest);
-          if (range) {
-            const d = range.start;
-            const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-            setWeekStart((cur) => (iso !== cur ? iso : cur));
-          }
+        const range = latest ? parseDateRangeFromFilename(latest) : null;
+        if (range) {
+          const iso = toIso(range.start);
+          setCurrentWeekStart(iso);
+          // Default the view to the live week (only while still on today's auto-week).
+          setWeekStart((cur) => (cur === isoWeekStart(new Date()) ? iso : cur));
         }
       } catch {
         // keep today's week on any error
@@ -586,15 +668,15 @@ export default function DeptBonusCalculator({
         // Team-effort bonus: every member gets the single shared amount.
         if (sharedSet?.has(bonus.id)) {
           const sh = shared?.[bonus.id];
-          if (sh?.on) sum += computeAmount(bonus, sh.vars);
+          if (sh?.on) sum += computeAmount(bonus, sh.vars, usdToPhpRate);
           continue;
         }
         const st = member.applied[bonus.id];
-        if (st?.on) sum += computeAmount(bonus, st.vars);
+        if (st?.on) sum += computeAmount(bonus, st.vars, usdToPhpRate);
       }
       return sum;
     },
-    [applicableBonuses, sharedCommonByDept],
+    [applicableBonuses, sharedCommonByDept, usdToPhpRate],
   );
 
   const deptTotal = useCallback(
@@ -726,7 +808,10 @@ export default function DeptBonusCalculator({
             bonusName: bonus.name,
             kind: bonus.kind,
             vars: bonus.kind === 'formula' ? numVars : null,
-            amount: computeAmount(bonus, st.vars),
+            // USD bonuses are converted to PHP here so the saved amount (and the
+            // Payroll Wizard "KPI Sub." sum) stays PHP. The rate is snapshotted
+            // at apply time, like the rest of the applied row.
+            amount: computeAmount(bonus, st.vars, usdToPhpRate),
           });
         }
       }
@@ -838,8 +923,16 @@ export default function DeptBonusCalculator({
                 : visibleDeptKeys.length === 1
                   ? DEPARTMENTS.find((d) => d.key === visibleDeptKeys[0])?.name
                   : 'My Departments'}
-              <span className="ml-2 font-mono text-[11px] font-normal text-zinc-400">week of {weekStart}</span>
             </h2>
+            <div className="mt-2">
+              <WeekPicker
+                value={weekStart}
+                weekEnd={weekEnd}
+                options={weekOptions}
+                currentWeekStart={currentWeekStart}
+                onChange={setWeekStart}
+              />
+            </div>
           </div>
           <motion.div
             className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/60"
@@ -882,14 +975,24 @@ export default function DeptBonusCalculator({
           </div>
         )}
 
-        <DeadlineBanner
-          weekStart={weekStart}
-          weekEnd={weekEnd}
-          daysLeft={daysLeft}
-          overdue={overdue}
-          readyCount={readyCount}
-          total={totalDepts}
-        />
+        {isLiveWeek ? (
+          <DeadlineBanner
+            weekStart={weekStart}
+            weekEnd={weekEnd}
+            daysLeft={daysLeft}
+            overdue={overdue}
+            readyCount={readyCount}
+            total={totalDepts}
+          />
+        ) : (
+          <PastWeekBanner
+            weekStart={weekStart}
+            weekEnd={weekEnd}
+            liveWeekStart={currentWeekStart}
+            liveWeekEnd={currentWeekStart ? weekEndFromStart(currentWeekStart) : ''}
+            onJumpToLive={() => currentWeekStart && setWeekStart(currentWeekStart)}
+          />
+        )}
       </div>
 
       {/* Department cards */}
@@ -928,6 +1031,48 @@ export default function DeptBonusCalculator({
           const pagedMembers = members.slice(pageStart, pageStart + MEMBER_PAGE_SIZE);
           const hasAnyBonus =
             common.length > 0 || (individualByDept.get(key)?.size ?? 0) > 0;
+          const hasIndividual = (individualByDept.get(key)?.size ?? 0) > 0;
+
+          // Per-column rollups for the table (header tri-state + footer subtotals).
+          // Computed over *all* members so the footer reflects the whole dept,
+          // independent of the current search/pagination view.
+          const isApplicable = (email: string, bonusId: string) =>
+            applicableBonuses(key, email).some((x) => x.id === bonusId);
+          const colMeta = normalCommon.map((b) => {
+            const appMembers = allMembers.filter((m) => isApplicable(m.email, b.id));
+            const onCount = appMembers.filter((m) => m.applied[b.id]?.on).length;
+            const subtotal = appMembers.reduce(
+              (s, m) => s + (m.applied[b.id]?.on ? computeAmount(b, m.applied[b.id]?.vars, usdToPhpRate) : 0),
+              0,
+            );
+            return {
+              b,
+              appCount: appMembers.length,
+              onCount,
+              allOn: appMembers.length > 0 && onCount === appMembers.length,
+              someOn: onCount > 0 && onCount < appMembers.length,
+              subtotal,
+            };
+          });
+          const sharedMeta = sharedCommon.map((b) => {
+            const sh = d?.shared?.[b.id];
+            const on = !!sh?.on;
+            const perPerson = on ? computeAmount(b, sh?.vars, usdToPhpRate) : 0;
+            const appCount = allMembers.filter((m) => isApplicable(m.email, b.id)).length;
+            return { b, sh, on, perPerson, subtotal: perPerson * appCount };
+          });
+          const indivSubtotal = allMembers.reduce((s, m) => {
+            const ind = applicableBonuses(key, m.email).filter(
+              (b) => !common.some((c) => c.id === b.id) && !sharedSet?.has(b.id),
+            );
+            return (
+              s +
+              ind.reduce(
+                (ss, b) => ss + (m.applied[b.id]?.on ? computeAmount(b, m.applied[b.id]?.vars, usdToPhpRate) : 0),
+                0,
+              )
+            );
+          }, 0);
 
           return (
             <motion.div
@@ -940,7 +1085,7 @@ export default function DeptBonusCalculator({
               className={cn(
                 'group relative overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow hover:shadow-xl dark:bg-zinc-900/40',
                 'border-zinc-200/90 dark:border-zinc-800',
-                !readOnly && daysLeft <= 2 && 'ring-1 ring-amber-400/70 dark:ring-amber-500/40',
+                isLiveWeek && !readOnly && daysLeft <= 2 && 'ring-1 ring-amber-400/70 dark:ring-amber-500/40',
               )}
             >
               {/* Header row -- the wallpaper is now a compact thumbnail accent,
@@ -985,7 +1130,7 @@ export default function DeptBonusCalculator({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="truncate text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{dept?.name ?? key}</h3>
-                    <HeroBadge status={d?.status ?? 'draft'} warn={!readOnly && daysLeft <= 2} />
+                    <HeroBadge status={d?.status ?? 'draft'} warn={isLiveWeek && !readOnly && daysLeft <= 2} />
                     {d?.dirty && (
                       <motion.span
                         className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400 shadow-[0_0_6px] shadow-amber-400"
@@ -1040,94 +1185,6 @@ export default function DeptBonusCalculator({
                       exit={{ y: -8 }}
                       transition={{ duration: 0.42, ease: EASE }}
                     >
-                      {/* Common-bonus legend with one-tap apply-to-all */}
-                      {normalCommon.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-2 px-3.5 pt-3">
-                          <span
-                            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-                            style={{ backgroundColor: hexA(color, 0.14), color }}
-                          >
-                            <Building2 className="h-3 w-3" /> Common
-                          </span>
-                          {normalCommon.map((b) => (
-                            <button
-                              key={b.id}
-                              type="button"
-                              disabled={readOnly || !d?.loaded}
-                              onClick={() => applyToAll(key, b.id, true)}
-                              title={`Apply "${b.name}" to all members`}
-                              className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                            >
-                              <CheckCheck className="h-3 w-3" />
-                              {b.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Team-effort (shared) common bonuses: one entry for everyone */}
-                      {sharedCommon.length > 0 && d?.loaded && (
-                        <div className="space-y-2 px-3.5 pt-3">
-                          {sharedCommon.map((b) => {
-                            const sh = d.shared[b.id];
-                            const on = !!sh?.on;
-                            const vars = bonusVariables(b);
-                            const perPerson = on ? computeAmount(b, sh?.vars) : 0;
-                            return (
-                              <div
-                                key={b.id}
-                                className="rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 dark:border-violet-900/50 dark:bg-violet-950/20"
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <label className="flex min-w-0 items-center gap-2">
-                                    <input
-                                      type="checkbox"
-                                      className="h-4 w-4 shrink-0 rounded accent-violet-600"
-                                      disabled={readOnly}
-                                      checked={on}
-                                      onChange={(ev) => toggleShared(key, b.id, ev.target.checked)}
-                                    />
-                                    <span className="truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">{b.name}</span>
-                                    <span className="inline-flex items-center gap-0.5 rounded bg-violet-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
-                                      <Users className="h-2.5 w-2.5" /> Team
-                                    </span>
-                                  </label>
-                                  <span
-                                    className={cn(
-                                      'shrink-0 font-mono text-[12px] tabular-nums',
-                                      perPerson > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
-                                    )}
-                                  >
-                                    {peso(perPerson)} <span className="text-[9px] text-zinc-400">/ person</span>
-                                  </span>
-                                </div>
-                                {on && b.kind === 'formula' && vars.length > 0 && (
-                                  <div className="mt-1.5 pl-6">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      {vars.map((v) => (
-                                        <label key={v} className="flex items-center gap-1">
-                                          <span className="font-mono text-[10px] text-zinc-400">{v}</span>
-                                          <Input
-                                            type="number"
-                                            inputMode="decimal"
-                                            aria-label={`${v} for the whole team`}
-                                            disabled={readOnly}
-                                            value={sh?.vars?.[v] ?? ''}
-                                            onChange={(ev) => setSharedVar(key, b.id, v, ev.target.value)}
-                                            className="h-7 w-20 text-center text-sm tabular-nums"
-                                          />
-                                        </label>
-                                      ))}
-                                    </div>
-                                    <p className="mt-1 text-[10px] text-zinc-400">entered once &middot; everyone gets {peso(perPerson)}</p>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-
                       {/* Member search + pagination toolbar (standard list controls) */}
                       {d?.loaded && hasAnyBonus && allMembers.length > 0 && (
                         <div className="flex flex-col gap-2 px-2.5 pt-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1195,137 +1252,384 @@ export default function DeptBonusCalculator({
                           {cq ? 'No members match your search.' : 'No team members in this department.'}
                         </div>
                       ) : (
-                        <motion.div
-                          className="space-y-1.5 px-2.5 pb-1 pt-2"
-                          initial="hidden"
-                          animate="show"
-                          variants={{ show: { transition: { staggerChildren: 0.028, delayChildren: 0.06 } } }}
-                        >
-                          {pagedMembers.map((m) => {
-                            // Team-effort bonuses are shown/edited once at the top, not per member.
-                            const mBonuses = applicableBonuses(key, m.email).filter((b) => !sharedSet?.has(b.id));
-                            const mTotal = memberTotal(key, m, d.shared);
-                            const sharedForMember = applicableBonuses(key, m.email).filter(
-                              (b) => sharedSet?.has(b.id) && d.shared[b.id]?.on,
-                            );
-                            return (
-                              <motion.div
-                                key={m.email}
-                                variants={{ hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0 } }}
-                                className="rounded-xl border border-zinc-100 bg-white px-3 py-2.5 dark:border-zinc-800/60 dark:bg-zinc-900/30"
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="flex min-w-0 items-center gap-2">
-                                    <span
-                                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
-                                      style={{ backgroundColor: hexA(color, 0.16), color }}
-                                      aria-hidden
-                                    >
-                                      {initials(m.name)}
+                        <div className="px-2.5 pb-1 pt-2.5">
+                          <div className="overflow-x-auto rounded-xl border border-zinc-200/80 dark:border-zinc-800">
+                            <table className="table-keep w-full border-collapse text-left">
+                              {/* Header: Member · one column per common / team bonus · Total */}
+                              <thead>
+                                <tr>
+                                  <th className="sticky left-0 z-[3] min-w-[148px] border-b border-r border-zinc-200 bg-zinc-50 px-3 py-2 align-bottom dark:border-zinc-800 dark:bg-[#0f141b]">
+                                    <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                                      Member
                                     </span>
-                                    <div className="truncate text-[13px] font-medium text-zinc-800 dark:text-zinc-100">{m.name}</div>
-                                  </div>
-                                  <span
-                                    className={cn(
-                                      'shrink-0 rounded-md px-1.5 py-0.5 font-mono text-sm font-semibold tabular-nums',
-                                      mTotal > 0
-                                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
-                                        : 'text-zinc-400 dark:text-zinc-600',
-                                    )}
-                                  >
-                                    <AnimatedPeso value={mTotal} />
-                                  </span>
-                                </div>
+                                  </th>
 
-                                {/* Applicable bonuses for this member */}
-                                <div className="mt-2 space-y-1">
-                                  {mBonuses.map((b) => {
-                                    const st = m.applied[b.id];
-                                    const on = !!st?.on;
-                                    const isCommon = common.some((c) => c.id === b.id);
-                                    const vars = bonusVariables(b);
-                                    const amt = on ? computeAmount(b, st?.vars) : 0;
-                                    return (
-                                      <div
-                                        key={b.id}
-                                        className="rounded-lg border border-zinc-100 px-2 py-1.5 dark:border-zinc-800/50"
-                                      >
-                                        <div className="flex items-center justify-between gap-2">
-                                          <label className="flex min-w-0 items-center gap-2">
-                                            <input
-                                              type="checkbox"
-                                              className="h-4 w-4 shrink-0 rounded accent-emerald-600"
-                                              disabled={readOnly}
-                                              checked={on}
-                                              onChange={(ev) => toggleBonus(key, m.email, b.id, ev.target.checked)}
-                                            />
-                                            <span className="truncate text-[12.5px] text-zinc-700 dark:text-zinc-200">{b.name}</span>
-                                            <BonusTag isCommon={isCommon} kind={b.kind} />
-                                          </label>
+                                  {colMeta.map(({ b, allOn, someOn, onCount, appCount }) => (
+                                    <th
+                                      key={b.id}
+                                      className="min-w-[128px] border-b border-l border-zinc-200/70 bg-zinc-50 px-2.5 py-2 align-bottom dark:border-zinc-800/70 dark:bg-zinc-900/70"
+                                    >
+                                      <div className="flex flex-col gap-1.5">
+                                        <div className="flex items-start justify-between gap-1.5">
                                           <span
-                                            className={cn(
-                                              'shrink-0 font-mono text-[12px] tabular-nums',
-                                              amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
-                                            )}
+                                            className="line-clamp-2 text-[11.5px] font-semibold leading-tight text-zinc-800 dark:text-zinc-100"
+                                            title={b.name}
                                           >
-                                            {peso(amt)}
+                                            {b.name}
                                           </span>
+                                          <KindDot kind={b.kind} />
                                         </div>
-
-                                        {/* Formula variable inputs (shown when applied) */}
-                                        {on && b.kind === 'formula' && vars.length > 0 && (
-                                          <div className="mt-1.5 flex flex-wrap gap-2 pl-6">
-                                            {vars.map((v) => (
-                                              <label key={v} className="flex items-center gap-1">
-                                                <span className="font-mono text-[10px] text-zinc-400">{v}</span>
-                                                <Input
-                                                  type="number"
-                                                  inputMode="decimal"
-                                                  aria-label={`${v} for ${m.name}`}
-                                                  disabled={readOnly}
-                                                  value={st?.vars?.[v] ?? ''}
-                                                  onChange={(ev) => setVar(key, m.email, b.id, v, ev.target.value)}
-                                                  className="h-7 w-20 text-center text-sm tabular-nums"
-                                                />
-                                              </label>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-
-                                  {/* Team-effort bonuses this member shares in (read-only here) */}
-                                  {sharedForMember.map((b) => {
-                                    const sh = d.shared[b.id];
-                                    const amt = computeAmount(b, sh?.vars);
-                                    return (
-                                      <div
-                                        key={b.id}
-                                        className="flex items-center justify-between gap-2 rounded-lg border border-violet-100 bg-violet-50/40 px-2 py-1.5 dark:border-violet-900/40 dark:bg-violet-950/10"
-                                      >
-                                        <span className="flex min-w-0 items-center gap-2">
-                                          <span className="truncate text-[12.5px] text-zinc-600 dark:text-zinc-300">{b.name}</span>
-                                          <span className="inline-flex items-center gap-0.5 rounded bg-violet-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
-                                            <Users className="h-2.5 w-2.5" /> Team
-                                          </span>
-                                        </span>
-                                        <span
+                                        <BonusCurrencyTag bonus={b} rate={usdToPhpRate} />
+                                        <button
+                                          type="button"
+                                          disabled={readOnly || !d?.loaded || appCount === 0}
+                                          onClick={() => applyToAll(key, b.id, !allOn)}
+                                          title={allOn ? 'Untick for everyone' : 'Tick for everyone'}
                                           className={cn(
-                                            'shrink-0 font-mono text-[12px] tabular-nums',
-                                            amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                            'inline-flex w-fit items-center gap-1 rounded-md border px-1.5 py-0.5 transition-colors disabled:opacity-40',
+                                            allOn
+                                              ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                              : someOn
+                                                ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300'
+                                                : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400',
                                           )}
                                         >
-                                          {peso(amt)}
-                                        </span>
+                                          <span
+                                            className={cn(
+                                              'flex h-3 w-3 items-center justify-center rounded-[3px] border',
+                                              allOn
+                                                ? 'border-emerald-500 bg-emerald-500 text-white'
+                                                : someOn
+                                                  ? 'border-amber-500 bg-amber-500 text-white'
+                                                  : 'border-zinc-300 dark:border-zinc-600',
+                                            )}
+                                          >
+                                            {allOn ? <Check className="h-2 w-2" strokeWidth={3.5} /> : someOn ? <Minus className="h-2 w-2" strokeWidth={3.5} /> : null}
+                                          </span>
+                                          <span className="font-mono text-[9px] font-semibold tabular-nums">
+                                            {onCount}/{appCount}
+                                          </span>
+                                        </button>
                                       </div>
+                                    </th>
+                                  ))}
+
+                                  {sharedMeta.map(({ b, sh, on, perPerson }) => {
+                                    const vars = bonusVariables(b);
+                                    return (
+                                      <th
+                                        key={b.id}
+                                        className="min-w-[144px] border-b border-l border-violet-200/70 bg-violet-50/70 px-2.5 py-2 align-bottom dark:border-violet-900/50 dark:bg-violet-950/25"
+                                      >
+                                        <div className="flex flex-col gap-1.5">
+                                          <label className="flex items-start gap-1.5">
+                                            <input
+                                              type="checkbox"
+                                              className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded accent-violet-600"
+                                              disabled={readOnly}
+                                              checked={on}
+                                              onChange={(ev) => toggleShared(key, b.id, ev.target.checked)}
+                                            />
+                                            <span
+                                              className="line-clamp-2 text-[11.5px] font-semibold leading-tight text-zinc-800 dark:text-zinc-100"
+                                              title={b.name}
+                                            >
+                                              {b.name}
+                                            </span>
+                                          </label>
+                                          <span className="inline-flex w-fit items-center gap-0.5 rounded bg-violet-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                                            <Users className="h-2 w-2" /> Team · {peso(perPerson)}/ea
+                                          </span>
+                                          <BonusCurrencyTag bonus={b} rate={usdToPhpRate} />
+                                          {on && b.kind === 'formula' && vars.length > 0 && (
+                                            <div className="flex flex-wrap gap-1">
+                                              {vars.map((v) => (
+                                                <label key={v} className="flex items-center gap-1">
+                                                  <span className="font-mono text-[9px] text-zinc-400">{v}</span>
+                                                  <Input
+                                                    type="number"
+                                                    inputMode="decimal"
+                                                    aria-label={`${v} for the whole team`}
+                                                    disabled={readOnly}
+                                                    value={sh?.vars?.[v] ?? ''}
+                                                    onChange={(ev) => setSharedVar(key, b.id, v, ev.target.value)}
+                                                    className="h-6 w-14 px-1 text-center text-[11px] tabular-nums"
+                                                  />
+                                                </label>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </th>
                                     );
                                   })}
-                                </div>
-                              </motion.div>
-                            );
-                          })}
-                        </motion.div>
+
+                                  {hasIndividual && (
+                                    <th className="min-w-[150px] border-b border-l border-zinc-200/70 bg-zinc-50 px-2.5 py-2 align-bottom dark:border-zinc-800/70 dark:bg-zinc-900/70">
+                                      <span className="inline-flex items-center gap-1 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                                        <User className="h-2.5 w-2.5" /> Individual
+                                      </span>
+                                    </th>
+                                  )}
+
+                                  <th className="sticky right-0 z-[3] min-w-[96px] border-b border-l border-zinc-200 bg-zinc-50 px-3 py-2 text-right align-bottom dark:border-zinc-800 dark:bg-[#0f141b]">
+                                    <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                                      Total
+                                    </span>
+                                  </th>
+                                </tr>
+                              </thead>
+
+                              <motion.tbody
+                                initial="hidden"
+                                animate="show"
+                                variants={{ show: { transition: { staggerChildren: 0.02, delayChildren: 0.04 } } }}
+                              >
+                                {pagedMembers.map((m) => {
+                                  const appl = applicableBonuses(key, m.email);
+                                  const applSet = new Set(appl.map((b) => b.id));
+                                  const mIndividual = appl.filter(
+                                    (b) => !common.some((c) => c.id === b.id) && !sharedSet?.has(b.id),
+                                  );
+                                  const mTotal = memberTotal(key, m, d.shared);
+                                  return (
+                                    <motion.tr
+                                      key={m.email}
+                                      variants={{ hidden: { opacity: 0, y: 4 }, show: { opacity: 1, y: 0 } }}
+                                      className="group/row border-b border-zinc-100 last:border-0 hover:bg-emerald-50/40 dark:border-zinc-800/60 dark:hover:bg-emerald-950/10"
+                                    >
+                                      {/* Member (sticky) */}
+                                      <td className="sticky left-0 z-[2] border-r border-zinc-200/80 bg-white px-3 py-2 align-top group-hover/row:bg-emerald-50/40 dark:border-zinc-800 dark:bg-[#11161c] dark:group-hover/row:bg-emerald-950/20">
+                                        <div className="flex items-center gap-2">
+                                          <span
+                                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
+                                            style={{ backgroundColor: hexA(color, 0.16), color }}
+                                            aria-hidden
+                                          >
+                                            {initials(m.name)}
+                                          </span>
+                                          <span
+                                            className="min-w-0 truncate text-[12px] font-medium text-zinc-800 dark:text-zinc-100"
+                                            title={m.name}
+                                          >
+                                            {m.name}
+                                          </span>
+                                        </div>
+                                      </td>
+
+                                      {/* Common bonus cells */}
+                                      {colMeta.map(({ b }) => {
+                                        const applicable = applSet.has(b.id);
+                                        const st = m.applied[b.id];
+                                        const on = !!st?.on;
+                                        const vars = bonusVariables(b);
+                                        const amt = applicable && on ? computeAmount(b, st?.vars, usdToPhpRate) : 0;
+                                        return (
+                                          <td key={b.id} className="border-l border-zinc-100 px-2.5 py-2 align-top dark:border-zinc-800/50">
+                                            {!applicable ? (
+                                              <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-700">—</span>
+                                            ) : (
+                                              <div className="flex flex-col gap-1">
+                                                <label className="flex items-center gap-1.5">
+                                                  <input
+                                                    type="checkbox"
+                                                    className="h-3.5 w-3.5 shrink-0 rounded accent-emerald-600"
+                                                    disabled={readOnly}
+                                                    checked={on}
+                                                    onChange={(ev) => toggleBonus(key, m.email, b.id, ev.target.checked)}
+                                                  />
+                                                  <span
+                                                    className={cn(
+                                                      'font-mono text-[11px] tabular-nums',
+                                                      amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                                    )}
+                                                  >
+                                                    {on ? peso(amt) : '—'}
+                                                  </span>
+                                                </label>
+                                                {on && b.kind === 'formula' && vars.length > 0 && (
+                                                  <div className="flex flex-wrap gap-1 pl-5">
+                                                    {vars.map((v) => (
+                                                      <label key={v} className="flex items-center gap-0.5">
+                                                        <span className="font-mono text-[9px] text-zinc-400">{v}</span>
+                                                        <Input
+                                                          type="number"
+                                                          inputMode="decimal"
+                                                          aria-label={`${v} for ${m.name}`}
+                                                          disabled={readOnly}
+                                                          value={st?.vars?.[v] ?? ''}
+                                                          onChange={(ev) => setVar(key, m.email, b.id, v, ev.target.value)}
+                                                          className="h-6 w-14 px-1 text-center text-[11px] tabular-nums"
+                                                        />
+                                                      </label>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            )}
+                                          </td>
+                                        );
+                                      })}
+
+                                      {/* Team bonus cells (entered once in the header; read-only per person) */}
+                                      {sharedMeta.map(({ b, on, perPerson }) => {
+                                        const applicable = applSet.has(b.id);
+                                        const amt = applicable && on ? perPerson : 0;
+                                        return (
+                                          <td
+                                            key={b.id}
+                                            className="border-l border-violet-100/70 bg-violet-50/20 px-2.5 py-2 align-top dark:border-violet-900/30 dark:bg-violet-950/10"
+                                          >
+                                            {!applicable ? (
+                                              <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-700">—</span>
+                                            ) : (
+                                              <span
+                                                className={cn(
+                                                  'font-mono text-[11px] tabular-nums',
+                                                  amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                                )}
+                                              >
+                                                {on ? peso(amt) : '—'}
+                                              </span>
+                                            )}
+                                          </td>
+                                        );
+                                      })}
+
+                                      {/* Individual bonuses for this member */}
+                                      {hasIndividual && (
+                                        <td className="border-l border-zinc-100 px-2.5 py-2 align-top dark:border-zinc-800/50">
+                                          {mIndividual.length === 0 ? (
+                                            <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-700">—</span>
+                                          ) : (
+                                            <div className="flex flex-col gap-1.5">
+                                              {mIndividual.map((b) => {
+                                                const st = m.applied[b.id];
+                                                const on = !!st?.on;
+                                                const vars = bonusVariables(b);
+                                                const amt = on ? computeAmount(b, st?.vars, usdToPhpRate) : 0;
+                                                return (
+                                                  <div key={b.id} className="flex flex-col gap-0.5">
+                                                    <label className="flex items-center gap-1.5">
+                                                      <input
+                                                        type="checkbox"
+                                                        className="h-3.5 w-3.5 shrink-0 rounded accent-violet-600"
+                                                        disabled={readOnly}
+                                                        checked={on}
+                                                        onChange={(ev) => toggleBonus(key, m.email, b.id, ev.target.checked)}
+                                                      />
+                                                      <span className="min-w-0 truncate text-[11px] text-zinc-600 dark:text-zinc-300" title={b.name}>
+                                                        {b.name}
+                                                      </span>
+                                                      <BonusCurrencyTag bonus={b} rate={usdToPhpRate} />
+                                                      <span
+                                                        className={cn(
+                                                          'ml-auto shrink-0 font-mono text-[11px] tabular-nums',
+                                                          amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                                        )}
+                                                      >
+                                                        {on ? peso(amt) : '—'}
+                                                      </span>
+                                                    </label>
+                                                    {on && b.kind === 'formula' && vars.length > 0 && (
+                                                      <div className="flex flex-wrap gap-1 pl-5">
+                                                        {vars.map((v) => (
+                                                          <label key={v} className="flex items-center gap-0.5">
+                                                            <span className="font-mono text-[9px] text-zinc-400">{v}</span>
+                                                            <Input
+                                                              type="number"
+                                                              inputMode="decimal"
+                                                              aria-label={`${v} for ${m.name}`}
+                                                              disabled={readOnly}
+                                                              value={st?.vars?.[v] ?? ''}
+                                                              onChange={(ev) => setVar(key, m.email, b.id, v, ev.target.value)}
+                                                              className="h-6 w-14 px-1 text-center text-[11px] tabular-nums"
+                                                            />
+                                                          </label>
+                                                        ))}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+                                        </td>
+                                      )}
+
+                                      {/* Member total (sticky) */}
+                                      <td className="sticky right-0 z-[2] border-l border-zinc-200/80 bg-white px-3 py-2 text-right align-top group-hover/row:bg-emerald-50/40 dark:border-zinc-800 dark:bg-[#11161c] dark:group-hover/row:bg-emerald-950/20">
+                                        <span
+                                          className={cn(
+                                            'font-mono text-[12px] font-bold tabular-nums',
+                                            mTotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                          )}
+                                        >
+                                          <AnimatedPeso value={mTotal} />
+                                        </span>
+                                      </td>
+                                    </motion.tr>
+                                  );
+                                })}
+                              </motion.tbody>
+
+                              {/* Footer: per-column subtotals + dept grand total */}
+                              <tfoot>
+                                <tr>
+                                  <td className="sticky left-0 z-[2] border-r border-t border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-[#0f141b]">
+                                    <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                                      Totals
+                                    </span>
+                                  </td>
+                                  {colMeta.map(({ b, subtotal, onCount }) => (
+                                    <td key={b.id} className="border-l border-t border-zinc-200/70 bg-zinc-50/60 px-2.5 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/50">
+                                      <div className="flex flex-col">
+                                        <span
+                                          className={cn(
+                                            'font-mono text-[11px] font-semibold tabular-nums',
+                                            subtotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                          )}
+                                        >
+                                          {peso(subtotal)}
+                                        </span>
+                                        <span className="font-mono text-[9px] text-zinc-400">{onCount} applied</span>
+                                      </div>
+                                    </td>
+                                  ))}
+                                  {sharedMeta.map(({ b, subtotal }) => (
+                                    <td key={b.id} className="border-l border-t border-violet-200/60 bg-violet-50/40 px-2.5 py-2 dark:border-violet-900/40 dark:bg-violet-950/20">
+                                      <span
+                                        className={cn(
+                                          'font-mono text-[11px] font-semibold tabular-nums',
+                                          subtotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                        )}
+                                      >
+                                        {peso(subtotal)}
+                                      </span>
+                                    </td>
+                                  ))}
+                                  {hasIndividual && (
+                                    <td className="border-l border-t border-zinc-200/70 bg-zinc-50/60 px-2.5 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/50">
+                                      <span
+                                        className={cn(
+                                          'font-mono text-[11px] font-semibold tabular-nums',
+                                          indivSubtotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                        )}
+                                      >
+                                        {peso(indivSubtotal)}
+                                      </span>
+                                    </td>
+                                  )}
+                                  <td className="sticky right-0 z-[2] border-l border-t border-zinc-200 bg-zinc-50 px-3 py-2 text-right dark:border-zinc-800 dark:bg-[#0f141b]">
+                                    <span className="font-mono text-[12px] font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
+                                      <AnimatedPeso value={total} />
+                                    </span>
+                                  </td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        </div>
                       )}
 
                       {/* Footer */}
@@ -1376,6 +1680,27 @@ export default function DeptBonusCalculator({
 
 // -- Bits -----------------------------------------------------------------------
 
+/** Sky chip flagging a USD-denominated bonus. For a flat bonus it shows the
+ *  native "$X"; for a formula it shows "USD" (the result varies with inputs).
+ *  The peso figures in the grid are the FX-converted amounts that get paid; this
+ *  chip explains why a "$50" library bonus appears as a peso total. Renders
+ *  nothing for PHP bonuses so the common case stays uncluttered. */
+function BonusCurrencyTag({ bonus, rate }: { bonus: BonusDef; rate: number }) {
+  if ((bonus.currency ?? 'PHP') !== 'USD') return null;
+  const label =
+    bonus.kind === 'flat'
+      ? `${CURRENCY_SYMBOL.USD}${nativeFlatAmount(bonus).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : 'USD';
+  return (
+    <span
+      className="inline-flex w-fit items-center gap-0.5 rounded bg-sky-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
+      title={`USD bonus — paid in PHP, converted at ${PESO}${rate.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/$1`}
+    >
+      {label}
+    </span>
+  );
+}
+
 /** Peso figure that springs to its new value whenever it changes. */
 function AnimatedPeso({ value }: { value: number }) {
   const spring = useSpring(value, { stiffness: 150, damping: 24, mass: 0.6 });
@@ -1387,31 +1712,240 @@ function AnimatedPeso({ value }: { value: number }) {
   return <>{peso(shown)}</>;
 }
 
-function BonusTag({ isCommon, kind }: { isCommon: boolean; kind: BonusDef['kind'] }) {
+/** Compact flat/formula indicator for a bonus column header. */
+function KindDot({ kind }: { kind: BonusDef['kind'] }) {
   return (
-    <span className="flex shrink-0 items-center gap-1">
-      <span
-        className={cn(
-          'inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
-          isCommon
-            ? 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300'
-            : 'bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300',
-        )}
-      >
-        {isCommon ? <Building2 className="h-2.5 w-2.5" /> : <User className="h-2.5 w-2.5" />}
-        {isCommon ? 'Dept' : 'Individual'}
-      </span>
-      <span
-        className={cn(
-          'rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
-          kind === 'flat'
-            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-            : 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
-        )}
-      >
-        {kind}
-      </span>
+    <span
+      className={cn(
+        'shrink-0 rounded px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide',
+        kind === 'flat'
+          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+          : 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
+      )}
+      title={kind === 'flat' ? 'Flat amount' : 'Formula bonus'}
+    >
+      {kind === 'flat' ? 'flat' : 'ƒ(x)'}
     </span>
+  );
+}
+
+/** "Live" pulse pill — marks the week accounting is currently dispatching. */
+function LiveBadge() {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+      <span className="relative flex h-1.5 w-1.5">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      </span>
+      Live
+    </span>
+  );
+}
+
+/** Format a Mon–Sun week as "Jun 9 – Jun 15". */
+function fmtWeek(startIso: string, endIso: string): string {
+  if (!startIso) return '—';
+  const [sy, sm, sd] = startIso.split('-').map(Number);
+  const s = new Date(sy!, sm! - 1, sd!);
+  const sL = s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (!endIso) return `${sL}, ${sy}`;
+  const [ey, em, ed] = endIso.split('-').map(Number);
+  const e = new Date(ey!, em! - 1, ed!);
+  const eL = e.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `${sL} – ${eL}`;
+}
+
+/**
+ * Week navigator: prev/next arrows step through uploaded Hubstaff weeks and a
+ * dropdown lists them all, marking the live (currently-dispatched) week and
+ * offering a one-tap jump back to it.
+ */
+function WeekPicker({
+  value,
+  weekEnd,
+  options,
+  currentWeekStart,
+  onChange,
+}: {
+  value: string;
+  weekEnd: string;
+  options: { start: string; end: string }[];
+  currentWeekStart: string | null;
+  onChange: (start: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // options are sorted newest-first, so a higher index is an older week.
+  const idx = options.findIndex((o) => o.start === value);
+  const isLive = currentWeekStart != null && value === currentWeekStart;
+  const hasOlder = idx >= 0 && idx < options.length - 1;
+  const hasNewer = idx > 0;
+
+  return (
+    <div ref={ref} className="relative inline-flex items-center gap-1">
+      <button
+        type="button"
+        aria-label="Older week"
+        disabled={!hasOlder}
+        onClick={() => hasOlder && onChange(options[idx + 1]!.start)}
+        className="rounded-md border border-zinc-200 bg-white p-1 text-zinc-500 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800"
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-left transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:bg-zinc-800/70"
+      >
+        <CalendarDays className="h-3.5 w-3.5 text-zinc-400" />
+        <span className="text-[12.5px] font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
+          {fmtWeek(value, weekEnd)}
+        </span>
+        {isLive ? (
+          <LiveBadge />
+        ) : (
+          <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+            Past
+          </span>
+        )}
+        <ChevronDown className={cn('h-3.5 w-3.5 text-zinc-400 transition-transform', open && 'rotate-180')} />
+      </button>
+
+      <button
+        type="button"
+        aria-label="Newer week"
+        disabled={!hasNewer}
+        onClick={() => hasNewer && onChange(options[idx - 1]!.start)}
+        className="rounded-md border border-zinc-200 bg-white p-1 text-zinc-500 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800"
+      >
+        <ChevronRight className="h-3.5 w-3.5" />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.16, ease: EASE }}
+            className="absolute left-9 top-full z-30 mt-1.5 w-64 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-950"
+          >
+            <div className="flex items-center justify-between border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+              <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
+                Pay weeks
+              </span>
+              {currentWeekStart && !isLive && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(currentWeekStart);
+                    setOpen(false);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide text-emerald-700 transition-colors hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70"
+                >
+                  <Zap className="h-2.5 w-2.5" /> Jump to live
+                </button>
+              )}
+            </div>
+            <ul className="max-h-72 overflow-y-auto py-1">
+              {options.length === 0 ? (
+                <li className="px-3 py-3 text-center text-[11px] text-zinc-400">No uploaded weeks yet.</li>
+              ) : (
+                options.map((o) => {
+                  const selected = o.start === value;
+                  const live = currentWeekStart != null && o.start === currentWeekStart;
+                  return (
+                    <li key={o.start}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onChange(o.start);
+                          setOpen(false);
+                        }}
+                        className={cn(
+                          'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] transition-colors',
+                          selected ? 'bg-emerald-50/70 dark:bg-emerald-950/30' : 'hover:bg-zinc-50 dark:hover:bg-zinc-900',
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'flex h-3.5 w-3.5 shrink-0 items-center justify-center',
+                            selected ? 'text-emerald-600 dark:text-emerald-400' : 'text-transparent',
+                          )}
+                        >
+                          <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                        </span>
+                        <span
+                          className={cn(
+                            'flex-1 tabular-nums',
+                            selected ? 'font-semibold text-zinc-900 dark:text-zinc-100' : 'text-zinc-600 dark:text-zinc-300',
+                          )}
+                        >
+                          {fmtWeek(o.start, o.end)}
+                        </span>
+                        {live && <LiveBadge />}
+                      </button>
+                    </li>
+                  );
+                })
+              )}
+            </ul>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Shown in place of the deadline banner while viewing a non-live (past) week. */
+function PastWeekBanner({
+  weekStart,
+  weekEnd,
+  liveWeekStart,
+  liveWeekEnd,
+  onJumpToLive,
+}: {
+  weekStart: string;
+  weekEnd: string;
+  liveWeekStart: string | null;
+  liveWeekEnd: string;
+  onJumpToLive: () => void;
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-indigo-300/70 bg-indigo-50 px-3 py-2 text-xs text-indigo-900 dark:border-indigo-800/60 dark:bg-indigo-950/40 dark:text-indigo-200">
+      <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
+      <span className="font-semibold">Viewing the week of {fmtWeek(weekStart, weekEnd)}.</span>
+      <span className="opacity-80">
+        Not the current payroll week{liveWeekStart ? ` (${fmtWeek(liveWeekStart, liveWeekEnd)})` : ''} — edits here apply to this past period.
+      </span>
+      {liveWeekStart && (
+        <button
+          type="button"
+          onClick={onJumpToLive}
+          className="ml-auto inline-flex items-center gap-1 rounded-full bg-white/80 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-indigo-700 transition-colors hover:bg-white dark:bg-black/30 dark:text-indigo-200 dark:hover:bg-black/50"
+        >
+          <Zap className="h-3 w-3" /> Jump to live
+        </button>
+      )}
+    </div>
   );
 }
 

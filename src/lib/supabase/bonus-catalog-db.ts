@@ -15,6 +15,7 @@ type BonusRow = {
   kind: 'flat' | 'formula';
   amount: number | string | null;
   formula: string | null;
+  currency: 'PHP' | 'USD' | null;
   created_by: string | null;
   created_at: string | null;
   updated_by: string | null;
@@ -42,6 +43,8 @@ function mapBonus(r: BonusRow): BonusDef {
     kind: r.kind,
     amount: r.amount == null ? undefined : Number(r.amount),
     formula: r.formula ?? undefined,
+    // Legacy rows (pre-currency) are PHP.
+    currency: r.currency === 'USD' ? 'USD' : 'PHP',
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedBy: r.updated_by,
@@ -95,6 +98,7 @@ export async function upsertBonus(
     kind: bonus.kind,
     amount: bonus.kind === 'flat' ? (Number.isFinite(bonus.amount) ? bonus.amount : 0) : null,
     formula: bonus.kind === 'formula' ? (bonus.formula ?? '') : null,
+    currency: bonus.currency === 'USD' ? 'USD' : 'PHP',
     created_by: actor,
     updated_by: actor,
   };

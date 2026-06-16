@@ -18,6 +18,10 @@ create table if not exists public.bonus_catalog_bonuses (
   kind        text        not null check (kind in ('flat','formula')),
   amount      numeric(14,2),
   formula     text,
+  -- Currency the flat amount / formula result is denominated in. USD bonuses are
+  -- converted to PHP at the live FX rate when applied (the KPI Calculator), so
+  -- the payout layer (bonus_catalog_applied + Payroll Wizard) stays PHP.
+  currency    text        not null default 'PHP' check (currency in ('PHP','USD')),
   created_by  text,
   created_at  timestamptz not null default now(),
   updated_by  text,
@@ -97,13 +101,14 @@ declare v text;
 begin
   select value into v from public.app_settings where key = 'bonus.catalog';
   if v is not null and v <> '' then
-    insert into public.bonus_catalog_bonuses (id, name, description, kind, amount, formula, created_by)
+    insert into public.bonus_catalog_bonuses (id, name, description, kind, amount, formula, currency, created_by)
     select b->>'id',
            coalesce(b->>'name',''),
            b->>'description',
            coalesce(b->>'kind','flat'),
            nullif(b->>'amount','')::numeric,
            b->>'formula',
+           case when b->>'currency' = 'USD' then 'USD' else 'PHP' end,
            'migrated'
     from jsonb_array_elements((v::jsonb)->'bonuses') as b
     where coalesce(b->>'id','') <> ''

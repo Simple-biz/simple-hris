@@ -34,7 +34,8 @@ export interface PayRow {
 export interface CommonBonusRow {
   name: string;
   kind: 'Flat' | 'Formula';
-  detail: string; // flat amount (PHP) or the formula text
+  detail: string; // flat amount (currency-prefixed) or the formula text
+  currency: PayCurrency;
   appliesTo: string;
 }
 
@@ -43,6 +44,7 @@ export interface EmployeeBonusRow {
   name: string;
   kind: 'Flat' | 'Formula';
   detail: string;
+  currency: PayCurrency;
 }
 
 export interface DeptBlock {
@@ -89,14 +91,15 @@ export function buildCatalogExport(input: BuildCatalogInput): CatalogExportModel
     return (fallbackName?.trim() || (e && resolveName?.(e)) || email || 'Unknown').toString();
   };
 
-  const bonusDetail = (b: BonusDef): { kind: 'Flat' | 'Formula'; detail: string } => {
+  const bonusDetail = (b: BonusDef): { kind: 'Flat' | 'Formula'; detail: string; currency: PayCurrency } => {
+    const currency: PayCurrency = b.currency === 'USD' ? 'USD' : 'PHP';
     if (b.kind === 'flat') {
       const amt = Number.isFinite(b.amount) ? (b.amount as number) : 0;
-      // Bonus amounts are PHP; use an ASCII "PHP" prefix so it renders cleanly in
-      // both the CSV and the PDF (the peso glyph isn't in pdf-lib's Helvetica).
-      return { kind: 'Flat', detail: `PHP ${n2(amt)}` };
+      // Use the ASCII currency code as the prefix so it renders cleanly in both
+      // the CSV and the PDF (the peso glyph isn't in pdf-lib's Helvetica).
+      return { kind: 'Flat', detail: `${currency} ${n2(amt)}`, currency };
     }
-    return { kind: 'Formula', detail: (b.formula ?? '').trim() || '(empty formula)' };
+    return { kind: 'Formula', detail: (b.formula ?? '').trim() || '(empty formula)', currency };
   };
 
   const blocks: DeptBlock[] = [];
@@ -127,8 +130,8 @@ export function buildCatalogExport(input: BuildCatalogInput): CatalogExportModel
         const excl = a.excludedEmails?.length ?? 0;
         let appliesTo = excl > 0 ? `Dept. minus ${excl} excluded` : 'Whole department';
         if (a.sharedTeam) appliesTo += ` ${String.fromCharCode(0xb7)} shared inputs`;
-        const { kind, detail } = bonusDetail(b);
-        return { name: b.name || 'Untitled', kind, detail, appliesTo };
+        const { kind, detail, currency } = bonusDetail(b);
+        return { name: b.name || 'Untitled', kind, detail, currency, appliesTo };
       })
       .filter((r): r is CommonBonusRow => r !== null)
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -137,12 +140,13 @@ export function buildCatalogExport(input: BuildCatalogInput): CatalogExportModel
       .map((a) => {
         const b = bonusById.get(a.bonusId);
         if (!b) return null;
-        const { kind, detail } = bonusDetail(b);
+        const { kind, detail, currency } = bonusDetail(b);
         return {
           employee: nameFor(a.employeeEmail, a.employeeName),
           name: b.name || 'Untitled',
           kind,
           detail,
+          currency,
         };
       })
       .filter((r): r is EmployeeBonusRow => r !== null)
@@ -220,13 +224,13 @@ export function catalogToCsv(model: CatalogExportModel): string {
     for (const b of d.commonBonuses) {
       lines.push([
         d.name, 'Bonus', 'Common (department)', '', b.name,
-        '', '', 'PHP', b.kind, b.detail, b.appliesTo,
+        '', '', b.currency, b.kind, b.detail, b.appliesTo,
       ]);
     }
     for (const b of d.employeeBonuses) {
       lines.push([
         d.name, 'Bonus', 'Employee', b.employee, b.name,
-        '', '', 'PHP', b.kind, b.detail, '',
+        '', '', b.currency, b.kind, b.detail, '',
       ]);
     }
   }

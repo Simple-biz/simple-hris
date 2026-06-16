@@ -80,13 +80,15 @@ import {
   downloadCatalogCsv,
   downloadCatalogPdf,
 } from '@/lib/payment-catalog/catalog-export';
-
-const PESO = '₱';
+import { OFFICIAL_USD_TO_PHP_RATE, effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
 
 // Always render exactly 2 decimals so the exact amount is shown without ever
 // rounding cents away to a whole number (1500 -> "₱1,500.00", 1500.5 -> "₱1,500.50").
-function money(n: number): string {
-  return `${PESO}${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Currency defaults to PHP (legacy bonuses have no currency); USD bonuses render
+// with a "$" prefix.
+function money(n: number, currency: PayCurrency = 'PHP'): string {
+  const locale = currency === 'USD' ? 'en-US' : 'en-PH';
+  return `${CURRENCY_SYMBOL[currency]}${n.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** Shared easing — matches the app's tab transition (App.tsx). */
@@ -485,6 +487,25 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 
   const roster = useMemo(() => buildRoster(initialData), [initialData]);
 
+  // Live USD->PHP rate (PHP per $1) — used only to sort the Bonus Library's
+  // "Amount (high-low)" by PHP-equivalent so a $100 bonus outranks a ₱500 one.
+  // The actual payout conversion happens at apply time in the KPI Calculator.
+  const [usdToPhpRate, setUsdToPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((json: { value?: string | null }) => {
+        if (!cancelled) setUsdToPhpRate(effectiveUsdToPhpRateFromStored(json.value));
+      })
+      .catch(() => {
+        /* keep the official fallback */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const refetch = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -705,8 +726,8 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
           </div>
         </div>
 
-        {/* Inner tabs */}
-        <div className="mt-4 flex flex-wrap gap-1">
+        {/* Inner tabs — navigation stays live even in a view-only tab. */}
+        <div className="mt-4 flex flex-wrap gap-1" data-readonly-allow>
           {tabs.map((t) => (
             <button
               key={t.id}
@@ -781,6 +802,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 assignments={assignments}
                 onUpsert={upsertBonus}
                 onDelete={deleteBonus}
+                usdToPhpRate={usdToPhpRate}
               />
             </motion.div>
           ) : (
@@ -1535,11 +1557,14 @@ function LibraryTab({
   assignments,
   onUpsert,
   onDelete,
+  usdToPhpRate,
 }: {
   bonuses: BonusDef[];
   assignments: BonusAssignment[];
   onUpsert: (b: BonusDef) => void;
   onDelete: (id: string) => void;
+  /** Live USD->PHP rate, used to sort by PHP-equivalent amount. */
+  usdToPhpRate: number;
 }) {
   const [editing, setEditing] = useState<BonusDef | null>(null);
   const [creating, setCreating] = useState(false);
@@ -1577,20 +1602,25 @@ function LibraryTab({
   const sortedBonuses = useMemo(() => {
     const list = [...filteredBonuses];
     const ts = (b: BonusDef) => (b.createdAt ? Date.parse(b.createdAt) : 0);
+    // PHP-equivalent so the highest-PAYING bonus sorts first regardless of
+    // currency (a $100 bonus outranks a ₱500 one). Formula bonuses have no flat
+    // amount, so they sort last (sentinel -1).
+    const phpEquiv = (b: BonusDef) =>
+      b.amount == null ? -1 : b.amount * (b.currency === 'USD' ? usdToPhpRate : 1);
     switch (sort) {
       case 'newest':
         return list.sort((a, b) => ts(b) - ts(a));
       case 'oldest':
         return list.sort((a, b) => ts(a) - ts(b));
       case 'amount':
-        return list.sort((a, b) => (b.amount ?? -1) - (a.amount ?? -1));
+        return list.sort((a, b) => phpEquiv(b) - phpEquiv(a));
       case 'name':
       default:
         return list.sort((a, b) =>
           (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }),
         );
     }
-  }, [filteredBonuses, sort]);
+  }, [filteredBonuses, sort, usdToPhpRate]);
 
   const pageCount = Math.max(1, Math.ceil(sortedBonuses.length / PAGE_SIZE));
 
@@ -1610,7 +1640,7 @@ function LibraryTab({
   );
 
   const startCreate = () => {
-    setEditing({ id: newId('bonus'), name: '', kind: 'flat', amount: 0, formula: '' });
+    setEditing({ id: newId('bonus'), name: '', kind: 'flat', amount: 0, formula: '', currency: 'PHP' });
     setCreating(true);
   };
 
@@ -1628,7 +1658,8 @@ function LibraryTab({
         <p className="shrink-0 text-sm text-zinc-500 dark:text-zinc-400">
           {bonuses.length} bonus{bonuses.length === 1 ? '' : 'es'} defined
         </p>
-        <div className="relative min-w-0 flex-1">
+        {/* Search stays live even in a view-only tab (see ReadOnlyTab). */}
+        <div className="relative min-w-0 flex-1" data-readonly-allow>
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
           <input
             value={search}
@@ -1785,6 +1816,7 @@ function BonusCard({
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{bonus.name || 'Untitled'}</span>
             <KindBadge kind={bonus.kind} />
+            <CurrencyBadge currency={bonus.currency} />
           </div>
           {bonus.description && (
             <p className="mt-0.5 truncate text-xs text-zinc-500 dark:text-zinc-500">{bonus.description}</p>
@@ -1803,7 +1835,7 @@ function BonusCard({
       {/* Body grows to fill; overflow is hidden so every card is the same height. */}
       <div className="mt-3 min-h-0 flex-1 overflow-hidden">
         {bonus.kind === 'flat' ? (
-          <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{money(bonus.amount ?? 0)}</div>
+          <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{money(bonus.amount ?? 0, bonus.currency)}</div>
         ) : (
           <code className="block overflow-hidden rounded bg-zinc-100 px-2 py-1.5 font-mono text-xs leading-relaxed text-zinc-700 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3] dark:bg-zinc-900 dark:text-zinc-300">
             {bonus.formula || '(empty formula)'}
@@ -1956,6 +1988,7 @@ function BonusDetailModal({
                     {b.name || 'Untitled'}
                   </h2>
                   <KindBadge kind={b.kind} />
+                  <CurrencyBadge currency={b.currency} />
                 </div>
                 {b.description && (
                   <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">{b.description}</p>
@@ -2003,8 +2036,13 @@ function BonusDetailModal({
                       <div>
                         <span className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">Amount</span>
                         <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-                          {money(b.amount ?? 0)}
+                          {money(b.amount ?? 0, b.currency)}
                         </div>
+                        {b.currency === 'USD' && (
+                          <p className="mt-1 text-[11px] text-zinc-400">
+                            Converted to PHP at the live rate when applied in the KPI Calculator.
+                          </p>
+                        )}
                       </div>
                     ) : (
                       <div>
@@ -2025,7 +2063,7 @@ function BonusDetailModal({
                             ))}
                           </div>
                         )}
-                        {b.kind === 'formula' && <InlineTester formula={b.formula ?? ''} />}
+                        {b.kind === 'formula' && <InlineTester formula={b.formula ?? ''} currency={b.currency} />}
                       </div>
                     )}
 
@@ -2077,6 +2115,7 @@ function BonusEditor({
   const [kind, setKind] = useState(initial.kind);
   const [amount, setAmount] = useState<string>(initial.amount != null ? String(initial.amount) : '');
   const [formula, setFormula] = useState(initial.formula ?? '');
+  const [currency, setCurrency] = useState<PayCurrency>(initial.currency ?? 'PHP');
   const [showCode, setShowCode] = useState(false);
 
   const formulaCheck = useMemo(() => (kind === 'formula' ? validateFormula(formula) : null), [kind, formula]);
@@ -2088,6 +2127,7 @@ function BonusEditor({
     kind,
     amount: kind === 'flat' ? Number(amount) : undefined,
     formula: kind === 'formula' ? formula.trim() : undefined,
+    currency,
   };
 
   const valid = name.trim().length > 0 && validateBonus(draft).ok;
@@ -2124,29 +2164,40 @@ function BonusEditor({
         </Field>
       </div>
 
-      {/* Kind toggle */}
-      <div className="mt-3">
-        <span className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Bonus type</span>
-        <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
-          {(['flat', 'formula'] as const).map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setKind(k)}
-              className={`relative rounded px-3 py-1 text-xs font-medium capitalize transition-colors ${
-                kind === k ? 'text-white' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-              }`}
-            >
-              {kind === k && (
-                <motion.span
-                  layoutId="bonusKindPill"
-                  className="absolute inset-0 rounded bg-orange-500"
-                  transition={{ type: 'spring', stiffness: 500, damping: 34 }}
-                />
-              )}
-              <span className="relative z-10">{k === 'flat' ? 'Flat amount' : 'Formula'}</span>
-            </button>
-          ))}
+      {/* Kind + currency toggles */}
+      <div className="mt-3 flex flex-wrap items-start gap-x-8 gap-y-3">
+        <div>
+          <span className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Bonus type</span>
+          <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
+            {(['flat', 'formula'] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setKind(k)}
+                className={`relative rounded px-3 py-1 text-xs font-medium capitalize transition-colors ${
+                  kind === k ? 'text-white' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                }`}
+              >
+                {kind === k && (
+                  <motion.span
+                    layoutId={`bonusKindPill-${initial.id}`}
+                    className="absolute inset-0 rounded bg-orange-500"
+                    transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+                  />
+                )}
+                <span className="relative z-10">{k === 'flat' ? 'Flat amount' : 'Formula'}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <span className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Currency</span>
+          <CurrencyToggle value={currency} onChange={setCurrency} idSuffix={`bonus-${initial.id}`} />
+          {currency === 'USD' && (
+            <p className="mt-1 max-w-[15rem] text-[10.5px] leading-snug text-zinc-400">
+              Converted to PHP at the live rate when applied in the KPI Calculator.
+            </p>
+          )}
         </div>
       </div>
 
@@ -2161,7 +2212,7 @@ function BonusEditor({
           transition={{ duration: 0.2, ease: EASE }}
           className="mt-3 max-w-xs"
         >
-          <Field label={`Amount (${PESO})`}>
+          <Field label={`Amount (${CURRENCY_SYMBOL[currency]} ${currency})`}>
             <Input
               type="number"
               inputMode="decimal"
@@ -2220,7 +2271,7 @@ function BonusEditor({
 
           <FormulaHelp />
 
-          {formulaCheck?.ok && formulaCheck.variables.length > 0 && <InlineTester formula={formula} />}
+          {formulaCheck?.ok && formulaCheck.variables.length > 0 && <InlineTester formula={formula} currency={currency} />}
 
           <button
             type="button"
@@ -2285,7 +2336,7 @@ function FormulaHelp() {
 }
 
 /** Live test calculator: an input per variable, computing the result. */
-function InlineTester({ formula }: { formula: string }) {
+function InlineTester({ formula, currency = 'PHP' }: { formula: string; currency?: PayCurrency }) {
   const check = useMemo(() => validateFormula(formula), [formula]);
   const [vals, setVals] = useState<Record<string, string>>({});
 
@@ -2338,7 +2389,7 @@ function InlineTester({ formula }: { formula: string }) {
             transition={{ type: 'spring', stiffness: 420, damping: 26 }}
             className="inline-block font-bold tabular-nums text-emerald-600 dark:text-emerald-400"
           >
-            {result == null ? '-' : money(result)}
+            {result == null ? '-' : money(result, currency)}
           </motion.span>
         </AnimatePresence>
       </div>
@@ -2704,11 +2755,12 @@ function AssignmentRow({
             {bonus?.name ?? '(deleted bonus)'}
           </span>
           {bonus && <KindBadge kind={bonus.kind} />}
+          {bonus && <CurrencyBadge currency={bonus.currency} />}
         </div>
         <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
           {who && <span className="truncate">{who}</span>}
           {bonus?.kind === 'flat' && (
-            <span className="font-medium text-emerald-600 dark:text-emerald-400">{money(bonus.amount ?? 0)}</span>
+            <span className="font-medium text-emerald-600 dark:text-emerald-400">{money(bonus.amount ?? 0, bonus.currency)}</span>
           )}
           {bonus?.kind === 'formula' && (
             <code className="truncate font-mono text-[11px] text-zinc-500">{bonus.formula}</code>
@@ -2791,10 +2843,11 @@ function CommonAssignmentRow({
               {bonus?.name ?? '(deleted bonus)'}
             </span>
             {bonus && <KindBadge kind={bonus.kind} />}
+            {bonus && <CurrencyBadge currency={bonus.currency} />}
           </div>
           <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
             {bonus?.kind === 'flat' && (
-              <span className="font-medium text-emerald-600 dark:text-emerald-400">{money(bonus.amount ?? 0)}</span>
+              <span className="font-medium text-emerald-600 dark:text-emerald-400">{money(bonus.amount ?? 0, bonus.currency)}</span>
             )}
             {bonus?.kind === 'formula' && (
               <code className="truncate font-mono text-[11px] text-zinc-500">{bonus.formula}</code>
@@ -2974,6 +3027,20 @@ function KindBadge({ kind }: { kind: BonusDef['kind'] }) {
       }`}
     >
       {kind}
+    </span>
+  );
+}
+
+/** Flags a USD-denominated bonus. PHP is the silent default, so this renders
+ *  nothing for PHP to keep the common case uncluttered. */
+function CurrencyBadge({ currency }: { currency?: PayCurrency }) {
+  if ((currency ?? 'PHP') !== 'USD') return null;
+  return (
+    <span
+      className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
+      title="USD-denominated — converted to PHP at the live rate when applied"
+    >
+      {CURRENCY_SYMBOL.USD} USD
     </span>
   );
 }

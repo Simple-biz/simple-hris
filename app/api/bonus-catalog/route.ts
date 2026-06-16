@@ -6,7 +6,8 @@ import {
   addAssignment,
   removeAssignment,
 } from '@/lib/supabase/bonus-catalog-db';
-import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
+import { deniedResponse } from '@/lib/auth/authorize-email';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { validateBonus, type BonusDef, type BonusAssignment } from '@/lib/bonus-catalog/types';
 
 export const dynamic = 'force-dynamic';
@@ -27,7 +28,7 @@ export async function GET() {
 /** POST — create/update a bonus, or add an assignment. Writes require an
  *  elevated session; the actor's email is recorded as the creator. */
 export async function POST(request: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('accounting', 'bonus_catalog');
   if (!authz.ok) return deniedResponse(authz);
   const actor = authz.sessionEmail;
 
@@ -68,7 +69,7 @@ export async function POST(request: Request) {
 
 /** DELETE — remove a bonus (?type=bonus&id=) or an assignment (?type=assignment&id=). */
 export async function DELETE(request: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('accounting', 'bonus_catalog');
   if (!authz.ok) return deniedResponse(authz);
 
   const { searchParams } = new URL(request.url);

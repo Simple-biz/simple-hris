@@ -2,11 +2,13 @@
 
 An Accounting tab (renamed **Payment Catalog**) covering two concerns:
 
-1. **Bonuses** -- author reusable custom bonuses (a flat peso amount or an
-   Excel-style formula) and assign them department-wide ("common") or to a
-   specific employee. As of the 2026-06 rework it is **database-backed** (moved
-   off `app_settings`) so a teammate's edits show up live, and it ships with a
-   real spreadsheet formula engine.
+1. **Bonuses** -- author reusable custom bonuses (a flat amount or an
+   Excel-style formula, in **PHP or USD**) and assign them department-wide
+   ("common") or to a specific employee. As of the 2026-06 rework it is
+   **database-backed** (moved off `app_settings`) so a teammate's edits show up
+   live, and it ships with a real spreadsheet formula engine. A USD bonus is
+   converted to PHP at the live FX rate when it is **applied** (see §3), so the
+   payout layer (`bonus_catalog_applied` + the Payroll Wizard) stays PHP.
 2. **Pay Structures** -- the authoritative starting Regular/OT hourly rate for a
    department or an individual, in PHP or USD (see
    [§5 Pay Structures (authoritative rates)](#5-pay-structures-authoritative-rates)).
@@ -38,8 +40,9 @@ Two tables (see `references/create_bonus_catalog.sql`):
 | `name` | text | |
 | `description` | text? | |
 | `kind` | text | `'flat'` \| `'formula'` |
-| `amount` | numeric(14,2)? | peso amount when `kind='flat'` |
+| `amount` | numeric(14,2)? | amount (in `currency`) when `kind='flat'` |
 | `formula` | text? | Excel-style expression when `kind='formula'` |
+| `currency` | text | `'PHP'` (default) \| `'USD'`; USD is converted to PHP at the live FX rate when the bonus is **applied** (see §3). Added by `add_bonus_catalog_currency.sql`. |
 | `created_by` / `created_at` | | immutable (preserved by `bonus_catalog_touch` trigger) |
 | `updated_by` / `updated_at` | | |
 
@@ -90,10 +93,34 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
 ## 3. UI (`BonusCatalog.tsx`)
 
 - **Create / edit a bonus:** toggle between **Flat amount** and **Formula**
-  (animated transition). Flat shows a peso input; Formula shows a monospace
-  editor with live validation and a generated-TypeScript preview.
+  (animated transition), plus a **PHP / USD** currency toggle (same control as
+  Pay Structures). The amount input + all amount displays render in the chosen
+  currency; a sky **USD** badge flags USD bonuses in the cards, detail modal, and
+  assignment rows. Flat shows an amount input; Formula shows a monospace editor
+  with live validation and a generated-TypeScript preview.
 - **Inline tester:** for formula bonuses with variables, an `InlineTester` lets
-  you type sample variable values and see the computed result in real time.
+  you type sample variable values and see the computed result (in the bonus's
+  currency) in real time.
+- **Currency conversion happens at apply time, not here.** A USD bonus stores its
+  native USD `amount`; the **KPI Calculator** (`DeptBonusCalculator.tsx`) fetches
+  the live `usd_to_php_rate` and multiplies USD bonuses by it inside
+  `computeAmount()` — the single chokepoint every projected total and the saved
+  `bonus_catalog_applied.amount` flow through — so the applied row, the Payroll
+  Wizard "KPI Sub." sum, Bonus History, and Employee KPI Results all stay PHP. The
+  converted PHP value is snapshotted into `bonus_catalog_applied.amount` at save
+  time, and **that stored value is what the Wizard pays** — it never re-converts.
+  The calculator shows a sky `$X` / `USD` tag on USD bonus columns; the grid
+  figures are the FX-converted pesos.
+  > **Known limitation (display only):** the calculator grid is a *live*
+  > projection — it recomputes `computeAmount(bonus, vars, usd_to_php_rate)` at
+  > the current rate every render (it doesn't read back the stored `amount`). So
+  > if `usd_to_php_rate` changes after a USD bonus week was saved, re-opening that
+  > past week shows a peso figure that differs from the stored/paid amount. This
+  > is the same live-recompute behavior PHP formula bonuses already have (editing a
+  > catalog formula changes the projection until re-saved); **payouts are
+  > unaffected** because the Wizard reads the stored PHP snapshot. To make the
+  > historical display match exactly, snapshot the rate on the applied row and
+  > render the stored amount for saved non-live weeks.
 - **Assign:** an "Add common" picker assigns a bonus department-wide; an employee
   picker (optionally filtered to one department) assigns to a single person.
   Remove via the trash icon on each assignment row.

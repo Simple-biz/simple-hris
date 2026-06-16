@@ -71,6 +71,7 @@ docs/
 
 | Doc |
 |---|
+| [meeting-with-carla-2026-06-16.md](./meetings/meeting-with-carla-2026-06-16.md) |
 | [meeting-2026-05-20-carla-kentshin-teal.md](./meetings/meeting-2026-05-20-carla-kentshin-teal.md) |
 | [meeting-antigravity-2026-05-13.md](./meetings/meeting-antigravity-2026-05-13.md) |
 | [meeting-with-carla-2026-05-07.md](./meetings/meeting-with-carla-2026-05-07.md) |

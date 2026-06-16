@@ -21,7 +21,13 @@
       "Bash(tee /tmp/tsc.log)",
       "Read(//tmp/**)",
       "Bash(ls -la feedback_money_two_decimals.md)",
-      "Bash(cat feedback_money_two_decimals.md)"
+      "Bash(cat feedback_money_two_decimals.md)",
+      "Read(//c/Users/Itachi/.claude/plugins/cache/claude-plugins-official/frontend-design/unknown/skills/frontend-design/**)",
+      "Bash(git --no-pager diff --stat -- src references docs)",
+      "Bash(git --no-pager diff --stat -w -- src/components/manager/DeptBonusCalculator.tsx)",
+      "Bash(git --no-pager diff -- src/components/manager/DeptBonusCalculator.tsx)",
+      "Bash(echo \"\\(exit: $?\\)\")",
+      "Bash([ -f \"$f\" ])"
     ]
   }
 }

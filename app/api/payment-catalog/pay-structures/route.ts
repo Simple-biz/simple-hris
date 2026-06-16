@@ -4,7 +4,8 @@ import {
   upsertPayStructure,
   deletePayStructure,
 } from '@/lib/supabase/pay-structures-db';
-import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
+import { deniedResponse } from '@/lib/auth/authorize-email';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { validatePayStructure, type PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { insertRateHistoryRow } from '@/lib/payroll/rate-history';
 import { updateEmployeeRates } from '@/lib/supabase/employee-hourly-rates';
@@ -129,7 +130,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('accounting', 'bonus_catalog');
   if (!authz.ok) return deniedResponse(authz);
   const actor = authz.sessionEmail;
 
@@ -160,7 +161,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('accounting', 'bonus_catalog');
   if (!authz.ok) return deniedResponse(authz);
 
   const { searchParams } = new URL(request.url);

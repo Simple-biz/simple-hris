@@ -10,11 +10,12 @@
 // Wizard is a deliberate later step.
 
 import { validateFormula } from './formula';
+import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 
 export const BONUS_CATALOG_KEY = 'bonus.catalog';
 export const BONUS_CATALOG_VERSION = 1 as const;
 
-/** How a bonus produces its peso amount. */
+/** How a bonus produces its amount. */
 export type BonusKind = 'flat' | 'formula';
 
 export interface BonusDef {
@@ -26,6 +27,10 @@ export interface BonusDef {
   amount?: number;
   /** For kind === 'formula' (Excel-style syntax). */
   formula?: string;
+  /** Currency the flat amount / formula result is denominated in. Default 'PHP'
+   *  (absent on legacy bonuses). USD bonuses are converted to PHP at the live FX
+   *  rate when applied (the KPI Calculator), so the payout layer stays PHP. */
+  currency?: PayCurrency;
   /** Author attribution (set server-side from the session). */
   createdBy?: string | null;
   createdAt?: string | null;
