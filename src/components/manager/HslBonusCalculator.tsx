@@ -507,7 +507,7 @@ export default function HslBonusCalculator({
           period,
           e.employee_name,
           e.employee_email,
-          String(Math.round(e.calculated_bonus)),
+          e.calculated_bonus.toFixed(2),
           d.status,
         ].map((v) => `"${v.replace(/"/g, '""')}"`).join(','));
       }

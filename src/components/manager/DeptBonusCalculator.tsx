@@ -158,7 +158,9 @@ function weekEndFromStart(startIso: string): string {
 }
 
 function peso(n: number): string {
-  return `${PESO}${Math.round(n).toLocaleString('en-PH')}`;
+  // Always show centavos so a fractional formula result (e.g. a division in the
+  // Payment Catalog formula) is never silently rounded to whole pesos.
+  return `${PESO}${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** Two-letter initials from a roster name (handles "Last, First M." formats). */
@@ -182,15 +184,27 @@ function appliedId(dept: string, periodStart: string, email: string, bonusId: st
   return `app:${periodStart}:${dept}:${email}:${bonusId}`;
 }
 
-/** Compute the peso amount a bonus pays for a given set of (string) variable inputs. */
+/** Round a peso amount to centavos (2dp) — the money granularity the
+ *  bonus_catalog_applied.amount column (numeric(14,2)) and the Payroll Wizard
+ *  "KPI Sub." sum operate at. Keeps the live display, the saved row, and what
+ *  the wizard pays in exact agreement. */
+function toCentavos(n: number): number {
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
+
+/** Compute the peso amount a bonus pays for a given set of (string) variable
+ *  inputs. Flat bonuses use the catalog amount; formula bonuses evaluate the
+ *  Payment Catalog formula verbatim (`evaluateFormula`). The result is pinned to
+ *  centavos so a fractional formula (e.g. a division) is represented exactly as
+ *  it will be stored and paid — never truncated to whole pesos. */
 function computeAmount(bonus: BonusDef, varsStr: Record<string, string> | undefined): number {
-  if (bonus.kind === 'flat') return Number.isFinite(bonus.amount) ? (bonus.amount as number) : 0;
+  if (bonus.kind === 'flat') return toCentavos(Number.isFinite(bonus.amount) ? (bonus.amount as number) : 0);
   const check = validateFormula(bonus.formula ?? '');
   if (!check.ok) return 0;
   const nums: Record<string, number> = {};
   for (const v of check.variables) nums[v] = Number(varsStr?.[v] ?? '') || 0;
   try {
-    return evaluateFormula(bonus.formula ?? '', nums);
+    return toCentavos(evaluateFormula(bonus.formula ?? '', nums));
   } catch {
     return 0;
   }

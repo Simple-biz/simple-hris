@@ -346,5 +346,7 @@ export function calcTeamSplitShare(
 
 export function formatPeso(amount: number, currency: 'PHP' | 'USD' = 'PHP'): string {
   if (currency === 'USD') return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  return `₱${Math.round(amount).toLocaleString('en-PH')}`;
+  // Always show centavos so a fractional bonus (e.g. a team-split share divided
+  // across members) is never silently rounded to whole pesos in the display.
+  return `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
