@@ -9,6 +9,7 @@ import {
   ROLE_TO_FEATURE_VIEW,
   type FeatureViewKey,
 } from "@/lib/rbac/feature-permissions";
+import { NOTIFICATION_TYPE_FEATURE_GATE } from "@/lib/notifications/notification-views";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,6 +38,53 @@ async function viewerMayDeleteNotifications(email: string, roles: string[]): Pro
   return !restricted;
 }
 
+/**
+ * The feature-gated notification types the signed-in viewer may NOT see, so the
+ * GET query can exclude them. A gated type (see NOTIFICATION_TYPE_FEATURE_GATE)
+ * is hidden unless the viewer holds a role mapping to the gate's view AND has at
+ * least `view` access to its feature — i.e. they were granted it from the
+ * HR / Admin Roles tab. Admins (and unresolved sessions) hide nothing. Global
+ * types — like the payroll-processing lock — are never gated.
+ *
+ * Excluding at query time, rather than after the 50-row limit, keeps an
+ * authorized-but-ungated viewer's other notifications from being crowded out by
+ * a backlog of notifications they aren't allowed to read.
+ */
+async function hiddenGatedTypesForViewer(): Promise<string[]> {
+  const gatedTypes = Object.keys(NOTIFICATION_TYPE_FEATURE_GATE);
+  if (gatedTypes.length === 0) return [];
+
+  const session = (await getServerSession(authOptions)) as SessionLike;
+  const sessionEmail = normEmail(session?.user?.email ?? "") ?? "";
+  const roles = (session?.user?.roles ?? []) as string[];
+  if (!sessionEmail || roles.includes("admin")) return [];
+
+  const viewsForRoles = new Set<FeatureViewKey>(
+    roles
+      .map((r) => ROLE_TO_FEATURE_VIEW[r])
+      .filter((v): v is FeatureViewKey => !!v),
+  );
+
+  // A gated type is reachable only if the viewer holds a role for its view; the
+  // rest are hidden outright. Skip the feature-permission lookup entirely when
+  // nothing is reachable — the common case for plain employees, who never hold a
+  // role-mapped view.
+  const reachable = gatedTypes.filter(
+    (t) => viewsForRoles.has(NOTIFICATION_TYPE_FEATURE_GATE[t].view),
+  );
+  if (reachable.length === 0) return gatedTypes;
+
+  const perms = await fetchFeaturePermissionsForEmail(sessionEmail);
+
+  return gatedTypes.filter((type) => {
+    const gate = NOTIFICATION_TYPE_FEATURE_GATE[type];
+    const canSee =
+      viewsForRoles.has(gate.view) &&
+      resolveFeatureAccess(perms, gate.view, gate.feature) !== "hidden";
+    return !canSee;
+  });
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const email = url.searchParams.get('email')?.trim().toLowerCase();
@@ -49,10 +97,19 @@ export async function GET(req: Request) {
     return NextResponse.json({ notifications: [] });
   }
 
-  const { data, error } = await supabase
+  const hiddenTypes = await hiddenGatedTypesForViewer();
+
+  let query = supabase
     .from('employee_notifications')
     .select('id, type, tone, title, message, details, read_at, created_at')
-    .eq('recipient_email', email)
+    .eq('recipient_email', email);
+  if (hiddenTypes.length > 0) {
+    // PostgREST `not.in` exclusion — quote each value so any future type string
+    // with reserved characters stays literal.
+    query = query.not('type', 'in', `(${hiddenTypes.map((t) => `"${t}"`).join(',')})`);
+  }
+
+  const { data, error } = await query
     .order('created_at', { ascending: false })
     .limit(50);
 

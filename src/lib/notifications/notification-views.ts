@@ -1,4 +1,5 @@
 import type { AppView } from '@/lib/rbac/views';
+import type { FeatureViewKey } from '@/lib/rbac/feature-permissions';
 
 /**
  * Maps each `employee_notifications.type` to the dashboard(s) where the
@@ -29,3 +30,26 @@ export function viewsForNotificationType(type: string | null | undefined): AppVi
   if (!type) return [];
   return NOTIFICATION_TYPE_TO_VIEWS[type] ?? [];
 }
+
+/**
+ * Notification types whose *visibility* is gated behind a feature grant. A
+ * recipient only sees a gated notification if they (a) hold a role that maps to
+ * the gate's `view` and (b) have at least `view` access to the named feature
+ * there — i.e. they were given access from the HR / Admin Roles tab. Admins
+ * always see everything.
+ *
+ * Types NOT listed here are "global": every recipient sees them regardless of
+ * feature permissions. The payroll-processing lock (`payroll.processing_started`
+ * / `payroll.processing_stopped`) is intentionally absent — starting the payroll
+ * wizard is a company-wide alert that everyone receiving it should see.
+ *
+ * Gating is enforced server-side in `GET /api/employee-notifications`, which
+ * also backs `useNotificationCountsByView`, so the panel and the per-dashboard
+ * unread badges stay in sync.
+ */
+export const NOTIFICATION_TYPE_FEATURE_GATE: Record<
+  string,
+  { view: FeatureViewKey; feature: string }
+> = {
+  'onboarding.submitted': { view: 'hr', feature: 'onboarding' },
+};

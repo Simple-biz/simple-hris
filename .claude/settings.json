@@ -4,7 +4,8 @@
       "Bash(git -C \"c:/Users/Itachi/Desktop/simple-hris\" log --oneline -8)",
       "Bash(PYTHONIOENCODING=utf-8 python - C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/114ebec2-f111-4172-a58a-ebe1f72fa6b5/tasks/wr1qit241.output)",
       "Bash(PYTHONIOENCODING=utf-8 python -)",
-      "PowerShell(npx tsc --noEmit -p \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\tsconfig.json\" 2>&1)"
+      "PowerShell(npx tsc --noEmit -p \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\tsconfig.json\" 2>&1)",
+      "PowerShell(if \\($?\\) { \"TYPECHECK OK\" } else { \"TYPECHECK FAILED\" })"
     ]
   }
 }

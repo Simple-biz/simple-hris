@@ -137,6 +137,26 @@ interface PresencePayload {
   online_at: string;
 }
 
+// --- fairy dust (Aliviah only) ------------------------------------------------
+// Aliviah's cursor leaves a trail of pink sparkles as it sweeps the screen.
+// Purely cosmetic and scoped to her email so nobody else's pointer is affected.
+const FAIRY_EMAIL = 'aliviah@simple.biz';
+const FAIRY_DUST_COLORS = ['#ff9ed8', '#ffc2ec', '#ff6fbf', '#ffd9f2', '#f4a8ff', '#ffb0e0'];
+const DUST_SPAWN_THROTTLE_MS = 38; // cap spawn rate independent of the 60fps move feed
+const DUST_MAX = 60; // hard ceiling on live motes (they self-remove on fade)
+
+interface DustMote {
+  id: number;
+  x: number; // % of overlay (same coord space as the cursor)
+  y: number;
+  color: string;
+  size: number; // initial scale
+  dx: number; // drift to the side (px)
+  dy: number; // gravity / fall (px)
+  rot: number; // tumble (deg)
+  dur: number; // fade duration (s)
+}
+
 // --- per-cursor component -----------------------------------------------------
 function RemoteCursor({
   email,
@@ -163,7 +183,69 @@ function RemoteCursor({
   useEffect(() => { xMv.set(x); }, [x, xMv]);
   useEffect(() => { yMv.set(y); }, [y, yMv]);
 
+  // Fairy dust: only Aliviah's cursor sprinkles pink sparkles behind itself.
+  const isFairy = (normEmail(email) ?? email.trim().toLowerCase()) === FAIRY_EMAIL;
+  const [motes, setMotes] = useState<DustMote[]>([]);
+  const moteIdRef = useRef(0);
+  const lastSpawnRef = useRef(0);
+
+  useEffect(() => {
+    if (!isFairy) return;
+    const now = Date.now();
+    if (now - lastSpawnRef.current < DUST_SPAWN_THROTTLE_MS) return;
+    lastSpawnRef.current = now;
+    // Spawn at the currently *visible* (spring-smoothed) cursor position so the
+    // dust is dropped where the pointer is and left behind as it sweeps forward.
+    const px = sx.get();
+    const py = sy.get();
+    const count = 1 + Math.floor(Math.random() * 2); // 1-2 motes per move tick
+    const batch: DustMote[] = [];
+    for (let i = 0; i < count; i++) {
+      batch.push({
+        id: ++moteIdRef.current,
+        x: px + (Math.random() - 0.5) * 1.2,
+        y: py + (Math.random() - 0.5) * 1.2,
+        color: FAIRY_DUST_COLORS[Math.floor(Math.random() * FAIRY_DUST_COLORS.length)],
+        size: 0.55 + Math.random() * 0.7,
+        dx: (Math.random() - 0.5) * 16,
+        dy: 8 + Math.random() * 16,
+        rot: (Math.random() - 0.5) * 220,
+        dur: 0.65 + Math.random() * 0.55,
+      });
+    }
+    setMotes((prev) => (prev.length > DUST_MAX ? prev.slice(-DUST_MAX) : prev).concat(batch));
+  }, [x, y, isFairy, sx, sy]);
+
   return (
+    <>
+      {isFairy && motes.length > 0 && (
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          {motes.map((m) => (
+            <motion.div
+              key={m.id}
+              className="absolute"
+              style={{ left: `${m.x}%`, top: `${m.y}%` }}
+              initial={{ opacity: 0.95, scale: m.size, x: 0, y: 0, rotate: 0 }}
+              animate={{ opacity: 0, scale: 0, x: m.dx, y: m.dy, rotate: m.rot }}
+              transition={{ duration: m.dur, ease: [0.22, 0.61, 0.36, 1] }}
+              onAnimationComplete={() => setMotes((prev) => prev.filter((p) => p.id !== m.id))}
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 10 10"
+                style={{
+                  transform: 'translate(-50%, -50%)',
+                  filter: `drop-shadow(0 0 4px ${m.color}) drop-shadow(0 0 8px ${m.color})`,
+                }}
+              >
+                <path d="M5 0 L6 4 L10 5 L6 6 L5 10 L4 6 L0 5 L4 4 Z" fill={m.color} />
+                <circle cx="5" cy="5" r="1" fill="rgba(255,255,255,0.95)" />
+              </svg>
+            </motion.div>
+          ))}
+        </div>
+      )}
     <motion.div
       className="absolute"
       style={{ left, top }}
@@ -208,6 +290,7 @@ function RemoteCursor({
         </span>
       </div>
     </motion.div>
+    </>
   );
 }
 
