@@ -978,6 +978,8 @@ Persistent left nav for all HR tabs (Overview, Onboarding, Offboarding, Leave Re
 
 The **Onboarding** tab. Two sub-tabs: **Onboarding Form** (renders `HrOnboardingForm`) and **Pending Hires**. *Pending Hires* are interview-stage hires staged in `hr_pending_employees` before they hit the Global Master List. Lifecycle (`HrPendingStatus`): `pending_work_email` -> `ready` -> `promoted`, plus `cancelled`. A synthetic **"Awaiting orientation"** state badges any `ready` row missing `orientation_attended_at` amber and disables Promote (the department manager must mark orientation first). Renders an "Add person" dialog, three clickable stat tiles, and a filterable table with per-row Promote / Back to Ready / Cancel / hard Delete / Set work email.
 
+**Promoted-tab pagination** *(2026-06-16)*. The Promoted tab accumulates every hire that ever reached the master list, so it pages **10 rows at a time** (`PROMOTED_PAGE_SIZE = 10`); `promotedPaged = tab === 'promoted'` gates it and the derived `displayPending` slices `filteredPending` to the active page. All other tabs render every matching row unpaged. The page resets to 0 whenever `tab`/`search`/`dept` change. The footer renders first/prev/next/last chevron icon buttons (`«‹›»` styled to match the form's existing pagination) and an "N–M of T" range, shown only when there is more than one page.
+
 | Action | Endpoint |
 |---|---|
 | List | `GET /api/hr/pending-employees` |
@@ -1068,7 +1070,9 @@ Modal to stage a new hire into the Pending Hires queue. Sections: Identity (name
 
 ### `app/onboarding/[token]/page.tsx`
 
-The **public, no-SSO onboarding form** new hires complete; auth is the random URL token. Loads via `GET /api/onboarding/{token}` (invalid -> error screen; already `submitted` -> `SubmittedScreen`). Otherwise a 6-step wizard: (1) welcome/personal info + Hurupay explainer, (2) Non-Solicitation + `SignaturePad`, (3) Privacy + signature, (4) W-8BEN (Yes/No outside-US -> file upload via `POST /api/onboarding/{token}/w8ben`), (5) Payment Method (Hurupay email or full Wires details), (6) Contract Worker Agreement + signature + date. Final Submit `POST /api/onboarding/{token}` flips the row to `submitted`. `SignaturePad` is a hand-rolled HiDPI `<canvas>` emitting a PNG data URL. Renders agreement copy from `agreement-texts.tsx` (kept in lockstep with the HR review modal).
+The **public, no-SSO onboarding form** new hires complete; auth is the random URL token. Loads via `GET /api/onboarding/{token}` (invalid -> error screen; already `submitted` -> `SubmittedScreen`). Otherwise a **7-step wizard** (`STEP_TITLES`): (1) **Intellectual Property** — the IP Assignment / Talent Release / Copyright Waiver agreement (now the FIRST step), with an acknowledgement checkbox + Name / drawn signature / auto-stamped local date block; (2) welcome/personal info + Hurupay explainer, (3) Non-Solicitation + `SignaturePad`, (4) Privacy + signature, (5) W-8BEN (Yes/No outside-US -> file upload via `POST /api/onboarding/{token}/w8ben`), (6) Payment Method (Hurupay email or full Wires details), (7) Contract Worker Agreement + signature + date. Final Submit `POST /api/onboarding/{token}` flips the row to `submitted` and renders/stores the signed IP PDF. `SignaturePad` is a hand-rolled HiDPI `<canvas>` emitting a PNG data URL. Renders agreement copy from `agreement-texts.tsx` (now including `IntellectualPropertyText`, kept in lockstep with the HR review modal). Step transitions use a directional slide+fade (`STEP_VARIANTS` via `motion/react`, reduced-motion aware).
+
+**Preview mode** *(2026-06-16)*. The literal token `preview` (`/onboarding/preview`) renders the same `OnboardingFormPage` as a **no-save dry-run**: `isPreview = token === 'preview'` short-circuits the load effect (seeds an empty `pending` link, no API call), skips per-step validation, guards the live W-8BEN upload, and shows an amber "Preview mode" banner. Real invite tokens are long random strings so `preview` never collides. Preview Submit renders the real signed PDF via the public `POST /api/onboarding/ip-assignment-preview` (no DB/storage writes). HR's "Onboarding Paper Work Template" link card (in `HrOnboardingForm`) points here. See [onboarding-ip-assignment.md](../features/onboarding-ip-assignment.md) for the full IP Assignment feature (PDF generation, migration #73, HR surfaces).
 
 ---
 
@@ -1138,7 +1142,9 @@ UI: sticky header with spring-animated grand total + headcount, `FilterPill` row
 
 ### `src/components/manager/ManagerMemberDialog.tsx`
 
-Per-member profile + payment-history dialog (roster "View" button). Two tabs (`TabBar`): **Profile** (masked hourly/OT rates, department, role, employee ID, start date, emails, full address) and **Payment history** (`ManagerMemberHoursMini`). Rate-mask toggle in the header. No fetching of its own.
+Per-member profile dialog (roster "View" button). A persistent left **identity rail** (avatar, name, role, department/MESA badges, then `RailRow`s for Employee ID, Start date, Work/Personal email, Address) beside a tabbed detail panel. Three tabs (`TabBar`, `TabId = 'work' | 'notes' | 'hours'`): **Work** (the teammate's read-only shared profile — Currently Working On / Skills / Strengths via `SkillBlock`), **Notes** (`MemberNotesEditor`, manager-only, `PUT /api/manager/member-notes`), and **Hours** (`ManagerMemberHoursMini`). No fetching of its own.
+
+**No rates/pay** *(2026-06-16, see [manager-my-team.md](../features/manager-my-team.md))*. The old "Pay rates" card + rate-mask toggle are gone; the rail now renders `RecognitionCard` instead — a read-only summary of the teammate's **commendation** (green flag) and **flag-for-review** (red flag) medals (count, latest note, awarder + date) from the `medals?: MedalRecord[]` prop the roster passes from its medal context. The former "Payments" tab is now the attendance-only **Hours** tab (pay summary removed).
 
 ### `src/components/manager/ManagerMemberHoursMini.tsx`
 

@@ -44,20 +44,33 @@ inside `/api/payment-dispatches` forward through the shared `forwardPaystubDispa
 
 ### Staging table — `paystub_dispatch_queue`
 
-Migration: `references/seed_paystub_dispatch_queue.sql` (idempotent). One row per
-`(cycle_source_file, recipient_email)`:
+Migration #72: `references/seed_paystub_dispatch_queue.sql` (idempotent). **PENDING** — until
+it's run, the wizard's "Lock & Send" 500s. One row per
+`UNIQUE (cycle_source_file, recipient_email)`:
 
+- `recipient_email` is the **work** email (the match key against
+  `payment_dispatches.recipient_email`); `personal_email` is where the paystub is mailed. A
+  `BEFORE INSERT/UPDATE` trigger (`normalize_email_column`) lowercases/trims `recipient_email`,
+  and a `paystub_queue_touch_updated_at` trigger bumps `updated_at` on every UPDATE.
 - `payload` (JSONB) — the exact per-employee object the old batch posted to n8n. Staged for
-  everyone with a resolvable personal email, **including** the excluded set (so they can be
-  paid + emailed later from the Excluded tab).
+  everyone resolved this cycle, **including** the excluded set (so they can be paid + emailed
+  later from the Excluded tab). `pay_period` (JSONB) holds the top-level n8n pay-period block.
+- `amount_php` / `amount_usd` — denormalized amounts so the Excluded tab + arrears rollup can
+  show what's owed without unpacking `payload`.
 - `excluded` / `exclude_reason` — `true` + `'do_not_pay'` when accounting ticked **Exclude**
   in the wizard's Validation step. Routes them to Payment Dispatch → Excluded.
 - `sent_at` / `sent_by` / `send_count` / `last_error` — paystub send tracking (stamped by the
   mark-paid send path; survives a re-stage because those columns are omitted from the upsert).
 - `locked_at` / `locked_by` — when the wizard locked + staged this cycle.
 
-Staging is **replace-for-cycle**: a re-lock upserts the new set and prunes people no longer in
-the run, but never deletes a row whose paystub already went out.
+The migration also **re-asserts `app_settings` in the `supabase_realtime` publication** so the
+[realtime dispatch lock](#lock--unlock--realtime-gate) is guaranteed live even if migration #12
+was skipped.
+
+Staging is **replace-for-cycle** (`upsertPaystubDispatchQueue`): a re-lock upserts the new set
+(`ON CONFLICT (cycle_source_file, recipient_email)`) and prunes people no longer in the run —
+deleting only the stale set with `sent_at IS NULL`, in 30-email batches to stay under the URL
+length cap — but **never deletes a row whose paystub already went out** (`sent_at` set).
 
 ### Wizard Validation — "do not pay" exclusions
 
@@ -161,15 +174,46 @@ N8N_DISPATCH_WEBHOOK_URL="https://<workspace>.app.n8n.cloud/webhook-test/confirm
 
 The **test** URL only fires while "Listen for test event" is active in the n8n editor — it captures one request then stops. For real dispatches, activate the workflow and point `N8N_DISPATCH_WEBHOOK_URL` at the `/webhook/` (production) URL. Restart the dev server after env changes.
 
-## API route
+## API routes
 
-`app/api/dispatch-paystubs/route.ts`:
+### Staging — `POST /api/paystub-dispatch-queue` (primary)
 
-- Validates `N8N_DISPATCH_WEBHOOK_URL` is set (500 if not).
-- Parses body as JSON (400 on invalid).
-- POSTs to the webhook with `Content-Type: application/json`.
-- On non-2xx from n8n: returns 502 with `{ error, detail }` (detail contains n8n's raw response for debugging).
-- On success: returns `{ ok: true, n8n: <parsed response> }`.
+`app/api/paystub-dispatch-queue/route.ts`. The wizard's "Lock in Values & Send to Payment
+Dispatch" posts `{ source_file, pay_period, entries[] }` here.
+
+- Auth: `requireElevatedSession()` (payroll/admin) — same gate as the wizard's other writes.
+  Lenny's narrower `payment_dispatch` grant is separate.
+- `entries` filtered to those with a non-empty `recipient_email`, then upserted via
+  `upsertPaystubDispatchQueue` (replace-for-cycle; see [Staging table](#staging-table--paystub_dispatch_queue)).
+- Writes a `paystubs.staged` audit row (`{ staged, payable, excluded, excluded_emails[≤200] }`).
+- Returns `{ staged, excluded, error }`.
+- `GET /api/paystub-dispatch-queue?source_file=<file>` (view-gated) returns the lightweight
+  list (no `payload` / bank creds) that `useDispatchQueue` uses to route excluded people.
+- `GET /api/paystub-dispatch-queue/arrears` (view-gated) returns the cross-cycle owed rollup
+  (see [Excluded tab](#excluded-tab--cross-cycle-arrears-ledger)).
+
+> **Migration #72 (`paystub_dispatch_queue`) is PENDING.** Until it's run in the Supabase
+> SQL editor, "Lock & Send" **500s** (the table doesn't exist).
+
+### Per-employee send — inside `POST /api/payment-dispatches`
+
+When Lenny marks a salary dispatch **Paid** (`status='paid'` with a `cycle_source_file`), the
+route looks up the staged row by `(cycle_source_file, recipient_email)` and — if a `payload`
+exists — calls `forwardPaystubDispatch` for just that person. Best-effort: the result is
+stamped on the queue row (`markPaystubSent` / `markPaystubSendError`) and returned as
+`{ paystub: { staged, sent, error } }`; a send failure never fails the payment record.
+
+### Legacy batch — `app/api/dispatch-paystubs/route.ts` (no callers)
+
+The old batch route is retained **only** for manual / preview / re-send and has **zero
+callers in the app** — the wizard no longer hits it. It was given a `requireElevatedSession()`
+gate (otherwise any authenticated user could fire arbitrary paystub emails through the
+webhook). Behavior when called directly:
+
+- Validates a `paystub_dispatch` webhook is configured (Admin → Webhooks or
+  `N8N_DISPATCH_WEBHOOK_URL`); 500 if not.
+- Parses body as JSON (400 on invalid), forwards via `forwardPaystubDispatch`.
+- On non-2xx from n8n: 502 with `{ error, detail }`. On success: `{ ok: true, n8n: <parsed> }`.
 
 ## Webhook payload
 
@@ -278,26 +322,50 @@ The paystub body uses inline-styled tables for email-client compatibility. Diago
 
 ## UI signals in the HRIS
 
-- **n8n pill** on the Dispatch step (`Ready to Dispatch` block): small pink badge reading "Triggers n8n automation · Accounting heads up" with an n8n favicon, linking to the n8n Cloud workspace. Gives payroll/accounting a clear signal that clicking Confirm will fire an external workflow.
-- **Running red-light animation**: while `isDispatching === true` the Dispatch panel gets a conic-gradient red light running around its edges (1.6s per rotation). Button disables and label changes to "Dispatching…". Controlled by the `dispatch-running-light` CSS class embedded alongside the JSX (inline `<style>` for scoped keyframes).
+- **n8n pill** on the Dispatch step: small pink badge reading "Paystubs send 1-by-1 from Payment Dispatch · n8n on Mark Paid" with an n8n favicon, linking to the n8n Cloud workspace. Signals that emails fire per-person from Payment Dispatch (not in a batch here).
+- **Running red-light animation**: while `isDispatching === true` the Dispatch panel gets a conic-gradient red light running around its edges (1.6s per rotation). Button disables and label changes to "Sending to Dispatch…". Controlled by the `dispatch-running-light` CSS class embedded alongside the JSX (inline `<style>` for scoped keyframes).
 
-## Client-side dispatch flow
+## Client-side lock-and-stage flow
+
+The Dispatch step's primary button is **"Lock in Values & Send to Payment Dispatch"** (its
+`onClick`, ~`PayrollWizard.tsx:10689`). It **stages** — it does **not** email:
 
 ```
-Confirm & Dispatch onClick
- ├─ Resolve personal_email per row; collect `missing` (rows to skip).
- ├─ Early-out if no employees have personal email → error toast.
- ├─ Warning toast listing up to 5 skipped names if any.
+"Lock in Values & Send to Payment Dispatch" onClick
+ ├─ isReplay → error toast (past periods are view-only); bail.
+ ├─ No calcSourceFile → error toast; bail.
+ ├─ Read dispatchData { rows, excludedRows, missing, payPeriodPayload }.
+ ├─ Empty rows + excludedRows → "Nothing to send" toast; bail.
+ ├─ missing.length > 0 → warning toast (≤5 names without a personal email — no paystub emailed).
+ ├─ Build `entries` = payable rows (excluded:false) + excludedRows (excluded:true, exclude_reason),
+ │   each with recipient_email, personal_email, name, department_key, amount_php, amount_usd
+ │   (PHP/usdToPhpRate), and the full `payload`.
  ├─ setIsDispatching(true)  → red-light animation + disabled button.
- ├─ fetch('/api/dispatch-paystubs', { method: 'POST', body: { pay_period, employees } })
- │    ├─ res.ok  → success toast "Sent N paystub requests to n8n" + setCurrentStep(1).
- │    └─ !res.ok → error toast with { error, detail from n8n }.
+ ├─ POST /api/paystub-dispatch-queue { source_file, pay_period, entries }
+ │    ├─ !res.ok || data.error → error toast "Send to Payment Dispatch failed"; bail.
+ │    └─ ok →
+ │         ├─ dispatchValuesLock.setLocked(true)   (flip the realtime lock → Dispatch goes live; best-effort)
+ │         ├─ success toast (N payable staged · M excluded)
+ │         ├─ publishFinalPaySnapshot()  + broadcastSave()
+ │         ├─ setReportSnapshot(...) + setReportsTab('salaries')
+ │         └─ setCurrentStep(9)   (advance to the Report step)
  └─ finally → setIsDispatching(false)
 ```
 
+The Dispatch panel still shows the **running red-light animation** while `isDispatching`
+(button label → "Sending to Dispatch…"). Below the staging button, a realtime lock card
+(`dispatchValuesLock`, see [Lock / unlock](#lock--unlock--realtime-gate)) shows
+**"Locked — Payment Dispatch is live for this cycle"** + an **Unlock** button when locked, or
+an amber "Unlocked — Payment Dispatch stays empty…" note otherwise.
+
 ## References
 
+- Migration: `references/seed_paystub_dispatch_queue.sql` (`paystub_dispatch_queue` — **PENDING**, migration #72).
 - Workflow JSON: `references/n8n_paystub_dispatch.json`.
 - Business rules: `Documentation/BUSINESS_LOGIC.md`.
-- API route: `app/api/dispatch-paystubs/route.ts`.
-- Client logic: `src/components/PayrollWizard.tsx` (`dispatchData` useMemo + Dispatch step JSX + Preview Paystubs dialog).
+- Routes: `app/api/paystub-dispatch-queue/route.ts` (+ `arrears/`), `app/api/payment-dispatches/route.ts` (per-employee send on Mark Paid), `app/api/dispatch-paystubs/route.ts` (legacy batch, no callers).
+- Shared send helper: `src/lib/payroll/paystub-dispatch.ts` (`forwardPaystubDispatch`).
+- Queue data access: `src/lib/supabase/paystub-dispatch-queue.ts` (`upsertPaystubDispatchQueue`, `getPaystubDispatchEntry`, `listExcludedArrears`, `markPaystubSent` / `markPaystubSendError`).
+- Realtime lock hook: `src/hooks/useWizardDispatchLock.ts`.
+- Clerk-side queue: `src/components/payroll-clerk/useDispatchQueue.ts` + `ExcludedQueue.tsx`.
+- Wizard: `src/components/PayrollWizard.tsx` (`dispatchData` useMemo + Dispatch step JSX + Preview modal).

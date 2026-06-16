@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import {
   getHrOnboardingSubmissionByToken,
   submitHrOnboarding,
+  uploadIpAssignmentFile,
   type SubmitOnboardingInput,
 } from "@/lib/supabase/hr-onboarding-submissions";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
+import { generateIpAssignmentPdf } from "@/lib/onboarding/ip-assignment-pdf";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -100,6 +102,10 @@ export async function GET(
         phone: row.phone,
         email: row.email,
         location: row.location,
+        ip_agreement_agreed: row.ip_agreement_agreed,
+        ip_agreement_name: row.ip_agreement_name,
+        ip_agreement_signature: row.ip_agreement_signature,
+        ip_agreement_date: row.ip_agreement_date,
         non_solicitation_signature: row.non_solicitation_signature,
         privacy_signature: row.privacy_signature,
         w8ben_applicable: row.w8ben_applicable,
@@ -146,8 +152,12 @@ export async function POST(
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Required fields across the 6 steps.
+  // Required fields across the steps.
   const missing: string[] = [];
+  if (body.ip_agreement_agreed !== true) missing.push("ip_agreement_agreed");
+  if (!body.ip_agreement_name?.trim()) missing.push("ip_agreement_name");
+  if (!body.ip_agreement_signature) missing.push("ip_agreement_signature");
+  if (!body.ip_agreement_date?.trim()) missing.push("ip_agreement_date");
   if (!body.full_name?.trim()) missing.push("full_name");
   if (!body.phone?.trim()) missing.push("phone");
   if (!body.email?.trim()) missing.push("email");
@@ -183,6 +193,38 @@ export async function POST(
       { error: `Missing required fields: ${missing.join(", ")}` },
       { status: 400 },
     );
+  }
+
+  // Render + store the signed Intellectual Property Assignment PDF before the
+  // submit write, so the storage path can be persisted in the same update. The
+  // row already exists (created at link generation), so we have its id from the
+  // token lookup. Best-effort: if generation/upload fails we still save the raw
+  // signature/name/date (HR can fall back to the captured signature image), so
+  // a PDF hiccup never blocks the hire from finishing onboarding.
+  const lookup = await getHrOnboardingSubmissionByToken(token);
+  const submissionId = lookup.row?.id ?? null;
+  if (submissionId) {
+    try {
+      const pdfBytes = await generateIpAssignmentPdf({
+        name: body.ip_agreement_name!.trim(),
+        signatureDataUrl: body.ip_agreement_signature ?? null,
+        dateIso: body.ip_agreement_date ?? null,
+      });
+      const safeName = (body.ip_agreement_name ?? "participant")
+        .trim()
+        .replace(/[^a-z0-9]+/gi, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60) || "participant";
+      const { path, error: uploadErr } = await uploadIpAssignmentFile(submissionId, pdfBytes);
+      if (uploadErr) {
+        console.error("IP assignment PDF upload failed:", uploadErr);
+      } else {
+        body.ip_assignment_file_path = path;
+        body.ip_assignment_file_name = `IP-Assignment-${safeName}.pdf`;
+      }
+    } catch (e) {
+      console.error("IP assignment PDF generation failed:", e);
+    }
   }
 
   const { row, error } = await submitHrOnboarding(token, body as SubmitOnboardingInput);

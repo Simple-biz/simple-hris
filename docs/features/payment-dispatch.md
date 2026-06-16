@@ -146,6 +146,41 @@ On confirm: POST to `/api/payment-dispatches` with all 4 send fields + 4 recipie
 
 `SentPaymentsHistory.tsx` — table of `payment_dispatches` rows for the current cycle. 7 columns (recipient, processor, USD, PHP, bank used, txn id, sent, arrival). On mobile: horizontal scroll (`overflow-x-auto` with `min-w-[760px]`).
 
+### 3.7 Excluded & held tab (cross-cycle arrears)
+
+`ExcludedQueue.tsx` — the **Excluded** processor-rail card. Holds everyone the queue can't (or shouldn't) pay this cycle, so they stay visible instead of silently disappearing. Each row carries one or more `ExclusionReason` chips (`src/components/payroll-clerk/mock-queue.ts`):
+
+| Reason | Chip | Source |
+|---|---|---|
+| `no_bank` | "No bank preferred" (zinc) | no recognized processor / `Bank Preferred` |
+| `no_pay` | "No current pay" (amber) | `computeCurrentPay()` returned no USD amount |
+| `no_hours` | "No hours" (rose) | no hours on the Hubstaff row |
+| `do_not_pay` | "Excluded in wizard" (violet) | Payroll Wizard's per-row **Exclude** tickbox (staged on `paystub_dispatch_queue.excluded`) |
+
+`useDispatchQueue.ts` reads `paystub_dispatch_queue` for the current `source_file`; any row flagged `excluded` is moved out of the pending queue into this tab (keyed by lowercased work email), carrying the last paystub `sent_at` for a "Paystub sent" badge.
+
+**Cross-cycle arrears ledger.** A wizard-excluded person can be held across *multiple* cycles. `useDispatchQueue` overlays `GET /api/paystub-dispatch-queue/arrears` (see [paystub-dispatch.md](./paystub-dispatch.md)) so each row's amount = the **sum** of every unpaid held cycle, with a per-cycle breakdown. People owed from *prior* held cycles who aren't in this cycle's excluded set are still surfaced (so back-owed money never disappears), unless they're payable through the pending queue this cycle.
+
+Header shows an **"Owed ₱X (US$Y)"** pill (sum across the filtered list) + a person/held-cycle count tooltip. A row with `arrears.cycles.length > 1` gets an expandable "**N weeks pending**" disclosure listing each cycle (label + ₱ + a rose "send failed" tag when `lastError` is set).
+
+**Reconcile actions (`onMarkPaid`).** Only a `do_not_pay` row that's *otherwise* dispatchable (`row.payable` present) gets an action button — it opens the same `MarkPaidDialog` as the main queue:
+
+- Single cycle → **"Pay now"**.
+- Multiple held cycles → **"Settle ₱X"** — `handleConfirmPaid` in `PayrollDispatch.tsx` loops the unpaid cycles, POSTing `/api/payment-dispatches` once per cycle. It is **failure-tolerant**: each successful POST already moved money + emailed a paystub, so it records per-cycle outcomes (`paidCycles` / `failedCycles` / `sent` / `failedSend` / `notStaged`) and never aborts mid-loop. Failed cycles stay in arrears for a safe retry; the toast summarizes "`paidCycles`/`N` cycles settled". Owed-but-not-payable rows (no bank this cycle) show a muted "Can't pay here" tag instead.
+
+**Filters.** A single-select **reason** rail and a single-select **bank** rail (emerald pills, one per processor present + a "No bank" / `other` pill), plus a 250 ms debounced search over name / email / bank label / raw `Bank Preferred`. Both rails reset pagination (`PAGE_SIZE = 25`).
+
+### 3.8 Wizard dispatch lock — queue gating
+
+The dispatch queue (pending **and** excluded) is gated on a **per-cycle** realtime flag set by the Payroll Wizard: `app_settings` key `payroll.dispatch_lock.<sourceFile>` (`{ locked, lockedAt, lockedBy }`, parsed by `parseLockedFlag` which tolerates legacy bool/blank). This is **distinct** from the global dispute lock in §6 (`payroll.dispatch_locked`, the Start/Stop processing button) — that one only pauses employee disputes; this one decides whether there is any queue data to show.
+
+- `useDispatchQueue.loadAll()` derives `wizardReady` from the flag: **absent (never locked) reads as not-ready**; it is **fail-open only on a fetch error** so a network hiccup never blanks a genuinely-locked run.
+- When `!wizardReady`, `loadAll` returns empty `rows`/`excluded`/`paid` and `PayrollDispatch.tsx` renders the `WizardNotReadyState` ("Payroll Wizard isn't ready yet" — prompts accounting to click **Lock in Values & Send to Payment Dispatch** in the wizard).
+- `PayrollDispatch.tsx` subscribes via `useWizardDispatchLock(period.sourceFile)`; a lock/unlock flip calls `refresh()` so the queue appears/clears live.
+- **Reports / Urgent / Orphanage tabs are NOT gated** — `renderBody()` short-circuits to those before the `!wizardReady` check, so they always render.
+
+**Global Master List filter.** `computeCurrentPay()` returns `masterEmails` (every work/personal/alternate email in `active_employees`; `current-pay.ts:119,795`). `useDispatchQueue` filters both pending and excluded rows to that set (`inMaster`), removing stale / off-boarded / never-mastered rate rows. **Fail-open:** if the master set is missing (degraded payload) it doesn't filter, so the whole queue is never blanked.
+
 ---
 
 ## 4. Data layer
@@ -302,7 +337,7 @@ Implemented in **`src/lib/payroll/dispatch-bonuses.ts`** as a server-side mirror
 |---|---|---|
 | `/api/payroll-current-pay` | GET | Returns the `CurrentPayResult` from `computeCurrentPay()` |
 | `/api/payment-dispatches` | GET | Lists dispatches, optionally filtered by `?cycle_id=` |
-| `/api/payment-dispatches` | POST | Inserts a new dispatch row + writes audit-log entry `payment.dispatched` |
+| `/api/payment-dispatches` | POST | Inserts a new dispatch row + writes audit-log entry `payment.dispatched`. When `status='paid'` and the Payroll Wizard staged a paystub for this `(cycle_source_file, recipient_email)`, also fires that **one** person's paystub email via `forwardPaystubDispatch` (best-effort — never fails the payment) and returns `{ paystub: { staged, sent, error } }` so the client can toast sent / failed / not-staged. Gated by `requireFeatureEdit('accounting', 'payment_dispatch')`. See [paystub-dispatch.md](./paystub-dispatch.md). |
 | `/api/payroll-dispatch-lock` | GET | Returns `{ locked, lockedAt, lockedBy }` |
 | `/api/payroll-dispatch-lock` | POST | Toggles the lock — body: `{ locked: boolean }` — writes audit-log entry `payroll.dispatch.locked` / `payroll.dispatch.unlocked` with snapshotted operator + timestamp |
 | `/api/employee-hourly-rates` | GET | Existing route, now also returns the 8 new payment-dispatch fields |

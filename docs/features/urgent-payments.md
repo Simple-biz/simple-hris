@@ -159,6 +159,22 @@ Orphanage budget:
 
 ---
 
+## Employee MESA weekly contribution (client-only)
+
+> The accounting-side urgent dispatch above pays out **approved** MESA disbursements. Separately, the **employee MESA tab** (`src/components/employee/EmployeeMesa.tsx`) shows the recurring weekly savings/match shape. These are client-side constants and copy only — **no DB, schema, or API change.**
+
+The weekly contribution is **employee ₱100 + company (Simple.biz) ₱300 = ₱400 per week** (`EmployeeMesa.tsx:45-47`):
+
+| Constant | Value | Drives |
+|---|---|---|
+| `WEEKLY_EMPLOYEE_CONTRIB` | `100` | the per-week employee deduction |
+| `WEEKLY_COMPANY_MATCH` | `300` | the "We contribute" / "Simple.biz has matched" cards, the per-week ledger row, and `cumulativeCompany = completed.length * WEEKLY_COMPANY_MATCH` |
+| `WEEKLY_TOTAL` | `400` (`100 + 300`) | the combined weekly total |
+
+The company match was **lowered from ₱400 to ₱300** (weekly total previously ₱500, now ₱400). The matching narrative now reads **"matched three times over"** (3× the employee's ₱100), and the opt-in agreement text reads **"PHP 300 each week"** — both updated in lockstep with the constant.
+
+---
+
 ## Files changed / created
 
 | Path | Change |

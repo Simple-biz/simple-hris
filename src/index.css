@@ -297,6 +297,41 @@
   }
 }
 
+/* The public onboarding form is light-only (its surfaces have no dark
+   variants). Shared bits — the form inputs AND the agreement prose — carry
+   dark: text variants, so under the app's dark theme they rendered near-white
+   on the light form and were unreadable. Pin this subtree to the light palette
+   so it always reads as designed, in any theme. Unlayered so it wins over the
+   Tailwind utilities layer; the HR review modal reuses the same agreement
+   components but is NOT .onboarding-public, so its dark view is untouched. */
+.onboarding-public {
+  color-scheme: light;
+}
+.onboarding-public input,
+.onboarding-public textarea,
+.onboarding-public select {
+  color: #18181b !important; /* zinc-900 */
+}
+.onboarding-public input::placeholder,
+.onboarding-public textarea::placeholder {
+  color: #a1a1aa !important; /* zinc-400 */
+}
+
+/* Agreement / prose copy: keep body text dark-gray and headings near-black even
+   when the app theme is dark. Scoped to .dark so light mode stays pristine, and
+   accent-colored notes/badges (emerald / amber / yellow) keep their hue. */
+.dark .onboarding-public p:not([class*="text-emerald"]):not([class*="text-amber"]):not([class*="text-yellow"]),
+.dark .onboarding-public li {
+  color: #3f3f46; /* zinc-700 */
+}
+.dark .onboarding-public h1:not([class*="text-yellow"]):not([class*="text-amber"]):not([class*="text-emerald"]),
+.dark .onboarding-public h2:not([class*="text-yellow"]):not([class*="text-amber"]):not([class*="text-emerald"]),
+.dark .onboarding-public h3:not([class*="text-yellow"]):not([class*="text-amber"]):not([class*="text-emerald"]),
+.dark .onboarding-public h4 {
+  color: #18181b; /* zinc-900 */
+}
+/* onboarding light-mode contrast fix — see note above */
+
 @layer components {
   .tabular-nums {
     font-variant-numeric: tabular-nums;

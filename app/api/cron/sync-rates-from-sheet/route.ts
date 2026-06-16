@@ -30,9 +30,31 @@ function isAuthorized(req: NextRequest): boolean {
   return got === `Bearer ${expected}`;
 }
 
+/**
+ * Disabled: employee rates are now managed in the Payment Catalog (individual
+ * structures = a person's negotiated rate; department structures = the base
+ * rate). Letting the Google Sheet overwrite `employee_hourly_rates` /
+ * `employee_rate_history` would change pay inside HRIS, which is no longer
+ * allowed — rate changes flow through the catalog. Flip this to re-enable if the
+ * Sheet ever becomes authoritative for rates again.
+ */
+const RATES_SHEET_SYNC_DISABLED = true;
+
 async function runSync(req: NextRequest): Promise<NextResponse> {
   if (!isAuthorized(req) && !(await cronSessionElevated())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+  }
+
+  if (RATES_SHEET_SYNC_DISABLED) {
+    return NextResponse.json(
+      {
+        success: false,
+        disabled: true,
+        error:
+          'Google Sheet rates sync is disabled. Employee rates are managed in the Payment Catalog; syncing must not change pay in HRIS.',
+      },
+      { status: 200 },
+    );
   }
 
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {

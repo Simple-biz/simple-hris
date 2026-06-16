@@ -23,7 +23,11 @@ export interface AppliedBonusRow {
   appliedBy?: string | null;
 }
 
-type DbRow = {
+/** Raw DB-row shape (snake_case). This is the read contract every consumer
+ *  expects (Payroll Wizard, DeptBonusCalculator, ManagerBonusHistory) — do NOT
+ *  camelCase it on the way out. The camelCase `AppliedBonusRow` is the WRITE
+ *  contract only (client → POST). */
+export type AppliedDbRow = {
   id: string;
   period_start: string;
   period_end: string;
@@ -38,29 +42,16 @@ type DbRow = {
   applied_by: string | null;
 };
 
-function mapRow(r: DbRow): AppliedBonusRow {
-  return {
-    id: r.id,
-    periodStart: r.period_start,
-    periodEnd: r.period_end,
-    department: r.department,
-    employeeEmail: r.employee_email,
-    employeeName: r.employee_name,
-    bonusId: r.bonus_id,
-    bonusName: r.bonus_name,
-    kind: r.kind,
-    vars: r.vars ?? null,
-    amount: r.amount == null ? 0 : Number(r.amount),
-    appliedBy: r.applied_by,
-  };
-}
-
-/** List applied rows, filtered by a single dept or a set of depts, for a period. */
+/**
+ * List applied rows, filtered by a single dept or a set of depts, for a period.
+ * Returns raw snake_case DB rows — every read consumer reads `employee_email`,
+ * `employee_name`, `bonus_id`, `bonus_name`, etc.
+ */
 export async function listApplied(opts: {
   dept?: string;
   depts?: string[];
   periodStart?: string;
-}): Promise<AppliedBonusRow[]> {
+}): Promise<AppliedDbRow[]> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return [];
   let query = supabase.from(TABLE).select('*').order('employee_name', { ascending: true });
@@ -69,7 +60,7 @@ export async function listApplied(opts: {
   if (opts.periodStart) query = query.eq('period_start', opts.periodStart);
   const { data, error } = await query;
   if (error || !data) return [];
-  return data.map((r) => mapRow(r as DbRow));
+  return data as AppliedDbRow[];
 }
 
 /**

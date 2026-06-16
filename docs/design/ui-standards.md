@@ -775,6 +775,75 @@ Note: `<TabsContent>` is omitted when using `AnimatePresence` because base-ui
 unmounts the inactive panel before motion can play its exit animation; the
 controlled `tab` state lets us drive the swap manually.
 
+### 11.1 Sliding-indicator pill tabs (custom, not `components/ui/tabs`)
+
+For dense in-page tab/filter rows the codebase uses a hand-rolled pill row
+instead of the shadcn `<Tabs>` primitive. The signature is a **single gradient
+indicator that physically glides between pills** via a Framer `layoutId`
+(shared-element transition) rather than each pill toggling its own background.
+Canonical references in `src/components/hr/`:
+
+| Pill component | File | `layoutId` |
+| --- | --- | --- |
+| `SubTabPill` (Onboarding Form / Pending Hires) | `HrOnboarding.tsx` | `hr-onboarding-subtab` |
+| `TabPill` (Awaiting / Ready / Failed / Promoted / …) | `HrOnboarding.tsx` | `hr-pending-tab` |
+| `FilterPill` (Awaiting submission / Submitted / Archived / All) | `HrOnboardingForm.tsx` | `hr-onboarding-filter` |
+
+Anatomy (only the active pill renders the indicator; every pill shares the same
+`layoutId`, so Framer animates the single element across positions):
+
+```tsx
+<button type="button" onClick={onClick} aria-pressed={active}
+  className={cn('relative rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
+    active ? 'text-white' : 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 …')}>
+  {active && (
+    <motion.span
+      layoutId="hr-onboarding-subtab"
+      className="absolute inset-0 rounded-md bg-gradient-to-r from-emerald-500 to-teal-700 shadow-sm shadow-emerald-600/25"
+      transition={{ duration: reduce ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+    />
+  )}
+  <span className="relative z-10">{label}</span>
+</button>
+```
+
+Rules:
+
+- The emerald→teal gradient indicator is the default tone; the count chip is
+  `bg-white/20 text-white` when active, neutral zinc otherwise.
+- A pill that carries a **danger tone keeps its own color even while the
+  indicator slides onto it** — `TabPill`'s `tone="danger"` (the Failed tab)
+  swaps the indicator gradient to `from-red-500 to-rose-700` and tints the idle
+  label/count red so an unfinished promote stands out whether or not it's
+  selected. Don't let the shared indicator flatten a danger pill back to emerald.
+- The indicator transition is `duration: 0.28, ease: [0.22, 1, 0.36, 1]`,
+  **gated behind `useReducedMotion()`** (`reduce ? 0`).
+- `aria-pressed={active}` on every pill; the label/count sit at `relative z-10`
+  above the absolute indicator.
+
+The associated **panel content** does a directional crossfade/slide keyed on the
+active value, wrapped in `overflow-x-clip` so the horizontal slide never spawns
+a page scrollbar (and, unlike `overflow-x-hidden`, doesn't turn the wrapper into
+a scroll container that would break a sticky table header). The slide direction
+tracks which pill the user moved toward (`dir` +1 forward / −1 back), e.g.
+`HrOnboarding.tsx`:
+
+```tsx
+const SUB_TAB_VARIANTS = {
+  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 28 : -28 }),
+  center: { opacity: 1, x: 0 },
+  exit:  (dir: number) => ({ opacity: 0, x: dir >= 0 ? -28 : 28 }),
+};
+// …
+<div className="overflow-x-clip">
+  <AnimatePresence mode="wait" initial={false} custom={subDir}>
+    <motion.div key={subTab} custom={subDir} variants={SUB_TAB_VARIANTS}
+      initial="enter" animate="center" exit="exit"
+      transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }} />
+  </AnimatePresence>
+</div>
+```
+
 ---
 
 ## 12. Empty / loading / error states
@@ -907,6 +976,18 @@ Row reveal: `staggerChildren: 0.025 – 0.04, delayChildren: 0.05 – 0.08`. For
 ~12+ rows, cap the per-row delay (`Math.min(i * 0.012, 0.2)`) so very long
 lists don't take seconds to fully reveal.
 
+**Per-row table stagger-in** (used when a table is wrapped in
+`AnimatePresence`, e.g. the HR Onboarding tables): each `motion.tr` does
+`initial={{ opacity: 0, y: 4 }} → animate={{ opacity: 1, y: 0 }}` over
+`duration: 0.18, ease: 'easeOut'` with a **per-index delay capped** so a long
+list never crawls — `delay: reduceMotion ? 0 : Math.min(i * 0.02, 0.2)` in
+`HrOnboarding.tsx` (the pending-hires table also gives a **snappier exit**,
+`{ opacity: 0, y: -4, transition: { duration: 0.12 } }`). The
+`HrOnboardingForm.tsx` submissions table uses the same shape with a slightly
+larger cap (`Math.min(i * 0.025, 0.25)`) and **no exit** — its rows are keyed
+`` `${filter}:${r.id}` `` so switching filter remounts them and replays the
+cascade. Always gate the delay on `useReducedMotion()`.
+
 ### 14.4 Hover affordance
 
 Three patterns in use:
@@ -934,6 +1015,36 @@ with a 700ms ring expand. Don't reinvent — call the helper.
 Decorative blurred blobs (`<motion.div className="absolute … rounded-full bg-orange-300/30 blur-3xl" />`) are reserved for the highest-traffic branded
 landing pages (`PayrollDispatch`). They fade in over `0.8 – 1.2s`. Don't use
 on any editorial surface.
+
+### 14.8 Live-presence avatar rail (Accounting collab)
+
+The floating right-edge "who's in Accounting" rail
+(`src/components/accounting/AccountingCollabLayer.tsx`) is the canonical
+presence-roster animation. Conventions to copy if you build another presence rail:
+
+- **No `overflow`/`max-h` on the rail container.** The avatar's decorations
+  render *outside* its box — the name card pops out to the left (`right-full`)
+  and the online/eye badges sit at the avatar's corners — so any clipping
+  container (incl. `overflow-y-auto`) would shear them off (and add a
+  scrollbar). To stay on-screen without a scrollbar, **cap the visible
+  avatars** at `MAX_RAIL_AVATARS = 9` and collapse the remainder into a `+N`
+  chip (a same-sized `h-11 w-11` zinc bubble).
+- **Join/leave pop** via `<AnimatePresence mode="popLayout">`: each `RailAvatar`
+  enters `{ opacity: 0, scale: 0.2, x: 24 } → { opacity: 1, scale: 1, x: 0 }`
+  and exits the reverse, on a `POP_SPRING`
+  (`{ type: 'spring', stiffness: 520, damping: 24, mass: 0.7 }`) tuned to
+  overshoot so the avatar "pops" rather than eases in. Remaining avatars
+  reflow with `layout="position"`.
+- **Staggered initial cascade**: `delay: Math.min(index * 0.06, 0.42)` so a
+  fresh roster cascades in, capped so a large team never feels sluggish.
+- **44px raised chips** (`h-11 w-11`) with a layered `boxShadow` ring whose
+  color encodes state: **orange glow when observing** that peer, the peer's own
+  **cursor color when same-section** (their pointer is observable right now),
+  and a soft neutral white ring + drop shadow otherwise (reads as a chip
+  floating over the page).
+- **Pulsing online badge**: an emerald dot with a looping ping halo
+  (`opacity 0.55→0, scale 1→2.1`, `repeat: Infinity`), the halo `aria-hidden`
+  by virtue of being decorative (see §16 — pair live indicators with text).
 
 ---
 

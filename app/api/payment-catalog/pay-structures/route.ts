@@ -44,54 +44,62 @@ async function syncRateHistory(s: PayStructure, actor: string, effectiveDateIso?
   const effective = effectiveDateIso ? (parseDateOnly(effectiveDateIso) ?? today) : today;
   const effectiveIso = fmtIsoDate(effective);
 
-  if (supabase) {
-    await supabase
-      .from('employee_rate_history')
-      .delete()
-      .eq('employee_email', email)
-      .gte('effective_from', todayIso);
-  }
+  // USD pay structures are intentionally NOT pushed to the PHP-denominated rate
+  // history / cache / Google Sheet: writing a USD number there would corrupt
+  // them, and the rates sheet sync would later read it back as PHP. The Payment
+  // Catalog overlay (src/lib/payroll/resolve-rate.ts) applies USD rates at
+  // pay-calc time instead. The employee notification below still fires for both
+  // currencies.
+  if (s.currency !== 'USD') {
+    if (supabase) {
+      await supabase
+        .from('employee_rate_history')
+        .delete()
+        .eq('employee_email', email)
+        .gte('effective_from', todayIso);
+    }
 
-  await insertRateHistoryRow({
-    email,
-    regularRate: s.regularRate,
-    otRate: s.otRate ?? null,
-    effectiveFrom: effective,
-    createdBy: actor,
-    note: 'Set via Payment Catalog',
-  });
-
-  if (effective.getTime() <= today.getTime()) {
-    await updateEmployeeRates({
-      workEmail: email,
-      regularRate: String(s.regularRate),
-      otRate: String(s.otRate ?? s.regularRate),
+    await insertRateHistoryRow({
+      email,
+      regularRate: s.regularRate,
+      otRate: s.otRate ?? null,
+      effectiveFrom: effective,
+      createdBy: actor,
+      note: 'Set via Payment Catalog',
     });
-  }
 
-  // Push to the Google Sheet rates tab so the Sheet stays in sync.
-  // Individual rate overrides the department base -- only individual structures
-  // call syncRateHistory so this only fires for per-person saves (never dept).
-  void updateEmployeeRateInSheet({
-    workEmail: email,
-    regularRate: s.regularRate,
-    otRate: s.otRate ?? null,
-  }).catch((err: unknown) => {
-    console.warn('[pay-structures] sheet rate sync failed:', err);
-  });
+    if (effective.getTime() <= today.getTime()) {
+      await updateEmployeeRates({
+        workEmail: email,
+        regularRate: String(s.regularRate),
+        otRate: String(s.otRate ?? s.regularRate),
+      });
+    }
 
-  // Mirror the Hourly Rate + OT rate into the Hogan Agents Pay Plan sheet for
-  // Hogan agents only. Surgical (matched by Email; never touches the curated
-  // KPI/Scoreboard/Notes columns). Gated on department so non-Hogan saves don't
-  // pay to read the large Hogan sheet for a guaranteed no-op.
-  if (s.departmentKey === HOGAN_DEPT_KEY) {
-    void updateHslPayPlanRate({
+    // Push to the Google Sheet rates tab so the Sheet stays in sync.
+    // Individual rate overrides the department base -- only individual structures
+    // call syncRateHistory so this only fires for per-person saves (never dept).
+    void updateEmployeeRateInSheet({
       workEmail: email,
       regularRate: s.regularRate,
       otRate: s.otRate ?? null,
     }).catch((err: unknown) => {
-      console.warn('[pay-structures] HSL pay plan sync failed:', err);
+      console.warn('[pay-structures] sheet rate sync failed:', err);
     });
+
+    // Mirror the Hourly Rate + OT rate into the Hogan Agents Pay Plan sheet for
+    // Hogan agents only. Surgical (matched by Email; never touches the curated
+    // KPI/Scoreboard/Notes columns). Gated on department so non-Hogan saves don't
+    // pay to read the large Hogan sheet for a guaranteed no-op.
+    if (s.departmentKey === HOGAN_DEPT_KEY) {
+      void updateHslPayPlanRate({
+        workEmail: email,
+        regularRate: s.regularRate,
+        otRate: s.otRate ?? null,
+      }).catch((err: unknown) => {
+        console.warn('[pay-structures] HSL pay plan sync failed:', err);
+      });
+    }
   }
 
   if (supabase) {
@@ -105,7 +113,7 @@ async function syncRateHistory(s: PayStructure, actor: string, effectiveDateIso?
         message:
           'Your negotiated pay rate has been updated in the Payment Catalog. See the details below for the latest figures.',
         details: {
-          after: { regular_rate: String(s.regularRate), ot_rate: String(s.otRate ?? '') },
+          after: { regular_rate: String(s.regularRate), ot_rate: String(s.otRate ?? ''), currency: s.currency },
           effective_from: effectiveIso,
           scheduled: effective.getTime() > today.getTime(),
           source: 'payment_catalog',

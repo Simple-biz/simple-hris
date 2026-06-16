@@ -4,13 +4,45 @@
 // signed). Keep these in sync by editing here only — never inline the text
 // at a call site.
 
+import {
+  IP_ASSIGNMENT_INTRO,
+  IP_ASSIGNMENT_SECTIONS,
+  IP_ASSIGNMENT_TITLE,
+} from '@/lib/onboarding/ip-assignment-text';
+
 export const AGREEMENT_TITLES = {
+  intellectualProperty: IP_ASSIGNMENT_TITLE,
   nonSolicitation: 'Non-Solicitation of Employees',
   privacy: 'Privacy Agreement',
   contract: 'Contract Worker Agreement',
 } as const;
 
 const proseClass = 'space-y-3 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300';
+
+/**
+ * Intellectual Property Assignment, Talent Release, and Copyright Waiver.
+ * Rendered from the shared data module so this React copy and the server-side
+ * PDF generator stay byte-for-byte identical.
+ */
+export function IntellectualPropertyText() {
+  return (
+    <article className={proseClass}>
+      {IP_ASSIGNMENT_INTRO.map((p, i) => (
+        <p key={`intro-${i}`}>{p}</p>
+      ))}
+      {IP_ASSIGNMENT_SECTIONS.map((section) => (
+        <section key={section.heading}>
+          <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">{section.heading}</h3>
+          {section.paragraphs.map((p, i) => (
+            <p key={i} className={i > 0 ? 'mt-2' : undefined}>
+              {p}
+            </p>
+          ))}
+        </section>
+      ))}
+    </article>
+  );
+}
 
 export function NonSolicitationText() {
   return (

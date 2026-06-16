@@ -87,6 +87,12 @@ import {
   indexHourlyRatesByEmail,
   type EmployeeHourlyRateRow,
 } from '@/lib/supabase/employee-hourly-rates';
+import {
+  buildCatalogRateIndex,
+  resolveEmployeeCatalogRate,
+  resolveDeptCatalogRate,
+} from '@/lib/payroll/resolve-rate';
+import type { PayStructure } from '@/lib/payment-catalog/pay-structure';
 import { normEmail } from '@/lib/email/norm-email';
 import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 import { sortHubstaffColumnsForDisplay } from '@/lib/supabase/hubstaff-hours-db';
@@ -900,6 +906,10 @@ export default function PayrollWizard({
   );
   const [hourlyRatesLoading, setHourlyRatesLoading] = useState(false);
   const [hourlyRatesError, setHourlyRatesError] = useState<string | null>(null);
+  // Payment Catalog pay structures — the source of truth for rates. Overlaid on
+  // top of the sheet-synced `hourlyRateRows` in `ratesByEmail` below (live cycle
+  // only: skipped while replaying a past period).
+  const [payStructures, setPayStructures] = useState<PayStructure[]>([]);
 
   // ── Orphanage step (id=4): all orphanage_visit + ceo_visitation disputes
   // inside the active PAB month range. Fetched lazily when the user lands on
@@ -1759,6 +1769,22 @@ export default function PayrollWizard({
     }
   }, []);
 
+  const loadPayStructures = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/payment-catalog/pay-structures', { cache: 'no-store' });
+      const json = (await res.json()) as { structures?: PayStructure[]; error?: string | null };
+      setPayStructures(json.structures ?? []);
+    } catch {
+      // Non-fatal: without the catalog, ratesByEmail falls back to the sheet rates.
+      setPayStructures([]);
+    }
+  }, []);
+
+  // Load the Payment Catalog once on mount so the Step 2 calc can overlay it.
+  useEffect(() => {
+    void loadPayStructures();
+  }, [loadPayStructures]);
+
   // Step 2 needs the rates table. Skip the first call when initialData
   // already shipped it — manual re-load buttons inside step 2 still re-fetch.
   const skipInitialRatesFetchRef = useRef(Boolean(initialData?.hourlyRates?.length));
@@ -2067,8 +2093,33 @@ export default function PayrollWizard({
       if (!hit) continue;
       for (const em of emails) if (!idx.has(em)) idx.set(em, hit);
     }
+
+    // Payment Catalog overlay. Priority: individual (employee) structure → sheet
+    // rate → department base. The individual rate overrides the sheet; the
+    // department rate only fills in for an employee with no sheet rate at all.
+    // PHP-equivalent (USD converted at the FX rate). Skipped during replay so
+    // historical periods keep the rates that were in effect then ("live cycle
+    // only").
+    if (!isReplay && payStructures.length > 0) {
+      const catIdx = buildCatalogRateIndex(payStructures);
+      for (const [em, row] of idx) {
+        const empCat = resolveEmployeeCatalogRate(
+          catIdx,
+          [em, row.work_email ?? '', row.personal_email ?? ''],
+          usdToPhpRate,
+        );
+        const hasSheet =
+          (row.regular_rate != null && row.regular_rate !== '') ||
+          (row.ot_rate != null && row.ot_rate !== '');
+        const deptCat = hasSheet ? null : resolveDeptCatalogRate(catIdx, row.department, usdToPhpRate);
+        const applied = empCat ?? deptCat;
+        if (applied) {
+          idx.set(em, { ...row, regular_rate: String(applied.regPhp), ot_rate: String(applied.otPhp) });
+        }
+      }
+    }
     return idx;
-  }, [hourlyRateRows, masterEmployees]);
+  }, [hourlyRateRows, masterEmployees, payStructures, isReplay, usdToPhpRate]);
 
   // Lookup maps over masterEmployees, built once per roster change. The Step 2
   // calc, the department auto-assign effect, and dispatchData each need to match

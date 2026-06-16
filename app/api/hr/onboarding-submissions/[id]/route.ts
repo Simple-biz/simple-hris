@@ -3,6 +3,7 @@ import {
   archiveHrOnboardingSubmission,
   deleteHrOnboardingSubmission,
   getHrOnboardingSubmissionById,
+  getIpAssignmentSignedUrl,
   getW8BenSignedUrl,
 } from "@/lib/supabase/hr-onboarding-submissions";
 import {
@@ -30,7 +31,13 @@ export async function GET(
     const signed = await getW8BenSignedUrl(row.w8ben_file_path, 600);
     w8benUrl = signed.url;
   }
-  return NextResponse.json({ row, w8benUrl });
+  // Likewise for the generated Intellectual Property Assignment PDF.
+  let ipAssignmentUrl: string | null = null;
+  if (row.ip_assignment_file_path) {
+    const signed = await getIpAssignmentSignedUrl(row.ip_assignment_file_path, 600);
+    ipAssignmentUrl = signed.url;
+  }
+  return NextResponse.json({ row, w8benUrl, ipAssignmentUrl });
 }
 
 export async function DELETE(

@@ -1,11 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion, AnimatePresence, useSpring, useTransform } from 'motion/react';
+import { motion, AnimatePresence, useSpring, useTransform, useReducedMotion } from 'motion/react';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Loader2,
   Mail,
@@ -47,6 +49,18 @@ import type {
 type TabFilter = 'pending' | 'ready' | 'promoted' | 'failed' | 'cancelled' | 'no_show' | 'all';
 type SubTab = 'pending-hires' | 'onboarding-form';
 
+// Left-to-right order of the sub-tabs, so the panel can slide in the direction
+// that matches the pill the user moved toward.
+const SUB_TAB_ORDER: Record<SubTab, number> = { 'onboarding-form': 0, 'pending-hires': 1 };
+
+// Directional crossfade for the sub-tab panels. `dir` is +1 when moving to a
+// later tab, -1 when moving back — the incoming panel enters from that side.
+const SUB_TAB_VARIANTS = {
+  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 28 : -28 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -28 : 28 }),
+};
+
 const STATUS_LABEL: Record<HrPendingStatus, string> = {
   pending_work_email: 'Awaiting work email',
   ready: 'Ready to promote',
@@ -84,7 +98,20 @@ function formatDate(iso: string | null): string {
 }
 
 export default function HrOnboarding() {
+  const reduceMotion = useReducedMotion();
   const [subTab, setSubTab] = useState<SubTab>('onboarding-form');
+  // Direction of the last sub-tab move (+1 forward, -1 back) so the panel
+  // slides toward the pill the user clicked.
+  const [subDir, setSubDir] = useState(1);
+  const selectSubTab = useCallback(
+    (next: SubTab) => {
+      setSubTab((cur) => {
+        if (next !== cur) setSubDir(SUB_TAB_ORDER[next] >= SUB_TAB_ORDER[cur] ? 1 : -1);
+        return next;
+      });
+    },
+    [],
+  );
   const [pending, setPending] = useState<HrPendingEmployeeRow[]>([]);
   const [pendingLoading, setPendingLoading] = useState(true);
 
@@ -196,6 +223,23 @@ export default function HrOnboarding() {
     }
     return c;
   }, [pending]);
+
+  // The Promoted tab accumulates every hire that ever made it to the master
+  // list, so it pages 10 at a time. Every other tab shows all matching rows.
+  const PROMOTED_PAGE_SIZE = 10;
+  const [promotedPage, setPromotedPage] = useState(0);
+  useEffect(() => {
+    setPromotedPage(0);
+  }, [tab, search, dept]);
+  const promotedPaged = tab === 'promoted';
+  const promotedTotalPages = Math.max(1, Math.ceil(filteredPending.length / PROMOTED_PAGE_SIZE));
+  const promotedSafePage = Math.min(promotedPage, promotedTotalPages - 1);
+  const displayPending = promotedPaged
+    ? filteredPending.slice(
+        promotedSafePage * PROMOTED_PAGE_SIZE,
+        (promotedSafePage + 1) * PROMOTED_PAGE_SIZE,
+      )
+    : filteredPending;
 
   // Rows in the current filter that can be promoted / re-promoted (orientation
   // confirmed; both 'ready' and 'failed_to_promote' rows already have a work
@@ -547,19 +591,34 @@ export default function HrOnboarding() {
         <SubTabPill
           label="Onboarding Form"
           active={subTab === 'onboarding-form'}
-          onClick={() => setSubTab('onboarding-form')}
+          onClick={() => selectSubTab('onboarding-form')}
         />
         <SubTabPill
           label="Pending Hires"
           active={subTab === 'pending-hires'}
-          onClick={() => setSubTab('pending-hires')}
+          onClick={() => selectSubTab('pending-hires')}
         />
       </div>
 
-      {subTab === 'onboarding-form' ? (
-        <HrOnboardingForm />
-      ) : (
-      <>
+      {/* overflow-x-clip contains the horizontal slide without spawning a page
+          scrollbar (and, unlike overflow-x-hidden, never turns this into a
+          scroll container — the table's sticky header keeps working). */}
+      <div className="overflow-x-clip">
+        <AnimatePresence mode="wait" initial={false} custom={subDir}>
+          <motion.div
+            key={subTab}
+            custom={subDir}
+            variants={SUB_TAB_VARIANTS}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+            className="flex flex-col gap-6 lg:gap-8"
+          >
+            {subTab === 'onboarding-form' ? (
+              <HrOnboardingForm />
+            ) : (
+            <>
       {/* Stat tiles */}
       <section className="grid gap-3 sm:grid-cols-3" aria-label="Pending hire counts">
         <StatTile
@@ -756,7 +815,7 @@ export default function HrOnboarding() {
                 </thead>
                 <tbody className="divide-y divide-emerald-100/70 bg-white/85 dark:divide-emerald-900/35 dark:bg-zinc-950/40">
                   <AnimatePresence initial={false}>
-                    {filteredPending.map((row) => {
+                    {displayPending.map((row, i) => {
                       const isBusy = busyId === row.id;
                       // On the Ready tab, a promotable row (orientation confirmed)
                       // can be ticked by clicking anywhere on the row, not just the
@@ -771,8 +830,12 @@ export default function HrOnboarding() {
                           key={row.id}
                           initial={{ opacity: 0, y: 4 }}
                           animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -4 }}
-                          transition={{ duration: 0.18 }}
+                          exit={{ opacity: 0, y: -4, transition: { duration: 0.12 } }}
+                          transition={{
+                            duration: 0.18,
+                            ease: 'easeOut',
+                            delay: reduceMotion ? 0 : Math.min(i * 0.02, 0.2),
+                          }}
                           onClick={
                             rowSelectable
                               ? (e) => {
@@ -978,12 +1041,71 @@ export default function HrOnboarding() {
                   </AnimatePresence>
                 </tbody>
               </table>
+              {promotedPaged && promotedTotalPages > 1 && (
+                <div className="flex items-center justify-between border-t border-emerald-100/60 px-4 py-2.5 dark:border-emerald-900/30">
+                  <p className="text-[11px] text-zinc-400">
+                    {promotedSafePage * PROMOTED_PAGE_SIZE + 1}–
+                    {Math.min((promotedSafePage + 1) * PROMOTED_PAGE_SIZE, filteredPending.length)} of{' '}
+                    {filteredPending.length}
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      disabled={promotedSafePage === 0}
+                      onClick={() => setPromotedPage(0)}
+                      aria-label="First page"
+                    >
+                      <ChevronLeft className="h-3 w-3" />
+                      <ChevronLeft className="-ml-2 h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      disabled={promotedSafePage === 0}
+                      onClick={() => setPromotedPage((p) => Math.max(0, p - 1))}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="h-3 w-3" />
+                    </Button>
+                    <span className="min-w-[4rem] text-center text-[11px] text-zinc-500">
+                      {promotedSafePage + 1} / {promotedTotalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      disabled={promotedSafePage >= promotedTotalPages - 1}
+                      onClick={() => setPromotedPage((p) => Math.min(promotedTotalPages - 1, p + 1))}
+                      aria-label="Next page"
+                    >
+                      <ChevronRight className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      disabled={promotedSafePage >= promotedTotalPages - 1}
+                      onClick={() => setPromotedPage(promotedTotalPages - 1)}
+                      aria-label="Last page"
+                    >
+                      <ChevronRight className="h-3 w-3" />
+                      <ChevronRight className="-ml-2 h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </CardContent>
       </Card>
-      </>
-      )}
+            </>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </div>
 
       {/* Set work email dialog */}
       <SetWorkEmailDialog
@@ -1629,19 +1751,28 @@ function SubTabPill({
   active: boolean;
   onClick: () => void;
 }) {
+  const reduce = useReducedMotion();
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        'rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
+        'relative rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
         active
-          ? 'bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25'
+          ? 'text-white'
           : 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
       )}
     >
-      {label}
+      {/* Shared indicator — glides between pills via layoutId. */}
+      {active && (
+        <motion.span
+          layoutId="hr-onboarding-subtab"
+          className="absolute inset-0 rounded-md bg-gradient-to-r from-emerald-500 to-teal-700 shadow-sm shadow-emerald-600/25"
+          transition={{ duration: reduce ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+        />
+      )}
+      <span className="relative z-10">{label}</span>
     </button>
   );
 }
@@ -1661,6 +1792,7 @@ function TabPill({
   // when the tab isn't selected.
   tone?: 'emerald' | 'danger';
 }) {
+  const reduce = useReducedMotion();
   const isDanger = tone === 'danger';
   return (
     <button
@@ -1668,17 +1800,30 @@ function TabPill({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
-        active && isDanger && 'bg-gradient-to-r from-red-500 to-rose-700 text-white shadow-sm shadow-rose-600/25',
-        active && !isDanger && 'bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25',
+        'relative flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
+        active && 'text-white',
         !active && isDanger && 'text-red-700 hover:bg-red-50 hover:text-red-900 dark:text-red-300 dark:hover:bg-red-950/40 dark:hover:text-red-100',
         !active && !isDanger && 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
       )}
     >
-      {label}
+      {/* Shared indicator — glides between pills via layoutId. Its tone follows
+          the active tab so the Failed pill stays red. */}
+      {active && (
+        <motion.span
+          layoutId="hr-pending-tab"
+          className={cn(
+            'absolute inset-0 rounded-md shadow-sm',
+            isDanger
+              ? 'bg-gradient-to-r from-red-500 to-rose-700 shadow-rose-600/25'
+              : 'bg-gradient-to-r from-emerald-500 to-teal-700 shadow-emerald-600/25',
+          )}
+          transition={{ duration: reduce ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+        />
+      )}
+      <span className="relative z-10">{label}</span>
       <span
         className={cn(
-          'rounded-full px-1.5 text-[10px] tabular-nums',
+          'relative z-10 rounded-full px-1.5 text-[10px] tabular-nums',
           active && 'bg-white/20 text-white',
           !active && isDanger && 'bg-red-200 text-red-800 dark:bg-red-900/60 dark:text-red-200',
           !active && !isDanger && 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',

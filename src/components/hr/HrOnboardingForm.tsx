@@ -12,6 +12,7 @@ import {
   ChevronRight,
   ClipboardCopy,
   Download,
+  ExternalLink,
   Eye,
   EyeOff,
   FileText,
@@ -42,13 +43,15 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs as TabsPrimitive } from '@base-ui/react/tabs';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AGREEMENT_TITLES,
   ContractWorkerText,
+  IntellectualPropertyText,
   NonSolicitationText,
   PrivacyText,
 } from '@/components/onboarding/agreement-texts';
+import { formatLongDate } from '@/lib/onboarding/ip-assignment-text';
 import {
   Dialog,
   DialogContent,
@@ -66,6 +69,11 @@ function isPlausibleEmail(s: string): boolean {
 // Peso sign as a char code so this source stays ASCII (the editor on this box
 // mangles literal non-ASCII bytes).
 const CURRENCY_PESO = String.fromCharCode(0x20b1);
+
+// Live preview of the onboarding paperwork — opens the same multi-step form
+// (personal info, agreements, W-8BEN, payment method, contract signature) that
+// new hires complete, in a no-save "preview" mode. See app/onboarding/[token].
+const ONBOARDING_PAPERWORK_TEMPLATE_URL = '/onboarding/preview';
 
 /** Shape returned by GET /api/hr/department-rates. */
 type DeptRateApi = {
@@ -120,6 +128,12 @@ type SubmissionRow = {
   full_name: string | null;
   phone: string | null;
   email: string | null;
+  ip_agreement_agreed: boolean | null;
+  ip_agreement_name: string | null;
+  ip_agreement_signature: string | null;
+  ip_agreement_date: string | null;
+  ip_assignment_file_path: string | null;
+  ip_assignment_file_name: string | null;
   non_solicitation_signature: string | null;
   privacy_signature: string | null;
   w8ben_applicable: boolean | null;
@@ -699,6 +713,7 @@ function publicLinkFor(token: string): string {
 }
 
 export default function HrOnboardingForm() {
+  const reduceMotion = useReducedMotion();
   const [rows, setRows] = useState<SubmissionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>('all');
@@ -1152,8 +1167,9 @@ export default function HrOnboardingForm() {
           </div>
         </div>
 
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-stretch">
         {licenseInfo && (
-          <div className={'mt-4 rounded-lg border px-3 py-2.5 text-xs ' + (licenseInfo.available_licenses === null ? 'border-amber-200/60 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/20' : licenseInfo.available_licenses === 0 ? 'border-red-200/60 bg-red-50/60 dark:border-red-900/40 dark:bg-red-950/20' : licenseInfo.available_licenses <= 2 ? 'border-orange-200/60 bg-orange-50/60 dark:border-orange-900/40 dark:bg-orange-950/20' : 'border-emerald-200/60 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20')}>
+          <div className={'flex-1 rounded-lg border px-3 py-2.5 text-xs ' + (licenseInfo.available_licenses === null ? 'border-amber-200/60 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/20' : licenseInfo.available_licenses === 0 ? 'border-red-200/60 bg-red-50/60 dark:border-red-900/40 dark:bg-red-950/20' : licenseInfo.available_licenses <= 2 ? 'border-orange-200/60 bg-orange-50/60 dark:border-orange-900/40 dark:bg-orange-950/20' : 'border-emerald-200/60 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20')}>
             <div className="mb-2 flex items-center gap-1.5 font-medium">
               {licenseInfo.available_licenses === null && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />}
               {licenseInfo.available_licenses === 0 && <XCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />}
@@ -1187,6 +1203,28 @@ export default function HrOnboardingForm() {
             )}
           </div>
         )}
+
+          {/* Link to the external onboarding paperwork template — preview / edit the doc */}
+          <a
+            href={ONBOARDING_PAPERWORK_TEMPLATE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group flex flex-1 items-center gap-3 rounded-lg border border-emerald-200/60 bg-emerald-50/60 px-3 py-2.5 text-xs transition-colors hover:border-emerald-300 hover:bg-emerald-100/70 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:hover:border-emerald-800 dark:hover:bg-emerald-950/40"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+              <FileText className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-1 font-medium text-emerald-900 dark:text-emerald-100">
+                Onboarding Paper Work Template
+                <ExternalLink className="h-3 w-3 shrink-0 opacity-60 transition-opacity group-hover:opacity-100" />
+              </span>
+              <span className="mt-0.5 block text-[10px] text-emerald-700/80 dark:text-emerald-300/70">
+                Preview what the onboarding paperwork looks like
+              </span>
+            </span>
+          </a>
+        </div>
       </div>
 
       {/* Filter + search */}
@@ -1434,7 +1472,7 @@ export default function HrOnboardingForm() {
                       key={`${filter}:${r.id}`}
                       initial={{ opacity: 0, y: 4 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.18, ease: 'easeOut', delay: Math.min(i * 0.025, 0.25) }}
+                      transition={{ duration: 0.18, ease: 'easeOut', delay: reduceMotion ? 0 : Math.min(i * 0.025, 0.25) }}
                       className={cn(
                         'align-top hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20',
                         selectedIds.has(r.id) && 'bg-emerald-50/60 dark:bg-emerald-950/30',
@@ -4207,7 +4245,7 @@ function LinkCreatedDialog({
 
 // Left-to-right order of the detail tabs — drives the directional slide so a
 // jump to a later tab enters from the right, an earlier tab from the left.
-const DETAIL_TAB_ORDER = ['summary', 'non_solicitation', 'privacy', 'contract'] as const;
+const DETAIL_TAB_ORDER = ['summary', 'ip_assignment', 'non_solicitation', 'privacy', 'contract'] as const;
 
 function SubmissionDetailDialog({
   row: rowProp,
@@ -4217,9 +4255,11 @@ function SubmissionDetailDialog({
   onClose: () => void;
 }) {
   const [w8benUrl, setW8benUrl] = useState<string | null>(null);
+  const [ipAssignmentUrl, setIpAssignmentUrl] = useState<string | null>(null);
   const [tab, setTab] = useState('summary');
   const [tabDirection, setTabDirection] = useState(0);
   const [downloadingW8Ben, setDownloadingW8Ben] = useState(false);
+  const [downloadingIp, setDownloadingIp] = useState(false);
 
   // Switch tabs while recording which way we moved (1 = rightward, -1 = left)
   // so the panel can slide in the matching direction.
@@ -4252,18 +4292,25 @@ function SubmissionDetailDialog({
   }, [rowProp?.id]);
 
   useEffect(() => {
-    if (!row?.w8ben_file_path) {
+    if (!row?.w8ben_file_path && !row?.ip_assignment_file_path) {
       setW8benUrl(null);
+      setIpAssignmentUrl(null);
       return;
     }
     let cancelled = false;
     (async () => {
       try {
         const res = await fetch(`/api/hr/onboarding-submissions/${row.id}`, { cache: 'no-store' });
-        const json = (await res.json()) as { w8benUrl?: string };
-        if (!cancelled) setW8benUrl(json.w8benUrl ?? null);
+        const json = (await res.json()) as { w8benUrl?: string; ipAssignmentUrl?: string };
+        if (!cancelled) {
+          setW8benUrl(json.w8benUrl ?? null);
+          setIpAssignmentUrl(json.ipAssignmentUrl ?? null);
+        }
       } catch {
-        if (!cancelled) setW8benUrl(null);
+        if (!cancelled) {
+          setW8benUrl(null);
+          setIpAssignmentUrl(null);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -4296,8 +4343,32 @@ function SubmissionDetailDialog({
     }
   }
 
+  // Same blob-download trick for the generated IP-assignment PDF.
+  async function handleDownloadIp() {
+    if (!ipAssignmentUrl) return;
+    setDownloadingIp(true);
+    try {
+      const res = await fetch(ipAssignmentUrl);
+      if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = row?.ip_assignment_file_name || 'IP-Assignment.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Download failed');
+    } finally {
+      setDownloadingIp(false);
+    }
+  }
+
   const detailTabs = [
     { value: 'summary', label: 'Summary' },
+    { value: 'ip_assignment', label: 'IP Assignment', signed: !!row.ip_agreement_signature },
     { value: 'non_solicitation', label: 'Non-Solicitation', signed: !!row.non_solicitation_signature },
     { value: 'privacy', label: 'Privacy', signed: !!row.privacy_signature },
     { value: 'contract', label: 'Contract', signed: !!row.contract_signature },
@@ -4366,6 +4437,55 @@ function SubmissionDetailDialog({
                         <DetailRow label="Full name" value={row.full_name} />
                         <DetailRow label="Phone" value={row.phone} />
                         <DetailRow label="Email" value={row.email} mono />
+                      </DetailSection>
+
+                      <DetailSection title="IP Assignment">
+                        <DetailRow
+                          label="Acknowledged?"
+                          value={row.ip_agreement_agreed ? 'Yes' : row.ip_agreement_signature ? 'Yes' : '—'}
+                        />
+                        <DetailRow label="Signed by" value={row.ip_agreement_name} />
+                        <DetailRow label="Date" value={formatLongDate(row.ip_agreement_date) || '—'} />
+                        {(row.ip_assignment_file_name || row.ip_agreement_signature) && (
+                          <div className="flex items-center justify-between gap-2 rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2 text-xs">
+                            <div className="flex items-center gap-2 truncate">
+                              <FileText className="h-4 w-4 shrink-0 text-emerald-700" />
+                              <span className="truncate">{row.ip_assignment_file_name || 'IP-Assignment.pdf'}</span>
+                            </div>
+                            {!row.ip_assignment_file_path ? (
+                              <span className="shrink-0 text-[11px] italic text-zinc-400">PDF not generated</span>
+                            ) : ipAssignmentUrl ? (
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                <a
+                                  href={ipAssignmentUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-2 py-1 text-[11px] font-medium text-emerald-800 transition-colors hover:bg-emerald-50"
+                                  title="Open the IP Assignment in a new tab"
+                                >
+                                  <Eye className="h-3 w-3" />
+                                  View
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={handleDownloadIp}
+                                  disabled={downloadingIp}
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-600 bg-emerald-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-60"
+                                  title="Download the signed IP Assignment PDF"
+                                >
+                                  {downloadingIp ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Download className="h-3 w-3" />
+                                  )}
+                                  Download
+                                </button>
+                              </div>
+                            ) : (
+                              <Loader2 className="h-3 w-3 animate-spin text-emerald-700" />
+                            )}
+                          </div>
+                        )}
                       </DetailSection>
 
                       <DetailSection title="W-8BEN">
@@ -4437,6 +4557,14 @@ function SubmissionDetailDialog({
                       </DetailSection>
                     </div>
                   </div>
+                ) : tab === 'ip_assignment' ? (
+                  <AgreementTab
+                    title={AGREEMENT_TITLES.intellectualProperty}
+                    signatureSrc={row.ip_agreement_signature}
+                    signedOn={row.ip_agreement_signature ? formatLongDate(row.ip_agreement_date) : null}
+                  >
+                    <IntellectualPropertyText />
+                  </AgreementTab>
                 ) : tab === 'non_solicitation' ? (
                   <AgreementTab
                     title={AGREEMENT_TITLES.nonSolicitation}
@@ -4737,22 +4865,31 @@ function FilterPill({
   active: boolean;
   onClick: () => void;
 }) {
+  const reduce = useReducedMotion();
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
+        'relative flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
         active
-          ? 'bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25'
+          ? 'text-white'
           : 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
       )}
     >
-      {label}
+      {/* Shared indicator — glides between pills via layoutId. */}
+      {active && (
+        <motion.span
+          layoutId="hr-onboarding-filter"
+          className="absolute inset-0 rounded-md bg-gradient-to-r from-emerald-500 to-teal-700 shadow-sm shadow-emerald-600/25"
+          transition={{ duration: reduce ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+        />
+      )}
+      <span className="relative z-10">{label}</span>
       <span
         className={cn(
-          'rounded-full px-1.5 text-[10px] tabular-nums',
+          'relative z-10 rounded-full px-1.5 text-[10px] tabular-nums',
           active ? 'bg-white/20 text-white' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
         )}
       >

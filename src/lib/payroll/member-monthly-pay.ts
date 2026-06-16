@@ -51,6 +51,13 @@ import {
 } from '@/lib/hubstaff/calendar-column-dedupe';
 import { phpHourlyPayFromSeconds } from '@/lib/payroll/money-php';
 import { fetchAllRateHistory, resolveRateAsOfDate } from '@/lib/payroll/rate-history';
+import { listPayStructures } from '@/lib/supabase/pay-structures-db';
+import {
+  buildCatalogRateIndex,
+  resolveEmployeeCatalogRate,
+  resolveDeptCatalogRate,
+} from '@/lib/payroll/resolve-rate';
+import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
 
 const NON_DATE_COLS = new Set([
   'id',
@@ -357,6 +364,11 @@ export interface MemberMonthlyPay {
   hasRate: boolean;
   regularRate: number | null;
   otRate: number | null;
+  /** True when `regularRate`/`otRate` came from a Payment Catalog structure
+   *  (the live-cycle override) rather than the sheet/history. PHP-equivalent. */
+  rateFromCatalog: boolean;
+  /** Native currency of the catalog rate ('USD' when a USD structure applied). */
+  rateCurrency: 'PHP' | 'USD' | null;
   startDate: string | null;
   department: string | null;
   weeks: MemberMonthlyPayWeek[];
@@ -433,13 +445,17 @@ export async function computeMemberMonthlyPay(args: {
 
   // Step 1: Fetch master + rates + PAB overrides in parallel. We need the master
   // row first to know this employee's alias emails before querying Hubstaff.
-  const [masterMin, rates, pabOverridesValue, rateHistory, holidaySettings] = await Promise.all([
-    fetchMasterRowsForEmail(new Set([emailNorm])),
-    getEmployeeHourlyRatesRows(),
-    getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
-    fetchAllRateHistory(),
-    getAppSettings([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY]),
-  ]);
+  const [masterMin, rates, pabOverridesValue, rateHistory, holidaySettings, fxValue, payStructuresResult] =
+    await Promise.all([
+      fetchMasterRowsForEmail(new Set([emailNorm])),
+      getEmployeeHourlyRatesRows(),
+      getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
+      fetchAllRateHistory(),
+      getAppSettings([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY]),
+      getAppSetting('usd_to_php_rate'),
+      listPayStructures(),
+    ]);
+  const fxRate = effectiveUsdToPhpRateFromStored(fxValue);
 
   const holidayEnabled =
     holidaySettings[US_HOLIDAYS_ENABLED_KEY] == null ? true : holidaySettings[US_HOLIDAYS_ENABLED_KEY] === 'true';
@@ -482,8 +498,31 @@ export async function computeMemberMonthlyPay(args: {
     const rpe = normEmail(r.personal_email);
     return (rwe && aliasNorms.has(rwe)) || (rpe && aliasNorms.has(rpe));
   });
-  const regularRate = rateRow ? parseRateText(rateRow.regular_rate) : null;
-  const otRate = rateRow ? parseRateText(rateRow.ot_rate) : null;
+  const sheetRegularRate = rateRow ? parseRateText(rateRow.regular_rate) : null;
+  const sheetOtRate = rateRow ? parseRateText(rateRow.ot_rate) : null;
+
+  // Payment Catalog override (source of truth). Applied "live cycle only": the
+  // catalog has no effective date, so we overlay it only when the viewed month
+  // is the current or a future month — past months keep resolving from dated
+  // rate history so historical estimates stay accurate. Department-scoped
+  // structures are matched off the master row's department.
+  const nowForMonth = new Date();
+  const viewedIsCurrentOrFuture =
+    args.year > nowForMonth.getFullYear() ||
+    (args.year === nowForMonth.getFullYear() && args.month >= nowForMonth.getMonth());
+  // Priority: individual (employee) catalog → sheet rate → department base.
+  const catIdx = buildCatalogRateIndex(payStructuresResult.structures);
+  const empCat = viewedIsCurrentOrFuture ? resolveEmployeeCatalogRate(catIdx, aliasNorms, fxRate) : null;
+  const deptCat = viewedIsCurrentOrFuture
+    ? resolveDeptCatalogRate(catIdx, masterRow?.department ?? rateRow?.department ?? null, fxRate)
+    : null;
+
+  const hasSheet = sheetRegularRate != null || sheetOtRate != null;
+  // Department base only fills in when the employee has no sheet rate at all.
+  const baseReg = hasSheet ? sheetRegularRate : (deptCat?.regPhp ?? null);
+  const baseOt = hasSheet ? sheetOtRate : (deptCat?.otPhp ?? null);
+  const regularRate = empCat?.regPhp ?? baseReg;
+  const otRate = empCat?.otPhp ?? baseOt;
   const hasRates = regularRate != null || otRate != null;
   const mesaMember = rateRow?.mesa_member === true;
   // Per-week MESA contribution. When the `mesa_start_date` column lands on
@@ -637,9 +676,12 @@ export async function computeMemberMonthlyPay(args: {
         weekWeekendOt += dayOt;
       }
 
-      const resolved = resolveRateAsOfDate(empHist, cell.date);
-      const dayReg$ = resolved?.regularRate ?? regularRate;
-      const dayOt$  = resolved?.otRate      ?? otRate;
+      // An individual catalog rate wins over the per-day history; otherwise
+      // resolve the rate effective on that date (the sheet layer), falling back
+      // to the cache rate / department base.
+      const resolved = empCat ? null : resolveRateAsOfDate(empHist, cell.date);
+      const dayReg$ = empCat ? empCat.regPhp : (resolved?.regularRate ?? regularRate);
+      const dayOt$  = empCat ? empCat.otPhp  : (resolved?.otRate      ?? otRate);
       if (dayReg$ != null) {
         anyRegRateThisWeek = true;
         const pay = phpHourlyPayFromSeconds(dayReg$, dayReg);
@@ -786,6 +828,8 @@ export async function computeMemberMonthlyPay(args: {
       hasRate: hasRates,
       regularRate,
       otRate,
+      rateFromCatalog: empCat != null,
+      rateCurrency: empCat?.currency ?? (hasSheet ? null : deptCat?.currency ?? null),
       startDate: masterRow?.start_date ?? null,
       department: masterRow?.department ?? null,
       weeks,

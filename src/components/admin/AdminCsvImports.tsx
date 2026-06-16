@@ -108,6 +108,7 @@ interface RatesSheetSyncResponse {
   skippedNoWorkEmail?: number;
   skippedNoRate?: number;
   uploadId?: string;
+  disabled?: boolean;
   error?: string;
 }
 
@@ -615,6 +616,13 @@ export default function AdminCsvImports() {
     try {
       const res = await fetch('/api/cron/sync-rates-from-sheet', { method: 'POST' });
       const json = (await res.json()) as RatesSheetSyncResponse;
+      if (json.disabled) {
+        const message =
+          json.error ?? 'Rates sync is disabled — rates are managed in the Payment Catalog.';
+        setResult('rates', { kind: 'idle' });
+        toast.info('Rates sync disabled', { description: message });
+        return;
+      }
       if (!res.ok || !json.success) {
         const message = json.error ?? res.statusText ?? 'Google Sheet sync failed';
         setResult('rates', { kind: 'error', fileName: synthFileName, message });

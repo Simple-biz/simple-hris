@@ -1003,8 +1003,14 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
    * contains **only this month’s days**, then the usual 40h regular cap applies per bucket.
    */
   const monthPayEstimate = useMemo(() => {
-    const cacheRegularRate = parseRateText(rate?.regular_rate);
-    const cacheOtRate = parseRateText(rate?.ot_rate);
+    // The Payment Catalog is the source of truth. When it covers this employee
+    // for the viewed (live) month, server-side member-monthly-pay reports the
+    // catalog rate (PHP-equivalent) and `rateFromCatalog: true` — use it for
+    // every day and bypass the per-day history, mirroring the server. Otherwise
+    // fall back to the sheet cache rate.
+    const catalogActive = memberPay?.rateFromCatalog === true;
+    const cacheRegularRate = catalogActive ? memberPay?.regularRate ?? null : parseRateText(rate?.regular_rate);
+    const cacheOtRate = catalogActive ? memberPay?.otRate ?? null : parseRateText(rate?.ot_rate);
 
     // Group every in-month day under its Mon–Sun week so the 40h regular cap
     // applies per week — matches `member-monthly-pay.ts` semantics.
@@ -1044,9 +1050,10 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         regularSec += dayReg;
         otSec += dayOt;
 
-        // Per-day rate resolution: history wins; fall back to the cache row
-        // (today's rate) when no history entry covers this day.
-        const resolved = resolveRateAsOfLocal(rateHistory, d.date);
+        // Per-day rate resolution: catalog (when active) wins for every day;
+        // otherwise history wins, falling back to the cache row (today's rate)
+        // when no history entry covers this day.
+        const resolved = catalogActive ? null : resolveRateAsOfLocal(rateHistory, d.date);
         const dayRegRate = resolved?.regularRate ?? cacheRegularRate;
         const dayOtRate  = resolved?.otRate      ?? cacheOtRate;
         if (dayRegRate != null) {
@@ -1078,7 +1085,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
       otRate: cacheOtRate,
       hasHours: monthAllDaysTotalSeconds > 0,
     };
-  }, [rate, rateHistory, mergedHoursByDateKey, monthStart, monthEnd, monthAllDaysTotalSeconds]);
+  }, [rate, rateHistory, mergedHoursByDateKey, monthStart, monthEnd, monthAllDaysTotalSeconds, memberPay]);
 
   /**
    * PAB evaluation window for the viewed month. Uses the accounting-set override

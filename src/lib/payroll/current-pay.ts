@@ -51,6 +51,12 @@ import {
   pabMonthFromWeekStart,
 } from "@/lib/payroll/dispatch-bonuses";
 import { fetchAllRateHistory, resolveRateAsOfDate, type RateHistoryByEmail } from "@/lib/payroll/rate-history";
+import { listPayStructures } from "@/lib/supabase/pay-structures-db";
+import {
+  buildCatalogRateIndex,
+  resolveEmployeeCatalogRate,
+  resolveDeptCatalogRate,
+} from "@/lib/payroll/resolve-rate";
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -297,6 +303,10 @@ function computeProratedRowPay(
    *  the department's 7-day pay week, so an 8-day Sun→Sun upload contributes
    *  exactly one week. */
   payWindow?: { start: Date; end: Date } | null,
+  /** Catalog override (PHP-equivalent). When present, the Payment Catalog is the
+   *  source of truth: every day is paid at this rate, bypassing the per-day rate
+   *  history. Absent → resolve per-day from history with `fallbackRate`. */
+  rateOverride?: { reg: number | null; ot: number | null } | null,
 ): {
   regularPayPHP: number | null;
   otPayPHP: number | null;
@@ -340,9 +350,17 @@ function computeProratedRowPay(
   let anyOtRate = false;
 
   for (const d of days) {
-    const resolved = resolveRateAsOfDate(empHist, d.date);
-    const reg = resolved?.regularRate ?? fallbackRate?.reg ?? null;
-    const ot = resolved?.otRate ?? fallbackRate?.ot ?? null;
+    let reg: number | null;
+    let ot: number | null;
+    if (rateOverride) {
+      // Payment Catalog wins over the per-day history rate.
+      reg = rateOverride.reg;
+      ot = rateOverride.ot;
+    } else {
+      const resolved = resolveRateAsOfDate(empHist, d.date);
+      reg = resolved?.regularRate ?? fallbackRate?.reg ?? null;
+      ot = resolved?.otRate ?? fallbackRate?.ot ?? null;
+    }
     if (reg != null) anyRegRate = true;
     if (ot != null) anyOtRate = true;
 
@@ -395,6 +413,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     budgetRequestsResult,
     giftPaymentsResult,
     approvedDisputeDates,
+    payStructuresResult,
   ] = await Promise.all([
     fetchHubstaffRowsOrdered(),
     getEmployeeHourlyRatesRows(),
@@ -412,6 +431,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     supabase
       ? fetchAllApprovedDisputes(supabase).then((m) => mergeApprovedTimeAdjustments(supabase, m))
       : Promise.resolve(new Map<string, Map<string, number | null>>()),
+    listPayStructures(),
   ]);
 
   // Deferred: the full-table Hubstaff scan (every row, every upload) is ONLY
@@ -432,6 +452,9 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
   // hubstaff row keyed on either still resolves to a rate.
   const rateByEmail = new Map<string, { reg: number | null; ot: number | null }>();
   const mesaEmails = new Set<string>();
+  // email → department NAME, so the catalog's department-scoped pay structures
+  // can be resolved for employees who have no per-person structure.
+  const deptByEmail = new Map<string, string>();
   for (const r of rates.rows) {
     const reg = parseRateText(r.regular_rate);
     const ot = parseRateText(r.ot_rate);
@@ -440,11 +463,22 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     const entry = { reg, ot };
     if (we) rateByEmail.set(we, entry);
     if (pe && !rateByEmail.has(pe)) rateByEmail.set(pe, entry);
+    if (r.department) {
+      if (we && !deptByEmail.has(we)) deptByEmail.set(we, r.department);
+      if (pe && !deptByEmail.has(pe)) deptByEmail.set(pe, r.department);
+    }
     if (r.mesa_member === true) {
       if (we) mesaEmails.add(we);
       if (pe) mesaEmails.add(pe);
     }
   }
+
+  // Payment Catalog drives rates at compute time with priority: individual
+  // (employee) structure → sheet rate → department base. This is the live
+  // dispatch cycle, so the overlay applies to every day — "live cycle only"
+  // historical gating lives in the dashboard estimate path
+  // (member-monthly-pay.ts), not here.
+  const catalogIndex = buildCatalogRateIndex(payStructuresResult.structures);
 
   // ── Bonus prep ───────────────────────────────────────────────────────
   // 1. Determine the dispatch week's date range. Two paths:
@@ -608,10 +642,23 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     const em = normEmail(mapped.email);
     if (!em) continue;
 
-    const rate = rateByEmail.get(em);
+    const sheetRate = rateByEmail.get(em);
     const isHslEmp = hslEmails.has(em);
-    const reg = rate?.reg ?? null;
-    const ot = rate?.ot ?? null;
+    // Priority: individual (employee) catalog → sheet rate → department base.
+    // PHP-equivalent (USD converted at fx). The individual catalog rate is the
+    // only one that OVERRIDES the per-day history; the department rate is purely
+    // a fallback for employees with no sheet rate at all.
+    const empCat = resolveEmployeeCatalogRate(catalogIndex, em, fxRate);
+    const deptCat = resolveDeptCatalogRate(catalogIndex, deptByEmail.get(em) ?? null, fxRate);
+    const catalogOverride = empCat ? { reg: empCat.regPhp, ot: empCat.otPhp } : null;
+    const hasSheet = sheetRate != null && (sheetRate.reg != null || sheetRate.ot != null);
+    const baseRate = hasSheet
+      ? sheetRate
+      : deptCat
+        ? { reg: deptCat.regPhp, ot: deptCat.otPhp }
+        : sheetRate;
+    const reg = empCat?.regPhp ?? baseRate?.reg ?? null;
+    const ot = empCat?.otPhp ?? baseRate?.ot ?? null;
 
     // Prorate pay per day using the rate-history table — handles mid-cycle
     // promotions / department transfers where the rate flipped on a specific
@@ -630,7 +677,15 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     const rowResolved = sourceFileForRow
       ? resolveCanonicalColumnsToIso(raw, sourceFileForRow)
       : raw;
-    const prorated = computeProratedRowPay(rowResolved, rateHistory, em, rate, isHslEmp, payWindow);
+    const prorated = computeProratedRowPay(
+      rowResolved,
+      rateHistory,
+      em,
+      baseRate,
+      isHslEmp,
+      payWindow,
+      catalogOverride,
+    );
 
     // Hours: when per-day ISO columns exist, report the pay-week-clamped totals
     // (so an 8-day Sun→Sun upload counts only this department's 7 days). Fall

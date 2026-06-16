@@ -1,17 +1,27 @@
 # Bonus Catalog
 
-An Accounting tab for authoring reusable custom bonuses -- either a flat peso
-amount or an Excel-style formula -- and assigning them either department-wide
-("common") or to a specific employee. As of the 2026-06 rework it is **database-
-backed** (moved off `app_settings`) so a teammate's edits show up live, and it
-ships with a real spreadsheet formula engine.
+An Accounting tab (renamed **Payment Catalog**) covering two concerns:
 
-> Scope today: this is a **standalone authoring tool**. The bonuses defined here
-> are not yet wired into the Payroll Wizard / paystubs.
+1. **Bonuses** -- author reusable custom bonuses (a flat peso amount or an
+   Excel-style formula) and assign them department-wide ("common") or to a
+   specific employee. As of the 2026-06 rework it is **database-backed** (moved
+   off `app_settings`) so a teammate's edits show up live, and it ships with a
+   real spreadsheet formula engine.
+2. **Pay Structures** -- the authoritative starting Regular/OT hourly rate for a
+   department or an individual, in PHP or USD (see
+   [§5 Pay Structures (authoritative rates)](#5-pay-structures-authoritative-rates)).
+
+> As of 2026-06-16 the Pay Structures are **authoritative for hourly rates** and
+> are wired into all pay math via a compute-time overlay
+> (`src/lib/payroll/resolve-rate.ts`). Bonuses defined here still drive the
+> non-HSL KPI Calculator -> `bonus_catalog_applied`, not the Wizard directly.
 
 Code: `src/components/accounting/BonusCatalog.tsx`,
 `src/lib/bonus-catalog/{types,formula}.ts`,
 `src/lib/supabase/bonus-catalog-db.ts`, `app/api/bonus-catalog/route.ts`.
+Pay Structures: `src/lib/payment-catalog/pay-structure.ts`,
+`src/lib/payroll/resolve-rate.ts`,
+`app/api/payment-catalog/pay-structures/route.ts`.
 Migration: `references/create_bonus_catalog.sql`.
 
 ---
@@ -104,3 +114,96 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
 
 Visibility is governed by the `bonus_catalog` feature in the Accounting view --
 see [rbac-feature-permissions.md](./rbac-feature-permissions.md).
+
+---
+
+## 5. Pay Structures (authoritative rates)
+
+A **Pay Structure** (`src/lib/payment-catalog/pay-structure.ts`) is the
+authoritative starting Regular + OT hourly rate, scoped either to a whole
+**department** ("common") or a single **employee** ("specific"), each carrying
+its own `currency` (`'PHP' | 'USD'`). OT is optional and defaults to `1.5x`
+the regular rate (`OT_MULTIPLIER`, `defaultOtRate()`). They are stored in
+`payment_catalog_pay_structures` and managed via
+`app/api/payment-catalog/pay-structures/route.ts` (`GET` list / `POST` upsert /
+`DELETE`, all `requireElevatedSession`).
+
+These structures are the **source of truth for hourly rates** across the app.
+HR onboarding reads department-scoped structures as the prefilled-rate source
+(`src/lib/supabase/department-rates.ts`), and -- as of 2026-06-16 -- all pay
+math resolves rates through them at compute time.
+
+### 5.1 Compute-time overlay (`src/lib/payroll/resolve-rate.ts`)
+
+The overlay is a **pure in-memory** layer -- it **never writes to the DB**. It
+builds a `CatalogRateIndex` from the flat `listPayStructures()` result:
+
+| Field | Keyed by | Holds |
+|---|---|---|
+| `byEmail` | normalized employee email | employee-scoped `PayStructure` |
+| `byDeptKey` | canonical department key | department-scoped `PayStructure` |
+
+(`buildCatalogRateIndex()`; later entries win on a key collision, matching
+upsert-by-id semantics.)
+
+Resolution is **two functions**, not one combined resolver:
+
+- `resolveEmployeeCatalogRate(index, emails, fxRate)` -- the INDIVIDUAL rate.
+  Tries each alias email (work / personal / alternates) against `byEmail`;
+  returns `null` when the person has no personal structure.
+- `resolveDeptCatalogRate(index, deptRaw, fxRate)` -- the DEPARTMENT BASE.
+  Normalizes the department name to a key (`normalizeDeptToKey`) and looks it up
+  in `byDeptKey`. This is the lowest-priority fallback, **not** an override.
+
+Callers interleave the existing HRIS sheet rate themselves:
+
+```
+effective = resolveEmployeeCatalogRate(...)   // INDIVIDUAL catalog rate
+         ?? sheetRate                          // SHEET / history (employee_rate_history / employee_hourly_rates)
+         ?? resolveDeptCatalogRate(...)        // DEPARTMENT base (only when no sheet rate at all)
+```
+
+So the **final priority is INDIVIDUAL -> SHEET -> DEPARTMENT base**. A person's
+negotiated individual rate always wins; a tenured employee with no personal
+entry keeps their existing raised sheet rate; the department structure only
+fills in for someone with no individual rate *and* no sheet rate (e.g. a brand-
+new hire).
+
+**Currency:** each structure resolves to a PHP-equivalent (`regPhp` / `otPhp`).
+A USD structure is multiplied by the FX rate at compute time; the native rate +
+`currency` are returned alongside (`regNative` / `otNative`) for display. The
+returned `ResolvedCatalogRate.source` records which scope matched
+(`'employee' | 'department'`).
+
+### 5.2 Live-cycle-only application
+
+Callers decide *when* to apply the overlay so historical replays/estimates stay
+accurate against dated rate history:
+
+| Consumer | When the overlay applies |
+|---|---|
+| `src/lib/payroll/current-pay.ts` (Payment Dispatch server mirror) | **Always** (the live dispatch cycle) |
+| `src/lib/payroll/member-monthly-pay.ts` (manager + employee monthly estimate) | Only when the viewed month is **current/future** (`viewedIsCurrentOrFuture`); exposes `rateFromCatalog` on its result |
+| `src/components/PayrollWizard.tsx` (client calc -> everything staged to dispatch) | Only when **`!isReplay`** |
+| `app/api/employee-hourly-rates` `?email=` self-view branch (Dashboard / Profile / Mesa) | Applied to the returned "your current rate" row (PHP-equivalent) |
+| `src/components/employee/EmployeeMyHours.tsx` calendar | **Indirectly** -- reads `member-monthly-pay`'s `rateFromCatalog` flag; when set, uses the catalog rate for every day and bypasses per-day history (mirrors the server). It does not call `resolve-rate.ts` directly. |
+
+### 5.3 USD corruption fix (`syncRateHistory` in the pay-structures route)
+
+When an **employee** structure is saved, `POST .../pay-structures` fires
+`syncRateHistory()` (fire-and-forget). For **USD** structures it now **skips**
+all PHP-denominated writes -- the `employee_rate_history` row, the
+`employee_hourly_rates` cache, the Google Sheet rates tab, and the Hogan Pay
+Plan sheet -- because writing a USD number into those PHP fields would corrupt
+them (and the sheet sync would later read it back as PHP). The overlay handles
+USD->PHP at pay-calc time instead. PHP structures still write all of the above.
+The employee `rate.change` notification fires for **both** currencies, and the
+payload now carries `currency`. Department-scoped saves never call
+`syncRateHistory` at all.
+
+### 5.4 Known gap
+
+The admin **Rates** tab (`Rates.tsx`) still displays the cached sheet number for
+catalog-covered employees because it reads the `employee_hourly_rates` cache
+table directly and does not apply the overlay. This is intentional / left as-is
+-- the cache is not authoritative for those rows.

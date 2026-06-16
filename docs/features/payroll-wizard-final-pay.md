@@ -5,7 +5,7 @@ accounting-editable adjustments layered on top. Covers the **Initial Calculation
 the **Additions** table (step 3), and the **HSL** table (step 5).
 
 Source: [`src/components/PayrollWizard.tsx`](../../src/components/PayrollWizard.tsx).
-Last substantive update: **2026-06-10**.
+Last substantive update: **2026-06-16**.
 
 ---
 
@@ -157,3 +157,21 @@ where lower("Work Email") in ('someone@simple.biz')
 
 This only flips the payroll flag; it does **not** write an opt-out record in the `mesa_requests`
 table (the opt-in/opt-out/disbursement workflow). Handle that separately if needed.
+
+## 7. Contractors step — Actions column gating
+
+Step 6 (`Contractors`) lists pending contractor invoices to review before dispatch. Each row's
+**Actions** column renders state-dependent buttons; the on-click handler is `updateInvoiceStatus`
+(`PayrollWizard.tsx:9852`), which PATCHes `/api/contractor/invoices/{id}` with the new status.
+
+The opposite button is **hidden once a decision is made** so a decided row only offers an undo:
+
+| `inv.status` | Buttons shown |
+| --- | --- |
+| `pending` | **Approve** + **Reject** (both gated on `inv.status === 'pending'`) |
+| `approved` | **Reset** only (Reject no longer lingers) |
+| `rejected` | **Reset** only (Approve no longer lingers) |
+
+**Reset** is gated on `inv.status !== 'pending'` and calls `updateInvoiceStatus(inv.id, 'pending')`,
+returning the row to pending and restoring both Approve and Reject. No backend
+approve/reject/reset logic changed — this is purely a render-time gate on the same three buttons.

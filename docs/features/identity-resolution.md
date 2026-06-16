@@ -90,6 +90,53 @@ alternates into its match set:
 - Backs `/api/manager/member-monthly-pay`, consumed by the manager dialog AND the
   employee My Hours view.
 
+### Tech Bonus 30-day-service gate (`startDateByEmail`)
+
+The Tech Bonus requires 30 days of service before an employee's first cycle, so
+the gate resolves each person's `start_date` by email. That lookup map
+(`startDateByEmail`) originally indexed only the master's primary **work** and
+**personal** email. An employee whose hours/rates key on an *alternate* work
+email therefore had no entry in the map and was silently skipped by the
+`if (!sd) continue` guard — eligible, but never granted the bonus.
+
+The fix folds alternates into the same map (the primary still wins; an alternate
+only fills a slot that isn't already taken):
+
+- **`src/components/PayrollWizard.tsx`** — the `startDateByEmail` memo now also
+  maps `emp.alternate_work_email` / `emp.alternate_work_email_2`
+  (`PayrollWizard.tsx:3756`, primary wins via `!map.has(a)`). It is consumed by:
+  - the `techBonusEligible` memo that drives the Additions tab's **Tech** pill
+    (`PayrollWizard.tsx:3795`), and
+  - `dispatchData`'s `hasThirtyDaysByWeek` (`PayrollWizard.tsx:4263`), which now
+    **reuses the single memoized map** instead of rebuilding a divergent one, with
+    `startDateByEmail` added to the memo deps (`PayrollWizard.tsx:4396`). This
+    keeps the staged paystub amount and the on-screen pill from drifting apart.
+- **`src/lib/payroll/current-pay.ts`** (the Payment Dispatch server mirror) —
+  `fetchMasterMin` now `SELECT`s `"Alternate Work Email"` /
+  `"Alternate Work Email 2"` (`current-pay.ts:235`), and the server-side
+  `startDateByEmail` bridges them the same way (`current-pay.ts:570`).
+
+**No change needed** elsewhere: `member-monthly-pay.ts` already bridges alternate
+work emails (see above), and both employee dashboards already resolve the
+employee's own record across all of their emails (work + personal + alternates).
+
+#### Data fix — Sheen Gobalani (PENDING)
+
+The trigger case: Kyle Sheen "Sheen" Gobalani's master row carried a vestigial
+primary Work Email `shannong@simple.biz` while every operational system (Hubstaff
+hours, `employee_hourly_rates` rate row) keyed her on `sheeng@simple.biz`, which
+sat in her *Alternate* slot. The lookup fix above resolves her start date in code;
+`references/fix_sheen_gobalani_work_email.sql` (**PENDING**) makes the data itself
+canonical by swapping the two — `Work Email → sheeng@simple.biz`,
+`Alternate Work Email → shannong@simple.biz` — keyed on the old work email +
+Personal Email `gobalanik@gmail.com` + `Department = 'Accounting Team'`. It is
+non-lossy (old value preserved as the alternate), reversible (rollback block
+included), and idempotent.
+
+> **Gotcha:** if the MASTERLIST Google Sheet still lists `shannong@simple.biz` as
+> her work email, a future sheet sync could re-introduce it. Update the Sheet too
+> for the correction to be durable.
+
 ### Employee dashboard
 - `EmployeeMyHours` folds alternates into `aliasEmails` (the calendar match set)
   and resolves its rate row against a master-derived alias set. The rate match

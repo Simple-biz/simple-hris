@@ -35,7 +35,7 @@ docs/
 | [paystub-dispatch.md](./features/paystub-dispatch.md) | Paystub generation + dispatch |
 | [payroll-wizard-final-pay.md](./features/payroll-wizard-final-pay.md) | Initial Calculation → Final pay: formula, Adj. (signed delta) + Orphanage columns, Sun→Sat pay weeks + cross-upload merge, MESA flag |
 | [bonus-calculator.md](./features/bonus-calculator.md) | Department + HSL bonus calculators |
-| [bonus-catalog.md](./features/bonus-catalog.md) | Reusable custom bonuses (flat or Excel-formula engine), DB-backed, assigned per-dept or per-employee |
+| [bonus-catalog.md](./features/bonus-catalog.md) | Payment Catalog: reusable custom bonuses (flat or Excel-formula engine) + Pay Structures, now **authoritative for hourly rates** via a compute-time overlay (`src/lib/payroll/resolve-rate.ts`, priority individual → sheet → dept base) |
 | [csv-imports.md](./features/csv-imports.md) | CSV ingest + Google Sheet sync (Admin tab, endpoints, env, schema) |
 | [rbac-feature-permissions.md](./features/rbac-feature-permissions.md) | Role grants + per-tab Hidden/View/Edit overlay; Admin-provisioned, enforced across all views + API; force-logout/session reset |
 | [accounting-cobrowse.md](./features/accounting-cobrowse.md) | Live "Observe" screen mirroring in Accounting (rrweb over Realtime), built on the collab layer |
@@ -44,6 +44,8 @@ docs/
 | [system-diagnostics.md](./features/system-diagnostics.md) | Admin diagnostics service map + probes |
 | [time-adjustment-requests.md](./features/time-adjustment-requests.md) | Employee time adjustment requests: wizard, evidence upload, Accounting review, pay wiring |
 | [identity-resolution.md](./features/identity-resolution.md) | Master-authoritative identity + Department; alternate-work-email bridging for hours/rate matching across Rates & Profiles, Payroll Wizard, manager + employee dashboards |
+| [manager-my-team.md](./features/manager-my-team.md) | Manager portal → My Team: roster, rates/pay hidden on every surface, Recognition-medal card, attendance-only Hours tab (HSL rule via `department` prop) |
+| [onboarding-ip-assignment.md](./features/onboarding-ip-assignment.md) | IP Assignment / Talent Release / Copyright Waiver as the first public onboarding step; signed PDF via pdf-lib stored in `hr-onboarding-files`; HR IP Assignment tab; `/onboarding/preview` no-save preview mode (migration #73 PENDING) |
 | [paystub.html](./features/paystub.html) | Paystub HTML template |
 
 ## design/ -- UI/UX standards
@@ -80,6 +82,7 @@ docs/
 
 | Doc |
 |---|
+| [audit-2026-06-16.md](./audits/audit-2026-06-16.md) |
 | [audit-2026-05-07.md](./audits/audit-2026-05-07.md) |
 | [audit-2026-04-25.md](./audits/audit-2026-04-25.md) |
 | [audit-2026-04-21.md](./audits/audit-2026-04-21.md) |

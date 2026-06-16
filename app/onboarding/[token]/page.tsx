@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   CloudUpload,
   Eraser,
+  FileText,
   Loader2,
   PartyPopper,
   Shield,
@@ -19,20 +20,31 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Toaster } from '@/components/ui/sonner';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import type { OnboardingPaymentMethod } from '@/lib/supabase/hr-onboarding-submissions';
 import {
   AGREEMENT_TITLES,
   ContractWorkerText,
+  IntellectualPropertyText,
   NonSolicitationText,
   PrivacyText,
 } from '@/components/onboarding/agreement-texts';
+import {
+  IP_ASSIGNMENT_ACKNOWLEDGEMENT,
+  formatLongDate,
+  todayLocalIso,
+} from '@/lib/onboarding/ip-assignment-text';
 
 type PriorData = {
   full_name: string | null;
   phone: string | null;
   email: string | null;
   location: string | null;
+  ip_agreement_agreed: boolean | null;
+  ip_agreement_name: string | null;
+  ip_agreement_signature: string | null;
+  ip_agreement_date: string | null;
   non_solicitation_signature: string | null;
   privacy_signature: string | null;
   w8ben_applicable: boolean | null;
@@ -69,6 +81,10 @@ type FormState = {
   phone: string;
   email: string;
   location: string;
+  ip_agreement_agreed: boolean;
+  ip_agreement_name: string;
+  ip_agreement_signature: string;
+  ip_agreement_date: string; // ISO yyyy-mm-dd, stamped on load
   non_solicitation_signature: string;
   privacy_signature: string;
   w8ben_applicable: boolean | null; // null = not chosen yet
@@ -95,6 +111,10 @@ const emptyForm: FormState = {
   phone: '',
   email: '',
   location: '',
+  ip_agreement_agreed: false,
+  ip_agreement_name: '',
+  ip_agreement_signature: '',
+  ip_agreement_date: '',
   non_solicitation_signature: '',
   privacy_signature: '',
   w8ben_applicable: null,
@@ -116,6 +136,7 @@ const emptyForm: FormState = {
 };
 
 const STEP_TITLES = [
+  'Intellectual Property',
   'Welcome',
   'Non-Solicitation',
   'Privacy Agreement',
@@ -124,22 +145,55 @@ const STEP_TITLES = [
   'Contract Worker Agreement',
 ] as const;
 
+// Directional slide+fade for step navigation. `direction` is +1 going forward
+// (Next) and -1 going back (Previous): the incoming step enters from the side
+// you're heading toward, the outgoing step leaves the opposite way.
+const STEP_VARIANTS = {
+  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 44 : -44 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -44 : 44 }),
+};
+
 export default function OnboardingFormPage() {
   const params = useParams<{ token: string }>();
   const token = params?.token;
+  // Reserved token that renders the form as a no-save preview so HR can see
+  // exactly what the onboarding paperwork looks like (linked from HR > Onboarding).
+  // Real invite tokens are long random strings, so this never collides.
+  const isPreview = token === 'preview';
 
   const [link, setLink] = useState<LinkInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [step, setStep] = useState(0);
+  // +1 when moving forward, -1 when moving back — drives the slide direction.
+  const [direction, setDirection] = useState(0);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [reviewing, setReviewing] = useState(false);
 
+  // Honour the OS "reduce motion" setting — fall back to a plain cross-fade.
+  const reduceMotion = useReducedMotion();
+
   useEffect(() => {
     if (!token) return;
+    // Preview mode: skip the API entirely and render an empty sample form.
+    if (isPreview) {
+      setLink({
+        id: 'preview',
+        status: 'pending',
+        invite_name: null,
+        invite_personal_email: null,
+        invite_department: null,
+        invite_note: null,
+        submitted_at: null,
+        priorData: null,
+      });
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -159,6 +213,10 @@ export default function OnboardingFormPage() {
             phone: prior.phone ?? '',
             email: prior.email ?? '',
             location: prior.location ?? '',
+            ip_agreement_agreed: prior.ip_agreement_agreed ?? false,
+            ip_agreement_name: prior.ip_agreement_name ?? prior.full_name ?? '',
+            ip_agreement_signature: prior.ip_agreement_signature ?? '',
+            ip_agreement_date: prior.ip_agreement_date ?? todayLocalIso(),
             non_solicitation_signature: prior.non_solicitation_signature ?? '',
             privacy_signature: prior.privacy_signature ?? '',
             w8ben_applicable: prior.w8ben_applicable ?? null,
@@ -185,7 +243,13 @@ export default function OnboardingFormPage() {
           // New submission — seed invite fields as hints.
           if (json.row?.invite_name) {
             const tokens = (json.row.invite_name ?? '').trim().split(/\s+/).filter(Boolean);
-            setForm((f) => ({ ...f, first_name: tokens[0] ?? '', last_name: tokens.slice(1).join(' ') }));
+            setForm((f) => ({
+              ...f,
+              first_name: tokens[0] ?? '',
+              last_name: tokens.slice(1).join(' '),
+              // Pre-fill the IP document's name from the invite too.
+              ip_agreement_name: f.ip_agreement_name || (json.row!.invite_name ?? ''),
+            }));
           }
           if (json.row?.invite_personal_email) {
             setForm((f) => ({
@@ -207,7 +271,14 @@ export default function OnboardingFormPage() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, isPreview]);
+
+  // Stamp the IP agreement with the local day the link was opened — client-side
+  // (in an effect) so it reflects the hire's timezone, never the server's UTC
+  // day. Only fills when empty, so a prior-submitted date is preserved.
+  useEffect(() => {
+    setForm((f) => (f.ip_agreement_date ? f : { ...f, ip_agreement_date: todayLocalIso() }));
+  }, []);
 
   const update = useCallback(<K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -216,24 +287,29 @@ export default function OnboardingFormPage() {
   const validateStep = useCallback((s: number): string | null => {
     switch (s) {
       case 0:
+        if (!form.ip_agreement_name.trim()) return 'Please enter your name on the Intellectual Property Assignment.';
+        if (!form.ip_agreement_agreed) return 'Please tick the box to acknowledge the Intellectual Property Assignment.';
+        if (!form.ip_agreement_signature) return 'Please sign the Intellectual Property Assignment.';
+        return null;
+      case 1:
         if (!form.first_name.trim()) return 'Please enter your first name.';
         if (!form.last_name.trim()) return 'Please enter your last name.';
         if (!form.phone.trim()) return 'Please enter your phone number.';
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return 'Please enter a valid email.';
         return null;
-      case 1:
+      case 2:
         if (!form.non_solicitation_signature) return 'Please sign the non-solicitation agreement.';
         return null;
-      case 2:
+      case 3:
         if (!form.privacy_signature) return 'Please sign the privacy agreement.';
         return null;
-      case 3:
+      case 4:
         if (form.w8ben_applicable === null) return 'Please indicate whether you are based outside the US.';
         if (form.w8ben_applicable && !form.w8ben_file_path && !form.w8ben_file_name) {
           return 'Please upload your completed W-8BEN form.';
         }
         return null;
-      case 4:
+      case 5:
         if (form.payment_method == null) return 'Please choose a payment method.';
         if (form.payment_method === 'hurupay') {
           if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.hurupay_email.trim())) {
@@ -252,7 +328,7 @@ export default function OnboardingFormPage() {
           if (!form.bank_full_address.trim()) return 'Please re-enter your full address in one cell.';
         }
         return null;
-      case 5:
+      case 6:
         if (!form.contract_signature) return 'Please sign the contract worker agreement.';
         if (!form.contract_date) return 'Please enter the date of signature.';
         return null;
@@ -262,25 +338,81 @@ export default function OnboardingFormPage() {
   }, [form]);
 
   const goNext = useCallback(() => {
-    const err = validateStep(step);
-    if (err) {
-      toast.error(err);
-      return;
+    // In preview, skip validation so HR can page through every step freely.
+    if (!isPreview) {
+      const err = validateStep(step);
+      if (err) {
+        toast.error(err);
+        return;
+      }
     }
+    // Leaving the IP step: seed the Welcome name from the name on the IP
+    // document so the hire doesn't have to type it twice.
+    if (step === 0) {
+      setForm((f) => {
+        if (f.first_name.trim() || !f.ip_agreement_name.trim()) return f;
+        const tokens = f.ip_agreement_name.trim().split(/\s+/).filter(Boolean);
+        return { ...f, first_name: tokens[0] ?? '', last_name: tokens.slice(1).join(' ') };
+      });
+    }
+    setDirection(1);
     setStep((s) => Math.min(STEP_TITLES.length - 1, s + 1));
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [step, validateStep]);
+  }, [step, validateStep, isPreview]);
 
   const goPrev = useCallback(() => {
+    setDirection(-1);
     setStep((s) => Math.max(0, s - 1));
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
+  // Preview-mode dry run: render the REAL signed IP Assignment PDF from what the
+  // tester entered and open it in a new tab. Nothing is written to the database
+  // or storage — this just exercises the exact document the hire will produce.
+  const generateIpPreviewPdf = useCallback(async () => {
+    if (!form.ip_agreement_name.trim() || !form.ip_agreement_signature) {
+      toast.error('Enter your name and sign the agreement first.');
+      setDirection(-1);
+      setStep(0);
+      if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/onboarding/ip-assignment-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: form.ip_agreement_name.trim(),
+          signatureDataUrl: form.ip_agreement_signature,
+          dateIso: form.ip_agreement_date,
+        }),
+      });
+      if (!res.ok) throw new Error(`Failed to render PDF (HTTP ${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      toast.success('Generated the signed IP Assignment PDF — opened in a new tab.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to generate preview PDF');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [form.ip_agreement_name, form.ip_agreement_signature, form.ip_agreement_date]);
+
   const submitForm = useCallback(async () => {
-    for (let i = 0; i <= 5; i++) {
+    if (isPreview) {
+      // In preview there's no real submission — instead render the signed IP
+      // Assignment PDF so the tester can see the generated document.
+      await generateIpPreviewPdf();
+      return;
+    }
+    for (let i = 0; i <= 6; i++) {
       const err = validateStep(i);
       if (err) {
         toast.error(err);
+        setDirection(i >= step ? 1 : -1);
         setStep(i);
         return;
       }
@@ -295,6 +427,10 @@ export default function OnboardingFormPage() {
           phone: form.phone.trim(),
           email: form.email.trim(),
           location: form.location.trim() || null,
+          ip_agreement_agreed: form.ip_agreement_agreed,
+          ip_agreement_name: form.ip_agreement_name.trim(),
+          ip_agreement_signature: form.ip_agreement_signature,
+          ip_agreement_date: form.ip_agreement_date,
           non_solicitation_signature: form.non_solicitation_signature,
           privacy_signature: form.privacy_signature,
           w8ben_applicable: form.w8ben_applicable,
@@ -330,7 +466,7 @@ export default function OnboardingFormPage() {
     } finally {
       setSubmitting(false);
     }
-  }, [form, token, validateStep]);
+  }, [form, token, validateStep, isPreview, generateIpPreviewPdf, step]);
 
   if (loading) {
     return (
@@ -369,8 +505,14 @@ export default function OnboardingFormPage() {
   const progressPct = Math.round(((step + 1) / STEP_TITLES.length) * 100);
 
   return (
-    <main className="min-h-dvh bg-gradient-to-br from-sky-50 via-white to-emerald-50 px-3 py-6 sm:px-6 sm:py-10">
+    <main className="onboarding-public min-h-dvh bg-gradient-to-br from-sky-50 via-white to-emerald-50 px-3 py-6 sm:px-6 sm:py-10">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
+        {isPreview && (
+          <div className="flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-900 shadow-sm">
+            <Sparkles className="h-4 w-4 shrink-0 text-amber-600" />
+            Preview mode — this is what new hires see. Nothing here is saved or submitted.
+          </div>
+        )}
         {/* Brand header */}
         <header className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -407,14 +549,33 @@ export default function OnboardingFormPage() {
           </div>
         </div>
 
-        {/* Step content card */}
+        {/* Step content card. overflow-hidden clips the horizontal slide so a
+            transition never spawns a scrollbar. mode="wait" lets the outgoing
+            step finish leaving before the next one slides in. */}
         <section className="overflow-hidden rounded-2xl border border-emerald-100/80 bg-white shadow-md ring-1 ring-emerald-500/5">
-          {step === 0 && <Step1Welcome form={form} update={update} link={link} />}
-          {step === 1 && <Step2NonSolicitation form={form} update={update} />}
-          {step === 2 && <Step3Privacy form={form} update={update} />}
-          {step === 3 && <Step4W8Ben token={token!} form={form} update={update} />}
-          {step === 4 && <Step5Payment form={form} update={update} />}
-          {step === 5 && <Step6Contract form={form} update={update} />}
+          <AnimatePresence mode="wait" initial={false} custom={direction}>
+            <motion.div
+              key={step}
+              custom={direction}
+              variants={
+                reduceMotion
+                  ? { enter: { opacity: 0 }, center: { opacity: 1 }, exit: { opacity: 0 } }
+                  : STEP_VARIANTS
+              }
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: reduceMotion ? 0.15 : 0.26, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {step === 0 && <StepIpAssignment form={form} update={update} preview={isPreview} onPreview={generateIpPreviewPdf} previewBusy={submitting} />}
+              {step === 1 && <Step1Welcome form={form} update={update} link={link} />}
+              {step === 2 && <Step2NonSolicitation form={form} update={update} />}
+              {step === 3 && <Step3Privacy form={form} update={update} />}
+              {step === 4 && <Step4W8Ben token={token!} form={form} update={update} preview={isPreview} />}
+              {step === 5 && <Step5Payment form={form} update={update} />}
+              {step === 6 && <Step6Contract form={form} update={update} />}
+            </motion.div>
+          </AnimatePresence>
         </section>
 
         {/* Footer with prev/next */}
@@ -447,7 +608,7 @@ export default function OnboardingFormPage() {
           ) : (
             <Button
               type="button"
-              className="bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:opacity-95"
+              className="bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:opacity-95 disabled:opacity-50"
               onClick={submitForm}
               disabled={submitting}
             >
@@ -456,7 +617,7 @@ export default function OnboardingFormPage() {
               ) : (
                 <Check className="mr-1.5 h-4 w-4" />
               )}
-              Submit
+              {isPreview ? 'Generate signed PDF' : 'Submit'}
             </Button>
           )}
         </footer>
@@ -468,6 +629,117 @@ export default function OnboardingFormPage() {
 
       <Toaster richColors position="top-center" />
     </main>
+  );
+}
+
+// ─── Step 0 — Intellectual Property Assignment (standalone first document) ──
+
+function StepIpAssignment({
+  form,
+  update,
+  preview,
+  onPreview,
+  previewBusy,
+}: {
+  form: FormState;
+  update: <K extends keyof FormState>(k: K, v: FormState[K]) => void;
+  preview?: boolean;
+  onPreview?: () => void;
+  previewBusy?: boolean;
+}) {
+  return (
+    <div className="space-y-5 p-5 sm:p-7">
+      <div>
+        <h2 className="text-xl font-bold text-zinc-900">{AGREEMENT_TITLES.intellectualProperty}</h2>
+        <p className="mt-1.5 text-sm leading-relaxed text-zinc-600">
+          Before we begin, please read this agreement in full. Tick the box, then print your name
+          and sign at the bottom to continue.
+        </p>
+      </div>
+
+      {/* The agreement copy — the same document, read top to bottom */}
+      <div className="max-h-[420px] overflow-y-auto rounded-xl border border-zinc-100 bg-zinc-50/60 p-4 sm:p-5">
+        <IntellectualPropertyText />
+      </div>
+
+      {/* Acknowledgement checkbox — mirrors the box on the printed document */}
+      <button
+        type="button"
+        onClick={() => update('ip_agreement_agreed', !form.ip_agreement_agreed)}
+        aria-pressed={form.ip_agreement_agreed}
+        className={cn(
+          'flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-all',
+          form.ip_agreement_agreed
+            ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500/30'
+            : 'border-zinc-200 bg-white hover:border-emerald-200 hover:bg-emerald-50/40',
+        )}
+      >
+        <span
+          className={cn(
+            'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-all',
+            form.ip_agreement_agreed
+              ? 'border-emerald-600 bg-emerald-600 text-white'
+              : 'border-zinc-300 bg-white',
+          )}
+        >
+          {form.ip_agreement_agreed && <Check className="h-3.5 w-3.5" />}
+        </span>
+        <span className="text-sm font-medium leading-relaxed text-zinc-800">
+          {IP_ASSIGNMENT_ACKNOWLEDGEMENT}
+        </span>
+      </button>
+
+      {/* PARTICIPANT block — sign at the very bottom, exactly like the document */}
+      <div className="space-y-5 rounded-xl border border-emerald-100 bg-emerald-50/30 p-4 sm:p-5">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700/80">
+          Participant
+        </p>
+        <Field label="Name" required>
+          <Input
+            value={form.ip_agreement_name}
+            onChange={(e) => update('ip_agreement_name', e.target.value)}
+            placeholder="Your full legal name"
+            autoComplete="name"
+          />
+        </Field>
+        <Field label="Signature" required>
+          <SignaturePad
+            value={form.ip_agreement_signature}
+            onChange={(v) => update('ip_agreement_signature', v)}
+          />
+        </Field>
+        <Field label="Date">
+          <div className="flex h-9 items-center rounded-lg border border-zinc-200 bg-zinc-100/70 px-3 text-sm text-zinc-700">
+            {formatLongDate(form.ip_agreement_date) || '—'}
+          </div>
+          <p className="text-[11px] text-zinc-500">
+            Automatically set to the date you opened this link.
+          </p>
+        </Field>
+
+        {preview && (
+          <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/70 p-3">
+            <p className="mb-2 text-[11px] font-medium text-amber-900">
+              Preview test — render the signed PDF from what you entered above (nothing is saved).
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+              onClick={onPreview}
+              disabled={previewBusy}
+            >
+              {previewBusy ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="mr-1.5 h-4 w-4" />
+              )}
+              Generate signed PDF
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -663,15 +935,21 @@ function Step4W8Ben({
   token,
   form,
   update,
+  preview,
 }: {
   token: string;
   form: FormState;
   update: <K extends keyof FormState>(k: K, v: FormState[K]) => void;
+  preview?: boolean;
 }) {
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   async function handleFile(file: File) {
+    if (preview) {
+      toast.info('Uploads are disabled in preview mode.');
+      return;
+    }
     setUploading(true);
     try {
       const fd = new FormData();

@@ -20,7 +20,7 @@ The canonical employee directory. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEES
 | `Name` | text | Display name, used in ID generation + profile merge |
 | `Personal Email` | text | Primary identity key for payroll matching |
 | `Work Email` | text | Secondary identity key |
-| `Alternate Work Email` *(2026-05-21)* | text | gsuite alias a promoted employee (most often PM team) presents to customers; mail still routes to the primary work inbox. Synced from master sheet col F. Treated as an identity key in the profile merge + reserved by the HR work-email minter |
+| `Alternate Work Email` *(2026-05-21)* | text | gsuite alias a promoted employee (most often PM team) presents to customers; mail still routes to the primary work inbox. Synced from master sheet col F. Treated as an identity key in the profile merge + reserved by the HR work-email minter. *(2026-06-16)* Also read by `current-pay.ts` `fetchMasterMin` to bridge alternates in the Tech Bonus start-date lookup (see below) |
 | `Alternate Work Email 2` *(2026-05-21)* | text | Second alternate alias (master sheet col G). Same treatment as `Alternate Work Email` |
 | `Start Date` | text/date | Used to derive `YYMM` group for employee ID generation |
 | `Profile Photo URL` | text | Optional; uploaded photo (Supabase Storage public URL) |
@@ -39,6 +39,8 @@ The canonical employee directory. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEES
 - `references/add_alternate_work_emails_to_global_master_list.sql` *(2026-05-21)* — `ALTER TABLE` adds `"Alternate Work Email"` + `"Alternate Work Email 2"` + `CREATE OR REPLACE VIEW active_employees` so PostgREST exposes them. No backfill — populated by the next master-sheet sync. The sheet often heads both columns identically, which the name-based ingest can't disambiguate, so `resolveMasterColumnMapping` maps any header containing "alternate"+"email" to the two slots **positionally** (Nth sheet column → Nth DB slot).
 
 **Code-level robustness:** `fetchActiveEmployees` and `getEmployeeMasterRecord` both try the full select first and fall back to the base select if the new columns don't exist on the view yet (`/does not exist/i.test(error.message)` guard). The Profile page additionally always calls `/api/employee-master-record` as a parallel fetch and merges the address fields, so the Address panel surfaces even when the `active_employees` view is stale.
+
+**Tech Bonus start-date bridging *(2026-06-16)*:** `src/lib/payroll/current-pay.ts` `fetchMasterMin()` selects `Work Email`, `Personal Email`, `Alternate Work Email`, `Alternate Work Email 2`, `Start Date`, `Department`. The resulting `startDateByEmail` map indexes the primary work + personal emails **and both alternates** (primary always wins — alternates never overwrite). This lets an employee whose Hubstaff/rate rows key on an alias still satisfy the Tech Bonus 30-day-service gate (Global Master List is the identity source of truth). The wizard mirrors this in `PayrollWizard.tsx`. PENDING data fix `references/fix_sheen_gobalani_work_email.sql` promotes Sheen Gobalani's canonical work email; if the MASTERLIST Google Sheet still lists the old address, the next sheet sync could revert it.
 
 **Primary key:** A surrogate `id` (`bigint`, identity) is recommended so bulk CSV replace can delete all existing rows in batches (see `references/supabase_global_master_list.sql`).
 
@@ -63,6 +65,8 @@ The canonical employee directory. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEES
 ### 2. `employee_hourly_rates`
 
 Per-employee rate table. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE`.
+
+> **Rate source-of-truth change *(2026-06-16)*:** this table (together with `employee_rate_history`) is no longer the top of the rate hierarchy. The **Payment Catalog** (`payment_catalog_pay_structures`, §12) is now authoritative for hourly rates via a compute-time overlay (`src/lib/payroll/resolve-rate.ts`); `employee_hourly_rates` / `employee_rate_history` form the **middle "sheet" layer** in the priority chain `INDIVIDUAL catalog → SHEET (history/cache) → DEPARTMENT base`. The **Google Sheet rates sync no longer writes these tables** — `POST /api/cron/sync-rates-from-sheet` is short-circuited behind `RATES_SHEET_SYNC_DISABLED = true`, so the sheet layer is a frozen snapshot. The **manual CSV rates upload** (`POST /api/employee-hourly-rates-upload`) still writes pay. See [bonus-catalog.md](../features/bonus-catalog.md) for the overlay.
 
 **Columns used:**
 
@@ -251,6 +255,8 @@ Authoritative per-employee rate history. Powers mid-cycle rate prorating: when a
 
 **Relationship to `employee_hourly_rates`:** the `"Regular Rate"` / `"OT Rate"` columns on `employee_hourly_rates` are now a **denormalized cache of today's rate**. They're only updated when `effectiveDate <= today` — future-dated changes leave the cache stale until the date arrives. Payroll compute uses the history table.
 
+> **Now the "sheet" middle layer *(2026-06-16)*:** in the catalog overlay's priority chain (`INDIVIDUAL catalog → SHEET → DEPARTMENT base`, see §12), the rate resolved from `employee_rate_history` (and its `employee_hourly_rates` cache) is the **sheet** rate — the middle tier, below an individual catalog structure but above the department base. The frozen Google Sheet sync no longer writes here; only `POST /api/update-employee-rates` and the manual CSV upload do.
+
 **Who reads it:**
 - `src/lib/payroll/rate-history.ts → fetchAllRateHistory()` returns a `Map<email, sorted-desc-history-rows[]>`.
 - `src/lib/payroll/current-pay.ts → computeProratedRowPay()` resolves per-day rates during Payment Dispatch compute (40h/week regular cap applied chronologically).
@@ -380,6 +386,94 @@ The merge engine runs in six phases:
 4. Email address as fallback
 
 **Profile `id` format**: `e:<work_email>` or `e:<personal_email>` or `row:<index>`.
+
+---
+
+### 12. `payment_catalog_pay_structures` — authoritative rate source *(2026-06-16)*
+
+Source of truth for hourly rates. The table is persisted by the Payment Catalog → Pay Structure tab (`references/create_payment_catalog_pay_structures.sql`, migration #68); what changed this batch is that it became **authoritative for payroll math** via a *compute-time overlay* — nothing in the overlay writes back to the DB.
+
+**The overlay (`src/lib/payroll/resolve-rate.ts`):**
+- `buildCatalogRateIndex(structures)` → `CatalogRateIndex { byEmail, byDeptKey }` (employee-scoped structures indexed by normalized email; department-scoped by canonical dept key).
+- `resolveEmployeeCatalogRate(index, emails, fxRate)` — INDIVIDUAL rate, tries each alias email, returns `null` if none.
+- `resolveDeptCatalogRate(index, deptRaw, fxRate)` — DEPARTMENT base (lowest priority).
+- Two functions, **not** a single combined resolver. Callers interleave the sheet themselves: `effective = resolveEmployeeCatalogRate ?? sheetRate ?? resolveDeptCatalogRate`.
+
+**Priority:** `INDIVIDUAL (employee) catalog → SHEET (employee_rate_history / employee_hourly_rates) → DEPARTMENT base`. The department structure is a base/fallback for people with no individual rate — **not** an override.
+
+**Currency:** each structure carries `PHP` or `USD`; a USD rate is converted to its PHP-equivalent (× FX) at compute time, with the native rate + currency returned alongside for display.
+
+**Live-cycle-only application:** `current-pay.ts` always applies the overlay (live dispatch); `member-monthly-pay.ts` applies it only for current/future months; `PayrollWizard.tsx` applies it only when `!isReplay` so historical replays stay accurate.
+
+**Wired consumers:** `src/lib/payroll/current-pay.ts`, `src/components/PayrollWizard.tsx`, `src/lib/payroll/member-monthly-pay.ts`, `app/api/employee-hourly-rates` (`?email=` self-view branch), `src/components/employee/EmployeeMyHours.tsx`.
+
+> **USD corruption fix** in `app/api/payment-catalog/pay-structures/route.ts` (`syncRateHistory`): USD employee structures now SKIP the PHP sheet/history writes (the overlay handles USD→PHP) while still firing the employee notification (currency added to the payload).
+
+> **Known gap:** the admin Rates tab (`Rates.tsx`) still displays the cached sheet number for catalog-covered employees because it reads the cache table directly — intentionally left as-is.
+
+---
+
+### 13. `paystub_dispatch_queue` — per-employee paystub staging *(migration #72, PENDING)*
+
+> **PENDING:** `references/seed_paystub_dispatch_queue.sql` has not been confirmed run. The wizard's "Lock & Send" 500s until the table exists.
+
+One staged row per `(cycle, employee)` carrying the authoritative paystub payload the wizard computed (Adj./Orphanage/MESA/dept & KPI bonuses + manual overrides — none of which `current-pay.ts` can reproduce). Paystub emails are **no longer batch-sent** from the wizard; instead, when a person is marked Paid in Payment Dispatch the server looks up their one row and fires the n8n paystub webhook for just them. See [paystub-dispatch.md](../features/paystub-dispatch.md).
+
+**Columns:**
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | UUID PK | `gen_random_uuid()` |
+| `cycle_source_file` | TEXT NOT NULL | Hubstaff CSV filename — the per-week cycle key |
+| `recipient_email` | TEXT NOT NULL | WORK email (match key vs `payment_dispatches.recipient_email`); lower-cased via trigger |
+| `personal_email` | TEXT | Where the paystub is mailed |
+| `recipient_name` / `department_key` | TEXT | Snapshotted |
+| `amount_php` / `amount_usd` | NUMERIC(12,2) | For the Excluded tab even when no payload |
+| `pay_period` | JSONB | Top-level n8n `pay_period` block |
+| `payload` | JSONB | The exact `DispatchEmployee` object the old batch dispatch posted to n8n |
+| `excluded` | BOOLEAN NOT NULL DEFAULT false | Accounting marked "do not pay" in the wizard's Validation step → routes to Payment Dispatch → Excluded |
+| `exclude_reason` | TEXT | `'do_not_pay'` \| `'no_personal_email'` \| free text |
+| `sent_at` / `sent_by` / `send_count` / `last_error` | mixed | Paystub send tracking, stamped by the mark-paid send path |
+| `locked_at` / `locked_by` | TIMESTAMPTZ / TEXT | When the wizard locked + staged this cycle |
+| `created_at` / `updated_at` | TIMESTAMPTZ | |
+
+**Constraints:** `UNIQUE (cycle_source_file, recipient_email)` → idempotent re-stages via `ON CONFLICT … DO UPDATE`.
+
+**Indexes:** `(cycle_source_file)`, `LOWER(recipient_email)`, `(cycle_source_file, LOWER(recipient_email))`, `(cycle_source_file, excluded)`.
+
+**Triggers:** `paystub_queue_norm_email` (reuses `normalize_email_column('recipient_email')`); `paystub_queue_set_updated_at` (bumps `updated_at`). The migration **also re-asserts `app_settings` in the `supabase_realtime` publication** so the dispatch lock (below) fires live.
+
+**Who reads/writes it:** `GET /api/paystub-dispatch-queue` (list) + `POST` (stage, `requireElevatedSession`); `GET /api/paystub-dispatch-queue/arrears` (per-employee unsettled excluded cycles); `POST /api/payment-dispatches` at `status='paid'` reads the staged row to fire that one paystub. Lib: `src/lib/supabase/paystub-dispatch-queue.ts`.
+
+---
+
+### 14. `hr_onboarding_submissions` — IP Assignment columns *(migration #73, PENDING)*
+
+> **PENDING:** `references/migrations/add_ip_assignment_to_onboarding.sql` has not been confirmed run. Required before the IP Assignment onboarding step works in production. See [onboarding-ip-assignment.md](../features/onboarding-ip-assignment.md).
+
+Adds 6 columns to the existing `hr_onboarding_submissions` table for the new first-step "Intellectual Property Assignment, Talent Release, and Copyright Waiver" agreement (mirrors the W-8BEN flow):
+
+| Column | Type | Notes |
+|---|---|---|
+| `ip_agreement_agreed` | BOOLEAN | TRUE once the hire ticks the acknowledgement |
+| `ip_agreement_name` | TEXT | Name printed on the document (PARTICIPANT block) |
+| `ip_agreement_signature` | TEXT | base64 PNG data URL of the drawn signature |
+| `ip_agreement_date` | DATE | Date the hire opened/signed the link (stamped client-side from local day) |
+| `ip_assignment_file_path` | TEXT | Storage path of the generated PDF |
+| `ip_assignment_file_name` | TEXT | Friendly filename for HR display |
+
+On submit, the server renders a filled PDF via `pdf-lib` (name + drawn signature + checked box + date) and stores it in the **`hr-onboarding-files`** Supabase Storage bucket at **`<submission_id>/ip-assignment.pdf`** (same bucket as the W-8BEN at `<submission_id>/w8ben.pdf`). HR fetches a signed URL on demand. Writers: `app/api/onboarding/[token]` (live submit) and `app/api/hr/onboarding-submissions/[id]` (read/regenerate); helpers in `src/lib/supabase/hr-onboarding-submissions.ts` (`HR_ONBOARDING_BUCKET`).
+
+---
+
+## `app_settings` keys (payroll)
+
+Beyond `auth.force_logout_map` (§9), the wizard/dispatch flow stores two per-pay-period JSON keys in `app_settings`:
+
+| Key | Shape | Purpose |
+|---|---|---|
+| `payroll.wizard.exclusions.<sourceFile>` | JSON array of work emails | Per-period "do not pay" exclude set toggled in the wizard's Validation step (`PayrollWizard.tsx`). |
+| `payroll.dispatch_lock.<sourceFile>` | `{ locked, lockedAt, lockedBy }` | Realtime reversible wizard dispatch lock. "Lock & Send" sets `locked=true`; the Dispatch queue is empty until locked, and Unlock (payroll/admin) reverses it. Hooks: `useWizardDispatchLock.ts`, `useDispatchQueue.ts`. Propagated live via the `app_settings` realtime publication. |
 
 ---
 

@@ -29,6 +29,15 @@ export type HrOnboardingSubmissionRow = {
   email: string | null;
   location: string | null;
 
+  // Intellectual Property Assignment — standalone document signed first, before
+  // the rest of the onboarding paperwork. The generated PDF lives in storage.
+  ip_agreement_agreed: boolean | null;
+  ip_agreement_name: string | null;
+  ip_agreement_signature: string | null;
+  ip_agreement_date: string | null;
+  ip_assignment_file_path: string | null;
+  ip_assignment_file_name: string | null;
+
   non_solicitation_signature: string | null;
   privacy_signature: string | null;
 
@@ -100,6 +109,15 @@ export type SubmitOnboardingInput = {
   phone: string;
   email: string;
   location?: string | null;
+
+  ip_agreement_agreed: boolean;
+  ip_agreement_name: string;
+  ip_agreement_signature: string;
+  ip_agreement_date: string;
+  // Storage path/name of the generated IP-assignment PDF. Set server-side after
+  // the document is rendered + uploaded; omitted means "keep what's stored".
+  ip_assignment_file_path?: string | null;
+  ip_assignment_file_name?: string | null;
 
   non_solicitation_signature: string;
   privacy_signature: string;
@@ -283,6 +301,18 @@ export async function submitHrOnboarding(
     phone: input.phone.trim(),
     email: input.email.trim().toLowerCase(),
     location: input.location?.trim() || null,
+    ip_agreement_agreed: input.ip_agreement_agreed,
+    ip_agreement_name: input.ip_agreement_name?.trim() || null,
+    ip_agreement_signature: input.ip_agreement_signature,
+    ip_agreement_date: input.ip_agreement_date || null,
+    // Only overwrite the stored PDF path when the route regenerated it on this
+    // submit (it always does when a signature is present). Omitting = keep.
+    ...(input.ip_assignment_file_path !== undefined && {
+      ip_assignment_file_path: input.ip_assignment_file_path,
+    }),
+    ...(input.ip_assignment_file_name !== undefined && {
+      ip_assignment_file_name: input.ip_assignment_file_name,
+    }),
     non_solicitation_signature: input.non_solicitation_signature,
     privacy_signature: input.privacy_signature,
     w8ben_applicable: input.w8ben_applicable,
@@ -458,6 +488,42 @@ export async function uploadW8BenFile(
 export async function getW8BenSignedUrl(
   path: string,
   expiresInSeconds = 300,
+): Promise<{ url: string | null; error: string | null }> {
+  const sb = client();
+  const { data, error } = await sb.storage
+    .from(HR_ONBOARDING_BUCKET)
+    .createSignedUrl(path, expiresInSeconds);
+  if (error) return { url: null, error: error.message };
+  return { url: data?.signedUrl ?? null, error: null };
+}
+
+/**
+ * Upload the server-generated Intellectual Property Assignment PDF into the
+ * private storage bucket at `<submission_id>/ip-assignment.pdf`. Returns the
+ * path so the caller can record it on the submission row.
+ */
+export async function uploadIpAssignmentFile(
+  submissionId: string,
+  body: ArrayBuffer | Uint8Array,
+): Promise<{ path: string | null; error: string | null }> {
+  const sb = client();
+  const path = `${submissionId}/ip-assignment.pdf`;
+  const bytes = body instanceof Uint8Array ? body : new Uint8Array(body);
+  const { error } = await sb.storage
+    .from(HR_ONBOARDING_BUCKET)
+    .upload(path, bytes, {
+      contentType: "application/pdf",
+      upsert: true,
+      cacheControl: "no-cache",
+    });
+  if (error) return { path: null, error: error.message };
+  return { path, error: null };
+}
+
+/** Sign a private IP-assignment PDF URL for HR to view/download. */
+export async function getIpAssignmentSignedUrl(
+  path: string,
+  expiresInSeconds = 600,
 ): Promise<{ url: string | null; error: string | null }> {
   const sb = client();
   const { data, error } = await sb.storage

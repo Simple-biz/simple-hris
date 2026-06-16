@@ -260,7 +260,13 @@
       "Bash(git --no-pager diff src/components/payroll-clerk/useDispatchQueue.ts)",
       "Bash(git -C \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\" log --all --oneline -S \"no_personal_email\")",
       "PowerShell($out = npm run lint 2>&1; $code = $LASTEXITCODE; $errs = \\($out | Select-String -Pattern \"error TS\"\\); Write-Output \"EXIT=$code\"; Write-Output \"ERROR_COUNT=$\\($errs.Count\\)\"; if \\($errs.Count -gt 0\\) { $errs | Select-Object -First 50 })",
-      "Bash(git --no-pager diff src/components/payroll-clerk/useDispatchQueue.ts src/components/payroll-clerk/PayrollDispatch.tsx src/components/payroll-clerk/ExcludedQueue.tsx)"
+      "Bash(git --no-pager diff src/components/payroll-clerk/useDispatchQueue.ts src/components/payroll-clerk/PayrollDispatch.tsx src/components/payroll-clerk/ExcludedQueue.tsx)",
+      "PowerShell(npx tsc --noEmit -p tsconfig.json)",
+      "PowerShell(if \\($?\\) { \"TYPECHECK OK\" } else { \"TYPECHECK FAILED\" })",
+      "PowerShell(npm install pdf-lib 2>&1)",
+      "PowerShell($dev = Get-Content package.json | ConvertFrom-Json; $dev.scripts.dev)",
+      "Bash(mkdir -p /c/tmp/sessions)",
+      "Bash(cp /tmp/sessions/0[2-9]_*.txt /tmp/sessions/1[01]_*.txt /c/tmp/sessions/)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Itachi\\.claude\\projects\\c--Users-Itachi-Desktop-simple-hris\\memory",

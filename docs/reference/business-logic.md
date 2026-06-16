@@ -289,6 +289,7 @@ The dispatch mirror covers the same rules described in this section (per-week ga
 
 1. **30 days of service from `start_date`.** The employee's master-list `start_date` plus 30 days is their `eligibleFrom` date. Before that date the employee never receives the bonus. If `start_date` is missing on an employee, the system treats them as ineligible and surfaces a "start date unknown" state in the employee dashboard.
    - Example: start June 15 → eligible July 15 → bonus lands on July's 3rd paycheck (or August's if July's 3rd paycheck is before July 15).
+   - **Alternate-work-email bridging *(added 2026-06-16)*.** The start-date lookup (`startDateByEmail`) is keyed on email, and the Global Master List is the identity source of truth for which addresses belong to one person. The map now indexes **`alternate_work_email` / `alternate_work_email_2`** in addition to the primary work + personal emails (primary still wins). Without this, an employee whose Hubstaff/rate row keys on an alternate (e.g. Sheen Gobalani: hours under `sheeng@` vs primary `shannong@`) was skipped by the `if (!sd) continue` guard and wrongly missed the bonus despite being eligible. The bridge is applied in `PayrollWizard.tsx` (the `startDateByEmail` memo, reused by both the `techBonusEligible` set and `dispatchData`'s `hasThirtyDaysByWeek` so the pill and the paid amount can't drift) and mirrored server-side in `current-pay.ts` (`fetchMasterMin` selects both Alternate Work Email columns; the Payment Dispatch mirror). `member-monthly-pay.ts` and both employee dashboards already bridged alternates, so no change was needed there.
 
 2. **Paid in the paycheck whose Salary Date falls in the 3rd _full_ calendar week of the month.**
    - **Salary Date** = the **Tuesday after the pay-period Sunday** (i.e. `pay_period.week.start + 8 days`). Paychecks dispatch every Tuesday.
@@ -836,6 +837,44 @@ Rate changes now carry an **effective date** instead of taking effect instantly.
 
 **HSL override (still in effect):** for `active_hsl_agents` rows, the HOGAN pay-plan sheet is the source of truth for hourly + OT. The rate-history table is bypassed on display for those agents — the HSL sync writes the canonical rate, and Rates & Profiles surfaces it directly. The Edit Rates button is replaced with a "Managed by HOGAN pay plan sync" lock chip.
 
+### Rate resolution — Payment Catalog overlay *(added 2026-06-16)*
+
+The **Payment Catalog** (`payment_catalog_pay_structures`) is now authoritative for hourly rates. Rates are resolved at **compute time** by a pure in-memory overlay in `src/lib/payroll/resolve-rate.ts` — nothing is written to the DB by this layer. See [`features/bonus-catalog.md`](../features/bonus-catalog.md) for the catalog UI; this section documents only the pay-math resolution.
+
+**Priority (per employee):**
+
+```
+INDIVIDUAL (employee) catalog rate
+  → SHEET / history rate (employee_rate_history → employee_hourly_rates)
+    → DEPARTMENT base catalog rate
+```
+
+- An **individual** (employee-scoped) structure is the person's negotiated rate. It is the only catalog rate that **overrides** the dated history — their raise always applies.
+- The **sheet** rate is the existing HRIS rate (mid-cycle-prorated from `employee_rate_history`, see above). It is the *middle* layer, so a tenured employee keeps their raised rate even without a personal catalog entry.
+- A **department** structure is a **base/fallback only** — the starting rate for someone in the department who has no individual rate *and* no sheet rate (e.g. a brand-new hire). It never overrides an existing rate.
+
+Callers interleave the sheet themselves rather than letting one function decide; the canonical pattern (in `current-pay.ts`) is:
+
+```ts
+effective = resolveEmployeeCatalogRate(...) ?? sheetRate ?? resolveDeptCatalogRate(...)
+```
+
+Two functions back this — `resolveEmployeeCatalogRate` (alias-aware: tries work/personal/alternate emails) and `resolveDeptCatalogRate` (department NAME normalized to a key) — both built off a `buildCatalogRateIndex()` lookup (`byEmail` + `byDeptKey`).
+
+**Currency.** Each structure carries its own currency (`PHP` or `USD`). Because all downstream pay math accumulates in PHP, a USD rate is converted to its PHP-equivalent here (× the FX rate); the native rate + currency are returned alongside for display.
+
+**Live-cycle only — callers decide *when* to apply it:**
+
+| Consumer | When the overlay applies |
+|---|---|
+| `current-pay.ts` (Payment Dispatch) | **Always** — the live dispatch cycle. |
+| `member-monthly-pay.ts` (manager + employee monthly estimate) | Only when the viewed month is **current/future** (`viewedIsCurrentOrFuture`); past months resolve from dated history. |
+| `PayrollWizard.tsx` (client calc + everything staged to dispatch) | Only when **`!isReplay`**, so historical replays of past periods stay accurate. |
+| `app/api/employee-hourly-rates` `?email=` self-view branch (Dashboard / Profile / Mesa) | Applies the overlay so the employee sees their catalog rate. |
+| `EmployeeMyHours` calendar | Per-day estimate uses the overlay. |
+
+The Google Sheet rates sync is **disabled** (`RATES_SHEET_SYNC_DISABLED`) so syncing can no longer change HRIS pay; the manual CSV rates upload still writes pay. See [`features/csv-imports.md`](../features/csv-imports.md).
+
 ## MESA contributions — per-week deduction *(added 2026-05-15)*
 
 MESA members contribute **₱100 per pay week**, not a flat ₱100 per month. The Manager Dashboard member modal now shows the full monthly total (e.g. `−₱400.00` for 4 weeks) instead of the previous hardcoded single-week amount.
@@ -845,6 +884,8 @@ MESA members contribute **₱100 per pay week**, not a flat ₱100 per month. Th
 - `MemberMonthlyPaySummary` type carries `totals.mesaDeductionPHP` and `totals.mesaMember`.
 
 **TODO (called out in code):** once an `employee_hourly_rates.mesa_start_date` column lands, gate the weekly deduction with `weekStart >= mesa_start_date` so contributions do not accrue retroactively for weeks before the member joined.
+
+**Company match — ₱300/week *(updated 2026-06-16)*.** The company (Simple.biz) match is **₱300 per week**, so the **weekly total is ₱400** (employee ₱100 + company ₱300). These are client-side constants in `src/components/employee/EmployeeMesa.tsx` (`WEEKLY_EMPLOYEE_CONTRIB = 100`, `WEEKLY_COMPANY_MATCH = 300`, `WEEKLY_TOTAL = 400`) that drive the "We contribute" / "Simple.biz has matched" cards, the per-week ledger row, and `cumulativeCompany = completed.length × WEEKLY_COMPANY_MATCH`. The match was lowered from ₱400 (previously a ₱500 weekly total); copy reads "matched **three times over**" (3× the employee's ₱100). The ₱100/week **payroll deduction** above is unaffected — this is the company's contribution to the member's MESA savings, not a paycheck deduction.
 
 ## Notifications system *(added 2026-05-15)*
 

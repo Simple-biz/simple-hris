@@ -2,7 +2,9 @@
 
 Admin-only data ingestion for the three CSV-shaped sources the HRIS depends on: the global master list (employee roster), the All-Dept payroll rates ledger, and Hubstaff weekly timesheets. Two transport mechanisms are supported per source: **direct CSV upload** and (for master + rates) **manual sync from a configured Google Sheet**. There is no automated cron — every sync runs only on a user click.
 
-> Last updated: 2026-05-07. This doc is the umbrella reference for the **Admin → CSV imports** tab, the underlying API endpoints, and the case-handling fixes made during the Google Sheet sync rollout.
+> Last updated: 2026-06-16. This doc is the umbrella reference for the **Admin → CSV imports** tab, the underlying API endpoints, and the case-handling fixes made during the Google Sheet sync rollout.
+
+> **Rates note (2026-06-16):** The **Google Sheet rates sync is now DISABLED** — rate changes flow exclusively through the [Payment Catalog](bonus-catalog.md). The **manual rates CSV upload is still enabled** and still writes pay tables. See [§3 Google Sheet sync](#3-google-sheet-sync-manual-button-only) and [§9](#9-recent-fixes--gotchas).
 
 ---
 
@@ -48,7 +50,7 @@ The Hubstaff card additionally surfaces a **client-side validation + confirm dia
 | Source | Endpoint | Destination table(s) | Archive table | Identity key |
 |---|---|---|---|---|
 | Master list CSV / Sheet | `POST /api/global-master-list` (CSV) and `POST /api/cron/sync-master-from-sheet` (Sheet) | `global_master_list` | `master_list_uploads` (newly archived row promoted to `is_current = true`) | `(LOWER("Personal Email"), LOWER("Department"))` partial index where both non-null |
-| Rates CSV / Sheet | `POST /api/employee-hourly-rates-upload` (CSV) and `POST /api/cron/sync-rates-from-sheet` (Sheet) | `employee_hourly_rates` | `rates_uploads` | `Work Email` (single column) |
+| Rates CSV / ~~Sheet~~ | `POST /api/employee-hourly-rates-upload` (CSV, **enabled**) and `POST /api/cron/sync-rates-from-sheet` (Sheet, **DISABLED 2026-06-16** — rates now flow through the [Payment Catalog](bonus-catalog.md)) | `employee_hourly_rates` | `rates_uploads` | `Work Email` (single column) |
 | Hubstaff weekly | `POST /api/hubstaff-hours` (CSV upload only — no sheet sync) | `hubstaff_hours` | `hubstaff_uploads` | `(source_file, row position)` — append-only with upload_id stamp |
 
 Every successful sync **promotes the new upload to `is_current = true`** and demotes all prior uploads. The dashboard, payroll wizard, etc. read from `is_current` rows only via the `active_employees` view (master) or by filtering on `upload_id = current` (hubstaff/rates).
@@ -92,6 +94,16 @@ No `googleapis` npm dependency. Hand-rolled with `crypto` to keep the dep footpr
 2. No header auto-detection — the `All Dept` sheet has its headers on row 1 by convention.
 3. No sentinel synthesis — the rates ingest has no analogous `MASTERLIST` marker.
 4. Tab name is **always wrapped in single quotes** in the URL's A1 notation (`'All Dept'` → `%27All%20Dept%27`). Sheets API requires this for tab names with spaces or punctuation.
+
+### Rates sync is DISABLED (2026-06-16)
+
+The rates sync route (`app/api/cron/sync-rates-from-sheet/route.ts`) is gated behind a `const RATES_SHEET_SYNC_DISABLED = true` and **short-circuits before touching any pay table**. The check runs immediately after auth — before the `SUPABASE_SERVICE_ROLE_KEY` guard, the sheet fetch, and the `replaceEmployeeHourlyRatesFromCsv` ingest — and returns `{ success: false, disabled: true, error: '…' }` with HTTP `200` (not 500), so the admin UI can distinguish "intentionally off" from a real failure. The `fetchRatesSheetAsCsv` fetch helper above is now dead code for production but is left wired for the day the flag flips.
+
+**Why:** employee hourly rates are now sourced from the **[Payment Catalog](bonus-catalog.md)** at compute time. Individual catalog structures are a person's negotiated rate; department structures are the base. Letting the Google Sheet overwrite `employee_hourly_rates` / `employee_rate_history` would change pay inside the HRIS, which is no longer allowed. The sheet rate layer is now a **frozen snapshot** — it is still read as the middle/fallback layer in the rate overlay, but the sync can no longer mutate it. Flip `RATES_SHEET_SYNC_DISABLED` to `false` to re-enable if the Sheet ever becomes authoritative again.
+
+**Scope:** only the *Google Sheet rates sync* is frozen. The **manual rates CSV upload** (`POST /api/employee-hourly-rates-upload`) was deliberately left **enabled** and still writes `employee_hourly_rates` + `rates_uploads`. The master-list sync and Hubstaff upload are unaffected.
+
+**Admin UI behavior (`AdminCsvImports.tsx`):** the `RatesSheetSyncResponse` interface carries a `disabled?: boolean`. The `handleRatesSheetSync` click handler checks `if (json.disabled)` *first*, resets the rates card to `idle` (no error panel), and shows an info toast — `toast.info('Rates sync disabled', { description: 'Rates sync is disabled — rates are managed in the Payment Catalog.' })` — instead of the red error toast. The "Sync from Google Sheet" link on the rates card still exists and is still clickable; clicking it just yields the info toast.
 
 ### Endpoint orchestration
 
@@ -166,8 +178,8 @@ CSV upload to `employee_hourly_rates`. Multipart `file=<csv>`. Returns `{ succes
 #### `GET /api/employee-hourly-rates-upload?uploads=1` *(added 2026-05-07)*
 Returns `{ uploads: [...], error }` newest-first from `rates_uploads`. Powers the Files tab → Payroll rates section. Calling without `?uploads=1` returns 400 with a hint (the route doesn't expose any other GET behavior).
 
-#### `POST /api/cron/sync-rates-from-sheet` *(added 2026-05-07)*
-Fetches the configured rates Sheet and pipes it through the rates ingest. Returns `{ success, sheetId, tabName, totalRows, dataRows, ...rates-result-fields }`.
+#### `POST /api/cron/sync-rates-from-sheet` *(added 2026-05-07; DISABLED 2026-06-16)*
+**Disabled.** Guarded by `RATES_SHEET_SYNC_DISABLED = true`; short-circuits after auth and returns `{ success: false, disabled: true, error }` with HTTP `200` — it never fetches the sheet or writes a pay table. Rate changes now flow through the [Payment Catalog](bonus-catalog.md); the manual `POST /api/employee-hourly-rates-upload` is still live. (When re-enabled, returns `{ success, sheetId, tabName, totalRows, dataRows, ...rates-result-fields }`.) See [§3](#rates-sync-is-disabled-2026-06-16).
 
 ### Hubstaff
 
@@ -259,6 +271,7 @@ Every entry includes `user_name`, `user_role`, `ip_address`, and `created_at`. S
 ### Rates ingest
 
 - **Same case-sensitivity + sequential UPDATE** issues as master *(2026-05-07)*. Fixed with parallel pattern.
+- **Google Sheet rates sync disabled** *(2026-06-16)*: the sync route now short-circuits behind `RATES_SHEET_SYNC_DISABLED = true` (returns `disabled: true` at HTTP 200) so it can no longer overwrite `employee_hourly_rates` / `employee_rate_history`. Rates are sourced from the [Payment Catalog](bonus-catalog.md) at compute time; the sheet layer is a frozen fallback. The **manual rates CSV upload stays enabled** and still writes pay. The admin "Sync from Google Sheet" link on the rates card now surfaces an info toast (`Rates sync disabled`) rather than running. See [§3](#rates-sync-is-disabled-2026-06-16).
 
 ### Rates page Department chip not displaying
 

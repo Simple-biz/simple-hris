@@ -25,6 +25,8 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 12.5. [Leave Requests](#125-leave-requests)
 12.7. [Admin Diagnostics](#127-admin-diagnostics)
 12.9. [Time Adjustment Requests](#129-time-adjustment-requests)
+12.12. [Onboarding (public)](#1212-onboarding-public)
+14. [Paystub Dispatch Queue](#14-paystub-dispatch-queue)
 13. [Planned Endpoints (Payroll Automation)](#13-planned-endpoints-payroll-automation)
 
 ---
@@ -295,7 +297,9 @@ Updates employee demographic fields (not rates) in both tables.
 Fetches all rows from the `employee_hourly_rates` table.
 
 **Query Parameters**:
-- `email` *(optional, added 2026-05-14)* — server-side ilike filter on `"Work Email"` then `"Personal Email"`. Returns a 1-row array (or empty). Used by the employee portal to avoid downloading every rate row just to read its own.
+- `email` *(optional, added 2026-05-14)* — server-side ilike filter on `"Work Email"` then `"Personal Email"`. Returns a 1-row array (or empty). Used by the employee portal to avoid downloading every rate row just to read its own. **Auth: self-or-elevated** (`authorizeEmailAccess`) — a non-elevated caller may only read their own row; the requested `?email=` is resolved against the session.
+
+**Payment Catalog overlay** *(added 2026-06-16)* — when `?email=` is supplied, the returned `regular_rate` / `ot_rate` are run through the compute-time **Payment Catalog** overlay (`src/lib/payroll/resolve-rate.ts`) so the self-view ("your current rate" on Dashboard / Profile / Mesa) matches what the Payroll Wizard pays. Priority: **individual catalog rate → the sheet row → department base** (the department structure fills in only when the row has no rate at all). The result is returned as the PHP-equivalent (USD structures are converted at the stored FX rate, `usd_to_php_rate`). The full-table fetch (no `?email=`) does **not** apply the overlay. Historical per-day pay still resolves from `employee_rate_history` elsewhere — the overlay is "live cycle only."
 
 **Response** `200`:
 ```json
@@ -313,7 +317,7 @@ Fetches all rows from the `employee_hourly_rates` table.
 }
 ```
 
-**Tables**: Reads `employee_hourly_rates`
+**Tables**: Reads `employee_hourly_rates`; reads `payment_catalog_pay_structures` + `app_settings` (`usd_to_php_rate`) when `?email=` is set
 **Service Role**: Not required
 
 ---
@@ -388,13 +392,17 @@ Returns archived `rates_uploads` rows newest-first. Powers the **Files** tab →
 
 ---
 
-### `POST /api/cron/sync-rates-from-sheet` *(added 2026-05-07)*
+### `POST /api/cron/sync-rates-from-sheet` *(added 2026-05-07; **DISABLED 2026-06-16**)*
+
+> **Disabled** — guarded by the module-level constant `RATES_SHEET_SYNC_DISABLED = true`. Employee rates are now managed in the **Payment Catalog** (see [bonus-catalog.md](../features/bonus-catalog.md)); letting the Google Sheet overwrite `employee_hourly_rates` / `employee_rate_history` would change pay inside HRIS, which is no longer allowed. The route short-circuits **after the auth check but before reading the sheet or writing any pay table**, returning HTTP `200` with `{ "success": false, "disabled": true, "error": "Google Sheet rates sync is disabled. …" }`. The admin CSV-imports UI surfaces this as an info toast rather than an error. Flip the constant back to `false` to re-enable.
+>
+> The separate **manual CSV rates upload** (`POST /api/employee-hourly-rates-upload`, above) is **not** affected — it remains enabled and still writes pay tables.
 
 Manual-button-only Google Sheet sync for the rates ledger. Reads the configured Google Sheet via the same service-account auth as the master list sync, expects headers on row 1 (no sentinel synthesis — rates have no `MASTERLIST` analogue), and pipes the resulting CSV through `replaceEmployeeHourlyRatesFromCsv()`.
 
 **Required env**: `GOOGLE_SHEETS_RATES_SHEET_ID`, `GOOGLE_SHEETS_RATES_TAB_NAME`, plus the shared `GOOGLE_SHEETS_SERVICE_ACCOUNT_*` and `SUPABASE_SERVICE_ROLE_KEY`.
 
-**Response** `200`: same shape as the master sync but with the rates ingest result fields (`uniqueEmployees`, `skippedNoWorkEmail`, `skippedNoRate`).
+**Response** (when re-enabled) `200`: same shape as the master sync but with the rates ingest result fields (`uniqueEmployees`, `skippedNoWorkEmail`, `skippedNoRate`).
 
 Audit log entry `csv.rates.sync` (or `csv.rates.sync.error` on failure). See [csv-imports.md](../features/csv-imports.md).
 
@@ -1277,6 +1285,7 @@ Lists every persisted dispatch (i.e. each row in `payment_dispatches`), newest f
 
 **Query Parameters**:
 - `cycle_id` *(optional)* — UUID. When present, returns only dispatches for that Hubstaff upload's cycle. Pass an empty string for "any cycle".
+- `email` *(optional)* — recipient email filter (passed to `listPaymentDispatches` as `recipientEmail`).
 
 **Response** `200`:
 ```json
@@ -1347,14 +1356,22 @@ Logs a single dispatch and (via trigger) writes through to `disbursement_records
 
 Required: `recipient_email`, `processor`, `transaction_id`, `bank_used`, `sent_date`. `status` defaults to `'paid'`.
 
-**Response** `200`: same shape as `GET`'s row entries.
+**Auth**: `requireFeatureEdit("accounting", "payment_dispatch")` — caller must hold edit access on the Payment Dispatch feature (this is the gate Lenny's Mark-Paid action runs under).
+
+**Response** `200`: `{ "row": {…}, "error": null, "paystub": { "staged": false, "sent": false, "error": null } }` — `row` is the same shape as `GET`'s row entries; `paystub` reports the per-employee paystub send (see below).
 
 Side effects:
 - Inserts into `payment_dispatches`.
 - Trigger `payment_dispatches_sync_disbursement` updates the matching `disbursement_records` row's `status / paid_amount_usd / paid_at / bank_used / transaction_id / dispatch_id` (matched on `(cycle_source_file, LOWER(recipient_email))`).
 - Writes a `payment.dispatched` audit log entry tagged `payroll_clerk`.
 
-**Tables**: `payment_dispatches`, `disbursement_records` (via trigger), `audit_log`
+**Per-employee paystub send** *(added 2026-06-16)* — when the dispatch lands as `status='paid'` **and** has a `cycle_source_file`, the route looks up the staged paystub row for that `(cycle_source_file, recipient_email)` in `paystub_dispatch_queue` (see [§14](#14-paystub-dispatch-queue)) and, if found, fires the n8n paystub webhook for **just that one person** via `forwardPaystubDispatch` (`src/lib/payroll/paystub-dispatch.ts`). This replaces the old batch email of every paystub at once. Behavior:
+- **Best-effort** — a failed send never fails the payment (the money already moved); the error is stamped on the queue row (`markPaystubSendError`) so it can be re-sent from the Excluded tab. A success calls `markPaystubSent` (bumps `send_count`, stamps `sent_at`/`sent_by`).
+- The `paystub` result tells the client what happened: `{ staged: true, sent: true }` (mailed), `{ staged: true, sent: false, error }` (staged but send failed / no resolvable personal email), or `{ staged: false }` (no staged row — nothing to mail).
+- Writes a `paystub.sent` or `paystub.send_failed` audit entry.
+- **Scope-safe**: MESA disbursements and orphanage-budget payouts go through their own routes, so they never reach this salary-paystub send path.
+
+**Tables**: `payment_dispatches`, `disbursement_records` (via trigger), `paystub_dispatch_queue` (read staged row + stamp sent/error), `audit_log`
 **Service Role**: Required (writes).
 
 ### `GET /api/payroll-dispatch-lock` & `POST /api/payroll-dispatch-lock`
@@ -1855,6 +1872,113 @@ Audit log: `mesa.request.approved` or `mesa.request.denied`.
 
 ---
 
+## 12.12 Onboarding (public)
+
+> Added 2026-06-16. The public onboarding flow gained an **Intellectual Property Assignment, Talent Release, and Copyright Waiver** as its first step (mirroring W-8BEN). On submit the server renders a filled PDF and stores it; HR views it through the submission-detail endpoint. See [onboarding-ip-assignment.md](../features/onboarding-ip-assignment.md) for the full feature doc (form, preview mode, PDF rendering, dark-mode/animation polish).
+
+> **Rate limiting** — everything under `/api/onboarding/` is rate-limited in `middleware.ts`: `GET` 30 req/IP/min, `POST` 5 req/IP/min. These routes are public (no session) by design — the invite token *is* the auth.
+
+> **PENDING migration #73** — `references/migrations/add_ip_assignment_to_onboarding.sql` adds 6 columns to `hr_onboarding_submissions` (`ip_agreement_agreed`, `ip_agreement_name`, `ip_agreement_signature`, `ip_agreement_date`, `ip_assignment_file_path`, `ip_assignment_file_name`). Until it is run, the live submit (`POST /api/onboarding/[token]`) errors on the IP write; the preview endpoint below works regardless.
+
+### `GET /api/onboarding/[token]`
+
+Loads the public onboarding form prefill for a real invite token (32-byte random string). Now also returns the IP Assignment fields (`ip_agreement_agreed`, `ip_agreement_name`, `ip_agreement_signature`, `ip_agreement_date`) alongside the existing prefill so a resumed form rehydrates the IP step.
+
+### `POST /api/onboarding/[token]`
+
+Submits the onboarding form for a real token. In addition to its prior behavior, it now:
+- **Validates** the IP step: rejects with `400` listing the missing field(s) when `ip_agreement_agreed !== true`, `ip_agreement_name` is blank, `ip_agreement_signature` is missing, or `ip_agreement_date` is blank.
+- **Renders + stores the signed PDF**: calls `generateIpAssignmentPdf({ name, signatureDataUrl, dateIso })` (pdf-lib) and uploads it via `uploadIpAssignmentFile(submissionId, bytes)` to the private **`hr-onboarding-files`** Supabase Storage bucket at **`<submission_id>/ip-assignment.pdf`**, then records `ip_assignment_file_path` + `ip_assignment_file_name` on the row. PDF generation/upload failure is logged but does not abort the submission.
+
+**Tables**: `hr_onboarding_submissions`; Storage bucket `hr-onboarding-files`
+**Service Role**: Required
+
+---
+
+### `POST /api/onboarding/ip-assignment-preview` *(added 2026-06-16)*
+
+Public **dry-run** renderer for the IP Assignment PDF. Powers the no-save `/onboarding/preview` mode's Submit button so HR can see exactly what the signed document looks like before the feature is live — **no migration, real invite link, DB, or storage required**. Sits under the rate-limited `/api/onboarding/` prefix.
+
+**Request Body** `application/json`:
+```json
+{
+  "name": "Jane Doe",
+  "signatureDataUrl": "data:image/png;base64,…",
+  "dateIso": "2026-06-16"
+}
+```
+
+All fields optional; `name` defaults to `"Participant"`, `signatureDataUrl`/`dateIso` default to `null`.
+
+**Response** `200`: the rendered PDF bytes with headers:
+- `Content-Type: application/pdf`
+- `Content-Disposition: inline; filename="IP-Assignment-preview.pdf"`
+- `Cache-Control: no-store`
+
+**Error Response**:
+- `400` — invalid JSON body
+- `500` — `{ "error": "<message>" }` if PDF rendering throws
+
+**Tables**: none. **Service Role**: not required (writes nothing).
+
+---
+
+## 14. Paystub Dispatch Queue
+
+> Added 2026-06-16. Backs the per-employee paystub dispatch model — the Payroll Wizard stages each payable employee's authoritative paystub payload here on "Lock in Values & Send to Payment Dispatch", and the email fires one-by-one when Lenny marks each salary dispatch paid (see [`POST /api/payment-dispatches`](#post-apipayment-dispatches)). See [paystub-dispatch.md](../features/paystub-dispatch.md) for the full feature.
+
+> **PENDING migration #72** — `paystub_dispatch_queue` (UNIQUE on `(cycle_source_file, recipient_email)`). Until it is run, the wizard's "Lock & Send" `POST` 500s. The migration also re-asserts `app_settings` in the `supabase_realtime` publication.
+
+### `GET /api/paystub-dispatch-queue?source_file=<file>`
+
+Lightweight list of staged rows for one cycle (no bank creds / full payload — see `LIST_COLUMNS` in `src/lib/supabase/paystub-dispatch-queue.ts`). Drives the dispatch queue's per-row sent/error badges and the routing of wizard-excluded people into the Excluded tab.
+
+**Auth**: `requireFeatureAccess("accounting", "payment_dispatch", "view")`.
+
+Returns `{ rows: [], error: null }` when `source_file` is missing.
+
+**Response** `200`: `{ "rows": [ … ], "error": null }`.
+
+### `POST /api/paystub-dispatch-queue`
+
+The Payroll Wizard's "Lock in Values & Send to Payment Dispatch" stages **every** payable + excluded employee's paystub payload for the cycle here, replacing the prior staged set for that `source_file`.
+
+**Auth**: `requireElevatedSession` (same gate as the wizard's other writes — payroll / admin).
+
+**Request Body** `application/json`:
+```json
+{
+  "source_file": "simple-biz_daily_report_2026-06-08_to_2026-06-14.csv",
+  "pay_period": { "…": "…" },
+  "entries": [
+    { "recipient_email": "fran@simple.biz", "excluded": false, "payload": { "…": "…" } }
+  ]
+}
+```
+
+- `source_file` required (`400` otherwise).
+- `entries` are filtered to those with a non-empty `recipient_email` before upsert.
+
+**Response** `200`: `{ "staged": 42, "excluded": 3, "error": null }`. On DB error: `500` with `{ "staged": 0, "error": "<message>" }`.
+
+Audit log: `paystubs.staged` (records `source_file`, `staged`, `payable`, `excluded`, and a capped `excluded_emails` list — the durable record of who was held this cycle).
+
+**Tables**: `paystub_dispatch_queue`, `audit_log`
+**Service Role**: Required
+
+### `GET /api/paystub-dispatch-queue/arrears`
+
+Cross-cycle unsettled pay for held (wizard-excluded) employees — one entry per employee with a running total + per-cycle breakdown. Drives the Payment Dispatch **Excluded** tab's "what we owe" rollup. View-gated (no bank creds / payload in the response).
+
+**Auth**: `requireFeatureAccess("accounting", "payment_dispatch", "view")`.
+
+**Response** `200`: `{ "entries": [ { "email": "…", "name": "…", "totalPhp": …, "totalUsd": …, "cycles": [ { "sourceFile": "…", "amountPhp": …, "amountUsd": …, "lockedAt": "…" } ] } ], "error": null }`. A cycle drops off the ledger once a matching `status='paid'` row exists in `payment_dispatches`.
+
+**Tables**: `paystub_dispatch_queue` (+ `payment_dispatches` to detect settled cycles)
+**Service Role**: Required
+
+---
+
 ## 13. Planned Endpoints (Payroll Automation)
 
 These endpoints do not exist yet. They are required for automating Step 5 (Dispatch) and webhook-based paystub delivery.
@@ -1975,6 +2099,9 @@ Lists all finalized payroll runs.
 | `employee_ids` | employee-ids, update-employee-ids | R, U |
 | `hubstaff_hours` | hubstaff-hours | R, C, D |
 | `app_settings` | app-settings | R, U (upsert) |
+| `payment_catalog_pay_structures` | employee-hourly-rates (`?email=` overlay), payment-catalog | R |
+| `hr_onboarding_submissions` | onboarding/[token], hr/onboarding-submissions/[id] | R, C, U |
+| `paystub_dispatch_queue` *(migration #72 PENDING)* | paystub-dispatch-queue, paystub-dispatch-queue/arrears, payment-dispatches | R, C, U |
 | `payroll_runs` | *(planned)* | C, R |
 | `payroll_line_items` | *(planned)* | C, R |
 | `payroll_dispatches` | *(planned)* | C, R, U |
