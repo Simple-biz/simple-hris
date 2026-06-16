@@ -25,6 +25,10 @@ const VALID_ROLES = [
 type Role = (typeof VALID_ROLES)[number];
 
 import { getSessionActor } from '@/lib/auth/session-actor';
+import {
+  listDepartmentsForManager,
+  revokeAllForManager,
+} from '@/lib/supabase/department-managers';
 
 function getClient() {
   return createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
@@ -163,6 +167,22 @@ export async function DELETE(request: Request) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+    // Cascade: revoking the `manager` role must also clear the person's
+    // department_managers assignments. Without this they stay registered as a
+    // department manager (still gating /api/manager/* and surfacing on every
+    // team member's "My Team" roster via getTeamRoster, even from another
+    // home department). The dept-manager assignment carries no meaning once the
+    // manager role is gone, so tear it down here. Best-effort: a cascade hiccup
+    // must not fail the (already-applied) role revoke.
+    let cascadedDepartments: string[] = [];
+    if (role === 'manager') {
+      const { rows: managed } = await listDepartmentsForManager(email);
+      cascadedDepartments = managed.map((m) => m.department);
+      if (cascadedDepartments.length > 0) {
+        await revokeAllForManager(email);
+      }
+    }
+
     const actor2 = await getSessionActor();
     void insertAuditLog({
       user_name: actor2.user_name,
@@ -170,10 +190,10 @@ export async function DELETE(request: Request) {
       action: 'rbac.role.revoked',
       resource: 'employee_roles',
       resource_id: email,
-      details: { target_email: email, role },
+      details: { target_email: email, role, cascadedDepartments },
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, cascadedDepartments });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

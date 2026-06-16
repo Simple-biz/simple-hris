@@ -1,5 +1,5 @@
 import type { AppView } from '@/lib/rbac/views';
-import type { FeatureViewKey } from '@/lib/rbac/feature-permissions';
+import type { FeatureViewKey, FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
 
 /**
  * Maps each `employee_notifications.type` to the dashboard(s) where the
@@ -53,3 +53,23 @@ export const NOTIFICATION_TYPE_FEATURE_GATE: Record<
 > = {
   'onboarding.submitted': { view: 'hr', feature: 'onboarding' },
 };
+
+/**
+ * Whether a viewer may *see* a notification of `type`. Ungated types (those
+ * absent from {@link NOTIFICATION_TYPE_FEATURE_GATE}) and unknown types are
+ * always visible — that's how the global payroll-lock alert reaches everyone.
+ * A gated type requires either admin or at least `view` access to its owning
+ * feature, i.e. the same perms-overlay grant the dashboards use for tab
+ * visibility (see view-tabs.ts). Pure logic — safe on both server and client.
+ */
+export function canViewNotificationType(
+  type: string | null | undefined,
+  viewer: { isAdmin?: boolean; perms?: FeaturePermissionsMap | null },
+): boolean {
+  if (!type) return true;
+  const gate = NOTIFICATION_TYPE_FEATURE_GATE[type];
+  if (!gate) return true; // global / ungated
+  if (viewer.isAdmin) return true;
+  const access = viewer.perms?.[gate.view]?.[gate.feature] ?? 'hidden';
+  return access === 'view' || access === 'edit';
+}

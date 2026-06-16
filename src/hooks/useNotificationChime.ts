@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 
 type IncomingNotification = {
+  type?: string | null;
   title?: string | null;
   message?: string | null;
 };
@@ -17,10 +18,21 @@ type IncomingNotification = {
  * something needs them — an onboarding form submission, a transfer request, etc.
  * — regardless of which tab they're currently on. The bell is synthesized with
  * the Web Audio API so it ships no binary asset.
+ *
+ * `shouldNotify` (optional) gates the alert by the incoming row's `type`: return
+ * false to stay silent for notifications the viewer isn't permitted to see (the
+ * Realtime payload bypasses the server-side feature gate, so feature-gated types
+ * like onboarding paperwork must be filtered here too). Defaults to alerting on
+ * everything. Kept in a ref so changing its identity never resubscribes.
  */
-export function useNotificationChime(email?: string | null): void {
+export function useNotificationChime(
+  email?: string | null,
+  shouldNotify?: (type: string | null | undefined) => boolean,
+): void {
   const normalized = email ? email.trim().toLowerCase() : null;
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const shouldNotifyRef = useRef(shouldNotify);
+  shouldNotifyRef.current = shouldNotify;
 
   // Browser autoplay policies block audio until the page has seen a user
   // gesture, so lazily create/resume the AudioContext on the first interaction.
@@ -87,6 +99,8 @@ export function useNotificationChime(email?: string | null): void {
         },
         (payload) => {
           const row = (payload.new ?? null) as IncomingNotification | null;
+          // Stay silent for types this viewer isn't permitted to see.
+          if (shouldNotifyRef.current && !shouldNotifyRef.current(row?.type)) return;
           playChime();
           toast(row?.title ?? 'New notification', {
             description: row?.message ?? undefined,

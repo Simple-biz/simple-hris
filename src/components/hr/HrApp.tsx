@@ -30,6 +30,7 @@ import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
 import { useNotificationChime } from '@/hooks/useNotificationChime';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import { canViewNotificationType } from '@/lib/notifications/notification-views';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { cn } from '@/lib/utils';
 import HrSidebar, { type HrTab } from './HrSidebar';
@@ -61,13 +62,23 @@ export default function HrApp() {
   const [viewerEmail, setViewerEmail] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
 
+  // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
+  const { roles, perms, ready: permsReady, allowedTabs, canEditTab } =
+    useFeaturePermissions(viewerEmail);
+
   // Live HR alerts: chime + toast on any new notification (e.g. a hire
   // submitting their onboarding form), and an unread badge on the sidebar.
-  useNotificationChime(viewerEmail);
+  // Gate the chime by feature visibility so an HR coordinator without the
+  // Onboarding grant isn't toasted about onboarding paperwork (the Realtime
+  // payload bypasses the server-side gate that filters the panel + badges).
+  const isAdmin = useMemo(() => roles.includes('admin'), [roles]);
+  const canChimeFor = useCallback(
+    (type: string | null | undefined) =>
+      canViewNotificationType(type, { isAdmin, perms }),
+    [isAdmin, perms],
+  );
+  useNotificationChime(viewerEmail, canChimeFor);
   const unreadNotifications = useEmployeeNotificationsUnread(viewerEmail);
-
-  // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
-  const { ready: permsReady, allowedTabs, canEditTab } = useFeaturePermissions(viewerEmail);
   const allowedHrTabs = allowedTabs('hr');
   const allowedHrKey = allowedHrTabs.join(',');
   useEffect(() => {

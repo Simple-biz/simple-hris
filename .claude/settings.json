@@ -5,7 +5,9 @@
       "Bash(PYTHONIOENCODING=utf-8 python - C:/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/114ebec2-f111-4172-a58a-ebe1f72fa6b5/tasks/wr1qit241.output)",
       "Bash(PYTHONIOENCODING=utf-8 python -)",
       "PowerShell(npx tsc --noEmit -p \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\tsconfig.json\" 2>&1)",
-      "PowerShell(if \\($?\\) { \"TYPECHECK OK\" } else { \"TYPECHECK FAILED\" })"
+      "PowerShell(if \\($?\\) { \"TYPECHECK OK\" } else { \"TYPECHECK FAILED\" })",
+      "PowerShell(npx eslint src/lib/notifications/notification-views.ts src/hooks/useNotificationChime.ts src/components/hr/HrApp.tsx app/api/employee-notifications/route.ts 2>&1)",
+      "PowerShell(npx next lint --file src/hooks/useNotificationChime.ts --file src/components/hr/HrApp.tsx --file app/api/employee-notifications/route.ts --file src/lib/notifications/notification-views.ts 2>&1)"
     ]
   }
 }

@@ -9,7 +9,10 @@ import {
   ROLE_TO_FEATURE_VIEW,
   type FeatureViewKey,
 } from "@/lib/rbac/feature-permissions";
-import { NOTIFICATION_TYPE_FEATURE_GATE } from "@/lib/notifications/notification-views";
+import {
+  NOTIFICATION_TYPE_FEATURE_GATE,
+  canViewNotificationType,
+} from "@/lib/notifications/notification-views";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,10 +44,11 @@ async function viewerMayDeleteNotifications(email: string, roles: string[]): Pro
 /**
  * The feature-gated notification types the signed-in viewer may NOT see, so the
  * GET query can exclude them. A gated type (see NOTIFICATION_TYPE_FEATURE_GATE)
- * is hidden unless the viewer holds a role mapping to the gate's view AND has at
- * least `view` access to its feature — i.e. they were granted it from the
- * HR / Admin Roles tab. Admins (and unresolved sessions) hide nothing. Global
- * types — like the payroll-processing lock — are never gated.
+ * is hidden unless the viewer has at least `view` access to its owning feature —
+ * i.e. they were granted it from the HR / Admin Roles tab — per the same
+ * perms-overlay rule the dashboards use for tab visibility. Admins (and
+ * unresolved sessions) hide nothing. Global types — like the payroll-processing
+ * lock — carry no gate and are never excluded.
  *
  * Excluding at query time, rather than after the 50-row limit, keeps an
  * authorized-but-ungated viewer's other notifications from being crowded out by
@@ -57,32 +61,14 @@ async function hiddenGatedTypesForViewer(): Promise<string[]> {
   const session = (await getServerSession(authOptions)) as SessionLike;
   const sessionEmail = normEmail(session?.user?.email ?? "") ?? "";
   const roles = (session?.user?.roles ?? []) as string[];
-  if (!sessionEmail || roles.includes("admin")) return [];
-
-  const viewsForRoles = new Set<FeatureViewKey>(
-    roles
-      .map((r) => ROLE_TO_FEATURE_VIEW[r])
-      .filter((v): v is FeatureViewKey => !!v),
-  );
-
-  // A gated type is reachable only if the viewer holds a role for its view; the
-  // rest are hidden outright. Skip the feature-permission lookup entirely when
-  // nothing is reachable — the common case for plain employees, who never hold a
-  // role-mapped view.
-  const reachable = gatedTypes.filter(
-    (t) => viewsForRoles.has(NOTIFICATION_TYPE_FEATURE_GATE[t].view),
-  );
-  if (reachable.length === 0) return gatedTypes;
+  // No resolvable identity -> hide nothing (the route sits behind auth
+  // middleware, so this only happens in degraded states).
+  if (!sessionEmail) return [];
+  const isAdmin = roles.includes("admin");
+  if (isAdmin) return [];
 
   const perms = await fetchFeaturePermissionsForEmail(sessionEmail);
-
-  return gatedTypes.filter((type) => {
-    const gate = NOTIFICATION_TYPE_FEATURE_GATE[type];
-    const canSee =
-      viewsForRoles.has(gate.view) &&
-      resolveFeatureAccess(perms, gate.view, gate.feature) !== "hidden";
-    return !canSee;
-  });
+  return gatedTypes.filter((type) => !canViewNotificationType(type, { isAdmin, perms }));
 }
 
 export async function GET(req: Request) {
