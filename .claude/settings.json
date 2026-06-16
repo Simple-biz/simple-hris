@@ -7,7 +7,13 @@
       "PowerShell(npx tsc --noEmit -p \"c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\tsconfig.json\" 2>&1)",
       "PowerShell(if \\($?\\) { \"TYPECHECK OK\" } else { \"TYPECHECK FAILED\" })",
       "PowerShell(npx eslint src/lib/notifications/notification-views.ts src/hooks/useNotificationChime.ts src/components/hr/HrApp.tsx app/api/employee-notifications/route.ts 2>&1)",
-      "PowerShell(npx next lint --file src/hooks/useNotificationChime.ts --file src/components/hr/HrApp.tsx --file app/api/employee-notifications/route.ts --file src/lib/notifications/notification-views.ts 2>&1)"
+      "PowerShell(npx next lint --file src/hooks/useNotificationChime.ts --file src/components/hr/HrApp.tsx --file app/api/employee-notifications/route.ts --file src/lib/notifications/notification-views.ts 2>&1)",
+      "Bash(node \"scripts/diag-carla.mjs\")",
+      "Bash(rm -f scripts/diag-carla.mjs)",
+      "Bash(node \"scripts/diag-carla-leadgen.mjs\")",
+      "Bash(rm -f scripts/diag-carla-leadgen.mjs)",
+      "Bash(node \"scripts/fix-carla-usmb.mjs\")",
+      "Bash(rm -f scripts/fix-carla-usmb.mjs)"
     ]
   }
 }

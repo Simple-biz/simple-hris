@@ -138,33 +138,61 @@ interface PresencePayload {
 }
 
 // --- cursor trails (per-person flair) ----------------------------------------
-// A couple of accounting users get a cosmetic particle trail behind their live
-// cursor. Purely visual and scoped by email, so nobody else's pointer changes.
-//   - Aliviah: pink fairy dust (sparkles that fall + tumble)
-//   - Carla:   fire trail (embers that rise + flicker out)
-type TrailKind = 'fairy' | 'fire';
+// A few accounting users get a cosmetic trail behind their live cursor. Purely
+// visual and scoped by email, so nobody else's pointer changes.
+//   - Aliviah: pink fairy dust  -> "particle" mode (sparkles that fall + tumble)
+//   - Carla:   purple laser     -> "segment" mode (glowing beam along the path)
+//   - Kaner:   blue + electric  -> "segment" mode (jagged lightning along path)
+type TrailKind = 'fairy' | 'laser' | 'electric';
 
 const TRAIL_BY_EMAIL: Record<string, TrailKind> = {
   'aliviah@simple.biz': 'fairy',
-  'carla@simple.biz': 'fire',
+  'carla@simple.biz': 'laser',
+  'kaner@simple.biz': 'electric',
+};
+
+// Optional pointer recolor, independent of the trail. Kaner's cursor is blue.
+const CURSOR_OVERRIDE: Record<string, { color: string; glow: string }> = {
+  'kaner@simple.biz': { color: '#3b82f6', glow: 'rgba(59,130,246,0.7)' },
 };
 
 const FAIRY_DUST_COLORS = ['#ff9ed8', '#ffc2ec', '#ff6fbf', '#ffd9f2', '#f4a8ff', '#ffb0e0'];
-const FIRE_COLORS = ['#fff2a0', '#ffd000', '#ffae00', '#ff8c1a', '#ff6a00', '#ff3d00', '#e02500'];
+const LASER_COLORS = ['#e9d5ff', '#d8b4fe', '#c084fc', '#a855f7', '#9333ea'];
+const ELECTRIC_COLORS = ['#e0f2fe', '#bae6fd', '#7dd3fc', '#38bdf8', '#60a5fa'];
 
-const DUST_SPAWN_THROTTLE_MS = 38; // cap spawn rate independent of the 60fps move feed
-const DUST_MAX = 60; // hard ceiling on live motes (they self-remove on fade)
+const DUST_SPAWN_THROTTLE_MS = 30; // cap spawn rate independent of the 60fps move feed
+const DUST_MAX = 70; // hard ceiling on live motes (they self-remove on fade)
+const TRAIL_IDLE_RESET_MS = 220; // a gap longer than this starts a fresh stroke
+const TRAIL_MAX_SEG_PX = 220; // skip absurdly long segments (cursor jumps)
 
 interface TrailMote {
   id: number;
-  x: number; // % of overlay (same coord space as the cursor)
+  x: number; // % of overlay (anchor: particle center, or segment start point)
   y: number;
   color: string;
-  size: number; // initial scale
-  dx: number; // drift to the side (px)
-  dy: number; // vertical drift (px): + falls (fairy dust), - rises (fire embers)
-  rot: number; // tumble (deg)
   dur: number; // fade duration (s)
+  // particle motes (fairy dust)
+  size?: number; // initial scale
+  dx?: number; // sideways drift (px)
+  dy?: number; // vertical drift (px): + falls
+  rot?: number; // tumble (deg)
+  // segment motes (laser / electric): connect the previous point -> this point
+  angle?: number; // segment orientation (deg)
+  length?: number; // segment length (px)
+  points?: string; // electric only: jagged polyline in local segment space
+}
+
+// Jagged lightning polyline across a segment of the given pixel length. The
+// endpoints sit on the centerline (y=7) so consecutive bolts join cleanly.
+function buildBolt(length: number): string {
+  const segs = Math.max(2, Math.round(length / 12));
+  const pts: string[] = [];
+  for (let i = 0; i <= segs; i++) {
+    const px = (length * i) / segs;
+    const py = i === 0 || i === segs ? 7 : 7 + (Math.random() - 0.5) * 11;
+    pts.push(`${px.toFixed(1)},${py.toFixed(1)}`);
+  }
+  return pts.join(' ');
 }
 
 // --- per-cursor component -----------------------------------------------------
@@ -193,40 +221,33 @@ function RemoteCursor({
   useEffect(() => { xMv.set(x); }, [x, xMv]);
   useEffect(() => { yMv.set(y); }, [y, yMv]);
 
-  // Cursor trail: Aliviah gets fairy dust, Carla gets a fire trail. Scoped by
-  // email so every other pointer is left untouched.
-  const trail = TRAIL_BY_EMAIL[(normEmail(email) ?? email.trim().toLowerCase())] ?? null;
+  // Cursor trail (scoped by email; every other pointer is left untouched).
+  const trailKey = normEmail(email) ?? email.trim().toLowerCase();
+  const trail = TRAIL_BY_EMAIL[trailKey] ?? null;
+  const cursorColor = CURSOR_OVERRIDE[trailKey]?.color ?? color;
+  const cursorGlow = CURSOR_OVERRIDE[trailKey]?.glow ?? glow;
   const [motes, setMotes] = useState<TrailMote[]>([]);
   const moteIdRef = useRef(0);
   const lastSpawnRef = useRef(0);
+  const lastPosRef = useRef<{ x: number; y: number } | null>(null);
+  const layerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!trail) return;
     const now = Date.now();
-    if (now - lastSpawnRef.current < DUST_SPAWN_THROTTLE_MS) return;
+    const gap = now - lastSpawnRef.current;
+    if (gap < DUST_SPAWN_THROTTLE_MS) return;
     lastSpawnRef.current = now;
-    // Spawn at the currently *visible* (spring-smoothed) cursor position so the
-    // particles are dropped where the pointer is and left behind as it moves.
+    // Visible (spring-smoothed) cursor position, so particles land where the
+    // pointer actually appears and are left behind as it moves.
     const px = sx.get();
     const py = sy.get();
-    const count = 1 + Math.floor(Math.random() * 2); // 1-2 motes per move tick
-    const batch: TrailMote[] = [];
-    for (let i = 0; i < count; i++) {
-      if (trail === 'fire') {
-        // Embers: a touch bigger, rise upward, jitter sideways, flicker out fast.
-        batch.push({
-          id: ++moteIdRef.current,
-          x: px + (Math.random() - 0.5) * 1.0,
-          y: py + (Math.random() - 0.5) * 1.0,
-          color: FIRE_COLORS[Math.floor(Math.random() * FIRE_COLORS.length)],
-          size: 0.7 + Math.random() * 0.7,
-          dx: (Math.random() - 0.5) * 12,
-          dy: -(10 + Math.random() * 20),
-          rot: (Math.random() - 0.5) * 80,
-          dur: 0.45 + Math.random() * 0.5,
-        });
-      } else {
-        // Fairy dust: sparkles that fall, tumble, and shrink away.
+
+    if (trail === 'fairy') {
+      // Fairy dust: sparkles that fall, tumble, and shrink away.
+      const count = 1 + Math.floor(Math.random() * 2);
+      const batch: TrailMote[] = [];
+      for (let i = 0; i < count; i++) {
         batch.push({
           id: ++moteIdRef.current,
           x: px + (Math.random() - 0.5) * 1.2,
@@ -239,51 +260,131 @@ function RemoteCursor({
           dur: 0.65 + Math.random() * 0.55,
         });
       }
+      setMotes((prev) => (prev.length > DUST_MAX ? prev.slice(-DUST_MAX) : prev).concat(batch));
+      return;
     }
-    setMotes((prev) => (prev.length > DUST_MAX ? prev.slice(-DUST_MAX) : prev).concat(batch));
+
+    // Stroke trails (laser / electric): connect the previous spawned point to
+    // the current one so the trail traces the cursor's actual path.
+    const fresh = gap > TRAIL_IDLE_RESET_MS;
+    const prev = fresh ? null : lastPosRef.current;
+    lastPosRef.current = { x: px, y: py };
+    if (!prev) return; // first point of a stroke -> nothing to connect yet
+
+    const layer = layerRef.current;
+    const w = layer?.clientWidth ?? 0;
+    const h = layer?.clientHeight ?? 0;
+    if (w === 0 || h === 0) return;
+    const dxPx = ((px - prev.x) / 100) * w;
+    const dyPx = ((py - prev.y) / 100) * h;
+    const length = Math.hypot(dxPx, dyPx);
+    if (length < 1 || length > TRAIL_MAX_SEG_PX) return; // no move / a jump
+    const angle = (Math.atan2(dyPx, dxPx) * 180) / Math.PI;
+
+    const palette = trail === 'laser' ? LASER_COLORS : ELECTRIC_COLORS;
+    const segColor = palette[Math.floor(Math.random() * palette.length)];
+    const mote: TrailMote = {
+      id: ++moteIdRef.current,
+      x: prev.x,
+      y: prev.y,
+      color: segColor,
+      angle,
+      length,
+      dur: trail === 'laser' ? 0.4 + Math.random() * 0.25 : 0.22 + Math.random() * 0.22,
+      points: trail === 'electric' ? buildBolt(length) : undefined,
+    };
+    setMotes((prev2) => (prev2.length > DUST_MAX ? prev2.slice(-DUST_MAX) : prev2).concat(mote));
   }, [x, y, trail, sx, sy]);
 
   return (
     <>
-      {trail && motes.length > 0 && (
-        <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          {motes.map((m) => (
-            <motion.div
-              key={m.id}
-              className="absolute"
-              style={{ left: `${m.x}%`, top: `${m.y}%` }}
-              initial={{ opacity: trail === 'fire' ? 1 : 0.95, scale: m.size, x: 0, y: 0, rotate: 0 }}
-              animate={{ opacity: 0, scale: trail === 'fire' ? 0.2 : 0, x: m.dx, y: m.dy, rotate: m.rot }}
-              transition={{ duration: m.dur, ease: trail === 'fire' ? [0.3, 0, 0.7, 0] : [0.22, 0.61, 0.36, 1] }}
-              onAnimationComplete={() => setMotes((prev) => prev.filter((p) => p.id !== m.id))}
-            >
-              {trail === 'fire' ? (
-                <div
-                  style={{
-                    width: 11,
-                    height: 11,
-                    borderRadius: '9999px',
-                    transform: 'translate(-50%, -50%)',
-                    background: `radial-gradient(circle at 50% 38%, #fff6cf 0%, ${m.color} 48%, rgba(0,0,0,0) 78%)`,
-                    boxShadow: `0 0 6px 2px ${m.color}, 0 0 14px 5px ${m.color}`,
-                  }}
-                />
-              ) : (
-                <svg
-                  width="11"
-                  height="11"
-                  viewBox="0 0 10 10"
-                  style={{
-                    transform: 'translate(-50%, -50%)',
-                    filter: `drop-shadow(0 0 4px ${m.color}) drop-shadow(0 0 8px ${m.color})`,
-                  }}
+      {trail && (
+        <div ref={layerRef} className="pointer-events-none absolute inset-0 overflow-hidden">
+          {motes.map((m) => {
+            // Fairy dust -> a falling, tumbling sparkle particle.
+            if (trail === 'fairy') {
+              return (
+                <motion.div
+                  key={m.id}
+                  className="absolute"
+                  style={{ left: `${m.x}%`, top: `${m.y}%` }}
+                  initial={{ opacity: 0.95, scale: m.size, x: 0, y: 0, rotate: 0 }}
+                  animate={{ opacity: 0, scale: 0, x: m.dx, y: m.dy, rotate: m.rot }}
+                  transition={{ duration: m.dur, ease: [0.22, 0.61, 0.36, 1] }}
+                  onAnimationComplete={() => setMotes((prev) => prev.filter((p) => p.id !== m.id))}
                 >
-                  <path d="M5 0 L6 4 L10 5 L6 6 L5 10 L4 6 L0 5 L4 4 Z" fill={m.color} />
-                  <circle cx="5" cy="5" r="1" fill="rgba(255,255,255,0.95)" />
-                </svg>
-              )}
-            </motion.div>
-          ))}
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 10 10"
+                    style={{
+                      transform: 'translate(-50%, -50%)',
+                      filter: `drop-shadow(0 0 4px ${m.color}) drop-shadow(0 0 8px ${m.color})`,
+                    }}
+                  >
+                    <path d="M5 0 L6 4 L10 5 L6 6 L5 10 L4 6 L0 5 L4 4 Z" fill={m.color} />
+                    <circle cx="5" cy="5" r="1" fill="rgba(255,255,255,0.95)" />
+                  </svg>
+                </motion.div>
+              );
+            }
+            // Laser / electric -> a segment anchored at the previous point,
+            // rotated along travel direction, fading where the cursor has been.
+            return (
+              <motion.div
+                key={m.id}
+                className="absolute"
+                style={{ left: `${m.x}%`, top: `${m.y}%` }}
+                initial={{ opacity: trail === 'electric' ? 1 : 0.95 }}
+                animate={{ opacity: trail === 'electric' ? [1, 0.35, 0.85, 0] : 0 }}
+                transition={{ duration: m.dur, ease: 'easeOut' }}
+                onAnimationComplete={() => setMotes((prev) => prev.filter((p) => p.id !== m.id))}
+              >
+                {trail === 'laser' ? (
+                  <div
+                    style={{
+                      width: m.length,
+                      height: 3,
+                      transformOrigin: '0 50%',
+                      transform: `translateY(-50%) rotate(${m.angle}deg)`,
+                      borderRadius: 9999,
+                      background: `linear-gradient(90deg, rgba(255,255,255,0) 0%, ${m.color} 55%, #ffffff 100%)`,
+                      boxShadow: `0 0 6px 2px ${m.color}, 0 0 16px 5px ${m.color}`,
+                    }}
+                  />
+                ) : (
+                  <svg
+                    width={m.length}
+                    height={14}
+                    viewBox={`0 0 ${m.length} 14`}
+                    style={{
+                      transformOrigin: '0 50%',
+                      transform: `translateY(-50%) rotate(${m.angle}deg)`,
+                      overflow: 'visible',
+                      filter: `drop-shadow(0 0 3px ${m.color}) drop-shadow(0 0 6px ${m.color})`,
+                    }}
+                  >
+                    <polyline
+                      points={m.points}
+                      fill="none"
+                      stroke={m.color}
+                      strokeWidth={2}
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                    />
+                    <polyline
+                      points={m.points}
+                      fill="none"
+                      stroke="rgba(255,255,255,0.9)"
+                      strokeWidth={0.8}
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                )}
+              </motion.div>
+            );
+          })}
         </div>
       )}
     <motion.div
@@ -299,11 +400,11 @@ function RemoteCursor({
         height="22"
         viewBox="0 0 22 22"
         fill="none"
-        style={{ filter: `drop-shadow(0 0 6px ${glow}) drop-shadow(0 1px 3px rgba(0,0,0,0.55))` }}
+        style={{ filter: `drop-shadow(0 0 6px ${cursorGlow}) drop-shadow(0 1px 3px rgba(0,0,0,0.55))` }}
       >
         <path
           d="M4 2L17.5 9.5L11 11.5L8.5 19L4 2Z"
-          fill={color}
+          fill={cursorColor}
           stroke="rgba(255,255,255,0.88)"
           strokeWidth="1"
           strokeLinejoin="round"
@@ -314,13 +415,13 @@ function RemoteCursor({
         style={{
           background: 'rgba(9,9,11,0.86)',
           backdropFilter: 'blur(12px)',
-          border: `1px solid ${color}44`,
-          boxShadow: `0 0 10px ${glow}, 0 2px 8px rgba(0,0,0,0.35)`,
+          border: `1px solid ${cursorColor}44`,
+          boxShadow: `0 0 10px ${cursorGlow}, 0 2px 8px rgba(0,0,0,0.35)`,
         }}
       >
         <span
           className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: color, boxShadow: `0 0 5px ${color}` }}
+          style={{ background: cursorColor, boxShadow: `0 0 5px ${cursorColor}` }}
         />
         <span
           className="font-mono text-[10px] font-medium leading-none tracking-tight"

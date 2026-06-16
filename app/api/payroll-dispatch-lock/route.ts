@@ -72,13 +72,16 @@ export async function POST(req: NextRequest) {
         .select("work_email")
         .in("role", ["admin", "hr_coordinator", "payroll_coordinator", "payroll_manager", "finance"])
         .is("revoked_at", null);
+      // Don't notify the actor about their own start/stop action — `actor` is
+      // their lowercased email (see getSessionActor).
+      const actorEmail = actor ? actor.trim().toLowerCase() : null;
       const recipients = Array.from(
         new Set(
           (roleRows ?? [])
             .map((r: { work_email?: string | null }) => (r.work_email ?? "").trim().toLowerCase())
             .filter(Boolean),
         ),
-      );
+      ).filter((email) => email !== actorEmail);
       if (recipients.length === 0) return;
       const type = body.locked ? "payroll.processing_started" : "payroll.processing_stopped";
       const title = body.locked ? "Payroll Processing Started" : "Payroll Processing Stopped";
