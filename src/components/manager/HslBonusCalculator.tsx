@@ -17,6 +17,10 @@ import {
   calcBonus, calcTeamSplitShare, canAccessHslDept, formatPeso,
 } from '@/lib/hsl-bonus/schema';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
+import {
+  pickCurrentSourceFile,
+  type HubstaffSourceFilesResponse,
+} from '@/lib/hubstaff/current-upload';
 import HslBonusReadyPreview from './HslBonusReadyPreview';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 
@@ -359,14 +363,17 @@ export default function HslBonusCalculator({
     visibleDepts.forEach((k) => void loadDept(k));
   }, [visibleDepts, loadDept]);
 
-  // Pin the KPI week to the latest Hubstaff upload so managers always enter
-  // data for the same week accounting is processing in the Payroll Wizard.
+  // Pin the KPI week to the Hubstaff batch accounting is dispatching — the
+  // Initialized (is_current) upload, NOT merely the newest file. The public
+  // endpoint returns newest-first, so we resolve the current batch the same way
+  // the Payroll Wizard does (pickCurrentSourceFile) to keep the manager's KPI
+  // week in lock-step with the week accounting processes.
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch('/api/hubstaff-hours?source_files=1', { cache: 'no-store' });
-        const json = (await res.json()) as { files?: string[] };
-        const latest = json.files?.[0];
+        const json = (await res.json()) as HubstaffSourceFilesResponse;
+        const latest = pickCurrentSourceFile(json.uploads, json.files);
         if (latest) {
           const range = parseDateRangeFromFilename(latest);
           if (range) {

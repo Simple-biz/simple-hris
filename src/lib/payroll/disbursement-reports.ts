@@ -13,8 +13,22 @@ import {
   createSupabaseServiceRoleClient,
 } from "@/lib/supabase/server";
 import { listHubstaffUploads } from "@/lib/supabase/hubstaff-hours-db";
-import { parseDateRangeFromFilename } from "@/lib/hubstaff/calendar-column-dedupe";
+import {
+  parseDateRangeFromFilename,
+  payWeekFromUploadStart,
+  resolveCanonicalColumnsToIso,
+} from "@/lib/hubstaff/calendar-column-dedupe";
 import { processorIdFromBankPreferred } from "@/components/payroll-clerk/mock-queue";
+import { normEmail } from "@/lib/email/norm-email";
+import { effectiveUsdToPhpRateFromStored } from "@/lib/fx/usd-php";
+import { listPayStructures } from "@/lib/supabase/pay-structures-db";
+import {
+  buildCatalogRateIndex,
+  resolveEmployeeCatalogRate,
+  resolveDeptCatalogRate,
+} from "@/lib/payroll/resolve-rate";
+import { fetchAllRateHistory } from "@/lib/payroll/rate-history";
+import { computeProratedRowPay } from "@/lib/payroll/current-pay";
 import type {
   PaymentDispatchRow,
   PaymentDispatchStatus,
@@ -98,7 +112,7 @@ export interface DisbursementReportSummary {
   reportName: string;
   totals: DisbursementReportTotals;
   /** Per-processor breakdown of paid amounts. */
-  byProcessor: Record<string, { count: number; usd: number }>;
+  byProcessor: Record<string, { count: number; usd: number; php: number }>;
   /** Every recipient with status='paid' for this cycle, sorted by name. Used
    *  on the report card so admins can scan who actually got paid that week. */
   paidRecipients: DisbursementReportRecipient[];
@@ -484,7 +498,7 @@ async function buildUrgentWeeklyReports(): Promise<DisbursementReportSummary[]> 
     latestCreatedAt: string;
     latestCreatedBy: string | null;
     totals: DisbursementReportTotals;
-    byProcessor: Record<string, { count: number; usd: number }>;
+    byProcessor: Record<string, { count: number; usd: number; php: number }>;
     paidByEmail: Map<string, DisbursementReportRecipient>;
   };
   const buckets = new Map<string, Bucket>();
@@ -521,9 +535,10 @@ async function buildUrgentWeeklyReports(): Promise<DisbursementReportSummary[]> 
       t.paidUSD += owedUSD;
       t.paidPHP += num(d.amount_php);
       const proc = d.processor || "unknown";
-      const acc = bucket.byProcessor[proc] ?? { count: 0, usd: 0 };
+      const acc = bucket.byProcessor[proc] ?? { count: 0, usd: 0, php: 0 };
       acc.count += 1;
       acc.usd += owedUSD;
+      acc.php += num(d.amount_php);
       bucket.byProcessor[proc] = acc;
       const emailKey = d.recipient_email.trim().toLowerCase();
       const existing = bucket.paidByEmail.get(emailKey);
@@ -616,7 +631,7 @@ export async function listDisbursementReports(): Promise<{
     periodEnd: string;
     uploadId: string | null;
     totals: DisbursementReportTotals;
-    byProcessor: Record<string, { count: number; usd: number }>;
+    byProcessor: Record<string, { count: number; usd: number; php: number }>;
     /** Map keyed by lowercased email so each recipient is counted once even if
      *  they appear in multiple disbursement_records rows for the same cycle. */
     paidByEmail: Map<string, DisbursementReportRecipient>;
@@ -642,9 +657,10 @@ export async function listDisbursementReports(): Promise<{
     if (r.status === "paid") {
       const emailKey = r.recipient_email.trim().toLowerCase();
       const proc = processorByEmail.get(emailKey) ?? "unknown";
-      const acc = bucket.byProcessor[proc] ?? { count: 0, usd: 0 };
+      const acc = bucket.byProcessor[proc] ?? { count: 0, usd: 0, php: 0 };
       acc.count += 1;
       acc.usd += num(r.paid_amount_usd) || num(r.amount_usd);
+      acc.php += num(r.amount_php);
       bucket.byProcessor[proc] = acc;
 
       const paidUSD = num(r.paid_amount_usd) || num(r.amount_usd);
@@ -757,9 +773,40 @@ function parseWorkedHours(raw: string | null | undefined): number {
   return h + m / 60 + s / 3600;
 }
 
+/** Parse a sheet rate to a number, or null when blank/invalid — mirrors
+ *  current-pay.ts's `parseRateText` so empty cells fall through to the
+ *  catalog/department fallback instead of pinning the rate to 0. */
+function parseSeedRate(v: string | number | null | undefined): number | null {
+  if (v == null) return null;
+  const s = String(v).trim().replace(/,/g, "");
+  if (!s) return null;
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Parse a YYYY-MM-DD string to a LOCAL-midnight Date (matches the pay-week
+ *  window math in calendar-column-dedupe / current-pay). */
+function parseLocalIsoDate(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 /**
  * Seeds `disbursement_records` for all `hubstaff_uploads` that have no records yet.
- * Replicates the logic of `references/seed_disbursement_records.sql` in TypeScript.
+ *
+ * Pay is computed with the **Payroll Wizard's authoritative calculator**
+ * (`computeProratedRowPay` from current-pay.ts): the Payment Catalog rate overlay
+ * (individual → sheet → department base), per-day rate-history prorating, the
+ * 40h/week regular cap applied chronologically, the HSL weekend premium, and
+ * the same FX resolution. This keeps a report's pending-cycle estimate in lock-
+ * step with what the live dispatch will actually pay — the two share one
+ * function and can't silently diverge. Bonuses (PAB/Tech) and the MESA deduction
+ * are NOT included here; those flow through the real `payment_dispatches` rows
+ * synced into `paid_amount_usd`.
+ *
  * Returns the total number of rows inserted/updated.
  */
 export async function seedMissingDisbursementRecords(): Promise<{
@@ -785,31 +832,70 @@ export async function seedMissingDisbursementRecords(): Promise<{
   );
   if (unseeded.length === 0) return { seeded: 0, error: null };
 
-  // FX rate from app_settings.
+  // FX rate from app_settings — same effective resolution the wizard uses.
   const { data: fxData } = await supabase
     .from("app_settings")
     .select("value")
     .eq("key", "usd_to_php_rate")
     .maybeSingle();
-  const fxRate = parseFloat((fxData as { value?: string } | null)?.value ?? "0") || 0;
+  const fxRate = effectiveUsdToPhpRateFromStored((fxData as { value?: string } | null)?.value);
 
-  // Employee rates indexed by email (work + personal).
+  // Pull the rest of the wizard's authoritative pay context in parallel:
+  //  - Payment Catalog pay structures (individual + department) for the rate overlay,
+  //  - the full employee_rate_history for mid-cycle per-day prorating,
+  //  - the master list (active_employees) for HSL membership (weekend premium).
+  const [payStructuresResult, rateHistory, masterRes] = await Promise.all([
+    listPayStructures(),
+    fetchAllRateHistory(),
+    supabase
+      .from("active_employees")
+      .select('"Work Email", "Personal Email", "Department"'),
+  ]);
+  const catalogIndex = buildCatalogRateIndex(payStructuresResult.structures);
+
+  // HSL email set (Department == 'hsl') — drives the +15₱/h weekend premium,
+  // matching current-pay.ts. Keyed on work + personal email.
+  const hslEmails = new Set<string>();
+  for (const m of (masterRes.data ?? []) as Array<{
+    "Work Email": string | null;
+    "Personal Email": string | null;
+    "Department": string | null;
+  }>) {
+    if ((m["Department"] ?? "").trim().toLowerCase() !== "hsl") continue;
+    const we = normEmail(m["Work Email"]);
+    const pe = normEmail(m["Personal Email"]);
+    if (we) hslEmails.add(we);
+    if (pe) hslEmails.add(pe);
+  }
+
+  // Sheet rates + department, indexed by email (work + personal). Empty cells
+  // resolve to null (not 0) so the catalog/department fallback can take over —
+  // same null semantics as current-pay.ts's parseRateText.
   const { data: ratesData } = await supabase
     .from("employee_hourly_rates")
     .select("*");
-  const ratesByEmail = new Map<string, { regular: number; ot: number }>();
+  const rateByEmail = new Map<string, { reg: number | null; ot: number | null }>();
+  const deptByEmail = new Map<string, string>();
   for (const r of (ratesData ?? []) as Array<{
     "Work Email": string | null;
     "Personal Email": string | null;
+    "Department": string | null;
     "Regular Rate": string | number | null;
     "OT Rate": string | number | null;
   }>) {
-    const we = r["Work Email"]?.trim().toLowerCase();
-    const pe = r["Personal Email"]?.trim().toLowerCase();
-    const regular = parseFloat(String(r["Regular Rate"] ?? "0")) || 0;
-    const ot = parseFloat(String(r["OT Rate"] ?? "0")) || 0;
-    if (we) ratesByEmail.set(we, { regular, ot });
-    if (pe && !ratesByEmail.has(pe)) ratesByEmail.set(pe, { regular, ot });
+    const we = normEmail(r["Work Email"]);
+    const pe = normEmail(r["Personal Email"]);
+    const entry = {
+      reg: parseSeedRate(r["Regular Rate"]),
+      ot: parseSeedRate(r["OT Rate"]),
+    };
+    if (we) rateByEmail.set(we, entry);
+    if (pe && !rateByEmail.has(pe)) rateByEmail.set(pe, entry);
+    const dept = r["Department"];
+    if (dept) {
+      if (we && !deptByEmail.has(we)) deptByEmail.set(we, dept);
+      if (pe && !deptByEmail.has(pe)) deptByEmail.set(pe, dept);
+    }
   }
 
   // Existing dispatches for unseeded source_files.
@@ -853,6 +939,14 @@ export async function seedMissingDisbursementRecords(): Promise<{
     const period = periodFromFilename(sourceFile);
     if (!period.start || !period.end) continue;
 
+    // Per-department pay-week windows from the upload's start date. An 8-day
+    // Sun→Sun upload contributes exactly one 7-day week per department (HSL keeps
+    // Mon→Sun, everyone else Sun→Sat), matching current-pay.ts so the estimate
+    // counts the same days the live dispatch does.
+    const periodStartDate = parseLocalIsoDate(period.start);
+    const payWeekHsl = periodStartDate ? payWeekFromUploadStart(periodStartDate, true) : null;
+    const payWeekNonHsl = periodStartDate ? payWeekFromUploadStart(periodStartDate, false) : null;
+
     // Fetch all hourly rows for this upload using select('*') — column names
     // in hubstaff_hours match the CSV headers (e.g. "Email", "Member", "Total worked").
     const PAGE = 1000;
@@ -874,18 +968,73 @@ export async function seedMissingDisbursementRecords(): Promise<{
 
     const rows: Record<string, unknown>[] = [];
     for (const h of allHours) {
-      const email = (h["Email"] as string | null)?.trim().toLowerCase();
+      const email = normEmail(h["Email"] as string | null);
       if (!email) continue;
-      const totalHours =
-        Math.round(parseWorkedHours(h["Total worked"] as string | null) * 100) / 100;
-      const regularHours = Math.round(Math.min(40, totalHours) * 100) / 100;
-      const otHours = Math.round(Math.max(0, totalHours - 40) * 100) / 100;
-      const rates = ratesByEmail.get(email) ?? { regular: 0, ot: 0 };
+
+      const isHslEmp = hslEmails.has(email);
+
+      // Rate resolution — identical priority to the live dispatch
+      // (current-pay.ts): individual catalog → sheet → department base. Only the
+      // individual catalog rate OVERRIDES the per-day history; the department
+      // rate is a pure fallback for employees with no sheet rate at all.
+      const sheetRate = rateByEmail.get(email);
+      const empCat = resolveEmployeeCatalogRate(catalogIndex, email, fxRate);
+      const deptCat = resolveDeptCatalogRate(catalogIndex, deptByEmail.get(email) ?? null, fxRate);
+      const catalogOverride = empCat ? { reg: empCat.regPhp, ot: empCat.otPhp } : null;
+      const hasSheet = sheetRate != null && (sheetRate.reg != null || sheetRate.ot != null);
+      const baseRate = hasSheet
+        ? sheetRate
+        : deptCat
+          ? { reg: deptCat.regPhp, ot: deptCat.otPhp }
+          : sheetRate;
+      const effReg = empCat?.regPhp ?? baseRate?.reg ?? null;
+      const effOt = empCat?.otPhp ?? baseRate?.ot ?? null;
+
+      // Per-day prorated pay: resolve the rate as-of each day from history, apply
+      // the 40h/week cap chronologically, clamp to this department's pay week,
+      // and add the HSL weekend premium — the exact same calculator the wizard
+      // uses. Falls back to the aggregate single-rate formula only when the row
+      // has no resolvable per-day columns.
+      const payWindow = isHslEmp ? payWeekHsl : payWeekNonHsl;
+      const rowResolved = resolveCanonicalColumnsToIso(h, sourceFile);
+      const prorated = computeProratedRowPay(
+        rowResolved,
+        rateHistory,
+        email,
+        baseRate,
+        isHslEmp,
+        payWindow,
+        catalogOverride,
+      );
+
+      let totalHours: number;
+      let regularHours: number;
+      let otHours: number;
+      let regularPayPHP: number | null;
+      let otPayPHP: number | null;
+      if (prorated) {
+        totalHours = Math.round((prorated.totalSec / 3600) * 100) / 100;
+        regularHours = Math.round((prorated.regularSec / 3600) * 100) / 100;
+        otHours = Math.round((prorated.otSec / 3600) * 100) / 100;
+        regularPayPHP = prorated.regularPayPHP;
+        otPayPHP = prorated.otPayPHP;
+      } else {
+        totalHours =
+          Math.round(parseWorkedHours(h["Total worked"] as string | null) * 100) / 100;
+        regularHours = Math.round(Math.min(40, totalHours) * 100) / 100;
+        otHours = Math.round(Math.max(0, totalHours - 40) * 100) / 100;
+        regularPayPHP = effReg != null ? Math.round(regularHours * effReg * 100) / 100 : null;
+        otPayPHP = effOt != null ? Math.round(otHours * effOt * 100) / 100 : null;
+      }
+
       const amountPHP =
-        Math.round((regularHours * rates.regular + otHours * rates.ot) * 100) /
-        100;
+        regularPayPHP != null || otPayPHP != null
+          ? Math.round(((regularPayPHP ?? 0) + (otPayPHP ?? 0)) * 100) / 100
+          : null;
       const amountUSD =
-        fxRate > 0 ? Math.round((amountPHP / fxRate) * 100) / 100 : null;
+        amountPHP != null && fxRate > 0
+          ? Math.round((amountPHP / fxRate) * 100) / 100
+          : null;
 
       const dispKey = `${sourceFile}|${email}`;
       const dispatch = dispatchMap.get(dispKey);
@@ -900,8 +1049,8 @@ export async function seedMissingDisbursementRecords(): Promise<{
         total_hours: totalHours,
         regular_hours: regularHours,
         ot_hours: otHours,
-        regular_rate_php: rates.regular,
-        ot_rate_php: rates.ot,
+        regular_rate_php: effReg,
+        ot_rate_php: effOt,
         amount_php: amountPHP,
         amount_usd: amountUSD,
         fx_rate: fxRate || null,

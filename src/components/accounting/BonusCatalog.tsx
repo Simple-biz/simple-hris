@@ -43,6 +43,10 @@ import {
   ChevronDown,
   ArrowDownUp,
   Check,
+  Download,
+  FileText,
+  FileSpreadsheet,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -71,11 +75,18 @@ import {
   type PayStructure,
   type PayCurrency,
 } from '@/lib/payment-catalog/pay-structure';
+import {
+  buildCatalogExport,
+  downloadCatalogCsv,
+  downloadCatalogPdf,
+} from '@/lib/payment-catalog/catalog-export';
 
 const PESO = '₱';
 
+// Always render exactly 2 decimals so the exact amount is shown without ever
+// rounding cents away to a whole number (1500 -> "₱1,500.00", 1500.5 -> "₱1,500.50").
 function money(n: number): string {
-  return `${PESO}${n.toLocaleString('en-PH', { maximumFractionDigits: 2 })}`;
+  return `${PESO}${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** Shared easing — matches the app's tab transition (App.tsx). */
@@ -296,6 +307,148 @@ function LoadingBar({ show }: { show: boolean }) {
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Export menu -- download the whole catalog (rates + bonuses) as CSV or a
+// branded PDF, grouped per category per department.
+// ---------------------------------------------------------------------------
+
+function ExportMenu({
+  payStructures,
+  bonuses,
+  assignments,
+  roster,
+  disabled,
+}: {
+  payStructures: PayStructure[];
+  bonuses: BonusDef[];
+  assignments: BonusAssignment[];
+  roster: RosterEntry[];
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<null | 'csv' | 'pdf'>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const buildModel = useCallback(() => {
+    const nameByEmail = new Map(roster.map((r) => [r.email, r.name]));
+    return buildCatalogExport({
+      payStructures,
+      bonuses,
+      assignments,
+      departments: DEPARTMENTS.map((d) => ({ key: d.key, name: d.name })),
+      resolveName: (email) => nameByEmail.get(email.toLowerCase()),
+    });
+  }, [payStructures, bonuses, assignments, roster]);
+
+  const onCsv = () => {
+    try {
+      downloadCatalogCsv(buildModel());
+      toast.success('Catalog exported to CSV');
+    } catch {
+      toast.error('Could not export CSV');
+    } finally {
+      setOpen(false);
+    }
+  };
+
+  const onPdf = async () => {
+    setBusy('pdf');
+    try {
+      await downloadCatalogPdf(buildModel());
+      toast.success('Catalog exported to PDF');
+      setOpen(false);
+    } catch {
+      toast.error('Could not generate PDF');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={disabled || busy !== null}
+        onClick={() => setOpen((o) => !o)}
+        className="gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-blue-900/60 dark:text-blue-300 dark:hover:bg-blue-950/40"
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+        Export
+        <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2, ease: EASE }}>
+          <ChevronDown className="h-3.5 w-3.5" />
+        </motion.span>
+      </Button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+            transition={{ duration: 0.16, ease: EASE }}
+            className="absolute right-0 z-40 mt-1 w-64 origin-top-right overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+          >
+            <div className="border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Export pay by department
+              </p>
+              <p className="mt-0.5 text-[10.5px] text-zinc-400">
+                Rates &amp; bonuses, grouped per category per department.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onCsv}
+              disabled={busy !== null}
+              className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-orange-50 disabled:opacity-50 dark:hover:bg-blue-950/30"
+            >
+              <FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-100">CSV spreadsheet</span>
+                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">One flat table for Excel / Sheets.</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onPdf}
+              disabled={busy !== null}
+              className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-orange-50 disabled:opacity-50 dark:hover:bg-blue-950/30"
+            >
+              {busy === 'pdf' ? (
+                <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-orange-500" />
+              ) : (
+                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+              )}
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-100">PDF report</span>
+                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">Branded, sectioned, print-ready.</span>
+              </span>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -534,13 +687,22 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               and define reusable bonuses to assign across the team.
             </p>
           </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+          <div className="flex items-center gap-2.5">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              </span>
+              Live &middot; changes save automatically
             </span>
-            Live &middot; changes save automatically
-          </span>
+            <ExportMenu
+              payStructures={payStructures}
+              bonuses={bonuses}
+              assignments={assignments}
+              roster={roster}
+              disabled={loading}
+            />
+          </div>
         </div>
 
         {/* Inner tabs */}

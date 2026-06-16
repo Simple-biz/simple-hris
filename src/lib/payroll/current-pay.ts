@@ -292,8 +292,13 @@ function parseHmsToSec(v: unknown): number {
  * Returns null when the row has no per-day ISO date columns (i.e. canonical
  * weekday CSV that couldn't be resolved) — caller should fall back to the
  * legacy single-rate × aggregate-hours formula in that case.
+ *
+ * Exported so the disbursement-report seeding path
+ * (`seedMissingDisbursementRecords`) computes pending-cycle estimates with the
+ * exact same rate-history prorating, 40h cap and HSL weekend premium as the
+ * live dispatch — the two can never silently diverge.
  */
-function computeProratedRowPay(
+export function computeProratedRowPay(
   rowResolved: Record<string, unknown>,
   history: RateHistoryByEmail,
   email: string,

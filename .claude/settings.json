@@ -13,7 +13,11 @@
       "Bash(node \"scripts/diag-carla-leadgen.mjs\")",
       "Bash(rm -f scripts/diag-carla-leadgen.mjs)",
       "Bash(node \"scripts/fix-carla-usmb.mjs\")",
-      "Bash(rm -f scripts/fix-carla-usmb.mjs)"
+      "Bash(rm -f scripts/fix-carla-usmb.mjs)",
+      "PowerShell(npm run lint 2>&1)",
+      "PowerShell(npx tsx c:/tmp/catalog-export-test.mts)",
+      "PowerShell(npx tsx ./_catalog-export-test.mts)",
+      "PowerShell(npx tsx ./_catalog-export-test.mts 2>&1)"
     ]
   }
 }

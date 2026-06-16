@@ -123,6 +123,11 @@ export interface AppliedSummaryRow {
   period_end: string;
   employee_count: number;
   total_bonus: number;
+  // Attribution for the dept-week: who last applied bonuses and when. Pulled
+  // from the underlying rows so Bonus History can show "added by X on <date>"
+  // even when there's no hsl_bonus_period_status row for the week.
+  applied_by: string | null;
+  applied_at: string | null; // ISO timestamp — most recent row touch
 }
 
 export async function summarizeApplied(depts: string[]): Promise<AppliedSummaryRow[]> {
@@ -130,14 +135,22 @@ export async function summarizeApplied(depts: string[]): Promise<AppliedSummaryR
   if (!supabase || depts.length === 0) return [];
   const { data, error } = await supabase
     .from(TABLE)
-    .select('department, period_start, period_end, employee_email, amount')
+    .select('department, period_start, period_end, employee_email, amount, applied_by, created_at, updated_at')
     .in('department', depts);
   if (error || !data) return [];
 
   // Aggregate in-process: group by (department, period_start).
   const map = new Map<
     string,
-    { department: string; period_start: string; period_end: string; emails: Set<string>; total: number }
+    {
+      department: string;
+      period_start: string;
+      period_end: string;
+      emails: Set<string>;
+      total: number;
+      applied_by: string | null;
+      applied_at: string | null;
+    }
   >();
   for (const r of data as Array<{
     department: string;
@@ -145,6 +158,9 @@ export async function summarizeApplied(depts: string[]): Promise<AppliedSummaryR
     period_end: string;
     employee_email: string;
     amount: number | string | null;
+    applied_by: string | null;
+    created_at: string | null;
+    updated_at: string | null;
   }>) {
     const key = `${r.department}::${r.period_start}`;
     let g = map.get(key);
@@ -155,11 +171,20 @@ export async function summarizeApplied(depts: string[]): Promise<AppliedSummaryR
         period_end: r.period_end,
         emails: new Set(),
         total: 0,
+        applied_by: null,
+        applied_at: null,
       };
       map.set(key, g);
     }
     if (r.employee_email) g.emails.add(r.employee_email);
     g.total += r.amount == null ? 0 : Number(r.amount);
+    // Attribute the dept-week to whoever touched it most recently.
+    const ts = r.updated_at ?? r.created_at ?? null;
+    if (ts && (!g.applied_at || ts > g.applied_at)) {
+      g.applied_at = ts;
+      g.applied_by = r.applied_by ?? g.applied_by;
+    }
+    if (!g.applied_by && r.applied_by) g.applied_by = r.applied_by;
   }
   return Array.from(map.values())
     .map((g) => ({
@@ -168,6 +193,8 @@ export async function summarizeApplied(depts: string[]): Promise<AppliedSummaryR
       period_end: g.period_end,
       employee_count: g.emails.size,
       total_bonus: g.total,
+      applied_by: g.applied_by,
+      applied_at: g.applied_at,
     }))
     .sort((a, b) => (a.period_start < b.period_start ? 1 : a.period_start > b.period_start ? -1 : 0));
 }

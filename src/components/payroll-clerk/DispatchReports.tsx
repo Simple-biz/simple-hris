@@ -65,7 +65,7 @@ export interface ReportSummary {
   isCurrent: boolean;
   reportName: string;
   totals: ReportTotals;
-  byProcessor: Record<string, { count: number; usd: number }>;
+  byProcessor: Record<string, { count: number; usd: number; php: number }>;
   /** Every recipient with status='paid' for this cycle, sorted by name. */
   paidRecipients: ReportRecipient[];
 }
@@ -943,7 +943,7 @@ function ReportDetail({
           </div>
           <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {PROCESSORS.map((p) => {
-              const stats = report.byProcessor[p.id] ?? { count: 0, usd: 0 };
+              const stats = report.byProcessor[p.id] ?? { count: 0, usd: 0, php: 0 };
               return (
                 <div
                   key={p.id}
@@ -957,13 +957,18 @@ function ReportDetail({
                   <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-500 dark:text-zinc-400">
                     {p.label}
                   </div>
-                  <div className="mt-0.5 flex items-baseline justify-between">
+                  <div className="mt-0.5 flex items-baseline justify-between gap-2">
                     <span className="text-lg font-bold tabular-nums text-zinc-900 dark:text-white">
                       {stats.count}
                     </span>
-                    <span className="font-mono text-[11px] tabular-nums text-zinc-600 dark:text-zinc-400">
-                      {formatUSD(stats.usd)}
-                    </span>
+                    <div className="flex flex-col items-end leading-tight">
+                      <span className="font-mono text-sm font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {formatUSD(stats.usd)}
+                      </span>
+                      <span className="font-mono text-[10px] tabular-nums text-zinc-500 dark:text-zinc-500">
+                        {formatPHP(stats.php)}
+                      </span>
+                    </div>
                   </div>
                 </div>
               );

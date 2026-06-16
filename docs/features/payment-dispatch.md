@@ -657,7 +657,7 @@ Returns one summary per cycle, newest period first.
     totalRecipients;
     totalOwedUSD;
   };
-  byProcessor: Record<ProcessorId, { count: number; usd: number }>;
+  byProcessor: Record<ProcessorId, { count: number; usd: number; php: number }>;
 }
 ```
 
@@ -699,6 +699,7 @@ Single library powering both endpoints. Key functions:
 | `formatDisbursementReportName(start, end, fallback)` | "April 12-18, 2026" same-month, "April 30 - May 3, 2026" cross-month, "December 30, 2025 - January 5, 2026" cross-year. Returns `fallback` (typically the source filename minus `.csv`) when dates are missing. |
 | `tallyRecord(totals, record)` | Internal — increments the right counters based on `record.status`. Pending rows go to `outstandingCount/USD`; paid rows go to paid + sent + total dispatched. |
 | `loadProcessorByEmail()` | Builds `Map<email, processorId>` from `employee_hourly_rates."Bank Preferred"` using the canonical `processorIdFromBankPreferred()` matcher (Hurupay/Wepay/HiGlobe/Wise/Jeeves; `xNNNN` → Wires). Used to attribute paid records when the source data was set via direct UPDATE rather than Mark Paid (which would have left a `payment_dispatches` row). |
+| `seedMissingDisbursementRecords()` | Generates `disbursement_records` for any `hubstaff_uploads` that have none yet. Computes pay with the **wizard's authoritative calculator** (`computeProratedRowPay` from `current-pay.ts`): Payment Catalog overlay (individual → sheet → department base), per-day `employee_rate_history` prorating, 40h/week cap applied chronologically, HSL weekend premium, FX via `effectiveUsdToPhpRateFromStored`. Pay-week windowed per department (`payWeekFromUploadStart`) so an 8-day Sun→Sun upload counts one 7-day week. Bonuses/MESA are excluded — those arrive via the real `payment_dispatches` sync into `paid_amount_usd`. |
 
 #### Period resolution chain
 
@@ -741,7 +742,7 @@ Switches to detail view via `setSelected*` triplet (`selected`, `selectedLoading
 **Detail view** (`ReportDetail`):
 - Header: report name, period range, uploaded timestamp, source filename, optional "Current cycle" pill.
 - 4 hero `DetailStat` cards (Paid / Sent / Pending / Total Paid). Total Paid uses 2-decimal formatting (`minimumFractionDigits: 2, maximumFractionDigits: 2`) — earlier code used `Math.round` which the user asked to fix.
-- **Paid by processor** card: 6-up grid of canonical processor tiles. Each shows count + USD total. Empty processors get a muted style; non-empty ones get the orange→rose tint.
+- **Paid by processor** card: 6-up grid of canonical processor tiles. Each shows the paid count (large, left) plus a stacked amount on the right — USD prominent (`text-sm`) over PHP smaller/muted (`text-[10px]`). Empty processors get a muted style; non-empty ones get the orange→rose tint. `byProcessor` carries `{ count, usd, php }`; `php` is summed from each paid record's `amount_php`.
 - **Not yet dispatched** card (only renders when outstanding > 0): scrollable email/USD list capped at 50 rows with `+ N more` overflow indicator.
 - **Dispatch detail** table: full per-row dispatches sorted with paid first, then by `sent_date` desc. Columns: Recipient, Status, Processor, USD, PHP, Bank used, Txn ID, Sent.
 

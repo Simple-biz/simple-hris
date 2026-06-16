@@ -53,11 +53,13 @@ export function isAutoOtRate(regularRate: number, otRate: number | null | undefi
   return Math.abs(otRate - defaultOtRate(regularRate)) <= 0.005;
 }
 
-/** Format a rate in its currency, e.g. "$35.50/hr". */
+/** Format a rate in its currency, e.g. "$35.50/hr".
+ *  Always shows exactly 2 decimals so the exact cent amount is preserved and a
+ *  whole-number rate never looks "rounded" (35 -> "35.00", 35.5 -> "35.50"). */
 export function formatRate(amount: number | null | undefined, currency: PayCurrency): string {
   if (amount == null || !Number.isFinite(amount)) return '-';
   const sym = CURRENCY_SYMBOL[currency] ?? '';
-  return `${sym}${amount.toLocaleString('en-US', { maximumFractionDigits: 2 })}/hr`;
+  return `${sym}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/hr`;
 }
 
 /** Human-readable validity check for a pay structure. */

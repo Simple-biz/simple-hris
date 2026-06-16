@@ -48,6 +48,10 @@ interface UnifiedRow {
   employee_count: number;
   scored_count: number;
   total_bonus: number;
+  // Catalog-only attribution: who applied the bonuses for this dept-week and
+  // when. Null for HSL rows (the HSL schema doesn't track a per-week author).
+  applied_by: string | null;
+  applied_at: string | null;
 }
 
 interface HslSummaryRow {
@@ -150,6 +154,21 @@ function formatLastUpdated(iso: string | null): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+/** Absolute "when it was applied" stamp, e.g. "Jun 14, 3:42 PM". */
+function formatAppliedAt(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `${date}, ${time}`;
+}
+
+/** Short, human name for an applier email (the part before @). */
+function applierName(email: string | null): string {
+  if (!email) return '';
+  return email.split('@')[0];
+}
+
 export default function ManagerBonusHistory({
   viewerEmail: _viewerEmail,
   managedDepts,
@@ -229,12 +248,20 @@ export default function ManagerBonusHistory({
         if (hslRes) {
           const hj = (await hslRes.json()) as { rows?: HslSummaryRow[]; error?: string };
           if (hj.error) setError(hj.error);
-          for (const r of hj.rows ?? []) out.push({ kind: 'hsl', ...r });
+          for (const r of hj.rows ?? []) out.push({ kind: 'hsl', ...r, applied_by: null, applied_at: null });
         }
 
         if (catRes) {
           const cj = (await catRes.json()) as {
-            rows?: { department: string; period_start: string; period_end: string; employee_count: number; total_bonus: number }[];
+            rows?: {
+              department: string;
+              period_start: string;
+              period_end: string;
+              employee_count: number;
+              total_bonus: number;
+              applied_by: string | null;
+              applied_at: string | null;
+            }[];
             error?: string;
           };
           if (cj.error) setError(cj.error);
@@ -253,6 +280,8 @@ export default function ManagerBonusHistory({
               employee_count: r.employee_count,
               scored_count: r.employee_count,
               total_bonus: r.total_bonus,
+              applied_by: r.applied_by ?? null,
+              applied_at: r.applied_at ?? null,
             });
           }
         }
@@ -533,6 +562,18 @@ export default function ManagerBonusHistory({
                           <span>
                             {row.scored_count}/{row.employee_count} scored
                           </span>
+                          {row.applied_by && (
+                            <>
+                              <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                              <span>
+                                added by{' '}
+                                <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                                  {applierName(row.applied_by)}
+                                </span>
+                                {row.applied_at && ` · ${formatAppliedAt(row.applied_at)}`}
+                              </span>
+                            </>
+                          )}
                           {row.updated_at && (
                             <>
                               <span className="text-zinc-300 dark:text-zinc-700">·</span>
@@ -597,6 +638,8 @@ export default function ManagerBonusHistory({
         deptName={viewing && viewing.kind === 'catalog' ? deptDisplay('catalog', viewing.department).name : ''}
         color={viewing && viewing.kind === 'catalog' ? deptDisplay('catalog', viewing.department).color : undefined}
         periodLabel={viewing ? formatRange(viewing.period_start, viewing.period_end) : ''}
+        appliedBy={viewing && viewing.kind === 'catalog' ? viewing.applied_by : null}
+        appliedAt={viewing && viewing.kind === 'catalog' ? viewing.applied_at : null}
         loading={viewingLoading}
         entries={viewingEntries}
         onClose={() => {
@@ -639,6 +682,8 @@ function CatalogBonusPreview({
   deptName,
   color,
   periodLabel,
+  appliedBy,
+  appliedAt,
   loading,
   entries,
   onClose,
@@ -647,6 +692,8 @@ function CatalogBonusPreview({
   deptName: string;
   color: string | undefined;
   periodLabel: string;
+  appliedBy: string | null;
+  appliedAt: string | null;
   loading: boolean;
   entries: PreviewEntry[];
   onClose: () => void;
@@ -687,6 +734,13 @@ function CatalogBonusPreview({
               <div>
                 <h3 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">{deptName}</h3>
                 <p className="mt-0.5 text-[11px] text-zinc-500">{periodLabel} · applied catalog bonuses</p>
+                {appliedBy && (
+                  <p className="mt-0.5 text-[11px] text-zinc-500">
+                    added by{' '}
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">{applierName(appliedBy)}</span>
+                    {appliedAt && ` · ${formatAppliedAt(appliedAt)}`}
+                  </p>
+                )}
               </div>
               <button
                 type="button"
