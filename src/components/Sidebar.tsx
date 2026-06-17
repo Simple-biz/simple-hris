@@ -24,6 +24,7 @@ import {
   HeartHandshake,
 } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
+import ConstructionMark from '@/components/common/ConstructionMark';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -48,6 +49,8 @@ interface SidebarProps {
    *  overlay. Computed once by the parent App so the rail and content gate
    *  agree. */
   allowedTabs: readonly string[];
+  /** Tab ids an admin marked "under construction" — shown with a badge. */
+  constructionTabs?: readonly string[];
 }
 
 const navItems = [
@@ -63,7 +66,8 @@ const navItems = [
   { id: 'settings', label: 'System Settings', icon: Settings },
 ];
 
-export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTabs }: SidebarProps) {
+export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTabs, constructionTabs = [] }: SidebarProps) {
+  const isConstr = (id: string) => constructionTabs.includes(id);
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   const [email, setEmail] = React.useState<string | null>(null);
@@ -170,6 +174,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
                   )}
                 />
                 {item.label}
+                {isConstr(item.id) && <ConstructionMark active={activeTab === item.id} />}
                 {item.id === 'notifications' && unreadNotifications > 0 && activeTab !== 'notifications'
                   ? (
                     <span className="relative ml-auto inline-flex">
@@ -220,6 +225,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
                   )}
                 />
                 <SWallNavLabel />
+                {isConstr('s-wall') && <ConstructionMark active={activeTab === 's-wall'} />}
                 {activeTab === 's-wall' && (
                   <ChevronRight className="ml-auto h-3 w-3 text-violet-400 dark:text-violet-500/70" />
                 )}

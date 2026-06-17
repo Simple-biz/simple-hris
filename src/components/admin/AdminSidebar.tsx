@@ -11,6 +11,7 @@ import {
   FileUp,
   KeyRound,
   LayoutDashboard,
+  LayoutTemplate,
   LogOut,
   Moon,
   MoreHorizontal,
@@ -63,6 +64,7 @@ const systemNav: Array<{
   { id: 'workspace', label: 'Google Workspace', icon: Settings },
   { id: 'csv-imports', label: 'CSV imports', icon: FileUp },
   { id: 'webhooks', label: 'Webhooks', icon: Webhook, badge: 'alert' },
+  { id: 'pages', label: 'Pages', icon: LayoutTemplate },
   { id: 'notifications', label: 'Notifications', icon: Bell },
 ];
 

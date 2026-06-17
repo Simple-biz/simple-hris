@@ -20,6 +20,7 @@ import {
   Users,
 } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
+import ConstructionMark from '@/components/common/ConstructionMark';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -40,6 +41,8 @@ interface ManagerSidebarProps {
   pendingLeaves?: number;
   /** Tab ids the viewer may see after the feature-permission overlay. */
   allowedTabs: readonly string[];
+  /** Tab ids an admin marked "under construction" — shown with a badge. */
+  constructionTabs?: readonly string[];
 }
 
 export default function ManagerSidebar({
@@ -50,8 +53,10 @@ export default function ManagerSidebar({
   pendingApprovals,
   pendingLeaves = 0,
   allowedTabs,
+  constructionTabs = [],
 }: ManagerSidebarProps) {
   const can = (id: ManagerTab) => allowedTabs.includes(id);
+  const isConstr = (id: ManagerTab) => constructionTabs.includes(id);
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => { setMounted(true); }, []);
@@ -107,6 +112,7 @@ export default function ManagerSidebar({
         )}
       />
       <span className="truncate text-left">{label}</span>
+      {isConstr(id) && <ConstructionMark active={activeTab === id} />}
       {badge}
     </button>
   );
@@ -196,6 +202,7 @@ export default function ManagerSidebar({
                 )}
               />
               <SWallNavLabel />
+              {isConstr('s-wall') && <ConstructionMark active={activeTab === 's-wall'} />}
             </button>}
           </nav>
 

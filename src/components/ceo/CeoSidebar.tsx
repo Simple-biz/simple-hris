@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes';
 import { signOut } from 'next-auth/react';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
 import { Bell, Crown, LayoutDashboard, LogOut, Megaphone, Moon, MoreHorizontal, Newspaper, Sun } from 'lucide-react';
+import ConstructionMark from '@/components/common/ConstructionMark';
 import { SWallNavLabel } from '@/components/swall/SWall';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,8 @@ interface CeoSidebarProps {
   viewerEmail: string | null;
   /** Tab ids the viewer may see after the feature-permission overlay. */
   allowedTabs: readonly string[];
+  /** Tab ids an admin marked "under construction" — shown with a badge. */
+  constructionTabs?: readonly string[];
 }
 
 export default function CeoSidebar({
@@ -32,8 +35,10 @@ export default function CeoSidebar({
   mobileOpen,
   viewerEmail,
   allowedTabs,
+  constructionTabs = [],
 }: CeoSidebarProps) {
   const can = (id: CeoTab) => allowedTabs.includes(id);
+  const isConstr = (id: CeoTab) => constructionTabs.includes(id);
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => { setMounted(true); }, []);
@@ -87,6 +92,7 @@ export default function CeoSidebar({
         )}
       />
       <span className="truncate text-left">{label}</span>
+      {isConstr(id) && <ConstructionMark active={activeTab === id} />}
       {badge}
     </button>
   );
@@ -155,6 +161,7 @@ export default function CeoSidebar({
                 )}
               />
               <SWallNavLabel />
+              {isConstr('s-wall') && <ConstructionMark active={activeTab === 's-wall'} />}
             </button>}
           </nav>
 

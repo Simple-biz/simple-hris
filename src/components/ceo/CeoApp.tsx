@@ -15,6 +15,9 @@ import AnnouncementComposer from '@/components/announcements/AnnouncementCompose
 import SWall from '@/components/swall/SWall';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import { usePagesVisibility } from '@/hooks/usePagesVisibility';
+import { pageLabel } from '@/lib/pages/visibility';
+import UnderConstruction from '@/components/common/UnderConstruction';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 
 function isPlausibleEmail(s: string): boolean {
@@ -84,15 +87,20 @@ export default function CeoApp() {
 
   // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
   const { ready: permsReady, allowedTabs, canEditTab } = useFeaturePermissions(viewerEmail);
+  // Global Pages overlay (admin-controlled visible / construction / hidden).
+  const { ready: pagesReady, visibilityOf } = usePagesVisibility();
   const allowedCeoTabs = allowedTabs('ceo');
-  const allowedCeoKey = allowedCeoTabs.join(',');
+  // Drop pages an admin hid; keep "construction" ones (shown with a placeholder).
+  const visibleCeoTabs = allowedCeoTabs.filter((t) => visibilityOf('ceo', t) !== 'hidden');
+  const constructionCeoTabs = allowedCeoTabs.filter((t) => visibilityOf('ceo', t) === 'construction');
+  const visibleCeoKey = visibleCeoTabs.join(',');
   useEffect(() => {
-    if (!permsReady) return;
-    if (!allowedCeoTabs.includes(activeTab)) {
-      setActiveTab((allowedCeoTabs[0] as CeoTab) ?? 'overview');
+    if (!permsReady || !pagesReady) return;
+    if (!visibleCeoTabs.includes(activeTab)) {
+      setActiveTab((visibleCeoTabs[0] as CeoTab) ?? 'overview');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permsReady, allowedCeoKey, activeTab]);
+  }, [permsReady, pagesReady, visibleCeoKey, activeTab]);
 
   if (!authChecked) {
     return (
@@ -118,7 +126,8 @@ export default function CeoApp() {
         setActiveTab={(tab) => { setActiveTab(tab); setMobileNavOpen(false); }}
         mobileOpen={mobileNavOpen}
         viewerEmail={viewerEmail}
-        allowedTabs={allowedCeoTabs}
+        allowedTabs={visibleCeoTabs}
+        constructionTabs={constructionCeoTabs}
       />
 
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -148,6 +157,9 @@ export default function CeoApp() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
+              {visibilityOf('ceo', activeTab) === 'construction' ? (
+                <UnderConstruction title={pageLabel('ceo', activeTab)} />
+              ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('ceo', activeTab)}>
               {activeTab === 'overview' && <CeoOverview viewerEmail={viewerEmail} />}
               {activeTab === 'announcements' && (
@@ -160,6 +172,7 @@ export default function CeoApp() {
                 <CeoSwallTab viewerEmail={viewerEmail} />
               )}
               </ReadOnlyTab>
+              )}
             </motion.div>
           </AnimatePresence>
         </div>

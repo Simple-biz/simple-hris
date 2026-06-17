@@ -442,6 +442,19 @@ export default function DeptBonusCalculator({
     return map;
   }, [teamMembers]);
 
+  // Identity email (personal-first key) → company work email, so the people
+  // search can match on the work address even though members are keyed on the
+  // displayed (personal-first) email. Only set when a distinct work email exists.
+  const workEmailByIdentity = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of teamMembers) {
+      const id = rowEmail(r);
+      const we = normEmail(r.work_email ?? null);
+      if (id && we) map.set(id, we);
+    }
+    return map;
+  }, [teamMembers]);
+
   // Common + per-employee catalog bonuses resolved per department key.
   const commonByDept = useMemo(() => {
     const map = new Map<string, BonusDef[]>();
@@ -841,7 +854,10 @@ export default function DeptBonusCalculator({
       const cq = (cardSearch[key] ?? '').trim().toLowerCase();
       const members = cq
         ? allMembers.filter(
-            (e) => e.name.toLowerCase().includes(cq) || e.email.toLowerCase().includes(cq),
+            (e) =>
+              e.name.toLowerCase().includes(cq) ||
+              e.email.toLowerCase().includes(cq) ||
+              (workEmailByIdentity.get(e.email)?.includes(cq) ?? false),
           )
         : allMembers;
       const hasIndividual = (individualByDept.get(key)?.size ?? 0) > 0;
@@ -923,7 +939,7 @@ export default function DeptBonusCalculator({
     },
     [
       state, wallpapers, cardSearch, deptTotal, commonByDept, sharedCommonByDept,
-      individualByDept, applicableBonuses, fx,
+      individualByDept, applicableBonuses, fx, workEmailByIdentity,
     ],
   );
 

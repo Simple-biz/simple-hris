@@ -30,6 +30,9 @@ import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
 import { useNotificationChime } from '@/hooks/useNotificationChime';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import { usePagesVisibility } from '@/hooks/usePagesVisibility';
+import { pageLabel } from '@/lib/pages/visibility';
+import UnderConstruction from '@/components/common/UnderConstruction';
 import { canViewNotificationType } from '@/lib/notifications/notification-views';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { cn } from '@/lib/utils';
@@ -79,15 +82,20 @@ export default function HrApp() {
   );
   useNotificationChime(viewerEmail, canChimeFor);
   const unreadNotifications = useEmployeeNotificationsUnread(viewerEmail);
+  // Global Pages overlay (admin-controlled visible / construction / hidden).
+  const { ready: pagesReady, visibilityOf } = usePagesVisibility();
   const allowedHrTabs = allowedTabs('hr');
-  const allowedHrKey = allowedHrTabs.join(',');
+  // Drop pages an admin hid; keep "construction" ones (shown with a placeholder).
+  const visibleHrTabs = allowedHrTabs.filter((t) => visibilityOf('hr', t) !== 'hidden');
+  const constructionHrTabs = allowedHrTabs.filter((t) => visibilityOf('hr', t) === 'construction');
+  const visibleHrKey = visibleHrTabs.join(',');
   useEffect(() => {
-    if (!permsReady) return;
-    if (!allowedHrTabs.includes(activeTab)) {
-      setActiveTab((allowedHrTabs[0] as HrTab) ?? 'overview');
+    if (!permsReady || !pagesReady) return;
+    if (!visibleHrTabs.includes(activeTab)) {
+      setActiveTab((visibleHrTabs[0] as HrTab) ?? 'overview');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permsReady, allowedHrKey, activeTab]);
+  }, [permsReady, pagesReady, visibleHrKey, activeTab]);
 
   // Identity comes from the AUTHENTICATED session, not a client-supplied
   // ?email= / sessionStorage value. ?email= is honored only for elevated users
@@ -179,7 +187,8 @@ export default function HrApp() {
         mobileOpen={mobileNavOpen}
         viewerEmail={viewerEmail}
         unreadNotifications={unreadNotifications}
-        allowedTabs={allowedHrTabs}
+        allowedTabs={visibleHrTabs}
+        constructionTabs={constructionHrTabs}
       />
 
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -209,6 +218,9 @@ export default function HrApp() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
+              {visibilityOf('hr', activeTab) === 'construction' ? (
+                <UnderConstruction title={pageLabel('hr', activeTab)} />
+              ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('hr', activeTab)}>
               {activeTab === 'overview' && <HrOverview viewerEmail={viewerEmail} />}
               {activeTab === 'onboarding' && <HrOnboarding />}
@@ -223,6 +235,7 @@ export default function HrApp() {
               )}
               {activeTab === 's-wall' && <HrSwallTab viewerEmail={viewerEmail} />}
               </ReadOnlyTab>
+              )}
             </motion.div>
           </AnimatePresence>
         </div>

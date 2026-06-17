@@ -52,6 +52,9 @@ import ManagerTransferDialog from '@/components/manager/ManagerTransferDialog';
 import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import { usePagesVisibility } from '@/hooks/usePagesVisibility';
+import { pageLabel } from '@/lib/pages/visibility';
+import UnderConstruction from '@/components/common/UnderConstruction';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
 import { useOnlineEmails } from '@/components/presence/PresenceProvider';
 import { TeamAvatar, initialsOf, gradientFor } from '@/components/team/team-ui';
@@ -254,15 +257,20 @@ export default function ManagerApp() {
 
   // Per-tab feature-permission overlay (hidden until granted; admin bypasses).
   const { ready: permsReady, allowedTabs, canEditTab } = useFeaturePermissions(viewerEmail);
+  // Global Pages overlay (admin-controlled visible / construction / hidden).
+  const { ready: pagesReady, visibilityOf } = usePagesVisibility();
   const allowedManagerTabs = allowedTabs('manager');
-  const allowedManagerKey = allowedManagerTabs.join(',');
+  // Drop pages an admin hid; keep "construction" ones (shown with a placeholder).
+  const visibleManagerTabs = allowedManagerTabs.filter((t) => visibilityOf('manager', t) !== 'hidden');
+  const constructionManagerTabs = allowedManagerTabs.filter((t) => visibilityOf('manager', t) === 'construction');
+  const visibleManagerKey = visibleManagerTabs.join(',');
   useEffect(() => {
-    if (!permsReady) return;
-    if (!allowedManagerTabs.includes(activeTab)) {
-      setActiveTab((allowedManagerTabs[0] as ManagerTab) ?? 'overview');
+    if (!permsReady || !pagesReady) return;
+    if (!visibleManagerTabs.includes(activeTab)) {
+      setActiveTab((visibleManagerTabs[0] as ManagerTab) ?? 'overview');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permsReady, allowedManagerKey, activeTab]);
+  }, [permsReady, pagesReady, visibleManagerKey, activeTab]);
 
   const handleNavigate = (tab: ManagerTab) => {
     setActiveTab(tab);
@@ -307,7 +315,8 @@ export default function ManagerApp() {
         viewerEmail={viewerEmail}
         pendingApprovals={pendingApprovals}
         pendingLeaves={pendingLeaves}
-        allowedTabs={allowedManagerTabs}
+        allowedTabs={visibleManagerTabs}
+        constructionTabs={constructionManagerTabs}
       />
 
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -343,6 +352,9 @@ export default function ManagerApp() {
               }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
+              {visibilityOf('manager', activeTab) === 'construction' ? (
+                <UnderConstruction title={pageLabel('manager', activeTab)} />
+              ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('manager', activeTab)}>
               {activeTab === 'overview' && (
                 <Overview
@@ -477,6 +489,7 @@ export default function ManagerApp() {
                 <NotificationsPanel viewerEmail={viewerEmail} accent="blue" />
               )}
               </ReadOnlyTab>
+              )}
             </motion.div>
           </AnimatePresence>
         </div>
