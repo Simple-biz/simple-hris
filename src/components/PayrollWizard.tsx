@@ -7099,6 +7099,10 @@ export default function PayrollWizard({
       }
       case 3: {
         const activeDept = DEPARTMENTS.find(d => d.key === activeDeptTab) ?? DEPARTMENTS[0]!;
+        // Hide the PAB / Tech columns entirely for a department that the bonus
+        // is not assigned to (or is globally disabled) — no empty placeholder.
+        const pabColShown = isDeptEligible(sysBonusCfg.pab, activeDeptTab);
+        const techColShown = isDeptEligible(sysBonusCfg.tech, activeDeptTab);
         const deptEmployees = effectiveCalcResults.filter(r => employeeDepts[r.email] === activeDeptTab);
         // Resolve each assigned employee's department by normalized email so time-adjustment
         // rows (keyed by work_email) can be grouped under the active department.
@@ -8452,17 +8456,21 @@ export default function PayrollWizard({
                             <TableHead className="min-w-[64px] px-1 py-2 text-right text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
                               Init
                             </TableHead>
-                            <TableHead className="min-w-[96px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-indigo-600 dark:text-indigo-400">
-                              PAB<br />
-                              <span className="font-mono font-normal text-zinc-400">M T W T F · 7h+</span>
-                            </TableHead>
-                            <TableHead className="min-w-[80px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-sky-600 dark:text-sky-400">
-                              Tech<br />
-                              <span className="font-mono font-normal text-zinc-400">
-                                {techBonusWeekInfo.isTechBonusWeek ? 'week 3 - ' : ''}
-                                {formatPHP(techAmountPhp)}
-                              </span>
-                            </TableHead>
+                            {pabColShown && (
+                              <TableHead className="min-w-[96px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-indigo-600 dark:text-indigo-400">
+                                PAB<br />
+                                <span className="font-mono font-normal text-zinc-400">M T W T F · 7h+</span>
+                              </TableHead>
+                            )}
+                            {techColShown && (
+                              <TableHead className="min-w-[80px] px-1 py-2 text-center text-[9px] font-medium leading-tight text-sky-600 dark:text-sky-400">
+                                Tech<br />
+                                <span className="font-mono font-normal text-zinc-400">
+                                  {techBonusWeekInfo.isTechBonusWeek ? 'week 3 - ' : ''}
+                                  {formatPHP(techAmountPhp)}
+                                </span>
+                              </TableHead>
+                            )}
                             {/* Toggle-based dept bonus columns */}
                             {!FORMULA_DEPT_KEYS.has(activeDeptTab) && activeDept.bonuses.map(b => (
                               <TableHead
@@ -8567,7 +8575,7 @@ export default function PayrollWizard({
                                   {emp.initialPay != null ? formatPHP(emp.initialPay) : '—'}
                                 </TableCell>
                                 {/* PAB — tri-state pill (Eligible / Ineligible / In Progress); click to open calendar modal */}
-                                {(() => {
+                                {pabColShown && (() => {
                                   const normEmpEmail = normEmail(emp.email) ?? emp.email.toLowerCase();
                                   const status = effectivePabStatus.get(normEmpEmail) ?? 'in_progress';
                                   const label =
@@ -8600,7 +8608,7 @@ export default function PayrollWizard({
                                   );
                                 })()}
                                 {/* Tech Bonus — week-detected pill; accounting can manually grant */}
-                                {(() => {
+                                {techColShown && (() => {
                                   const em = normEmail(emp.email);
                                   const sd = em ? startDateByEmail.get(em) : undefined;
                                   const hasRates = emp.regularRate != null || emp.otRate != null;
@@ -9567,6 +9575,10 @@ export default function PayrollWizard({
         const hslCalcRows = effectiveCalcResults.filter(
           r => employeeDepts[r.email] === 'hogan_smith_law',
         ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+        // Hide the PAB / Tech columns when HSL is not assigned the bonus (or it's disabled).
+        const pabColShownHsl = isDeptEligible(sysBonusCfg.pab, 'hogan_smith_law');
+        const techColShownHsl = isDeptEligible(sysBonusCfg.tech, 'hogan_smith_law');
 
         const totalHslInitialPay = hslCalcRows.reduce((s, r) => s + (r.initialPay ?? 0), 0);
         const totalHslKpiBonuses = Object.values(hslStepBonusByEmail).reduce((s, v) => s + v, 0);

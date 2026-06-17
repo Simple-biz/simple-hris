@@ -43,10 +43,13 @@ export function usePagesVisibility(): UsePagesVisibilityResult {
       );
       const json = (await res.json()) as { value?: string | null };
       setConfig(parsePagesVisibility(json.value));
-    } catch {
-      /* keep prior config */
-    } finally {
+      // Only flag ready once we've actually loaded the config. On failure we
+      // keep the prior config AND prior ready state; the 30s poll retries. Until
+      // a load succeeds, dashboards leave Pages gating off (fail-open) rather
+      // than acting on an empty config that would treat hidden pages as visible.
       setReady(true);
+    } catch {
+      /* keep prior config + ready state; a later poll/realtime retry recovers */
     }
   }, []);
 

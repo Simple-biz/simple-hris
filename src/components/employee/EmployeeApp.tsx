@@ -24,6 +24,9 @@ import { Lock, Menu, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useEmployeeNotificationsUnread } from '@/hooks/useEmployeeNotificationsUnread';
+import { usePagesVisibility } from '@/hooks/usePagesVisibility';
+import { dashboardPages, pageLabel } from '@/lib/pages/visibility';
+import UnderConstruction from '@/components/common/UnderConstruction';
 
 import { normEmail } from '@/lib/email/norm-email';
 import { isPayoutComplete } from '@/components/employee/employee-payout-fields';
@@ -96,6 +99,12 @@ export default function EmployeeApp() {
   // indicator, and one-time toast notifications when the state flips.
   const { state: lockState, loading: lockLoading } = useDispatchLock();
   const unreadNotifications = useEmployeeNotificationsUnread(employeeEmail);
+
+  // Global Pages overlay (admin-controlled visible / construction / hidden).
+  const { ready: pagesReady, visibilityOf } = usePagesVisibility();
+  const employeeTabKeys = useMemo(() => dashboardPages('employee').map((p) => p.key), []);
+  const hiddenEmployeeTabs = employeeTabKeys.filter((t) => visibilityOf('employee', t) === 'hidden');
+  const constructionEmployeeTabs = employeeTabKeys.filter((t) => visibilityOf('employee', t) === 'construction');
 
   const previousLocked = useRef<boolean | null>(null);
 
@@ -278,6 +287,18 @@ export default function EmployeeApp() {
     setMountedTabs((prev) => (prev.has(activeTab) ? prev : new Set(prev).add(activeTab)));
   }, [activeTab]);
 
+  // If an admin hides the active page, bounce to the first still-visible page.
+  const hiddenEmployeeKey = hiddenEmployeeTabs.join(',');
+  useEffect(() => {
+    if (!pagesReady) return;
+    if (hiddenEmployeeTabs.includes(activeTab)) {
+      const firstVisible = employeeTabKeys.find((t) => !hiddenEmployeeTabs.includes(t)) ?? 'dashboard';
+      setActiveTab(firstVisible);
+      setMobileNavOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagesReady, hiddenEmployeeKey, activeTab]);
+
   const navigate = (tab: string, profileTarget?: EmployeeProfileFocusTab) => {
     if (tab === 'profile' && profileTarget) setProfileFocusTab(profileTarget);
     setActiveTab(tab);
@@ -311,6 +332,12 @@ export default function EmployeeApp() {
 
   const renderContent = (tab: string) => {
     if (!employeeEmail) return null;
+
+    // Global Pages overlay: hidden tabs render nothing; construction tabs show
+    // the placeholder instead of the real page.
+    const vis = visibilityOf('employee', tab);
+    if (vis === 'hidden') return null;
+    if (vis === 'construction') return <UnderConstruction title={pageLabel('employee', tab)} />;
 
     switch (tab) {
       case 'dashboard':
@@ -435,6 +462,8 @@ export default function EmployeeApp() {
 
         profileIncomplete={profileIncomplete}
         profileSetupCount={profileSetupCount}
+        hiddenTabs={hiddenEmployeeTabs}
+        constructionTabs={constructionEmployeeTabs}
       />
       <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-orange-100 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-blue-950/60 dark:bg-[#0d1117]/95 md:hidden">

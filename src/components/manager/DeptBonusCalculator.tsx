@@ -442,6 +442,41 @@ export default function DeptBonusCalculator({
     return map;
   }, [teamMembers]);
 
+  // Every email a single person owns — personal, work, and any alternate work
+  // address — collapses to ONE identity key: the same personal-first key the
+  // roster uses (`rowEmail`). The Payment Catalog stores assignments, exclusions
+  // and applied rows under whatever email the accountant typed (usually the WORK
+  // email), so anyone whose work email differs from their roster (personal) key —
+  // e.g. scottc@simple.biz vs scottcam000@gmail.com — used to surface as a second
+  // phantom member card and risk a double bonus. Aliasing is built ONLY from
+  // emails that co-occur on the same master row, so two distinct humans who share
+  // a near-identical work email are never merged.
+  const emailAlias = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of teamMembers) {
+      const canonical = rowEmail(r);
+      if (!canonical) continue;
+      for (const raw of [
+        r.personal_email,
+        r.work_email,
+        r.alternate_work_email,
+        r.alternate_work_email_2,
+      ]) {
+        const e = normEmail(raw ?? null);
+        if (e) map.set(e, canonical);
+      }
+    }
+    return map;
+  }, [teamMembers]);
+
+  const canonEmail = useCallback(
+    (email: string | null | undefined): string => {
+      const e = normEmail(email ?? null) || (email ?? '').trim().toLowerCase();
+      return emailAlias.get(e) ?? e;
+    },
+    [emailAlias],
+  );
+
   // Identity email (personal-first key) → company work email, so the people
   // search can match on the work address even though members are keyed on the
   // displayed (personal-first) email. Only set when a distinct work email exists.
@@ -493,12 +528,14 @@ export default function DeptBonusCalculator({
       const key = normalizeDeptToKey(a.departmentKey) ?? a.departmentKey;
       const byBonus = map.get(key) ?? new Map<string, Set<string>>();
       const set = byBonus.get(a.bonusId) ?? new Set<string>();
-      for (const e of a.excludedEmails) set.add(e.toLowerCase());
+      // Canonicalize: the accountant excludes by work email, members are keyed by
+      // personal-first email — resolve both to the same identity so the exclusion lands.
+      for (const e of a.excludedEmails) set.add(canonEmail(e));
       byBonus.set(a.bonusId, set);
       map.set(key, byBonus);
     }
     return map;
-  }, [assignments]);
+  }, [assignments, canonEmail]);
 
   const individualByDept = useMemo(() => {
     // dept key -> (employee email -> BonusDef[])
@@ -508,7 +545,9 @@ export default function DeptBonusCalculator({
       const key = normalizeDeptToKey(a.departmentKey) ?? a.departmentKey;
       const bonus = bonusById.get(a.bonusId);
       if (!bonus) continue;
-      const email = normEmail(a.employeeEmail) || a.employeeEmail.toLowerCase();
+      // Key individual assignments by the same canonical identity the roster uses,
+      // so an assignment made under the work email attaches to the one member card.
+      const email = canonEmail(a.employeeEmail);
       const byEmail = map.get(key) ?? new Map<string, BonusDef[]>();
       const list = byEmail.get(email) ?? [];
       if (!list.some((b) => b.id === bonus.id)) list.push(bonus);
@@ -516,7 +555,7 @@ export default function DeptBonusCalculator({
       map.set(key, byEmail);
     }
     return map;
-  }, [assignments, bonusById]);
+  }, [assignments, bonusById, canonEmail]);
 
   const deptLabelByKey = useMemo<Record<string, string>>(() => {
     const out: Record<string, string> = {};
@@ -648,7 +687,10 @@ export default function DeptBonusCalculator({
         const sharedSet = sharedCommonByDept.get(key);
         const shared: Record<string, AppliedState> = {};
         for (const row of savedRows) {
-          const em = (row.employee_email ?? '').toLowerCase();
+          // Saved rows may be keyed under any of the person's emails (work vs
+          // personal) — collapse to the canonical identity so duplicate rows from
+          // a prior dual-email save merge onto the single member card.
+          const em = canonEmail(row.employee_email);
           if (!em) continue;
           const vars: Record<string, string> = {};
           if (row.vars) for (const [k, v] of Object.entries(row.vars)) vars[k] = String(v);
@@ -713,7 +755,7 @@ export default function DeptBonusCalculator({
         }));
       }
     },
-    [rosterByDept, individualByDept, commonByDept, commonExclusionsByDept, sharedCommonByDept, weekStart],
+    [rosterByDept, individualByDept, commonByDept, commonExclusionsByDept, sharedCommonByDept, weekStart, canonEmail],
   );
 
   useEffect(() => {

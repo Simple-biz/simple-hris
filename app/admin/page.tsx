@@ -42,6 +42,11 @@ interface WebhookEntry {
 }
 
 function AdminPageInner() {
+  // Render the shell only after client mount. The sidebar reads `useSession`
+  // (via useViewerProfilePhoto), which throws if it server-renders before the
+  // SessionProvider context resolves — the other dashboards avoid this by
+  // gating their sidebar behind a client-only flag, so we match that here.
+  const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
@@ -53,6 +58,10 @@ function AdminPageInner() {
   const searchParams = useSearchParams();
   const emailFromQuery = searchParams?.get('email') ?? null;
   const tabFromQuery = searchParams?.get('tab') ?? null;
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Deep-link support: /admin?tab=roles opens that tab directly (e.g. the
   // "Role Management & Sessions" link in System Settings).
@@ -206,6 +215,8 @@ function AdminPageInner() {
         return <AdminOverview userEmail={adminEmail} onNavigate={setActiveTab} />;
     }
   };
+
+  if (!mounted) return <AdminShellFallback />;
 
   return (
     <div

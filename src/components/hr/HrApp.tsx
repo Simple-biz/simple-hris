@@ -218,7 +218,7 @@ export default function HrApp() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
-              {visibilityOf('hr', activeTab) === 'construction' ? (
+              {visibilityOf('hr', activeTab) !== 'visible' ? (
                 <UnderConstruction title={pageLabel('hr', activeTab)} />
               ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('hr', activeTab)}>

@@ -352,7 +352,7 @@ export default function ManagerApp() {
               }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
-              {visibilityOf('manager', activeTab) === 'construction' ? (
+              {visibilityOf('manager', activeTab) !== 'visible' ? (
                 <UnderConstruction title={pageLabel('manager', activeTab)} />
               ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('manager', activeTab)}>

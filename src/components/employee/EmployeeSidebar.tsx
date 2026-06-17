@@ -25,6 +25,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import ConstructionMark from '@/components/common/ConstructionMark';
 import EmployeeAvatar from './EmployeeAvatar';
 import ViewSwitcher from '@/components/rbac/ViewSwitcher';
 
@@ -47,6 +48,10 @@ interface EmployeeSidebarProps {
   /** Profile photo and/or bank details still missing — flags the Profile nav item. */
   profileIncomplete?: boolean;
   profileSetupCount?: number;
+  /** Tab ids an admin hid in Pages settings — removed from the menu. */
+  hiddenTabs?: readonly string[];
+  /** Tab ids an admin marked "under construction" — shown with a badge. */
+  constructionTabs?: readonly string[];
 }
 
 const navItems = [
@@ -75,7 +80,11 @@ export default function EmployeeSidebar({
 
   profileIncomplete = false,
   profileSetupCount = 0,
+  hiddenTabs = [],
+  constructionTabs = [],
 }: EmployeeSidebarProps) {
+  const isHidden = (id: string) => hiddenTabs.includes(id);
+  const isConstr = (id: string) => constructionTabs.includes(id);
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
@@ -134,7 +143,7 @@ export default function EmployeeSidebar({
 
         <ScrollArea className="-mx-2 min-h-0 flex-1">
           <nav className="space-y-1 px-2">
-            {navItems.map((item, index) => (
+            {navItems.filter((item) => !isHidden(item.id)).map((item, index) => (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
@@ -162,6 +171,7 @@ export default function EmployeeSidebar({
                   )}
                 />
                 {item.label}
+                {isConstr(item.id) && <ConstructionMark active={activeTab === item.id} />}
                 {item.id === 'profile' && profileIncomplete && activeTab !== 'profile' && (
                   <span
                     className="relative ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold leading-none text-white ring-2 ring-white dark:ring-[#0d1117]"
@@ -196,6 +206,7 @@ export default function EmployeeSidebar({
               </button>
             ))}
             {/* S-Wall — all authenticated users can view; employees comment/react only */}
+            {!isHidden('s-wall') && (
             <button
               onClick={() => setActiveTab('s-wall')}
               style={{ transitionDelay: mobileOpen ? `${60 + navItems.length * 35}ms` : '0ms' }}
@@ -216,10 +227,12 @@ export default function EmployeeSidebar({
                 )}
               />
               S-Wall
+              {isConstr('s-wall') && <ConstructionMark active={activeTab === 's-wall'} />}
               {activeTab === 's-wall' && (
                 <ChevronRight className="ml-auto h-3 w-3 text-violet-400 dark:text-violet-500/70" />
               )}
             </button>
+            )}
           </nav>
         </ScrollArea>
       </div>

@@ -23,6 +23,9 @@ import SWall from './components/swall/SWall';
 import { ACCOUNTING_TAB_IDS, allowedAccountingTabsForUser, canAccessAccountingTabForUser, canEditAccountingTab } from '@/lib/rbac/accounting-tabs';
 import { canEditFeature, type FeaturePermissionsMap } from '@/lib/rbac/feature-permissions';
 import ReadOnlyTab from '@/components/rbac/ReadOnlyTab';
+import { usePagesVisibility } from '@/hooks/usePagesVisibility';
+import { pageLabel } from '@/lib/pages/visibility';
+import UnderConstruction from '@/components/common/UnderConstruction';
 import type { InitialAccountingData } from '@/lib/accounting/prefetch';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import AccountingMesa from '@/components/payroll/AccountingMesa';
@@ -102,7 +105,12 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
   }, [sessionEmail]);
 
   const isDark = mounted ? resolvedTheme === 'dark' : false;
-  const allowedTabs = allowedAccountingTabsForUser(roles, featurePerms);
+  // Global Pages overlay (admin-controlled visible / construction / hidden).
+  const { ready: pagesReady, visibilityOf } = usePagesVisibility();
+  const baseAllowedTabs = allowedAccountingTabsForUser(roles, featurePerms);
+  // Drop pages an admin hid; keep "construction" ones (shown with a placeholder).
+  const allowedTabs = baseAllowedTabs.filter((t) => visibilityOf('accounting', t) !== 'hidden');
+  const constructionTabs = baseAllowedTabs.filter((t) => visibilityOf('accounting', t) === 'construction');
   // Deleting a notification is an "edit" action. Admins bypass tab gating;
   // everyone else needs explicit `edit` access to the notifications feature.
   const canDeleteNotifications =
@@ -117,7 +125,9 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
     // here would bounce a click made during the initial fetch onto the
     // 'payment-dispatch' fallback (e.g. refresh, then click Rates). The effect
     // below re-checks the active tab the moment permsLoaded flips.
-    if (permsLoaded && !canAccessAccountingTabForUser(tab, roles, featurePerms)) {
+    const blockedByPerms = permsLoaded && !canAccessAccountingTabForUser(tab, roles, featurePerms);
+    const hiddenByPages = pagesReady && visibilityOf('accounting', tab) === 'hidden';
+    if (blockedByPerms || hiddenByPages) {
       setActiveTab(allowedTabs[0] ?? 'payment-dispatch');
       setMobileNavOpen(false);
       return;
@@ -148,13 +158,20 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
     // otherwise the initial render (empty perms) kicks every non-admin off
     // the default 'overview' tab onto the fallback before their real
     // permissions arrive.
-    if (!permsLoaded) return;
-    if (!canAccessAccountingTabForUser(activeTab, roles, featurePerms)) {
+    if (!permsLoaded || !pagesReady) return;
+    if (
+      !canAccessAccountingTabForUser(activeTab, roles, featurePerms) ||
+      visibilityOf('accounting', activeTab) === 'hidden'
+    ) {
       setActiveTab(allowedTabs[0] ?? 'payment-dispatch');
     }
-  }, [activeTab, allowedTabs, roles, featurePerms, permsLoaded]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, allowedTabs, roles, featurePerms, permsLoaded, pagesReady]);
 
   const renderContent = () => {
+    if (visibilityOf('accounting', activeTab) !== 'visible') {
+      return <UnderConstruction title={pageLabel('accounting', activeTab)} />;
+    }
     const readOnly = permsLoaded && !canEditAccountingTab(activeTab as typeof ACCOUNTING_TAB_IDS[number], roles, featurePerms);
     return <ReadOnlyTab readOnly={readOnly}>{renderTabContent()}</ReadOnlyTab>;
   };
@@ -220,7 +237,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
           onClick={() => setMobileNavOpen(false)}
         />
       )}
-      <Sidebar activeTab={activeTab} setActiveTab={navigate} mobileOpen={mobileNavOpen} allowedTabs={allowedTabs} />
+      <Sidebar activeTab={activeTab} setActiveTab={navigate} mobileOpen={mobileNavOpen} allowedTabs={allowedTabs} constructionTabs={constructionTabs} />
       <main ref={mainRef} className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex shrink-0 items-center gap-3 border-b border-orange-100 bg-white/95 px-3 py-2.5 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.625rem,env(safe-area-inset-top))] dark:border-blue-950/60 dark:bg-[#0d1117]/95 md:hidden">
           <Button

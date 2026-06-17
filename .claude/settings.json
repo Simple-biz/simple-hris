@@ -31,7 +31,15 @@
       "Bash(sleep 3; tail -15 /tmp/devserver.log 2>/dev/null || echo \"no log yet\")",
       "Bash(git diff *)",
       "Bash(tail -n +600 /tmp/pw_full.txt)",
-      "Bash(tee /tmp/tsc.txt)"
+      "Bash(tee /tmp/tsc.txt)",
+      "Bash(sed -n '/\"scripts\"/,/}/p')",
+      "Bash(./node_modules/.bin/eslint --version)",
+      "Bash(git --no-pager diff --numstat -- src/components/ceo/CeoApp.tsx src/components/hr/HrApp.tsx app/admin/page.tsx)",
+      "Bash(git update-index *)",
+      "Bash(git --no-pager diff HEAD --numstat -- src/components/ceo/CeoApp.tsx src/components/ceo/CeoSidebar.tsx app/admin/page.tsx src/components/admin/AdminSidebar.tsx)",
+      "Bash(cat)",
+      "Bash(bash /tmp/check_integration.sh)",
+      "Bash(git --no-pager log --oneline -4)"
     ]
   }
 }

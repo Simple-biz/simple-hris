@@ -157,7 +157,7 @@ export default function CeoApp() {
               transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
               className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
             >
-              {visibilityOf('ceo', activeTab) === 'construction' ? (
+              {visibilityOf('ceo', activeTab) !== 'visible' ? (
                 <UnderConstruction title={pageLabel('ceo', activeTab)} />
               ) : (
               <ReadOnlyTab readOnly={permsReady && !canEditTab('ceo', activeTab)}>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   Check,
   Construction,
@@ -101,6 +102,7 @@ export default function AdminPages() {
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [search, setSearch] = useState('');
+  const [activeDash, setActiveDash] = useState<DashboardKey>('ceo');
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Initial load.
@@ -175,15 +177,23 @@ export default function AdminPages() {
   );
 
   const q = search.trim().toLowerCase();
-  const filteredDashboards = useMemo(() => {
-    if (!q) return DASHBOARD_PAGES;
-    return DASHBOARD_PAGES.map((d) => ({
-      ...d,
-      pages: d.pages.filter(
-        (p) => p.label.toLowerCase().includes(q) || d.label.toLowerCase().includes(q),
-      ),
-    })).filter((d) => d.pages.length > 0);
-  }, [q]);
+  const current = DASHBOARD_PAGES.find((d) => d.key === activeDash) ?? DASHBOARD_PAGES[0]!;
+  // The active dashboard's pages, narrowed by the in-tab search box.
+  const currentFiltered = useMemo(
+    () => (!q ? current : { ...current, pages: current.pages.filter((p) => p.label.toLowerCase().includes(q)) }),
+    [q, current],
+  );
+  // Per-dashboard count of non-default (construction/hidden) pages, for tab badges.
+  const overrideCounts = useMemo(() => {
+    const counts: Partial<Record<DashboardKey, number>> = {};
+    for (const d of DASHBOARD_PAGES) {
+      counts[d.key] = d.pages.reduce(
+        (n, p) => n + (pageVisibility(config, d.key, p.key) !== 'visible' ? 1 : 0),
+        0,
+      );
+    }
+    return counts;
+  }, [config]);
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
@@ -205,14 +215,51 @@ export default function AdminPages() {
         <SaveBadge state={saveState} />
       </div>
 
-      {/* Search */}
-      <div className="relative mb-5 max-w-xs">
+      {/* Dashboard tabs */}
+      <div className="mb-5 flex items-end gap-1 overflow-x-auto border-b border-[#ececec] dark:border-zinc-800">
+        {DASHBOARD_PAGES.map((d) => {
+          const a = ACCENT[d.accent];
+          const active = d.key === activeDash;
+          const overrides = overrideCounts[d.key] ?? 0;
+          return (
+            <button
+              key={d.key}
+              type="button"
+              onClick={() => setActiveDash(d.key)}
+              aria-current={active}
+              className={cn(
+                'relative flex shrink-0 items-center gap-2 px-3.5 py-2.5 text-[13.5px] font-medium transition-colors',
+                active
+                  ? 'text-zinc-900 dark:text-zinc-100'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+              )}
+            >
+              <span className={cn('h-2 w-2 rounded-full', active ? a.dot : 'bg-zinc-300 dark:bg-zinc-700')} />
+              {d.label}
+              {overrides > 0 && (
+                <span className="rounded-full bg-amber-100 px-1.5 text-[10px] font-semibold leading-[16px] text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                  {overrides}
+                </span>
+              )}
+              {active && (
+                <motion.span
+                  layoutId="admin-pages-tab"
+                  className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-zinc-900 dark:bg-zinc-100"
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* In-tab search */}
+      <div className="relative mb-4 max-w-xs">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Filter pages…"
+          placeholder={`Filter ${current.label} pages…`}
           className="h-9 w-full rounded-md border border-[#ececec] bg-white pl-8 pr-3 text-sm text-zinc-900 outline-none transition-colors placeholder:text-zinc-400 focus:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
         />
       </div>
@@ -221,19 +268,28 @@ export default function AdminPages() {
         <div className="flex flex-1 items-center justify-center py-20 text-zinc-400">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
         </div>
-      ) : filteredDashboards.length === 0 ? (
-        <p className="py-16 text-center text-sm text-zinc-400">No pages match “{search}”.</p>
       ) : (
-        <div className="space-y-5 pb-10">
-          {filteredDashboards.map((dash) => (
-            <DashboardCard
-              key={dash.key}
-              dash={dash}
-              config={config}
-              onSet={setState}
-              onReset={resetDashboard}
-            />
-          ))}
+        <div className="pb-10">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={activeDash}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {currentFiltered.pages.length === 0 ? (
+                <p className="py-16 text-center text-sm text-zinc-400">No pages match “{search}”.</p>
+              ) : (
+                <DashboardCard
+                  dash={currentFiltered}
+                  config={config}
+                  onSet={setState}
+                  onReset={resetDashboard}
+                />
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
       )}
     </div>
@@ -287,7 +343,7 @@ function DashboardCard({
     <section className="overflow-hidden rounded-xl border border-[#ececec] bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
       <header className="flex items-center gap-3 border-b border-[#f1f1f1] px-4 py-3 dark:border-zinc-800/80">
         <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1', accent.soft, accent.ring)}>
-          <Icon className={cn('h-4.5 w-4.5', accent.text)} />
+          <Icon className={cn('h-[18px] w-[18px]', accent.text)} />
         </div>
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{dash.label} dashboard</h2>
