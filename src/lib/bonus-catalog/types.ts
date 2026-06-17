@@ -31,6 +31,8 @@ export interface BonusDef {
    *  (absent on legacy bonuses). USD bonuses are converted to PHP at the live FX
    *  rate when applied (the KPI Calculator), so the payout layer stays PHP. */
   currency?: PayCurrency;
+  /** Highlighted/favorited in the Bonus Library (sorts to the top + amber star). */
+  starred?: boolean;
   /** Author attribution (set server-side from the session). */
   createdBy?: string | null;
   createdAt?: string | null;

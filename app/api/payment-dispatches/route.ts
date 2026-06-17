@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
       processor: row.processor,
       amount_usd: row.amount_usd,
       amount_php: row.amount_php,
+      amount_cop: row.amount_cop,
       transaction_id: row.transaction_id,
       bank_used: row.bank_used,
       sent_date: row.sent_date,

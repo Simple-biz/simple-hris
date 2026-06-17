@@ -28,7 +28,7 @@ import {
 } from "@/lib/supabase/server";
 import { listOrphanageBudgetRequests } from "@/lib/supabase/orphanage-budget-requests";
 import { listGiftPayments } from "@/lib/supabase/gift-payments";
-import { effectiveUsdToPhpRateFromStored } from "@/lib/fx/usd-php";
+import { buildFxRates, USD_TO_COP_SETTINGS_KEY, type FxRates } from "@/lib/fx/currency-fx";
 import { normEmail } from "@/lib/email/norm-email";
 import {
   getPabMonthRange,
@@ -52,6 +52,10 @@ import {
 } from "@/lib/payroll/dispatch-bonuses";
 import { fetchAllRateHistory, resolveRateAsOfDate, type RateHistoryByEmail } from "@/lib/payroll/rate-history";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
+import { listSystemBonuses } from "@/lib/supabase/system-bonuses-db";
+import { resolveSystemBonuses, isDeptEligible } from "@/lib/payment-catalog/system-bonus";
+import { normalizeDeptToKey } from "@/lib/payroll/normalize-dept-key";
+import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
 import {
   buildCatalogRateIndex,
   resolveEmployeeCatalogRate,
@@ -97,12 +101,29 @@ export interface CurrentPayEntry {
   totalPayPHP: number | null;
   /** USD equivalent of totalPayPHP. */
   totalPayUSD: number | null;
+  /** Native COP payout (whole pesos), derived from the USD anchor (totalPayUSD ×
+   *  usdToCop). Only meaningful when `payCurrency === 'COP'`; null when totalPayUSD
+   *  is missing. Payment Dispatch reads this for the COP tab. */
+  totalPayCOP: number | null;
   hasRate: boolean;
+  /**
+   * The currency this employee's EFFECTIVE rate is denominated in (Payment
+   * Catalog). 'USD' / 'COP' when an individual/department structure in that
+   * currency drives their rate; 'PHP' otherwise (sheet rates are always PHP).
+   * Pay math still accumulates in PHP — this only flags who should be PAID in a
+   * non-PHP currency so Payment Dispatch can route them to a dedicated tab. For a
+   * USD employee `totalPayUSD` is their native pay; for COP `totalPayCOP` is
+   * (totalPayPHP is the FX-equivalent in both cases).
+   */
+  payCurrency: PayCurrency;
 }
 
 export interface CurrentPayResult {
   period: PayrollPeriod;
+  /** USD→PHP rate (PHP per $1). Kept for back-compat; see `fxRates` for the full set. */
   fxRate: number;
+  /** All USD-anchored rates (usdToPhp + usdToCop) used this run. */
+  fxRates: FxRates;
   /** Keyed by lowercased work_email (the canonical join key). */
   byEmail: Record<string, CurrentPayEntry>;
   /** Total MESA contributions collected across all members this cycle (₱100 × count). */
@@ -419,11 +440,13 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     giftPaymentsResult,
     approvedDisputeDates,
     payStructuresResult,
+    systemBonusesResult,
   ] = await Promise.all([
     fetchHubstaffRowsOrdered(),
     getEmployeeHourlyRatesRows(),
     getAppSettings([
       "usd_to_php_rate",
+      USD_TO_COP_SETTINGS_KEY,
       PAB_PERIOD_OVERRIDES_KEY,
       US_HOLIDAYS_ENABLED_KEY,
       US_HOLIDAYS_LIST_KEY,
@@ -437,7 +460,13 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       ? fetchAllApprovedDisputes(supabase).then((m) => mergeApprovedTimeAdjustments(supabase, m))
       : Promise.resolve(new Map<string, Map<string, number | null>>()),
     listPayStructures(),
+    listSystemBonuses(),
   ]);
+
+  // PAB + Tech bonus amounts + per-department allowlist are configurable in the
+  // Payment Catalog (System Bonuses tab). Falls back to the legacy constants +
+  // "applies to everyone" when no rows exist (pre-migration).
+  const sysBonuses = resolveSystemBonuses(systemBonusesResult.bonuses);
 
   // Deferred: the full-table Hubstaff scan (every row, every upload) is ONLY
   // needed to compute PAB eligibility, which only matters on the final PAB
@@ -446,12 +475,15 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
   // and only when `weekIsFinalPab` turns out to be true.
   let allHubstaffRows: Record<string, unknown>[] = [];
 
-  const fxValue = appSettings["usd_to_php_rate"];
   const pabOverridesValue = appSettings[PAB_PERIOD_OVERRIDES_KEY];
   const usHolidaysEnabledValue = appSettings[US_HOLIDAYS_ENABLED_KEY];
   const usHolidaysListValue = appSettings[US_HOLIDAYS_LIST_KEY];
 
-  const fxRate = effectiveUsdToPhpRateFromStored(fxValue);
+  // USD-anchored FX. The internal pay engine accumulates in PHP-equivalent
+  // (fxRate = usdToPhp keeps that math unchanged); `fx` also carries the COP
+  // rate so a COP structure resolves and a native COP payout can be derived.
+  const fx: FxRates = buildFxRates(appSettings);
+  const fxRate = fx.usdToPhp;
 
   // Index rates by both work_email and personal_email (lowercased) so a
   // hubstaff row keyed on either still resolves to a rate.
@@ -555,12 +587,20 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
   const hslEmails = new Set<string>();
   const masterEmailSet = new Set<string>();
   const startDateByEmail = new Map<string, Date>();
+  // email → department NAME from the master list (identity source of truth);
+  // preferred over the rates-row department for system-bonus dept eligibility.
+  const masterDeptByEmail = new Map<string, string>();
   for (const m of masterRows) {
     const we = normEmail(m.work_email);
     const pe = normEmail(m.personal_email);
     const altA = normEmail(m.alternate_work_email);
     const altB = normEmail(m.alternate_work_email_2);
     for (const e of [we, pe, altA, altB]) if (e) masterEmailSet.add(e);
+    if (m.department && m.department.trim()) {
+      for (const e of [we, pe, altA, altB]) {
+        if (e && !masterDeptByEmail.has(e)) masterDeptByEmail.set(e, m.department);
+      }
+    }
     if (m.department && m.department.trim().toLowerCase() === "hsl") {
       if (we) hslEmails.add(we);
       if (pe) hslEmails.add(pe);
@@ -653,8 +693,8 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     // PHP-equivalent (USD converted at fx). The individual catalog rate is the
     // only one that OVERRIDES the per-day history; the department rate is purely
     // a fallback for employees with no sheet rate at all.
-    const empCat = resolveEmployeeCatalogRate(catalogIndex, em, fxRate);
-    const deptCat = resolveDeptCatalogRate(catalogIndex, deptByEmail.get(em) ?? null, fxRate);
+    const empCat = resolveEmployeeCatalogRate(catalogIndex, em, fx);
+    const deptCat = resolveDeptCatalogRate(catalogIndex, deptByEmail.get(em) ?? null, fx);
     const catalogOverride = empCat ? { reg: empCat.regPhp, ot: empCat.otPhp } : null;
     const hasSheet = sheetRate != null && (sheetRate.reg != null || sheetRate.ot != null);
     const baseRate = hasSheet
@@ -664,6 +704,16 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
         : sheetRate;
     const reg = empCat?.regPhp ?? baseRate?.reg ?? null;
     const ot = empCat?.otPhp ?? baseRate?.ot ?? null;
+    // Effective currency mirrors the rate priority above: an employee USD
+    // structure wins; otherwise an existing sheet rate is PHP; otherwise the
+    // department base's currency; PHP when nothing matched.
+    const payCurrency: PayCurrency = empCat
+      ? empCat.currency
+      : hasSheet
+        ? 'PHP'
+        : deptCat
+          ? deptCat.currency
+          : 'PHP';
 
     // Prorate pay per day using the rate-history table — handles mid-cycle
     // promotions / department transfers where the rate flipped on a specific
@@ -727,12 +777,17 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
     const empHasThirtyDays =
       weekMonday && startDate ? hasThirtyDaysFromStart(weekMonday, startDate) : false;
 
+    const empDeptKey = normalizeDeptToKey(masterDeptByEmail.get(em) ?? deptByEmail.get(em) ?? null);
     const bonus = computeEmployeeBonus({
       hasRates,
       isFinalPabWeek: weekIsFinalPab,
       isPabEligible: pabEligible.has(em),
       isTechBonusWeek: weekIsTechBonus,
       hasThirtyDays: empHasThirtyDays,
+      pabAmountPHP: sysBonuses.pab.amountPHP,
+      techAmountPHP: sysBonuses.tech.amountPHP,
+      pabDeptEligible: isDeptEligible(sysBonuses.pab, empDeptKey),
+      techDeptEligible: isDeptEligible(sysBonuses.tech, empDeptKey),
     });
 
     // MESA: ₱100 deducted from members with a rates row. Accumulate into the
@@ -746,6 +801,11 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       totalPayPHP != null && fxRate > 0 ? totalPayPHP / fxRate : null;
     const initialPayUSD =
       initialPayPHP != null && fxRate > 0 ? initialPayPHP / fxRate : null;
+    // Native COP payout, derived from the USD anchor (not via PHP↔COP). COP has
+    // no minor unit in practice — round to whole pesos. Only meaningful when the
+    // employee is paid in COP; Payment Dispatch reads it for the COP tab.
+    const totalPayCOP =
+      totalPayUSD != null ? Math.round(totalPayUSD * fx.usdToCop) : null;
 
     byEmail[em] = {
       totalHours: Math.round(totalHours * 100) / 100,
@@ -763,7 +823,9 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
       mesaDeductionPHP,
       totalPayPHP: totalPayPHP != null ? Math.round(totalPayPHP * 100) / 100 : null,
       totalPayUSD: totalPayUSD != null ? Math.round(totalPayUSD * 100) / 100 : null,
+      totalPayCOP,
       hasRate: reg != null,
+      payCurrency,
     };
   }
 
@@ -793,6 +855,7 @@ export async function computeCurrentPay(): Promise<CurrentPayResult> {
   return {
     period: { cycleId, start: periodStartIso, end: periodEndIso, sourceFile },
     fxRate,
+    fxRates: fx,
     byEmail,
     stashedMesaTotalPHP,
     approvedBudgetRequestsTotalPHP: Math.round(approvedBudgetRequestsTotalPHP * 100) / 100,

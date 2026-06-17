@@ -11,6 +11,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Coins,
+  DollarSign,
   FileSpreadsheet,
   Globe2,
   Heart,
@@ -53,7 +54,7 @@ import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
 
-type TabId = 'all' | 'urgent' | 'done' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
+type TabId = 'all' | 'usd' | 'cop' | 'urgent' | 'done' | 'reports' | 'excluded' | 'orphanage' | 'notifications' | ProcessorId;
 
 interface ProcessorVisual {
   Icon: React.ComponentType<{ className?: string }>;
@@ -145,6 +146,20 @@ const URGENT_VISUAL: ProcessorVisual = {
   blurb: 'MESA · pay now',
 };
 
+const USD_VISUAL: ProcessorVisual = {
+  Icon: DollarSign,
+  accent: 'from-green-600 to-emerald-700',
+  glow: 'from-green-100/80 via-emerald-50/60 to-white dark:from-green-950/40 dark:via-emerald-950/30 dark:to-zinc-900',
+  blurb: 'Paid in US dollars',
+};
+
+const COP_VISUAL: ProcessorVisual = {
+  Icon: DollarSign,
+  accent: 'from-yellow-500 to-amber-600',
+  glow: 'from-yellow-100/80 via-amber-50/60 to-white dark:from-yellow-950/40 dark:via-amber-950/30 dark:to-zinc-900',
+  blurb: 'Paid in Colombian pesos',
+};
+
 const containerStagger = {
   hidden: { opacity: 0 },
   visible: { opacity: 1, transition: { staggerChildren: 0.04, delayChildren: 0.05 } },
@@ -209,6 +224,14 @@ export default function PayrollDispatch() {
     setHydrated(true);
   }, [fetched, loading]);
 
+  // Non-PHP people (US Managers in USD, Colombian staff in COP, etc.) are carved
+  // OUT of the PHP processor tabs and paid separately in their own currency tab
+  // — each person appears in exactly one place, so there's no double-paying.
+  // Everyone else (PHP) stays in the normal processor queues.
+  const usdPending = useMemo(() => pending.filter((r) => r.payCurrency === 'USD'), [pending]);
+  const copPending = useMemo(() => pending.filter((r) => r.payCurrency === 'COP'), [pending]);
+  const phpPending = useMemo(() => pending.filter((r) => r.payCurrency === 'PHP'), [pending]);
+
   const counts = useMemo(() => {
     const result: Record<ProcessorId, number> = {
       hurupay: 0,
@@ -218,11 +241,11 @@ export default function PayrollDispatch() {
       jeeves: 0,
       wires: 0,
     };
-    for (const row of pending) result[row.processor] += 1;
+    for (const row of phpPending) result[row.processor] += 1;
     return result;
-  }, [pending]);
+  }, [phpPending]);
 
-  const totalPending = pending.length;
+  const totalPending = phpPending.length;
   // "Sent" counts only rows that actually went through (status='paid'). Rows
   // logged with Threshold / Problem are excluded so the headline doesn't lie.
   const paidRows = useMemo(() => paid.filter((p) => p.status === 'paid'), [paid]);
@@ -237,12 +260,12 @@ export default function PayrollDispatch() {
   );
 
   const visibleRows = useMemo(() => {
-    if (activeTab === 'all') return pending;
+    if (activeTab === 'all') return phpPending;
     if (PROCESSORS.some((p) => p.id === activeTab)) {
-      return pending.filter((r) => r.processor === activeTab);
+      return phpPending.filter((r) => r.processor === activeTab);
     }
     return [];
-  }, [pending, activeTab]);
+  }, [phpPending, activeTab]);
 
   // Stable references so React.memo on ProcessorQueue / QueueRowItem actually
   // skips re-renders when only sibling state changes (e.g. opening Mark Paid
@@ -309,6 +332,7 @@ export default function PayrollDispatch() {
               sourceFile: c.sourceFile,
               amountPHP: c.amountPHP,
               amountUSD: c.amountUSD,
+              amountCOP: c.amountCOP,
               cycleId: null as string | null,
               periodStart: p.start,
               periodEnd: p.end,
@@ -319,6 +343,7 @@ export default function PayrollDispatch() {
               sourceFile: period.sourceFile,
               amountPHP: row.amountPHP,
               amountUSD: row.amountUSD,
+              amountCOP: row.amountCOP,
               cycleId: period.cycleId,
               periodStart: period.start,
               periodEnd: period.end,
@@ -356,6 +381,7 @@ export default function PayrollDispatch() {
             recipient_swift_code: payload.recipientSwiftCode || null,
             amount_usd: c.amountUSD,
             amount_php: c.amountPHP,
+            amount_cop: c.amountCOP,
             transaction_id: payload.transactionId,
             bank_used: payload.bankUsed,
             sent_date: payload.sentDate,
@@ -452,6 +478,40 @@ export default function PayrollDispatch() {
     }
     if (activeTab === 'excluded') {
       return <ExcludedQueue rows={excluded} onMarkPaid={handleOpenExcludedMarkPaid} />;
+    }
+    if (activeTab === 'usd') {
+      return (
+        <ProcessorQueue
+          processor={null}
+          rows={usdPending}
+          onMarkPaid={handleOpenMarkPaid}
+          periodStart={period.start}
+          periodEnd={period.end}
+          onRefresh={refresh}
+          nativeCurrency="USD"
+          allLabel={{
+            title: 'USD payments',
+            subtitle: 'People paid in US dollars — handled separately from the peso payroll. Mark each paid as it goes out.',
+          }}
+        />
+      );
+    }
+    if (activeTab === 'cop') {
+      return (
+        <ProcessorQueue
+          processor={null}
+          rows={copPending}
+          onMarkPaid={handleOpenMarkPaid}
+          periodStart={period.start}
+          periodEnd={period.end}
+          onRefresh={refresh}
+          nativeCurrency="COP"
+          allLabel={{
+            title: 'COP payments',
+            subtitle: 'People paid in Colombian pesos — handled separately from the peso payroll. Mark each paid as it goes out.',
+          }}
+        />
+      );
     }
     return (
       <ProcessorQueue
@@ -666,6 +726,34 @@ export default function PayrollDispatch() {
             })}
             <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
               <ProcessorCard
+                label="USD"
+                subtitle={USD_VISUAL.blurb}
+                count={usdPending.length}
+                Icon={USD_VISUAL.Icon}
+                accent={USD_VISUAL.accent}
+                glow={USD_VISUAL.glow}
+                active={activeTab === 'usd'}
+                onClick={() => setActiveTab('usd')}
+                iconOnlyFallback
+              />
+            </motion.div>
+            {copPending.length > 0 && (
+              <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+                <ProcessorCard
+                  label="COP"
+                  subtitle={COP_VISUAL.blurb}
+                  count={copPending.length}
+                  Icon={COP_VISUAL.Icon}
+                  accent={COP_VISUAL.accent}
+                  glow={COP_VISUAL.glow}
+                  active={activeTab === 'cop'}
+                  onClick={() => setActiveTab('cop')}
+                  iconOnlyFallback
+                />
+              </motion.div>
+            )}
+            <motion.div variants={itemPop} className="w-[136px] shrink-0 lg:w-auto">
+              <ProcessorCard
                 label="Done"
                 subtitle={DONE_VISUAL.blurb}
                 count={totalSent}
@@ -722,7 +810,7 @@ export default function PayrollDispatch() {
           <AnimatePresence mode="wait">
             <motion.div
               key={
-                activeTab === 'reports' || activeTab === 'excluded' || activeTab === 'orphanage' || activeTab === 'urgent'
+                activeTab === 'reports' || activeTab === 'excluded' || activeTab === 'orphanage' || activeTab === 'urgent' || activeTab === 'usd' || activeTab === 'cop'
                   ? activeTab
                   : activeTab +
                     (loading || !hydrated

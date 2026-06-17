@@ -73,6 +73,8 @@ import {
   resolvePabRangeForMonth,
 } from '@/lib/pab-period-settings';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { resolveSystemBonuses, isDeptEligible } from '@/lib/payment-catalog/system-bonus';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -347,6 +349,9 @@ interface SimpleViewProps {
     pabMonth: { year: number; month: number } | null;
   };
   techBonusEligibility: { eligible: number; pending: number; unknown: number; total: number };
+  /** Configurable PAB / Tech amounts (PHP) from the Payment Catalog. */
+  pabBonusPhp: number;
+  techBonusPhp: number;
   pageRows: OverviewEmployeeRow[];
   filteredTotal: number;
   totalPages: number;
@@ -421,6 +426,8 @@ function SimpleView({
   newHires,
   pabMetrics,
   techBonusEligibility,
+  pabBonusPhp,
+  techBonusPhp,
   pageRows,
   filteredTotal,
   totalPages,
@@ -487,7 +494,7 @@ function SimpleView({
     const e = new Date(pabMetrics.periodEnd); e.setHours(0, 0, 0, 0);
     return t.getTime() > e.getTime();
   })();
-  const pabBonusTotal = pabFinalizedForPayout ? pabMetrics.eligible * 5000 : 0;
+  const pabBonusTotal = pabFinalizedForPayout ? pabMetrics.eligible * pabBonusPhp : 0;
   const displayTotalPayout = totalPayout != null ? totalPayout + pabBonusTotal : null;
 
   const usdEquivalent = displayTotalPayout != null ? displayTotalPayout / PHP_USD_FX : null;
@@ -983,7 +990,7 @@ function SimpleView({
                     </div>
                     <div>
                       <h4 className="mb-1 text-[13px] font-semibold text-zinc-900 dark:text-white">
-                        Perfect Attendance Bonus · ₱5,000
+                        Perfect Attendance Bonus · {formatPhp(pabBonusPhp, 2)}
                       </h4>
                       <p className="mb-2 text-xs text-zinc-500 [@media(max-height:900px)]:mb-1.5 xl:mb-3.5 dark:text-zinc-400">
                         {pabMetrics.monthLabel ?? '—'}
@@ -1018,7 +1025,7 @@ function SimpleView({
                       <p className="mt-3.5 text-[11.5px] leading-snug text-zinc-400 dark:text-zinc-500">
                         {inProgress
                           ? `Tracking ${pabTotal} workers — accrual locks once period closes.`
-                          : `Accrues ₱${(pabMetrics.eligible * 5000).toLocaleString('en-PH')} if all eligible hold through month end.`}
+                          : `Accrues ${formatPhp(pabMetrics.eligible * pabBonusPhp, 2)} if all eligible hold through month end.`}
                       </p>
                     </div>
                   </>
@@ -1048,7 +1055,7 @@ function SimpleView({
               </div>
               <div>
                 <h4 className="mb-1 text-[13px] font-semibold text-zinc-900 dark:text-white">
-                  Technology Bonus · ₱1,850
+                  Technology Bonus · {formatPhp(techBonusPhp, 2)}
                 </h4>
                 <p className="mb-2 text-xs text-zinc-500 [@media(max-height:900px)]:mb-1.5 xl:mb-3.5 dark:text-zinc-400">
                   Paid on 3rd paycheck of each month · after 30 days of service
@@ -1081,7 +1088,7 @@ function SimpleView({
                   )}
                 </div>
                 <p className="mt-3.5 text-[11.5px] leading-snug text-zinc-400 dark:text-zinc-500">
-                  Accrues ₱{(techBonusEligibility.eligible * 1850).toLocaleString('en-PH')} on the
+                  Accrues {formatPhp(techBonusEligibility.eligible * techBonusPhp, 2)} on the
                   3rd paycheck of the month.
                 </p>
               </div>
@@ -2053,6 +2060,12 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
   React.useEffect(() => {
     hasMountedOnce = true;
   }, []);
+  // PAB + Tech amounts + per-department allowlist (Payment Catalog System
+  // Bonuses, prefetched). Falls back to the legacy constants when unset.
+  const sysBonusCfg = useMemo(
+    () => resolveSystemBonuses(initialData?.systemBonuses ?? []),
+    [initialData],
+  );
   const prefetchedRatesRef = React.useRef<import('@/lib/supabase/employee-hourly-rates').EmployeeHourlyRateRow[] | null>(
     initialData?.hourlyRates ?? null,
   );
@@ -2325,10 +2338,14 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     let eligible = 0;
     let pending = 0;
     let unknown = 0;
+    let considered = 0;
     // Per-email map drives the table filter — `null` means we couldn't decide
     // (missing or unparseable start_date), `true` = eligible, `false` = pending.
     const byEmail = new Map<string, boolean | null>();
     for (const e of employees) {
+      // Skip departments excluded from the Tech bonus allowlist (e.g. US managers).
+      if (!isDeptEligible(sysBonusCfg.tech, normalizeDeptToKey(e.department ?? null))) continue;
+      considered += 1;
       const emailKey = normEmail(e.work_email ?? e.personal_email ?? '') ?? '';
       if (!e.start_date) {
         unknown += 1;
@@ -2348,10 +2365,10 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
       if (emailKey) byEmail.set(emailKey, isElig);
     }
     return {
-      techBonusEligibility: { eligible, pending, unknown, total: employees.length },
+      techBonusEligibility: { eligible, pending, unknown, total: considered },
       techEligibilityByEmail: byEmail,
     };
-  }, [employees]);
+  }, [employees, sysBonusCfg]);
 
   const fetchEmployees = React.useCallback(async (signal?: AbortSignal) => {
     const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -2817,6 +2834,9 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
           const p = normEmail(e.personal_email ?? null);
           const key = w ?? p;
           if (!key) continue;
+          // Skip departments excluded from the PAB allowlist (e.g. US managers)
+          // so they don't inflate the eligible count / accrual.
+          if (!isDeptEligible(sysBonusCfg.pab, normalizeDeptToKey(e.department ?? null))) continue;
           const hubRow = (w && rowsByEmail.get(w)) || (p && rowsByEmail.get(p)) || {};
           masterEntries.push({ email: key, row: hubRow as Record<string, unknown> });
         }
@@ -2921,7 +2941,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     // `employees.length` (not the full array) so the 60s refetch of the same
     // roster doesn't churn this expensive effect; size changes capture
     // hires/leavers. `hslMasterEmailsKey` already covers HSL membership shifts.
-  }, [sourceFiles, selectedSourceFile, monthFilter, hslMasterEmailsKey, employees.length]);
+  }, [sourceFiles, selectedSourceFile, monthFilter, hslMasterEmailsKey, employees.length, sysBonusCfg]);
 
   /** Master-list rows only. Hubstaff-only workers are no longer merged into
    *  Overview totals — the master list is the single source of truth. */
@@ -3039,7 +3059,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
     return t.getTime() > e.getTime();
   })();
   const totalPayoutWithPab = totalPayout != null && pabFinalizedForPayoutExpanded
-    ? totalPayout + pabMetrics.eligible * 5000
+    ? totalPayout + pabMetrics.eligible * sysBonusCfg.pab.amountPHP
     : totalPayout;
 
   const stats = [
@@ -3301,6 +3321,8 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
               onViewRates={onViewRates}
               onNavigate={onNavigate}
               loading={loading}
+              pabBonusPhp={sysBonusCfg.pab.amountPHP}
+              techBonusPhp={sysBonusCfg.tech.amountPHP}
               pabEligibilityByEmail={pabEligibilityByEmail}
               pabFilter={pabFilter}
               setPabFilter={setPabFilter}
@@ -3928,7 +3950,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
                 icon={<Award className="h-3.5 w-3.5 text-indigo-500" />}
                 label="Perfect Attendance"
                 sub={pabMetrics.monthLabel ?? 'Month pending'}
-                amount="₱5,000"
+                amount={formatPhp(sysBonusCfg.pab.amountPHP, 2)}
                 eligible={pabMetrics.eligible}
                 total={pabTotalForExpanded(pabMetrics)}
                 loading={pabMetrics.loading}
@@ -3938,7 +3960,7 @@ export default function Overview({ onViewRates, onNavigate, initialData }: Overv
                 icon={<Laptop className="h-3.5 w-3.5 text-sky-500" />}
                 label="Technology"
                 sub="3rd paycheck · after 30d"
-                amount="₱1,850"
+                amount={formatPhp(sysBonusCfg.tech.amountPHP, 2)}
                 eligible={techBonusEligibility.eligible}
                 total={techBonusEligibility.total}
                 barClass="bg-sky-500"

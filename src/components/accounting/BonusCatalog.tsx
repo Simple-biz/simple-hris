@@ -47,6 +47,8 @@ import {
   FileText,
   FileSpreadsheet,
   Loader2,
+  Award,
+  Star,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -69,6 +71,8 @@ import {
   newPayId,
   formatRate,
   CURRENCY_SYMBOL,
+  CURRENCY_LOCALE,
+  PAY_CURRENCIES,
   OT_MULTIPLIER,
   defaultOtRate,
   isAutoOtRate,
@@ -80,15 +84,27 @@ import {
   downloadCatalogCsv,
   downloadCatalogPdf,
 } from '@/lib/payment-catalog/catalog-export';
-import { OFFICIAL_USD_TO_PHP_RATE, effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
+import {
+  SYSTEM_BONUS_DEFAULTS,
+  type SystemBonus,
+  type SystemBonusCode,
+} from '@/lib/payment-catalog/system-bonus';
+import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
+import {
+  effectiveUsdToCopRateFromStored,
+  officialFxRates,
+  phpPerUnit,
+  type FxRates,
+} from '@/lib/fx/currency-fx';
 
 // Always render exactly 2 decimals so the exact amount is shown without ever
 // rounding cents away to a whole number (1500 -> "₱1,500.00", 1500.5 -> "₱1,500.50").
 // Currency defaults to PHP (legacy bonuses have no currency); USD bonuses render
 // with a "$" prefix.
 function money(n: number, currency: PayCurrency = 'PHP'): string {
-  const locale = currency === 'USD' ? 'en-US' : 'en-PH';
-  return `${CURRENCY_SYMBOL[currency]}${n.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const locale = CURRENCY_LOCALE[currency] ?? 'en-PH';
+  const digits = currency === 'COP' ? 0 : 2;
+  return `${CURRENCY_SYMBOL[currency]}${n.toLocaleString(locale, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
 /** Shared easing — matches the app's tab transition (App.tsx). */
@@ -474,12 +490,13 @@ function buildRoster(initialData?: InitialAccountingData | null): RosterEntry[] 
 // Top-level component
 // ---------------------------------------------------------------------------
 
-type CatalogTab = 'pay-structure' | 'library' | 'assignments';
+type CatalogTab = 'pay-structure' | 'library' | 'assignments' | 'system-bonuses';
 
 export default function BonusCatalog({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [bonuses, setBonuses] = useState<BonusDef[]>([]);
   const [assignments, setAssignments] = useState<BonusAssignment[]>([]);
   const [payStructures, setPayStructures] = useState<PayStructure[]>([]);
+  const [systemBonuses, setSystemBonuses] = useState<SystemBonus[]>(initialData?.systemBonuses ?? []);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<CatalogTab>('pay-structure');
@@ -487,16 +504,21 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 
   const roster = useMemo(() => buildRoster(initialData), [initialData]);
 
-  // Live USD->PHP rate (PHP per $1) — used only to sort the Bonus Library's
+  // Live USD-anchored FX rates — used only to sort the Bonus Library's
   // "Amount (high-low)" by PHP-equivalent so a $100 bonus outranks a ₱500 one.
   // The actual payout conversion happens at apply time in the KPI Calculator.
-  const [usdToPhpRate, setUsdToPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
+  const [fx, setFx] = useState<FxRates>(officialFxRates());
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' })
+    fetch('/api/app-settings?keys=usd_to_php_rate,usd_to_cop_rate', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((json: { value?: string | null }) => {
-        if (!cancelled) setUsdToPhpRate(effectiveUsdToPhpRateFromStored(json.value));
+      .then((json: { values?: Record<string, string | null> }) => {
+        if (cancelled) return;
+        const v = json.values ?? {};
+        setFx({
+          usdToPhp: effectiveUsdToPhpRateFromStored(v['usd_to_php_rate']),
+          usdToCop: effectiveUsdToCopRateFromStored(v['usd_to_cop_rate']),
+        });
       })
       .catch(() => {
         /* keep the official fallback */
@@ -509,9 +531,10 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   const refetch = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [catRes, payRes] = await Promise.all([
+      const [catRes, payRes, sysRes] = await Promise.all([
         fetch('/api/bonus-catalog', { cache: 'no-store' }),
         fetch('/api/payment-catalog/pay-structures', { cache: 'no-store' }),
+        fetch('/api/payment-catalog/system-bonuses', { cache: 'no-store' }),
       ]);
       const cat = (await catRes.json()) as {
         bonuses?: BonusDef[];
@@ -519,9 +542,11 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
         error?: string | null;
       };
       const pay = (await payRes.json()) as { structures?: PayStructure[]; error?: string | null };
+      const sys = (await sysRes.json()) as { bonuses?: SystemBonus[]; error?: string | null };
       setBonuses(cat.bonuses ?? []);
       setAssignments(cat.assignments ?? []);
       setPayStructures(pay.structures ?? []);
+      setSystemBonuses(sys.bonuses ?? []);
     } catch {
       /* keep prior state */
     } finally {
@@ -544,6 +569,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bonus_catalog_bonuses' }, () => void refetch())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bonus_catalog_assignments' }, () => void refetch())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_catalog_pay_structures' }, () => void refetch())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_catalog_system_bonuses' }, () => void refetch())
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
@@ -686,10 +712,36 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
     [refetch],
   );
 
+  const upsertSystemBonus = useCallback(
+    async (bonus: SystemBonus) => {
+      setSystemBonuses((prev) =>
+        prev.some((b) => b.code === bonus.code)
+          ? prev.map((b) => (b.code === bonus.code ? { ...b, ...bonus } : b))
+          : [...prev, bonus],
+      );
+      try {
+        const res = await fetch('/api/payment-catalog/system-bonuses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bonus }),
+        });
+        const json = (await res.json()) as { row?: SystemBonus; error: string | null };
+        if (json.error) throw new Error(json.error);
+        if (json.row) setSystemBonuses((prev) => prev.map((b) => (b.code === json.row!.code ? json.row! : b)));
+        toast.success(`${bonus.label} saved`);
+      } catch (e) {
+        toast.error(`Could not save bonus: ${failMsg(e)}`);
+        void refetch();
+      }
+    },
+    [refetch],
+  );
+
   const tabs = [
     { id: 'pay-structure', label: 'Pay Structure', icon: Wallet, count: payStructures.length },
     { id: 'library', label: 'Bonus Library', icon: Sparkles, count: bonuses.length },
     { id: 'assignments', label: 'Assignments', icon: Building2, count: assignments.length },
+    { id: 'system-bonuses', label: 'System Bonuses', icon: Award, count: 0 },
   ] as const;
 
   return (
@@ -802,10 +854,10 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 assignments={assignments}
                 onUpsert={upsertBonus}
                 onDelete={deleteBonus}
-                usdToPhpRate={usdToPhpRate}
+                fx={fx}
               />
             </motion.div>
-          ) : (
+          ) : tab === 'assignments' ? (
             <motion.div
               key="assignments"
               initial={{ opacity: 0, x: 14 }}
@@ -822,6 +874,17 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 onRemove={removeAssignment}
               />
             </motion.div>
+          ) : (
+            <motion.div
+              key="system-bonuses"
+              initial={{ opacity: 0, x: 14 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -14 }}
+              transition={{ duration: 0.24, ease: EASE }}
+              className="h-full"
+            >
+              <SystemBonusesTab bonuses={systemBonuses} onUpsert={upsertSystemBonus} />
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
@@ -830,11 +893,229 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
 }
 
 // ---------------------------------------------------------------------------
+// System Bonuses tab -- the two built-in bonuses (PAB + Technology). Editable
+// amount + a per-department allowlist; timing/eligibility stays in the payroll
+// engine. Drives every dashboard via payment_catalog_system_bonuses.
+// ---------------------------------------------------------------------------
+
+function SystemBonusesTab({
+  bonuses,
+  onUpsert,
+}: {
+  bonuses: SystemBonus[];
+  onUpsert: (b: SystemBonus) => void;
+}) {
+  const byCode = (code: SystemBonusCode) => bonuses.find((b) => b.code === code) ?? null;
+  return (
+    <div className="mx-auto max-w-3xl p-4 sm:p-6">
+      <div className="mb-5 rounded-lg border border-orange-100 bg-orange-50/40 p-3 text-xs leading-relaxed text-zinc-600 dark:border-blue-950/60 dark:bg-blue-950/10 dark:text-zinc-400">
+        These two built-in bonuses pay automatically based on attendance and tenure. Set each
+        amount and choose which departments receive it — a department that is unticked (e.g.{' '}
+        <span className="font-medium">US - Manager Bonus</span>) is never paid that bonus. The
+        timing is fixed: PAB pays on the final week of the PAB period; the Technology Bonus pays
+        on the 3rd-week salary date. Changes apply across the Payroll Wizard, Payment Dispatch,
+        Overview, and every employee dashboard.
+      </div>
+      <SystemBonusCard
+        code="pab"
+        row={byCode('pab')}
+        onUpsert={onUpsert}
+        subtitle="Paid on the final week of the PAB period to employees who pass perfect attendance."
+      />
+      <SystemBonusCard
+        code="tech"
+        row={byCode('tech')}
+        onUpsert={onUpsert}
+        subtitle="Paid on the 3rd-week salary date to employees past 30 days of service."
+      />
+    </div>
+  );
+}
+
+function SystemBonusCard({
+  code,
+  row,
+  onUpsert,
+  subtitle,
+}: {
+  code: SystemBonusCode;
+  row: SystemBonus | null;
+  onUpsert: (b: SystemBonus) => void;
+  subtitle: string;
+}) {
+  const label = row?.label ?? SYSTEM_BONUS_DEFAULTS[code].label;
+  const savedAmount = row?.amount ?? SYSTEM_BONUS_DEFAULTS[code].amount;
+  const savedEnabled = row?.enabled ?? true;
+  const savedDeptsArr = useMemo(() => [...(row?.departmentKeys ?? [])].sort(), [row]);
+  const savedDeptsKey = savedDeptsArr.join(',');
+  // Reseed key: changes whenever the persisted row's values change (a teammate
+  // edit, or our own save reconciling) so the local draft follows the DB.
+  const savedKey = `${savedAmount}|${savedEnabled}|${savedDeptsKey}`;
+
+  const [amount, setAmount] = useState(String(savedAmount));
+  const [enabled, setEnabled] = useState(savedEnabled);
+  const [depts, setDepts] = useState<Set<string>>(() => new Set(savedDeptsArr));
+
+  useEffect(() => {
+    setAmount(String(savedAmount));
+    setEnabled(savedEnabled);
+    setDepts(new Set(savedDeptsArr));
+    // Only reseed when the persisted snapshot changes — not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedKey]);
+
+  const amountNum = Number(amount);
+  const amountValid = amount.trim() !== '' && Number.isFinite(amountNum) && amountNum >= 0;
+  const deptsKey = [...depts].sort().join(',');
+  const dirty =
+    amount !== String(savedAmount) || enabled !== savedEnabled || deptsKey !== savedDeptsKey;
+
+  const toggleDept = (key: string) =>
+    setDepts((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const save = () => {
+    if (!amountValid || !dirty) return;
+    onUpsert({
+      code,
+      label,
+      amount: amountNum,
+      currency: row?.currency ?? 'PHP',
+      enabled,
+      departmentKeys: [...depts],
+    });
+  };
+
+  return (
+    <Section icon={Award} title={label} subtitle={subtitle}>
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-end gap-4">
+          <Field label={`Amount (${CURRENCY_SYMBOL.PHP})`}>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm text-zinc-400">{CURRENCY_SYMBOL.PHP}</span>
+              <Input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="w-32"
+              />
+            </div>
+          </Field>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Status</span>
+            <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
+              {([
+                { on: true, label: 'Enabled' },
+                { on: false, label: 'Disabled' },
+              ] as const).map((o) => (
+                <button
+                  key={o.label}
+                  type="button"
+                  onClick={() => setEnabled(o.on)}
+                  className={`relative rounded px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    enabled === o.on
+                      ? 'text-white'
+                      : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  {enabled === o.on && (
+                    <motion.span
+                      layoutId={`sysEnabledPill-${code}`}
+                      className={`absolute inset-0 rounded ${o.on ? 'bg-emerald-500' : 'bg-zinc-400 dark:bg-zinc-600'}`}
+                      transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+                    />
+                  )}
+                  <span className="relative z-10">{o.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              Paid to{' '}
+              <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                {depts.size}
+              </span>{' '}
+              of {DEPARTMENTS.length} departments
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setDepts(new Set(DEPARTMENTS.map((d) => d.key)))}
+                className="rounded px-1.5 py-0.5 text-[11px] font-medium text-orange-600 hover:bg-orange-50 dark:text-orange-400 dark:hover:bg-blue-950/30"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={() => setDepts(new Set())}
+                className="rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {DEPARTMENTS.map((d) => {
+              const on = depts.has(d.key);
+              return (
+                <button
+                  key={d.key}
+                  type="button"
+                  onClick={() => toggleDept(d.key)}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${
+                    on
+                      ? 'bg-emerald-100 text-emerald-700 ring-emerald-400/40 hover:bg-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-500/30'
+                      : 'bg-white text-zinc-500 ring-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-500 dark:ring-zinc-700'
+                  }`}
+                >
+                  {on && <Check className="h-3 w-3" />}
+                  {d.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={!amountValid || !dirty}
+            onClick={save}
+            className="bg-orange-500 text-white hover:bg-orange-600"
+          >
+            Save changes
+          </Button>
+          {dirty && <span className="text-xs text-amber-600 dark:text-amber-400">Unsaved changes</span>}
+          {!dirty && row && (
+            <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Saved
+            </span>
+          )}
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Pay Structure tab -- authoritative Regular + OT rates (source of truth for
 // onboarding), per department ("common") or per individual.
 // ---------------------------------------------------------------------------
 
-/** Animated PHP / USD segmented toggle. */
+/** Animated PHP / USD / COP segmented toggle. */
 function CurrencyToggle({
   value,
   onChange,
@@ -846,7 +1127,7 @@ function CurrencyToggle({
 }) {
   return (
     <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
-      {(['PHP', 'USD'] as const).map((c) => (
+      {PAY_CURRENCIES.map((c) => (
         <button
           key={c}
           type="button"
@@ -1557,14 +1838,14 @@ function LibraryTab({
   assignments,
   onUpsert,
   onDelete,
-  usdToPhpRate,
+  fx,
 }: {
   bonuses: BonusDef[];
   assignments: BonusAssignment[];
   onUpsert: (b: BonusDef) => void;
   onDelete: (id: string) => void;
-  /** Live USD->PHP rate, used to sort by PHP-equivalent amount. */
-  usdToPhpRate: number;
+  /** Live USD-anchored FX rates, used to sort by PHP-equivalent amount. */
+  fx: FxRates;
 }) {
   const [editing, setEditing] = useState<BonusDef | null>(null);
   const [creating, setCreating] = useState(false);
@@ -1606,21 +1887,27 @@ function LibraryTab({
     // currency (a $100 bonus outranks a ₱500 one). Formula bonuses have no flat
     // amount, so they sort last (sentinel -1).
     const phpEquiv = (b: BonusDef) =>
-      b.amount == null ? -1 : b.amount * (b.currency === 'USD' ? usdToPhpRate : 1);
+      b.amount == null ? -1 : b.amount * phpPerUnit(b.currency ?? 'PHP', fx);
     switch (sort) {
       case 'newest':
-        return list.sort((a, b) => ts(b) - ts(a));
+        list.sort((a, b) => ts(b) - ts(a));
+        break;
       case 'oldest':
-        return list.sort((a, b) => ts(a) - ts(b));
+        list.sort((a, b) => ts(a) - ts(b));
+        break;
       case 'amount':
-        return list.sort((a, b) => phpEquiv(b) - phpEquiv(a));
+        list.sort((a, b) => phpEquiv(b) - phpEquiv(a));
+        break;
       case 'name':
       default:
-        return list.sort((a, b) =>
+        list.sort((a, b) =>
           (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }),
         );
     }
-  }, [filteredBonuses, sort, usdToPhpRate]);
+    // Highlighted ("starred") bonuses always float to the top, preserving the
+    // chosen order within each group.
+    return [...list.filter((b) => b.starred), ...list.filter((b) => !b.starred)];
+  }, [filteredBonuses, sort, fx]);
 
   const pageCount = Math.max(1, Math.ceil(sortedBonuses.length / PAGE_SIZE));
 
@@ -1750,6 +2037,7 @@ function LibraryTab({
                   assignments={assignmentCount(b.id)}
                   onView={() => setViewingId(b.id)}
                   onDelete={() => remove(b.id)}
+                  onToggleStar={() => onUpsert({ ...b, starred: !b.starred })}
                 />
               </motion.div>
             ))}
@@ -1803,14 +2091,23 @@ function BonusCard({
   assignments,
   onView,
   onDelete,
+  onToggleStar,
 }: {
   bonus: BonusDef;
   assignments: number;
   onView: () => void;
   onDelete: () => void;
+  onToggleStar: () => void;
 }) {
+  const starred = !!bonus.starred;
   return (
-    <div className="flex h-48 flex-col rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+    <div
+      className={`flex h-48 flex-col rounded-lg border bg-white p-4 shadow-sm dark:bg-zinc-950 ${
+        starred
+          ? 'border-amber-300 ring-1 ring-amber-300/60 dark:border-amber-500/40 dark:ring-amber-500/20'
+          : 'border-zinc-200 dark:border-zinc-800'
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -1823,6 +2120,20 @@ function BonusCard({
           )}
         </div>
         <div className="flex shrink-0 gap-1">
+          <button
+            type="button"
+            title={starred ? 'Remove highlight' : 'Highlight this bonus'}
+            aria-label={starred ? 'Remove highlight' : 'Highlight this bonus'}
+            aria-pressed={starred}
+            onClick={onToggleStar}
+            className={`rounded-md p-1.5 transition-colors ${
+              starred
+                ? 'text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30'
+                : 'text-zinc-300 hover:bg-amber-50 hover:text-amber-500 dark:text-zinc-600 dark:hover:bg-amber-950/30'
+            }`}
+          >
+            <Star className={`h-3.5 w-3.5 ${starred ? 'fill-amber-400' : ''}`} />
+          </button>
           <IconButton title="View" onClick={onView}>
             <Eye className="h-3.5 w-3.5" />
           </IconButton>
@@ -2038,7 +2349,7 @@ function BonusDetailModal({
                         <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
                           {money(b.amount ?? 0, b.currency)}
                         </div>
-                        {b.currency === 'USD' && (
+                        {(b.currency ?? 'PHP') !== 'PHP' && (
                           <p className="mt-1 text-[11px] text-zinc-400">
                             Converted to PHP at the live rate when applied in the KPI Calculator.
                           </p>
@@ -2193,7 +2504,7 @@ function BonusEditor({
         <div>
           <span className="mb-1.5 block text-xs font-medium text-zinc-600 dark:text-zinc-400">Currency</span>
           <CurrencyToggle value={currency} onChange={setCurrency} idSuffix={`bonus-${initial.id}`} />
-          {currency === 'USD' && (
+          {currency !== 'PHP' && (
             <p className="mt-1 max-w-[15rem] text-[10.5px] leading-snug text-zinc-400">
               Converted to PHP at the live rate when applied in the KPI Calculator.
             </p>
@@ -3031,16 +3342,17 @@ function KindBadge({ kind }: { kind: BonusDef['kind'] }) {
   );
 }
 
-/** Flags a USD-denominated bonus. PHP is the silent default, so this renders
+/** Flags a non-PHP (USD/COP) bonus. PHP is the silent default, so this renders
  *  nothing for PHP to keep the common case uncluttered. */
 function CurrencyBadge({ currency }: { currency?: PayCurrency }) {
-  if ((currency ?? 'PHP') !== 'USD') return null;
+  const cur = currency ?? 'PHP';
+  if (cur === 'PHP') return null;
   return (
     <span
       className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
-      title="USD-denominated — converted to PHP at the live rate when applied"
+      title={`${cur}-denominated — converted to PHP at the live rate when applied`}
     >
-      {CURRENCY_SYMBOL.USD} USD
+      {CURRENCY_SYMBOL[cur]} {cur}
     </span>
   );
 }

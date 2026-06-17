@@ -15,6 +15,13 @@ import {
   type QueueRow,
 } from './mock-queue';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
+
+/** Resolve a department key to its display name (null when unknown/empty). */
+function deptNameFromKey(key: string | null | undefined): string | null {
+  if (!key) return null;
+  return DEPARTMENTS.find((d) => d.key === key)?.name ?? null;
+}
 
 /** Cached slice of the queue state — everything except the transient flags. */
 type CachedQueue = {
@@ -181,13 +188,23 @@ async function loadAll(signal?: AbortSignal): Promise<{
     }
   }
   const fx = payJson.fxRate ?? 0;
-  const applyWizardFinal = <T extends { id: string; amountPHP: number | null; amountUSD: number | null }>(r: T): T => {
+  // USD anchor for re-deriving a COP person's native amount when the wizard
+  // overrides their final PHP pay (COP = USD-equivalent × usd_to_cop_rate).
+  const usdToCop = payJson.fxRates?.usdToCop ?? 0;
+  const applyWizardFinal = <
+    T extends { id: string; amountPHP: number | null; amountUSD: number | null; amountCOP: number | null },
+  >(r: T): T => {
     const f = wizardFinalByEmail[r.id];
     if (typeof f !== 'number') return r;
+    const newUsd = fx > 0 ? Math.round((f / fx) * 100) / 100 : r.amountUSD;
+    // Only COP-paid rows carry a non-null amountCOP; keep it in step with the override.
+    const newCop =
+      r.amountCOP != null && newUsd != null && usdToCop > 0 ? Math.round(newUsd * usdToCop) : r.amountCOP;
     return {
       ...r,
       amountPHP: f,
-      amountUSD: fx > 0 ? Math.round((f / fx) * 100) / 100 : r.amountUSD,
+      amountUSD: newUsd,
+      amountCOP: newCop,
     };
   };
 
@@ -196,7 +213,7 @@ async function loadAll(signal?: AbortSignal): Promise<{
   // (still payable from there — paying them logs the dispatch + sends their
   // staged paystub). Keyed by lowercased work email; carries the last paystub
   // send timestamp for a per-row badge.
-  const wizardExcluded = new Map<string, { sentAt: string | null }>();
+  const wizardExcluded = new Map<string, { sentAt: string | null; departmentKey: string | null }>();
   if (period.sourceFile) {
     try {
       const stageRes = await fetch(
@@ -206,7 +223,10 @@ async function loadAll(signal?: AbortSignal): Promise<{
       const stageJson = (await stageRes.json()) as { rows?: PaystubQueueListItem[] };
       for (const r of stageJson.rows ?? []) {
         if (r.excluded) {
-          wizardExcluded.set(r.recipient_email.trim().toLowerCase(), { sentAt: r.sent_at });
+          wizardExcluded.set(r.recipient_email.trim().toLowerCase(), {
+            sentAt: r.sent_at,
+            departmentKey: r.department_key ?? null,
+          });
         }
       }
     } catch {
@@ -244,11 +264,15 @@ async function loadAll(signal?: AbortSignal): Promise<{
       arrearsByEmail.set(e.email.trim().toLowerCase(), {
         totalPHP: e.totalPhp,
         totalUSD: e.totalUsd,
+        // Held arrears are tracked in PHP/USD only; COP people don't accrue
+        // cross-cycle arrears today, so default to 0/null.
+        totalCOP: 0,
         cycles: e.cycles.map((c) => ({
           sourceFile: c.sourceFile,
           label: formatCycleLabelFromFile(c.sourceFile),
           amountPHP: c.amountPhp,
           amountUSD: c.amountUsd,
+          amountCOP: null,
           paystubSentAt: c.paystubSentAt,
           lastError: c.lastError,
         })),
@@ -307,8 +331,11 @@ async function loadAll(signal?: AbortSignal): Promise<{
         totalHours: row.totalHours,
         amountUSD: row.amountUSD,
         amountPHP: row.amountPHP,
+        amountCOP: row.amountCOP,
         bankPreferredRaw: row.bankPreferredRaw,
         reasons: ['do_not_pay'],
+        departmentKey: ex.departmentKey,
+        departmentName: deptNameFromKey(ex.departmentKey),
         payable: row,
         paystubSentAt: ex.sentAt,
       });
@@ -325,7 +352,17 @@ async function loadAll(signal?: AbortSignal): Promise<{
       const reasons = r.reasons.includes('do_not_pay')
         ? r.reasons
         : ([...r.reasons, 'do_not_pay'] as ExclusionReason[]);
-      return { ...r, reasons, paystubSentAt: ex.sentAt };
+      // Staged "do not pay" dept wins; fall back to the rates-derived dept the
+      // excluded row already carries so a wizard-unassigned person still keeps
+      // their real department in the filter.
+      const departmentKey = ex.departmentKey ?? r.departmentKey ?? null;
+      return {
+        ...r,
+        reasons,
+        departmentKey,
+        departmentName: deptNameFromKey(ex.departmentKey) ?? r.departmentName ?? null,
+        paystubSentAt: ex.sentAt,
+      };
     }),
     ...movedExcluded,
   ];
@@ -362,6 +399,7 @@ async function loadAll(signal?: AbortSignal): Promise<{
       totalHours: base?.totalHours ?? null,
       amountUSD: ar.totalUSD,
       amountPHP: ar.totalPHP,
+      amountCOP: base?.amountCOP ?? null,
       bankPreferredRaw: base?.bankPreferredRaw ?? null,
       reasons: ['do_not_pay'],
       payable: base ? { ...base, amountPHP: ar.totalPHP, amountUSD: ar.totalUSD } : null,

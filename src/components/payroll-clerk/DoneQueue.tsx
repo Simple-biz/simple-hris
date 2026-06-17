@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { formatPHP, formatUSD, PROCESSORS } from './mock-queue';
+import { formatPHP, formatUSD, formatCOP, PROCESSORS } from './mock-queue';
 import QueuePagination from './QueuePagination';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import {
@@ -251,7 +251,7 @@ export default function DoneQueue({
                         {meta?.label ?? rec.processor}
                       </td>
                       <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                        {formatUSD(rec.amount_usd)}
+                        {rec.amount_cop != null ? formatCOP(rec.amount_cop) : formatUSD(rec.amount_usd)}
                       </td>
                       <td className="px-4 py-2.5 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
                         {formatPHP(rec.amount_php)}

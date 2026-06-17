@@ -5,14 +5,16 @@ import {
   upsertSkillSet,
   type UpsertSkillSetInput,
 } from '@/lib/supabase/employee-skill-sets';
-import { SKILL_SET_TITLES } from '@/lib/skill-set-titles';
 import { authorizeEmailAccess, deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const MAX_FIELD_LEN = 4000;
-const VALID_ROLE_TITLES = new Set<string>(SKILL_SET_TITLES);
+// Role / Title is no longer a fixed whitelist — the Profile offers
+// department-specific suggestions plus a free-typed "Custom title…", so any
+// non-empty string is accepted up to this length cap.
+const MAX_ROLE_TITLE_LEN = 120;
 
 /**
  * GET ?email=foo@bar       -> single row (returns empty defaults if missing)
@@ -82,9 +84,9 @@ export async function PUT(req: NextRequest) {
       );
     }
   }
-  if (body.role_title && !VALID_ROLE_TITLES.has(body.role_title)) {
+  if (body.role_title && body.role_title.trim().length > MAX_ROLE_TITLE_LEN) {
     return NextResponse.json(
-      { row: null, error: 'role_title is not a valid option' },
+      { row: null, error: `role_title must be at most ${MAX_ROLE_TITLE_LEN} characters` },
       { status: 400 },
     );
   }

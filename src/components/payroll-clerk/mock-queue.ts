@@ -1,6 +1,16 @@
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { CurrentPayEntry } from '@/lib/payroll/current-pay';
+import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
+import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+
+/** Resolve a rates-row Department string to a { key, name } payroll department. */
+function resolveDept(raw: string | null | undefined): { key: string | null; name: string | null } {
+  const key = normalizeDeptToKey(raw);
+  const name = key ? (DEPARTMENTS.find((d) => d.key === key)?.name ?? null) : null;
+  return { key, name };
+}
 
 export type ProcessorId = 'hurupay' | 'wepay' | 'higlobe' | 'wise' | 'jeeves' | 'wires';
 
@@ -65,8 +75,18 @@ export interface ExcludedRow {
   totalHours: number | null;
   amountUSD: number | null;
   amountPHP: number | null;
+  /** Native COP amount (whole pesos); only meaningful for COP-paid people. */
+  amountCOP: number | null;
   bankPreferredRaw: string | null;
   reasons: ExclusionReason[];
+  /**
+   * Department key + human name carried from the wizard-staged paystub row, so
+   * the Excluded tab can offer a per-department filter. Null when unknown (e.g.
+   * a no_bank/no_pay/no_hours row or a prior-cycle arrears row with no staged
+   * department).
+   */
+  departmentKey?: string | null;
+  departmentName?: string | null;
   /**
    * Present when this person was excluded from pay in the Payroll Wizard
    * ('do_not_pay') but is otherwise dispatchable (has bank + pay + hours). The
@@ -89,6 +109,7 @@ export interface ArrearsCycleView {
   label: string;
   amountPHP: number | null;
   amountUSD: number | null;
+  amountCOP: number | null;
   paystubSentAt: string | null;
   lastError: string | null;
 }
@@ -97,6 +118,7 @@ export interface ArrearsCycleView {
 export interface ArrearsInfo {
   totalPHP: number;
   totalUSD: number;
+  totalCOP: number;
   cycles: ArrearsCycleView[];
 }
 
@@ -142,6 +164,16 @@ export interface QueueRow {
   amountUSD: number | null;
   /** PHP equivalent of amountUSD. */
   amountPHP: number | null;
+  /** Native COP amount (whole pesos), derived from the USD anchor. Only
+   *  meaningful when `payCurrency === 'COP'`; null otherwise. */
+  amountCOP: number | null;
+  /**
+   * Currency this employee is actually PAID in (from their effective Payment
+   * Catalog rate). 'USD'/'COP' people are routed to Payment Dispatch's dedicated
+   * tab and shown/paid natively (`amountUSD`/`amountCOP`); 'PHP' people stay in
+   * the processor tabs. Defaults to 'PHP' for legacy/unknown rows.
+   */
+  payCurrency: PayCurrency;
   /** Regular + OT only (no bonuses). For the breakdown tooltip / chip. */
   initialPayUSD: number | null;
   initialPayPHP: number | null;
@@ -277,6 +309,7 @@ export function buildQueueFromRates(
     if (pay?.totalPayUSD == null && pay?.initialPayUSD == null) reasons.push('no_pay');
     if (pay?.totalHours == null) reasons.push('no_hours');
     if (reasons.length > 0) {
+      const dept = resolveDept(r.department);
       excluded.push({
         id: email.toLowerCase(),
         name,
@@ -284,8 +317,11 @@ export function buildQueueFromRates(
         totalHours: pay?.totalHours ?? null,
         amountUSD: pay?.totalPayUSD ?? pay?.initialPayUSD ?? null,
         amountPHP: pay?.totalPayPHP ?? pay?.initialPayPHP ?? null,
+        amountCOP: pay?.totalPayCOP ?? null,
         bankPreferredRaw: r.bank_preferred,
         reasons,
+        departmentKey: dept.key,
+        departmentName: dept.name,
       });
       continue;
     }
@@ -316,6 +352,8 @@ export function buildQueueFromRates(
       // UI surface a "+ ₱5,000 PAB" chip when there's an addition.
       amountUSD: pay?.totalPayUSD ?? pay?.initialPayUSD ?? null,
       amountPHP: pay?.totalPayPHP ?? pay?.initialPayPHP ?? null,
+      amountCOP: pay?.totalPayCOP ?? null,
+      payCurrency: pay?.payCurrency ?? 'PHP',
       initialPayUSD: pay?.initialPayUSD ?? null,
       initialPayPHP: pay?.initialPayPHP ?? null,
       pabBonusPHP: pay?.pabBonusPHP ?? 0,
@@ -365,4 +403,10 @@ export function formatUSD(n: number | null): string {
 export function formatPHP(n: number | null): string {
   if (n == null) return '—';
   return '₱' + n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** Native COP — no minor unit, so whole pesos with grouping (e.g. "COP$8,000"). */
+export function formatCOP(n: number | null): string {
+  if (n == null) return '—';
+  return 'COP$' + n.toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }

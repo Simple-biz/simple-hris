@@ -51,6 +51,17 @@ function AdminPageInner() {
   });
   const searchParams = useSearchParams();
   const emailFromQuery = searchParams?.get('email') ?? null;
+  const tabFromQuery = searchParams?.get('tab') ?? null;
+
+  // Deep-link support: /admin?tab=roles opens that tab directly (e.g. the
+  // "Role Management & Sessions" link in System Settings).
+  useEffect(() => {
+    const known = new Set([
+      'overview', 'roles', 'employees', 'workspace', 'csv-imports', 'webhooks',
+      'notifications', 'audit', 'diagnostics', 'api-tokens', 'backups', 'settings',
+    ]);
+    if (tabFromQuery && known.has(tabFromQuery)) setActiveTab(tabFromQuery);
+  }, [tabFromQuery]);
 
   useEffect(() => {
     try {

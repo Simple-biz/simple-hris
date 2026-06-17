@@ -359,6 +359,12 @@ export interface BonusBreakdown {
 /**
  * Combined per-employee gate. Returns the actual peso amount that
  * should be added on top of the regular + OT pay for this dispatch.
+ *
+ * The amounts and per-department eligibility are now configurable via the
+ * Payment Catalog System Bonuses tab (`payment_catalog_system_bonuses`). The
+ * caller resolves them (see src/lib/payment-catalog/system-bonus.ts) and passes
+ * them in; the optional args default to the legacy constants + "applies to
+ * everyone" so existing/pre-migration callers keep working unchanged.
  */
 export function computeEmployeeBonus(args: {
   hasRates: boolean;
@@ -366,12 +372,24 @@ export function computeEmployeeBonus(args: {
   isPabEligible: boolean;
   isTechBonusWeek: boolean;
   hasThirtyDays: boolean;
+  /** Configurable PAB amount (PHP); defaults to the legacy PAB_BONUS_PHP. */
+  pabAmountPHP?: number;
+  /** Configurable Tech amount (PHP); defaults to the legacy TECH_BONUS_PHP. */
+  techAmountPHP?: number;
+  /** False when the employee's department is excluded from PAB (default true). */
+  pabDeptEligible?: boolean;
+  /** False when the employee's department is excluded from Tech (default true). */
+  techDeptEligible?: boolean;
 }): BonusBreakdown {
   const { hasRates } = args;
   if (!hasRates) {
     return { pabBonusPHP: 0, techBonusPHP: 0, totalPHP: 0 };
   }
-  const pabBonusPHP = args.isFinalPabWeek && args.isPabEligible ? PAB_BONUS_PHP : 0;
-  const techBonusPHP = args.isTechBonusWeek && args.hasThirtyDays ? TECH_BONUS_PHP : 0;
+  const pabAmount = args.pabAmountPHP ?? PAB_BONUS_PHP;
+  const techAmount = args.techAmountPHP ?? TECH_BONUS_PHP;
+  const pabDeptEligible = args.pabDeptEligible ?? true;
+  const techDeptEligible = args.techDeptEligible ?? true;
+  const pabBonusPHP = args.isFinalPabWeek && args.isPabEligible && pabDeptEligible ? pabAmount : 0;
+  const techBonusPHP = args.isTechBonusWeek && args.hasThirtyDays && techDeptEligible ? techAmount : 0;
   return { pabBonusPHP, techBonusPHP, totalPHP: pabBonusPHP + techBonusPHP };
 }

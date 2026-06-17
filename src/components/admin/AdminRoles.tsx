@@ -31,7 +31,7 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { FEATURE_CATALOG, ROLE_TO_FEATURE_VIEW, type FeatureAccess, type FeatureViewKey } from '@/lib/rbac/feature-permissions';
 import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from '@/lib/hsl-bonus/schema';
-import { normalizeCurrency, type ContractorCurrency } from '@/lib/contractor-currency';
+import { normalizeCurrency, CONTRACTOR_CURRENCIES, type ContractorCurrency } from '@/lib/contractor-currency';
 
 // All known role keys — kept so legacy assignments in the DB (e.g. `viewer`,
 // `payroll_coordinator`, `payroll_manager`) still render correctly in the
@@ -1344,7 +1344,7 @@ export default function AdminRoles() {
                                   <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Presets every new invoice this contractor creates.</p>
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
-                                  {(['PHP', 'USD'] as const).map((cur) => (
+                                  {CONTRACTOR_CURRENCIES.map((cur) => (
                                     <button
                                       key={cur}
                                       type="button"

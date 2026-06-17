@@ -92,7 +92,7 @@ export function buildCatalogExport(input: BuildCatalogInput): CatalogExportModel
   };
 
   const bonusDetail = (b: BonusDef): { kind: 'Flat' | 'Formula'; detail: string; currency: PayCurrency } => {
-    const currency: PayCurrency = b.currency === 'USD' ? 'USD' : 'PHP';
+    const currency: PayCurrency = b.currency ?? 'PHP';
     if (b.kind === 'flat') {
       const amt = Number.isFinite(b.amount) ? (b.amount as number) : 0;
       // Use the ASCII currency code as the prefix so it renders cleanly in both

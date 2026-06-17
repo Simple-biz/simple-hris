@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { Ban, Banknote, CheckCircle2, ChevronDown, Clock, DollarSign, Layers, Search, SearchX, Send, ShieldOff, X } from 'lucide-react';
+import { Ban, Banknote, Building2, CheckCircle2, ChevronDown, Clock, DollarSign, Layers, Search, SearchX, Send, ShieldOff, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
@@ -41,6 +41,10 @@ function bankLabel(row: ExcludedRow): string {
 }
 
 type BankFilter = 'all' | ProcessorId | 'other';
+
+/** Department filter key: 'all', a real department key, or '__none__' (no dept). */
+type DeptFilter = 'all' | '__none__' | string;
+const NO_DEPT = '__none__';
 
 interface ExcludedQueueProps {
   rows: ExcludedRow[];
@@ -135,6 +139,7 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
   const [query, setQuery] = useState('');
   const [reasonFilter, setReasonFilter] = useState<ReasonFilter>('all');
   const [bankFilter, setBankFilter] = useState<BankFilter>('all');
+  const [deptFilter, setDeptFilter] = useState<DeptFilter>('all');
   const debounced = useDebouncedValue(query, 250);
 
   // Aggregate counts per reason for the header summary chips.
@@ -159,6 +164,29 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
   );
   const otherBankCount = bankCounts.get('other') ?? 0;
 
+  // Department counts → which dept pills to show (only present ones). Rows that
+  // carry no department (no_bank/no_pay/no_hours or prior-cycle arrears) collapse
+  // into a single "No department" bucket.
+  const deptCounts = useMemo(() => {
+    const c = new Map<string, { name: string; count: number }>();
+    for (const r of rows) {
+      const key = r.departmentKey ?? NO_DEPT;
+      const name = r.departmentName ?? 'No department';
+      const cur = c.get(key);
+      if (cur) cur.count += 1;
+      else c.set(key, { name, count: 1 });
+    }
+    return c;
+  }, [rows]);
+  const presentDepts = useMemo(
+    () =>
+      Array.from(deptCounts.entries())
+        .filter(([k]) => k !== NO_DEPT)
+        .sort((a, b) => a[1].name.localeCompare(b[1].name)),
+    [deptCounts],
+  );
+  const noDeptCount = deptCounts.get(NO_DEPT)?.count ?? 0;
+
   const filtered = useMemo(() => {
     const q = debounced.trim().toLowerCase();
     return rows.filter((r) => {
@@ -167,6 +195,7 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
         const p = rowProcessor(r);
         if (bankFilter === 'other' ? p !== null : p !== bankFilter) return false;
       }
+      if (deptFilter !== 'all' && (r.departmentKey ?? NO_DEPT) !== deptFilter) return false;
       if (!q) return true;
       return (
         r.name.toLowerCase().includes(q) ||
@@ -175,7 +204,7 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
         (r.bankPreferredRaw ?? '').toLowerCase().includes(q)
       );
     });
-  }, [rows, debounced, reasonFilter, bankFilter]);
+  }, [rows, debounced, reasonFilter, bankFilter, deptFilter]);
 
   // Total owed across the (filtered) excluded list + how many held cycles it
   // spans — "what we owe just in case they don't get paid this week".
@@ -208,7 +237,7 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
   const PAGE_SIZE = 25;
   const [page, setPage] = useState(1);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  useEffect(() => { setPage(1); }, [debounced, reasonFilter, bankFilter]);
+  useEffect(() => { setPage(1); }, [debounced, reasonFilter, bankFilter, deptFilter]);
   useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
   const pagedRows = useMemo(
     () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
@@ -292,6 +321,59 @@ export default function ExcludedQueue({ rows, onMarkPaid }: ExcludedQueueProps) 
             </button>
           )}
         </div>
+
+        {/* Department filter rail — single-select pills (wizard-staged dept) */}
+        {(presentDepts.length > 0 || noDeptCount > 0) && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Filter by department">
+            <span className="mr-0.5 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+              <Building2 className="h-3 w-3" />
+              Dept
+            </span>
+            <FilterPill
+              label="All"
+              count={rows.length}
+              active={deptFilter === 'all'}
+              onClick={() => setDeptFilter('all')}
+              tone="neutral"
+            />
+            {presentDepts.map(([key, info]) => (
+              <FilterPill
+                key={key}
+                label={info.name}
+                count={info.count}
+                active={deptFilter === key}
+                onClick={() => setDeptFilter((prev) => (prev === key ? 'all' : key))}
+                tone="reason"
+                Icon={Building2}
+                activeClass="border-indigo-500 bg-indigo-500 text-white shadow-sm shadow-indigo-500/30 dark:border-indigo-400 dark:bg-indigo-500 dark:text-white"
+                inactiveClass="border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300"
+              />
+            ))}
+            {noDeptCount > 0 && (
+              <FilterPill
+                label="No department"
+                count={noDeptCount}
+                active={deptFilter === NO_DEPT}
+                onClick={() => setDeptFilter((prev) => (prev === NO_DEPT ? 'all' : NO_DEPT))}
+                tone="reason"
+                Icon={ShieldOff}
+                activeClass="border-zinc-700 bg-zinc-800 text-white shadow-sm dark:border-zinc-200 dark:bg-zinc-100 dark:text-zinc-900"
+                inactiveClass="border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+              />
+            )}
+            {deptFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setDeptFilter('all')}
+                className="ml-1 inline-flex h-7 items-center gap-1 rounded-full px-2 text-[10.5px] font-medium text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                aria-label="Clear department filter"
+              >
+                <X className="h-3 w-3" />
+                Clear
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Bank filter rail — single-select pills, scoped to this tab */}
         {(presentBanks.length > 0 || otherBankCount > 0) && (

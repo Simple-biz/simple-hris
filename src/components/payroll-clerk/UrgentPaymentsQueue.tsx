@@ -63,6 +63,8 @@ function toQueueRow(r: UrgentPaymentRow, processor: ProcessorId): QueueRow {
     email: r.work_email,
     amountUSD: null,
     amountPHP: r.amount_needed,
+    amountCOP: null,
+    payCurrency: 'PHP',
     initialPayUSD: null,
     initialPayPHP: r.amount_needed,
     pabBonusPHP: 0,

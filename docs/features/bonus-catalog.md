@@ -3,15 +3,24 @@
 An Accounting tab (renamed **Payment Catalog**) covering two concerns:
 
 1. **Bonuses** -- author reusable custom bonuses (a flat amount or an
-   Excel-style formula, in **PHP or USD**) and assign them department-wide
+   Excel-style formula, in **PHP, USD, or COP**) and assign them department-wide
    ("common") or to a specific employee. As of the 2026-06 rework it is
    **database-backed** (moved off `app_settings`) so a teammate's edits show up
-   live, and it ships with a real spreadsheet formula engine. A USD bonus is
+   live, and it ships with a real spreadsheet formula engine. A USD/COP bonus is
    converted to PHP at the live FX rate when it is **applied** (see §3), so the
    payout layer (`bonus_catalog_applied` + the Payroll Wizard) stays PHP.
 2. **Pay Structures** -- the authoritative starting Regular/OT hourly rate for a
-   department or an individual, in PHP or USD (see
+   department or an individual, in PHP, USD, or COP (see
    [§5 Pay Structures (authoritative rates)](#5-pay-structures-authoritative-rates)).
+
+> **Currencies are USD-anchored.** USD is the conversion anchor: two rates live
+> in `app_settings` -- `usd_to_php_rate` (PHP per $1) and `usd_to_cop_rate` (COP
+> per $1) -- both editable in one panel in the Payroll Wizard "Initial
+> Calculation" step. PHP↔COP is *derived* through USD (`php_per_cop =
+> usd_to_php_rate / usd_to_cop_rate`), never stored. The generalized FX module is
+> `src/lib/fx/currency-fx.ts` (`phpPerUnit`, `nativeAmountFromPhp`, `buildFxRates`).
+> Internal pay math stays PHP-pivot; COP-paid people are settled natively in COP
+> via a dedicated Payment Dispatch tab (`payment_dispatches.amount_cop`).
 
 > As of 2026-06-16 the Pay Structures are **authoritative for hourly rates** and
 > are wired into all pay math via a compute-time overlay
@@ -42,7 +51,7 @@ Two tables (see `references/create_bonus_catalog.sql`):
 | `kind` | text | `'flat'` \| `'formula'` |
 | `amount` | numeric(14,2)? | amount (in `currency`) when `kind='flat'` |
 | `formula` | text? | Excel-style expression when `kind='formula'` |
-| `currency` | text | `'PHP'` (default) \| `'USD'`; USD is converted to PHP at the live FX rate when the bonus is **applied** (see §3). Added by `add_bonus_catalog_currency.sql`. |
+| `currency` | text | `'PHP'` (default) \| `'USD'` \| `'COP'`; USD/COP is converted to PHP at the live FX rate when the bonus is **applied** (see §3). Added by `add_bonus_catalog_currency.sql`; COP allowed by `add_cop_currency.sql`. |
 | `created_by` / `created_at` | | immutable (preserved by `bonus_catalog_touch` trigger) |
 | `updated_by` / `updated_at` | | |
 
@@ -93,34 +102,48 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
 ## 3. UI (`BonusCatalog.tsx`)
 
 - **Create / edit a bonus:** toggle between **Flat amount** and **Formula**
-  (animated transition), plus a **PHP / USD** currency toggle (same control as
-  Pay Structures). The amount input + all amount displays render in the chosen
-  currency; a sky **USD** badge flags USD bonuses in the cards, detail modal, and
-  assignment rows. Flat shows an amount input; Formula shows a monospace editor
+  (animated transition), plus a **PHP / USD / COP** currency toggle (same control
+  as Pay Structures, driven by `PAY_CURRENCIES`). The amount input + all amount
+  displays render in the chosen currency; a sky badge flags non-PHP (USD/COP)
+  bonuses in the cards, detail modal, and assignment rows. Flat shows an amount input; Formula shows a monospace editor
   with live validation and a generated-TypeScript preview.
 - **Inline tester:** for formula bonuses with variables, an `InlineTester` lets
   you type sample variable values and see the computed result (in the bonus's
   currency) in real time.
-- **Currency conversion happens at apply time, not here.** A USD bonus stores its
-  native USD `amount`; the **KPI Calculator** (`DeptBonusCalculator.tsx`) fetches
-  the live `usd_to_php_rate` and multiplies USD bonuses by it inside
-  `computeAmount()` — the single chokepoint every projected total and the saved
-  `bonus_catalog_applied.amount` flow through — so the applied row, the Payroll
-  Wizard "KPI Sub." sum, Bonus History, and Employee KPI Results all stay PHP. The
-  converted PHP value is snapshotted into `bonus_catalog_applied.amount` at save
-  time, and **that stored value is what the Wizard pays** — it never re-converts.
-  The calculator shows a sky `$X` / `USD` tag on USD bonus columns; the grid
-  figures are the FX-converted pesos.
-  > **Known limitation (display only):** the calculator grid is a *live*
-  > projection — it recomputes `computeAmount(bonus, vars, usd_to_php_rate)` at
-  > the current rate every render (it doesn't read back the stored `amount`). So
-  > if `usd_to_php_rate` changes after a USD bonus week was saved, re-opening that
-  > past week shows a peso figure that differs from the stored/paid amount. This
-  > is the same live-recompute behavior PHP formula bonuses already have (editing a
-  > catalog formula changes the projection until re-saved); **payouts are
-  > unaffected** because the Wizard reads the stored PHP snapshot. To make the
-  > historical display match exactly, snapshot the rate on the applied row and
-  > render the stored amount for saved non-live weeks.
+- **The manager view shows each bonus in its own currency; conversion to PHP
+  happens only at save time.** The **KPI Calculator** (`DeptBonusCalculator.tsx`)
+  DISPLAYS a non-PHP bonus in its native currency (`computeNative()` — no FX) so a
+  US-denominated bonus reads `$X` and a Colombian one reads `COP$X`, and totals
+  are kept split by currency (`Money` is a `Record<PayCurrency, number>`;
+  `fmtTotals` → e.g. `₱1,200.00 · $50.00 · COP$8,000`; a single-currency
+  department shows pure native). The **payout layer stays PHP**: when the manager
+  saves, `saveDept()` writes the FX-converted PHP value
+  (`computeAmount()` × `phpPerUnit(currency, fx)`) into
+  `bonus_catalog_applied.amount`, and **that stored PHP value is what the Payroll
+  Wizard "KPI Sub." sum, Bonus History, and Employee KPI Results read + pay** — it
+  never re-converts. A sky tag on non-PHP columns carries a tooltip explaining the
+  displayed native amount is paid in PHP at the live rate.
+  > **Known limitation (display only):** the grid is a *live* projection — the
+  > displayed native amount recomputes every render (it doesn't read back the
+  > stored PHP `amount`), and the PHP value `saveDept` writes uses
+  > `usd_to_php_rate` at save time. So if the rate changes after a USD bonus week
+  > was saved, the stored/paid PHP can differ from a fresh conversion of the shown
+  > dollars. This mirrors the live-recompute behavior PHP formula bonuses already
+  > have; **payouts are unaffected** because the Wizard reads the stored PHP
+  > snapshot. To make a saved non-live week reconcile exactly, snapshot the rate
+  > on the applied row.
+- **Currency-forced departments.** Some departments are paid in a fixed non-PHP
+  currency regardless of each bonus's own catalog currency (e.g. US-based teams
+  paid in dollars). `DeptBonusCalculator.tsx` keys this off `FORCED_DEPT_CURRENCY`
+  (a `Record<string, PayCurrency>`, currently `{ us_manager_bonus: 'USD' }`) via
+  `effectiveCurrency(deptKey, bonus)` — the single resolver every cell, column
+  subtotal, member total, and department total funnels through. So the
+  **US - Manager Bonus** department renders entirely in `$` (totals included), and
+  `saveDept` converts those amounts to PHP on save exactly as an explicitly-typed
+  bonus would (`computeAmount(..., effectiveCurrency(...))`), so the Payroll Wizard
+  "KPI Sub." stays PHP and round-trips back to the native currency in the Payment
+  Dispatch USD/COP tab. Add an entry to `FORCED_DEPT_CURRENCY` (e.g. a Colombian
+  team → `'COP'`) to force more.
 - **Assign:** an "Add common" picker assigns a bonus department-wide; an employee
   picker (optionally filtered to one department) assigns to a single person.
   Remove via the trash icon on each assignment row.
@@ -149,7 +172,7 @@ see [rbac-feature-permissions.md](./rbac-feature-permissions.md).
 A **Pay Structure** (`src/lib/payment-catalog/pay-structure.ts`) is the
 authoritative starting Regular + OT hourly rate, scoped either to a whole
 **department** ("common") or a single **employee** ("specific"), each carrying
-its own `currency` (`'PHP' | 'USD'`). OT is optional and defaults to `1.5x`
+its own `currency` (`'PHP' | 'USD' | 'COP'`). OT is optional and defaults to `1.5x`
 the regular rate (`OT_MULTIPLIER`, `defaultOtRate()`). They are stored in
 `payment_catalog_pay_structures` and managed via
 `app/api/payment-catalog/pay-structures/route.ts` (`GET` list / `POST` upsert /
@@ -197,9 +220,12 @@ fills in for someone with no individual rate *and* no sheet rate (e.g. a brand-
 new hire).
 
 **Currency:** each structure resolves to a PHP-equivalent (`regPhp` / `otPhp`).
-A USD structure is multiplied by the FX rate at compute time; the native rate +
-`currency` are returned alongside (`regNative` / `otNative`) for display. The
-returned `ResolvedCatalogRate.source` records which scope matched
+A non-PHP structure is multiplied by `phpPerUnit(currency, fx)` at compute time
+(USD → `usd_to_php_rate`; COP → the USD-anchored cross-rate
+`usd_to_php_rate / usd_to_cop_rate`); the native rate + `currency` are returned
+alongside (`regNative` / `otNative`) for display. The resolvers now take an
+`FxRates` (`{ usdToPhp, usdToCop }`) instead of a single number. The returned
+`ResolvedCatalogRate.source` records which scope matched
 (`'employee' | 'department'`).
 
 ### 5.2 Live-cycle-only application
@@ -234,3 +260,53 @@ The admin **Rates** tab (`Rates.tsx`) still displays the cached sheet number for
 catalog-covered employees because it reads the `employee_hourly_rates` cache
 table directly and does not apply the overlay. This is intentional / left as-is
 -- the cache is not authoritative for those rows.
+
+---
+
+## 6. System Bonuses (PAB + Technology Bonus)
+
+A fourth tab (**System Bonuses**, Award icon) makes the two built-in payroll
+bonuses configurable instead of hardcoded constants:
+
+| Bonus | Was | Now |
+|---|---|---|
+| Perfect Attendance Bonus (`pab`) | `PAB_BONUS_PHP = 5000` constant | editable `amount` + dept allowlist |
+| Technology Bonus (`tech`) | `TECH_BONUS_PHP = 1850` constant | editable `amount` + dept allowlist |
+
+Each row has an editable **amount** (PHP), an **enabled** toggle, and a
+**department allowlist** (`department_keys`) -- the bonus is only paid to
+employees whose normalized department key is in the list. The seed lists every
+`DEPARTMENTS` key **except `us_manager_bonus`**, so US managers (paid in USD)
+no longer pick up these PHP bonuses, while every other department's behavior is
+unchanged. **Timing/eligibility is NOT configurable** -- PAB still fires the
+final week of the PAB period (perfect-attendance check); Tech still fires the
+3rd-week salary date (30-day service check).
+
+- **Table:** `payment_catalog_system_bonuses` (codes `pab`/`tech` as PK, `amount`,
+  `currency`, `enabled`, `department_keys text[]`, audit + touch trigger, in
+  `supabase_realtime`). Migration `references/create_payment_catalog_system_bonuses.sql`.
+- **Model + resolver:** `src/lib/payment-catalog/system-bonus.ts` --
+  `resolveSystemBonuses(rows)` → `{pab, tech}` config; `isDeptEligible(cfg, deptKey)`
+  is **fail-open** when the allowlist is empty (pre-migration) or the department
+  can't be normalized, so only deliberately-omitted departments are dropped.
+- **DB-lib / API:** `src/lib/supabase/system-bonuses-db.ts` +
+  `app/api/payment-catalog/system-bonuses/route.ts` (GET any-authed; POST gated
+  by `requireFeatureEdit('accounting','bonus_catalog')`; no DELETE -- the set is fixed).
+- **Threaded everywhere:** `computeEmployeeBonus` (`dispatch-bonuses.ts`) now
+  accepts `pabAmountPHP`/`techAmountPHP`/`pabDeptEligible`/`techDeptEligible`
+  (defaults = legacy constants + applies-to-everyone). The two server math paths
+  (`current-pay.ts`, `member-monthly-pay.ts`) read `listSystemBonuses()` and pass
+  the resolved values; the Payroll Wizard + Overview read the prefetched
+  `initialData.systemBonuses`; the Employee Dashboard + My Hours fetch the GET
+  endpoint on mount (with the legacy constants as fallback). Pass-through surfaces
+  (Processor/Urgent queues, dispatch CSV) inherit the dynamic values automatically.
+
+> The standalone "Technology Bonus" Payroll Rule was removed from **System
+> Settings** -- it is managed here now.
+
+### Bonus Library star/highlight
+
+Each Bonus Library card has a **star** on the right (`BonusDef.starred`, column
+added by `references/add_bonus_catalog_starred.sql`). Starred bonuses float to
+the top of the list and render with an amber star + ring. Display-only -- it
+does not affect payout.

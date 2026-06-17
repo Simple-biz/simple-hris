@@ -1,22 +1,30 @@
 // Currency handling for contractor invoices. Admins set a contractor's
-// invoicing currency (PHP or USD) in Admin -> Roles; invoices snapshot it.
+// invoicing currency (PHP, USD or COP) in Admin -> Roles; invoices snapshot it.
 // Symbols are produced by Intl at runtime so this source stays ASCII-only.
 
-export type ContractorCurrency = 'PHP' | 'USD';
+export type ContractorCurrency = 'PHP' | 'USD' | 'COP';
 
-export const CONTRACTOR_CURRENCIES: readonly ContractorCurrency[] = ['PHP', 'USD'];
+export const CONTRACTOR_CURRENCIES: readonly ContractorCurrency[] = ['PHP', 'USD', 'COP'];
+
+const CONTRACTOR_LOCALE: Record<ContractorCurrency, string> = {
+  PHP: 'en-PH',
+  USD: 'en-US',
+  COP: 'es-CO',
+};
 
 export function normalizeCurrency(value: unknown): ContractorCurrency {
-  return value === 'USD' ? 'USD' : 'PHP';
+  return value === 'USD' || value === 'COP' ? value : 'PHP';
 }
 
 export function formatMoney(amount: number, currency: ContractorCurrency = 'PHP'): string {
-  const locale = currency === 'USD' ? 'en-US' : 'en-PH';
+  const locale = CONTRACTOR_LOCALE[currency] ?? 'en-PH';
+  // COP has no minor unit in practice; PHP/USD keep centavos.
+  const digits = currency === 'COP' ? 0 : 2;
   return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
   }).format(Number.isFinite(amount) ? amount : 0);
 }
 
@@ -25,7 +33,7 @@ export function formatMoney(amount: number, currency: ContractorCurrency = 'PHP'
 export function sumByCurrency(
   rows: readonly { total?: number | null; currency?: string | null }[],
 ): Record<ContractorCurrency, number> {
-  const acc: Record<ContractorCurrency, number> = { PHP: 0, USD: 0 };
+  const acc: Record<ContractorCurrency, number> = { PHP: 0, USD: 0, COP: 0 };
   for (const row of rows) {
     acc[normalizeCurrency(row.currency)] += row.total ?? 0;
   }

@@ -31,6 +31,13 @@ import {
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import {
+  resolveSystemBonuses,
+  isDeptEligible,
+  type SystemBonus,
+  type ResolvedSystemBonuses,
+} from '@/lib/payment-catalog/system-bonus';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import {
   OFFICIAL_USD_TO_PHP_RATE,
   effectiveUsdToPhpRateFromStored,
 } from '@/lib/fx/usd-php';
@@ -126,10 +133,6 @@ function formatSourceFileLabel(file: string): string {
   if (mo1n !== mo2n) return `${M1} ${d1n} to ${M2} ${d2n}, ${y1n}`;
   return `${M1} ${d1n} to ${d2n}, ${y1n}`;
 }
-
-/** Matches PayrollWizard COMMON_BONUSES / BUSINESS_LOGIC.md */
-const PERFECT_ATTENDANCE_BONUS_PHP = 5000;
-const TECHNOLOGY_BONUS_PHP = 1850;
 
 const DAY_NAMES: Record<string, { label: string; order: number; weekday: boolean }> = {
   mon: { label: 'Mon', order: 1, weekday: true },
@@ -528,6 +531,8 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     workEmail: string | null;
     department: string | null;
   }>({ name: null, personalEmail: null, workEmail: null, department: null });
+  /** PAB + Tech amounts + per-department allowlist (Payment Catalog System Bonuses). */
+  const [sysBonusCfg, setSysBonusCfg] = useState<ResolvedSystemBonuses>(() => resolveSystemBonuses([]));
 
   /** Gift-shipping dialog control — both the inline card CTA and the header
    *  bell icon flip this flag. */
@@ -595,11 +600,12 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     (async () => {
       setDataError(null);
       try {
-        const [ratesRes, fxRes, filesRes, holidaysRes] = await Promise.all([
+        const [ratesRes, fxRes, filesRes, holidaysRes, sysBonusRes] = await Promise.all([
           fetch(`/api/employee-hourly-rates?email=${encodeURIComponent(email)}`, { cache: 'no-store' }),
           fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
           fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, { cache: 'no-store' }),
           fetch('/api/app-settings?keys=us_holidays_enabled,us_holidays_list', { cache: 'no-store' }),
+          fetch('/api/payment-catalog/system-bonuses', { cache: 'no-store' }),
         ]);
 
         const ratesJson = (await ratesRes.json()) as {
@@ -609,7 +615,10 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         const fxJson = (await fxRes.json()) as { value: string | null };
         const filesJson = (await filesRes.json()) as { files?: string[]; error?: string | null };
         const holidaysJson = (await holidaysRes.json()) as { values: Record<string, string | null>; error?: string | null };
+        const sysBonusJson = (await sysBonusRes.json().catch(() => ({ bonuses: [] }))) as { bonuses?: SystemBonus[] };
         if (cancelled) return;
+
+        setSysBonusCfg(resolveSystemBonuses(sysBonusJson.bonuses ?? []));
 
         const hVals = holidaysJson.values;
         const holidayList = parseUsHolidaysList(hVals['us_holidays_list'] ?? null);
@@ -1408,13 +1417,21 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     (parseRate(rate.regular_rate) != null || parseRate(rate.ot_rate) != null)
   );
 
+  // PAB + Tech amounts + this employee's dept eligibility (Payment Catalog).
+  const myDeptKey = normalizeDeptToKey(profileForShipping.department ?? null);
+  const pabBonusPhpAmt = sysBonusCfg.pab.amountPHP;
+  const techBonusPhpAmt = sysBonusCfg.tech.amountPHP;
+  const pabDeptOk = isDeptEligible(sysBonusCfg.pab, myDeptKey);
+  const techDeptOk = isDeptEligible(sysBonusCfg.tech, myDeptKey);
+
   const pabBonusAmount = useMemo(() => {
     if (!hasRates) return 0;
     if (!isPAEligible) return 0;
-    if (isAllTime) return pabEligibleCount * PERFECT_ATTENDANCE_BONUS_PHP;
-    if (selectedFileWeek) return isFinalPabWeekForSelected ? PERFECT_ATTENDANCE_BONUS_PHP : 0;
+    if (!pabDeptOk) return 0;
+    if (isAllTime) return pabEligibleCount * pabBonusPhpAmt;
+    if (selectedFileWeek) return isFinalPabWeekForSelected ? pabBonusPhpAmt : 0;
     return 0;
-  }, [hasRates, isPAEligible, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
+  }, [hasRates, isPAEligible, pabDeptOk, pabBonusPhpAmt, isAllTime, selectedFileWeek, isFinalPabWeekForSelected, pabEligibleCount]);
 
   /**
    * Tech Bonus rules (per Carla, May 2026 meeting):
@@ -1473,7 +1490,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     return t >= thirdWeekMon.getTime() && t < fourthWeekMon.getTime();
   }, [employeeStartDate, selectedFileWeek]);
 
-  const technologyBonusAmount = isTechnologyBonusActive && hasRates ? TECHNOLOGY_BONUS_PHP : 0;
+  const technologyBonusAmount = isTechnologyBonusActive && hasRates && techDeptOk ? techBonusPhpAmt : 0;
 
   const MESA_DEDUCTION_PHP = 100;
   const isMesaMember = !!rate?.mesa_member;
@@ -1667,7 +1684,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
             <div className="min-w-0 space-y-1">
               <p className="text-xs font-medium text-zinc-900 dark:text-white">
                 Monthly period Perfect Attendance Bonus ·{' '}
-                {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')}
+                {formatPHP(pabBonusPhpAmt).replace(/\.\d{2}$/, '')}
               </p>
               {pabMonthRange && (
                 <p className="flex items-start gap-1 text-[10px] leading-relaxed text-indigo-600 dark:text-indigo-400">
@@ -1759,7 +1776,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
             </div>
             <div className="min-w-0 space-y-0.5">
               <p className="text-xs font-medium text-zinc-900 dark:text-white">
-                Technology Bonus · {formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')}
+                Technology Bonus · {formatPHP(techBonusPhpAmt).replace(/\.\d{2}$/, '')}
               </p>
               {techServiceStatus.state === 'pending' ? (
                 <p className="text-xs text-amber-800 dark:text-amber-300">
@@ -3053,7 +3070,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
               </p>
               <p className="mt-3 font-semibold text-zinc-800 dark:text-zinc-200">Technology bonus</p>
               <p className="mt-1">
-                {formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')} after 30 days of service, typically paid on the
+                {formatPHP(techBonusPhpAmt).replace(/\.\d{2}$/, '')} after 30 days of service, typically paid on the
                 3rd paycheck of the month.
               </p>
             </section>

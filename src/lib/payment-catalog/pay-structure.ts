@@ -9,7 +9,11 @@
 // and USD contractors / US managers. Default is PHP, switchable to USD per row.
 
 export type PayScope = 'department' | 'employee';
-export type PayCurrency = 'PHP' | 'USD';
+export type PayCurrency = 'PHP' | 'USD' | 'COP';
+
+/** All supported currencies, in display order. Iterate this instead of
+ *  hardcoding `['PHP','USD']` so a new currency is a one-line addition. */
+export const PAY_CURRENCIES: readonly PayCurrency[] = ['PHP', 'USD', 'COP'];
 
 export interface PayStructure {
   id: string;
@@ -37,6 +41,15 @@ export const CURRENCY_SYMBOL: Record<PayCurrency, string> = {
   // Peso sign is non-ASCII; build it from a char code so this source stays ASCII.
   PHP: String.fromCharCode(0x20b1),
   USD: '$',
+  // Colombian peso also uses "$"; prefix to disambiguate from USD/PHP.
+  COP: 'COP$',
+};
+
+/** Locale per currency for `toLocaleString` grouping/decimals. */
+export const CURRENCY_LOCALE: Record<PayCurrency, string> = {
+  PHP: 'en-PH',
+  USD: 'en-US',
+  COP: 'es-CO',
 };
 
 /** OT pay defaults to 1.5x the regular rate; a "custom" OT rate may override it. */
@@ -72,8 +85,8 @@ export function validatePayStructure(
   if (s.otRate != null && (!Number.isFinite(s.otRate) || s.otRate < 0)) {
     return { ok: false, error: 'OT rate must be a non-negative number.' };
   }
-  if (s.currency !== 'PHP' && s.currency !== 'USD') {
-    return { ok: false, error: 'Currency must be PHP or USD.' };
+  if (!PAY_CURRENCIES.includes(s.currency)) {
+    return { ok: false, error: 'Currency must be PHP, USD, or COP.' };
   }
   if (s.scope === 'employee' && !s.employeeEmail) {
     return { ok: false, error: 'Employee pay structure requires an email.' };

@@ -27,7 +27,11 @@
       "Bash(git --no-pager diff --stat -w -- src/components/manager/DeptBonusCalculator.tsx)",
       "Bash(git --no-pager diff -- src/components/manager/DeptBonusCalculator.tsx)",
       "Bash(echo \"\\(exit: $?\\)\")",
-      "Bash([ -f \"$f\" ])"
+      "Bash([ -f \"$f\" ])",
+      "Bash(sleep 3; tail -15 /tmp/devserver.log 2>/dev/null || echo \"no log yet\")",
+      "Bash(git diff *)",
+      "Bash(tail -n +600 /tmp/pw_full.txt)",
+      "Bash(tee /tmp/tsc.txt)"
     ]
   }
 }

@@ -19,6 +19,8 @@ export type PaymentDispatchRow = {
   recipient_swift_code: string | null;
   amount_usd: number | null;
   amount_php: number | null;
+  /** Native COP amount (whole pesos) when the recipient is paid in COP; null otherwise. */
+  amount_cop: number | null;
   transaction_id: string;
   bank_used: string;
   sent_date: string;
@@ -46,6 +48,7 @@ export interface InsertPaymentDispatchInput {
   recipient_swift_code?: string | null;
   amount_usd?: number | null;
   amount_php?: number | null;
+  amount_cop?: number | null;
   transaction_id: string;
   bank_used: string;
   sent_date: string;
@@ -78,6 +81,7 @@ export async function insertPaymentDispatch(
       recipient_swift_code: input.recipient_swift_code ?? null,
       amount_usd: input.amount_usd ?? null,
       amount_php: input.amount_php ?? null,
+      amount_cop: input.amount_cop ?? null,
       transaction_id: input.transaction_id,
       bank_used: input.bank_used,
       sent_date: input.sent_date,

@@ -181,6 +181,15 @@ The dispatch queue (pending **and** excluded) is gated on a **per-cycle** realti
 
 **Global Master List filter.** `computeCurrentPay()` returns `masterEmails` (every work/personal/alternate email in `active_employees`; `current-pay.ts:119,795`). `useDispatchQueue` filters both pending and excluded rows to that set (`inMaster`), removing stale / off-boarded / never-mastered rate rows. **Fail-open:** if the master set is missing (degraded payload) it doesn't filter, so the whole queue is never blanked.
 
+### 3.9 USD tab — USD-paid people
+
+People whose **effective Payment Catalog rate is non-PHP** are paid in their own currency, separately from the peso payroll. USD-denominated people (US-based teams, e.g. US Manager Bonus) get a **USD** card + tab; COP-denominated people (Colombian staff) get a **COP** card + tab. Conversion is **USD-anchored** (see [bonus-catalog.md](./bonus-catalog.md)): USD→PHP for PH staff, USD→COP for Colombian staff, USD→USD for US managers.
+
+- **Currency origin.** `current-pay.ts` resolves each employee's effective rate (`empCat ?? sheet ?? deptCat`) and records its currency as `CurrentPayEntry.payCurrency` (`'USD'`/`'COP'` only when an individual/department structure in that currency drives the rate; sheet rates are always PHP). It also derives the native COP payout from the USD anchor — `totalPayCOP = round(totalPayUSD × usd_to_cop_rate)` — alongside `totalPayUSD = totalPayPHP / usd_to_php_rate`. `buildQueueFromRates` copies these onto `QueueRow.payCurrency` (default `'PHP'`) / `amountCOP`.
+- **Carve-out, no double-pay.** `PayrollDispatch.tsx` splits `pending` into three **exclusive** buckets by exact `payCurrency`: `usdPending`, `copPending`, `phpPending`. The processor cards, their counts, `totalPending`, and the **All pending** tab all run off `phpPending`, so a non-PHP person appears in **exactly one** place — their currency tab. The COP card only renders when `copPending.length > 0`. All are marked paid through the same `MarkPaidDialog` → `POST /api/payment-dispatches` flow (the record carries `amount_usd` + `amount_php` + `amount_cop`, added by `add_cop_currency.sql`).
+- **Display.** The USD/COP tabs reuse `ProcessorQueue` (`processor={null}`) with an `allLabel` override + a `nativeCurrency` prop (`"USD"` / `"COP"`) that drives the headline total; each row's primary figure follows its own `payCurrency` (`formatCOP` for COP). COP is whole-peso (`es-CO`, 0 decimals).
+- **Gating.** The USD/COP tabs are queue data, so they sit **after** the `!wizardReady` guard in `renderBody()` (unlike Reports/Urgent/Orphanage).
+
 ---
 
 ## 4. Data layer
@@ -314,7 +323,7 @@ Implemented in **`src/lib/payroll/dispatch-bonuses.ts`** as a server-side mirror
 
 | Export | Purpose |
 |---|---|
-| `PAB_BONUS_PHP` / `TECH_BONUS_PHP` | Constants — ₱5,000 / ₱1,850 |
+| `PAB_BONUS_PHP` / `TECH_BONUS_PHP` | **Fallback** defaults (₱5,000 / ₱1,850). As of 2026-06-17 the live amounts + a per-department allowlist come from the Payment Catalog **System Bonuses** tab (`payment_catalog_system_bonuses`); `computeEmployeeBonus` takes `pabAmountPHP`/`techAmountPHP`/`pabDeptEligible`/`techDeptEligible` and the constants are only the fallback when no rows exist. See `docs/features/bonus-catalog.md` §6. |
 | `pabMonthFromWeekStart(weekStart)` | `{ year, month }` — PAB month from any week's start date |
 | `getHslAdjustedEnd(pabEnd)` | Extends end to closing Sunday for HSL Mon–Sun weeks |
 | `isFinalPabWeek(weekEnd, pabPeriodEnd)` | Boolean — is this the paycheck that closes the PAB month? |

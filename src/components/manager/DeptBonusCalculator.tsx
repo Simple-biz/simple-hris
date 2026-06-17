@@ -16,13 +16,22 @@
 // bonus_catalog_applied (one row per member x applied bonus) and, once the week
 // is marked Ready, feed the Payroll Wizard "KPI Sub." column.
 //
+// UI model: a "My Departments" landing grid of summary cards. Opening a card
+// reveals that department's calculator in either a right-side DRAWER or a
+// full-screen FOCUS workspace (with a department rail) -- the manager picks via
+// the "Open as" toggle. The calculator is a dense per-person table: rows are
+// people, columns are bonuses, each row totals live, the footer subtotals the
+// department, and Save / Mark Ready submit the week to payroll.
+//
 // Week = the latest Hubstaff upload (pinned, same key accounting processes).
 // Status (draft/ready/locked) lives in hsl_bonus_period_status (reused).
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AnimatePresence, LayoutGroup, motion, useSpring } from 'motion/react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
+  AppWindow,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -30,19 +39,24 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Loader2,
   Lock,
+  Maximize2,
   Minus,
+  PanelRight,
   RefreshCw,
   Save,
   Search,
   Sparkles,
+  Unlock,
   User,
   Users,
+  X,
   Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -56,16 +70,28 @@ import {
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { validateFormula, evaluateFormula } from '@/lib/bonus-catalog/formula';
 import type { BonusDef, BonusAssignment } from '@/lib/bonus-catalog/types';
-import { OFFICIAL_USD_TO_PHP_RATE, effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
-import { CURRENCY_SYMBOL } from '@/lib/payment-catalog/pay-structure';
+import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
+import {
+  effectiveUsdToCopRateFromStored,
+  officialFxRates,
+  phpPerUnit,
+  type FxRates,
+} from '@/lib/fx/currency-fx';
+import {
+  CURRENCY_SYMBOL,
+  CURRENCY_LOCALE,
+  PAY_CURRENCIES,
+  type PayCurrency,
+} from '@/lib/payment-catalog/pay-structure';
 
 // -- Types ---------------------------------------------------------------------
 
 type BonusStatus = 'draft' | 'ready' | 'locked';
+/** How the calculator overlay presents an open department. */
+type OpenMode = 'drawer' | 'focus' | 'modal';
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 const PESO = '₱';
-const MEMBER_PAGE_SIZE = 8;
 
 /** Per-member, per-bonus applied state. `vars` holds formula inputs as strings. */
 interface AppliedState {
@@ -136,15 +162,6 @@ function hexA(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** Generated "wallpaper" backdrop for departments without an uploaded image. */
-function fallbackBg(color: string): string {
-  return [
-    `radial-gradient(115% 115% at 0% 0%, ${hexA(color, 0.5)} 0%, transparent 55%)`,
-    `radial-gradient(130% 130% at 100% 110%, ${hexA(color, 0.9)} 0%, ${hexA(color, 0.1)} 62%)`,
-    `linear-gradient(135deg, #0b1220 0%, #0f172a 100%)`,
-  ].join(', ');
-}
-
 // -- Period helpers (weekly, Monday-anchored -- matches the payroll week) -------
 
 function isoWeekStart(d: Date): string {
@@ -161,10 +178,69 @@ function weekEndFromStart(startIso: string): string {
   return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
 }
 
-function peso(n: number): string {
-  // Always show centavos so a fractional formula result (e.g. a division in the
-  // Payment Catalog formula) is never silently rounded to whole pesos.
-  return `${PESO}${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+/** Money in one of the two supported currencies, e.g. "$50.00" / "₱1,200.00".
+ *  Always shows centavos so a fractional formula result (e.g. a division in the
+ *  Payment Catalog formula) is never silently rounded. */
+function fmtMoney(n: number, currency: PayCurrency = 'PHP'): string {
+  const sym = CURRENCY_SYMBOL[currency] ?? PESO;
+  const locale = CURRENCY_LOCALE[currency] ?? 'en-PH';
+  // COP has no minor unit; PHP/USD show centavos.
+  const digits = currency === 'COP' ? 0 : 2;
+  return `${sym}${n.toLocaleString(locale, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+
+/** A running total split by currency. A manager-view total can mix bonuses in
+ *  different currencies on the same person/department, so we keep each currency
+ *  separate rather than FX-converting — the conversion is a payout concern,
+ *  applied only when the row is SAVED (computeAmount). */
+type Money = Record<PayCurrency, number>;
+
+/** A fresh zeroed Money. */
+function zeroMoney(): Money {
+  return { PHP: 0, USD: 0, COP: 0 };
+}
+
+/** Sum two Money bags currency-by-currency. */
+function addMoney(a: Money, b: Money): Money {
+  const out = zeroMoney();
+  for (const c of PAY_CURRENCIES) out[c] = a[c] + b[c];
+  return out;
+}
+
+/** Departments whose KPI bonuses ALWAYS resolve in a forced currency, regardless
+ *  of each bonus's catalog currency — e.g. US-based teams (US Manager Bonus) are
+ *  paid in dollars, so their amounts are dollar figures and both the calculator
+ *  display AND the saved/converted payout treat them as USD. Add a Colombian
+ *  team here with 'COP' to force COP the same way. */
+const FORCED_DEPT_CURRENCY: Record<string, PayCurrency> = { us_manager_bonus: 'USD' };
+
+/** The native currency a bonus is denominated in (legacy bonuses default PHP). */
+function bonusCurrency(bonus: BonusDef): PayCurrency {
+  return bonus.currency && PAY_CURRENCIES.includes(bonus.currency) ? bonus.currency : 'PHP';
+}
+
+/** The effective currency for a bonus IN A DEPARTMENT: a currency-forced
+ *  department (e.g. US Manager Bonus) uses that currency across the board; any
+ *  other department uses the bonus's own catalog currency. This is the single
+ *  resolver every display + the saved payout funnels through, so a forced
+ *  department stays self-consistent (shown native, converted to PHP on save). */
+function effectiveCurrency(deptKey: string, bonus: BonusDef): PayCurrency {
+  return FORCED_DEPT_CURRENCY[deptKey] ?? bonusCurrency(bonus);
+}
+
+function moneyPositive(m: Money): boolean {
+  return PAY_CURRENCIES.some((c) => m[c] > 0);
+}
+
+/** Render a possibly-mixed total: only the non-zero currencies, joined by " · "
+ *  (e.g. "₱1,200.00 · $50.00 · COP$8,000"). An empty total reads "₱0.00", so a
+ *  single-currency department shows pure native and a PHP department is unchanged. */
+function fmtTotals(m: Money): string {
+  const parts: string[] = [];
+  for (const c of PAY_CURRENCIES) {
+    if (m[c]) parts.push(fmtMoney(m[c], c));
+  }
+  return parts.length ? parts.join(' · ') : fmtMoney(0, 'PHP');
 }
 
 /** Two-letter initials from a roster name (handles "Last, First M." formats). */
@@ -200,18 +276,24 @@ function toCentavos(n: number): number {
  *  inputs. Flat bonuses use the catalog amount; formula bonuses evaluate the
  *  Payment Catalog formula verbatim (`evaluateFormula`).
  *
- *  A USD-denominated bonus is converted to PHP at `fxRate` (PHP per $1) — the
- *  same USD->PHP-at-FX rule Pay Structures use (resolve-rate.ts). The multiply
- *  happens BEFORE centavo-pinning so the stored PHP value is exact. Because this
- *  is the single chokepoint every display + the saved `amount` funnels through,
- *  converting here keeps bonus_catalog_applied + the Payroll Wizard PHP-only.
- *  PHP bonuses (and legacy bonuses with no currency) pass through untouched. */
+ *  A non-PHP bonus is converted to its PHP-equivalent via `phpPerUnit(currency, fx)`
+ *  — USD at the USD->PHP rate, COP via the USD-anchored cross-rate — the same
+ *  rule Pay Structures use (resolve-rate.ts). The multiply happens BEFORE
+ *  centavo-pinning so the stored PHP value is exact. Because this is the single
+ *  chokepoint the saved `amount` funnels through, converting here keeps
+ *  bonus_catalog_applied + the Payroll Wizard PHP-only. PHP bonuses (and legacy
+ *  bonuses with no currency) pass through untouched.
+ *
+ *  `currency` overrides the bonus's own currency — passed for currency-forced
+ *  departments (e.g. US Manager Bonus) so their amounts convert to PHP on save
+ *  just like an explicitly-typed bonus would. Defaults to the bonus's catalog currency. */
 function computeAmount(
   bonus: BonusDef,
   varsStr: Record<string, string> | undefined,
-  fxRate: number,
+  fx: FxRates,
+  currency: PayCurrency = bonusCurrency(bonus),
 ): number {
-  const factor = bonus.currency === 'USD' ? fxRate : 1;
+  const factor = phpPerUnit(currency, fx);
   if (bonus.kind === 'flat') {
     return toCentavos((Number.isFinite(bonus.amount) ? (bonus.amount as number) : 0) * factor);
   }
@@ -221,6 +303,26 @@ function computeAmount(
   for (const v of check.variables) nums[v] = Number(varsStr?.[v] ?? '') || 0;
   try {
     return toCentavos(evaluateFormula(bonus.formula ?? '', nums) * factor);
+  } catch {
+    return 0;
+  }
+}
+
+/** The amount a bonus pays in its OWN currency — no FX. This is what the
+ *  manager's view DISPLAYS, so a USD bonus reads in dollars rather than its
+ *  peso equivalent. `computeAmount` (above) remains what gets SAVED + paid: the
+ *  payout layer stays PHP, so USD bonuses are FX-converted only when the applied
+ *  row is persisted (saveDept). Mirrors computeAmount with the factor fixed at 1. */
+function computeNative(bonus: BonusDef, varsStr: Record<string, string> | undefined): number {
+  if (bonus.kind === 'flat') {
+    return toCentavos(Number.isFinite(bonus.amount) ? (bonus.amount as number) : 0);
+  }
+  const check = validateFormula(bonus.formula ?? '');
+  if (!check.ok) return 0;
+  const nums: Record<string, number> = {};
+  for (const v of check.variables) nums[v] = Number(varsStr?.[v] ?? '') || 0;
+  try {
+    return toCentavos(evaluateFormula(bonus.formula ?? '', nums));
   } catch {
     return 0;
   }
@@ -273,18 +375,25 @@ export default function DeptBonusCalculator({
   const [assignments, setAssignments] = useState<BonusAssignment[]>([]);
   const [catalogLoaded, setCatalogLoaded] = useState(false);
 
-  // Live USD->PHP rate (PHP per $1). USD-denominated catalog bonuses are
-  // converted to PHP at this rate when applied, mirroring how Pay Structures
-  // convert USD rates (resolve-rate.ts). Read from the benign app_settings key
-  // the Payroll Wizard uses, falling back to the official rate.
-  const [usdToPhpRate, setUsdToPhpRate] = useState<number>(OFFICIAL_USD_TO_PHP_RATE);
+  // Live USD-anchored FX rates. Non-PHP catalog bonuses are converted to PHP at
+  // these rates when applied, mirroring how Pay Structures convert (resolve-rate.ts):
+  // USD at usd_to_php_rate, COP via the USD-anchored cross-rate. Read from the
+  // same benign app_settings keys the Payroll Wizard uses, falling back to the
+  // official rates.
+  const [fx, setFx] = useState<FxRates>(officialFxRates());
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' });
-        const json = (await res.json()) as { value?: string | null };
-        if (!cancelled) setUsdToPhpRate(effectiveUsdToPhpRateFromStored(json.value));
+        const res = await fetch('/api/app-settings?keys=usd_to_php_rate,usd_to_cop_rate', { cache: 'no-store' });
+        const json = (await res.json()) as { values?: Record<string, string | null> };
+        if (!cancelled) {
+          const v = json.values ?? {};
+          setFx({
+            usdToPhp: effectiveUsdToPhpRateFromStored(v['usd_to_php_rate']),
+            usdToCop: effectiveUsdToCopRateFromStored(v['usd_to_cop_rate']),
+          });
+        }
       } catch {
         /* keep the official fallback */
       }
@@ -427,11 +536,35 @@ export default function DeptBonusCalculator({
 
   const [state, setState] = useState<AllState>({});
   const [wallpapers, setWallpapers] = useState<Record<string, Wallpaper>>({});
-  const [activeFilter, setActiveFilter] = useState<string>('all');
-  // Per-department member search + pagination (standard list controls).
+  // Landing: filter the department cards by name.
+  const [deptSearch, setDeptSearch] = useState('');
+  // Per-department people search, used inside the open calculator panel.
   const [cardSearch, setCardSearch] = useState<Record<string, string>>({});
-  const [cardPage, setCardPage] = useState<Record<string, number>>({});
-  const [manualOpen, setManualOpen] = useState<Record<string, boolean>>({});
+  // The open department (rendered in the overlay) + how the overlay presents:
+  // a right-side drawer, or a full-screen focus workspace with a dept rail.
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [mode, setMode] = useState<OpenMode>('drawer');
+  // Portal guard: the fixed overlay only renders after mount (SSR-safe).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const reduceMotion = useReducedMotion();
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  // Pre-submit lock (local, per department): values must be locked before the
+  // Submit-to-Payroll button is enabled. Locking freezes the inputs.
+  const [lockedDepts, setLockedDepts] = useState<Record<string, boolean>>({});
+  // Centered submit confirmation modal: 'sending' -> 'done' / 'error'.
+  const [submit, setSubmit] = useState<{
+    kind: 'lock' | 'submit';
+    key: string;
+    phase: 'sending' | 'done' | 'error';
+    msg?: string;
+  } | null>(null);
+  // Mirror of `submit` for the (stable) Escape handler so it can defer to the
+  // modal without re-binding the drawer's keydown listener.
+  const submitRef = useRef(submit);
+  useEffect(() => {
+    submitRef.current = submit;
+  });
 
   function patchDept(key: string, patch: Partial<DeptState>) {
     setState((prev) => {
@@ -661,30 +794,137 @@ export default function DeptBonusCalculator({
   // -- Live bonus computation ----------------------------------------------------
 
   const memberTotal = useCallback(
-    (deptKey: string, member: MemberState, shared: Record<string, AppliedState> | undefined): number => {
+    (deptKey: string, member: MemberState, shared: Record<string, AppliedState> | undefined): Money => {
       const sharedSet = sharedCommonByDept.get(deptKey);
-      let sum = 0;
+      const sum: Money = zeroMoney();
       for (const bonus of applicableBonuses(deptKey, member.email)) {
         // Team-effort bonus: every member gets the single shared amount.
         if (sharedSet?.has(bonus.id)) {
           const sh = shared?.[bonus.id];
-          if (sh?.on) sum += computeAmount(bonus, sh.vars, usdToPhpRate);
+          if (sh?.on) sum[effectiveCurrency(deptKey, bonus)] += computeNative(bonus, sh.vars);
           continue;
         }
         const st = member.applied[bonus.id];
-        if (st?.on) sum += computeAmount(bonus, st.vars, usdToPhpRate);
+        if (st?.on) sum[effectiveCurrency(deptKey, bonus)] += computeNative(bonus, st.vars);
       }
       return sum;
     },
-    [applicableBonuses, sharedCommonByDept, usdToPhpRate],
+    [applicableBonuses, sharedCommonByDept],
   );
 
   const deptTotal = useCallback(
-    (deptKey: string, st: DeptState | undefined): number => {
-      if (!st) return 0;
-      return st.members.reduce((s, m) => s + memberTotal(deptKey, m, st.shared), 0);
+    (deptKey: string, st: DeptState | undefined): Money => {
+      if (!st) return zeroMoney();
+      return st.members.reduce<Money>(
+        (s, m) => addMoney(s, memberTotal(deptKey, m, st.shared)),
+        zeroMoney(),
+      );
     },
     [memberTotal],
+  );
+
+  // Per-department view data: the derived rows, columns, subtotals and progress
+  // stats shared by the landing card (summary) and the open calculator panel.
+  const buildDeptView = useCallback(
+    (key: string) => {
+      const d = state[key];
+      const dept = DEPARTMENTS.find((x) => x.key === key);
+      const color = deptColor(key);
+      const wp = wallpapers[key];
+      const readOnly = d ? d.status !== 'draft' : false;
+      const total = deptTotal(key, d);
+      const common = commonByDept.get(key) ?? [];
+      const sharedSet = sharedCommonByDept.get(key);
+      const normalCommon = common.filter((b) => !sharedSet?.has(b.id));
+      const sharedCommon = common.filter((b) => sharedSet?.has(b.id));
+      const allMembers = d?.members ?? [];
+      const cq = (cardSearch[key] ?? '').trim().toLowerCase();
+      const members = cq
+        ? allMembers.filter(
+            (e) => e.name.toLowerCase().includes(cq) || e.email.toLowerCase().includes(cq),
+          )
+        : allMembers;
+      const hasIndividual = (individualByDept.get(key)?.size ?? 0) > 0;
+      const hasAnyBonus = common.length > 0 || hasIndividual;
+
+      // Per-column rollups for the table (header tri-state + footer subtotals),
+      // computed over *all* members so the footer reflects the whole dept
+      // independent of the current search view.
+      const isApplicable = (email: string, bonusId: string) =>
+        applicableBonuses(key, email).some((x) => x.id === bonusId);
+      const colMeta = normalCommon.map((b) => {
+        const appMembers = allMembers.filter((m) => isApplicable(m.email, b.id));
+        const onCount = appMembers.filter((m) => m.applied[b.id]?.on).length;
+        // A column is one bonus, so its subtotal is a single native currency.
+        const subtotal = appMembers.reduce(
+          (s, m) => s + (m.applied[b.id]?.on ? computeNative(b, m.applied[b.id]?.vars) : 0),
+          0,
+        );
+        return {
+          b,
+          appCount: appMembers.length,
+          onCount,
+          allOn: appMembers.length > 0 && onCount === appMembers.length,
+          someOn: onCount > 0 && onCount < appMembers.length,
+          subtotal,
+        };
+      });
+      const sharedMeta = sharedCommon.map((b) => {
+        const sh = d?.shared?.[b.id];
+        const on = !!sh?.on;
+        const perPerson = on ? computeNative(b, sh?.vars) : 0;
+        const appCount = allMembers.filter((m) => isApplicable(m.email, b.id)).length;
+        return { b, sh, on, perPerson, subtotal: perPerson * appCount };
+      });
+      // Individual bonuses can be a mix of PHP and USD, so the subtotal is split.
+      const indivSubtotal = allMembers.reduce<Money>(
+        (s, m) => {
+          const ind = applicableBonuses(key, m.email).filter(
+            (b) => !common.some((c) => c.id === b.id) && !sharedSet?.has(b.id),
+          );
+          for (const b of ind) {
+            if (m.applied[b.id]?.on) s[effectiveCurrency(key, b)] += computeNative(b, m.applied[b.id]?.vars);
+          }
+          return s;
+        },
+        zeroMoney(),
+      );
+
+      // Progress: who has any bonus turned on, and who has an ON formula bonus
+      // still missing a required input (it would silently pay ₱0 -- worth a nudge).
+      let entered = 0;
+      let toFill = 0;
+      for (const m of allMembers) {
+        const appl = applicableBonuses(key, m.email);
+        let anyOn = false;
+        let needs = false;
+        for (const b of appl) {
+          const isShared = sharedSet?.has(b.id);
+          const st = isShared ? d?.shared?.[b.id] : m.applied[b.id];
+          if (!st?.on) continue;
+          anyOn = true;
+          if (b.kind === 'formula') {
+            const vars = bonusVariables(b);
+            if (vars.some((v) => !String(st.vars?.[v] ?? '').trim())) needs = true;
+          }
+        }
+        if (anyOn) entered += 1;
+        if (needs) toFill += 1;
+      }
+
+      return {
+        d, dept, color, wp, readOnly, total,
+        common, sharedSet, normalCommon, sharedCommon,
+        allMembers, members, cq,
+        hasIndividual, hasAnyBonus,
+        colMeta, sharedMeta, indivSubtotal,
+        entered, toFill,
+      };
+    },
+    [
+      state, wallpapers, cardSearch, deptTotal, commonByDept, sharedCommonByDept,
+      individualByDept, applicableBonuses, fx,
+    ],
   );
 
   // -- Mutators ------------------------------------------------------------------
@@ -781,10 +1021,11 @@ export default function DeptBonusCalculator({
 
   // -- Persistence ---------------------------------------------------------------
 
-  async function saveDept(key: string) {
+  async function saveDept(key: string): Promise<boolean> {
     const d = state[key];
-    if (!d) return;
+    if (!d) return false;
     patchDept(key, { saving: true });
+    let ok = false;
     try {
       const sharedSet = sharedCommonByDept.get(key);
       const rows = [] as Array<Record<string, unknown>>;
@@ -810,8 +1051,10 @@ export default function DeptBonusCalculator({
             vars: bonus.kind === 'formula' ? numVars : null,
             // USD bonuses are converted to PHP here so the saved amount (and the
             // Payroll Wizard "KPI Sub." sum) stays PHP. The rate is snapshotted
-            // at apply time, like the rest of the applied row.
-            amount: computeAmount(bonus, st.vars, usdToPhpRate),
+            // at apply time, like the rest of the applied row. A USD-forced
+            // department (US Manager Bonus) converts too, even when the bonus
+            // itself isn't tagged USD — matching what the calculator displays.
+            amount: computeAmount(bonus, st.vars, fx, effectiveCurrency(key, bonus)),
           });
         }
       }
@@ -826,16 +1069,18 @@ export default function DeptBonusCalculator({
       const stillDraft = d.status !== 'ready' && d.status !== 'locked';
       const applied = `${rows.length} bonus${rows.length === 1 ? '' : 'es'} applied`;
       toast.success(`${DEPARTMENTS.find((x) => x.key === key)?.name ?? key} saved`, {
-        description: stillDraft ? `${applied} · Mark Ready before payroll` : applied,
+        description: stillDraft ? `${applied} · lock & submit before payroll` : applied,
       });
+      ok = true;
     } catch (e) {
       toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
     } finally {
       patchDept(key, { saving: false });
     }
+    return ok;
   }
 
-  async function setStatus(key: string, next: BonusStatus): Promise<boolean> {
+  async function setStatus(key: string, next: BonusStatus, opts?: { silent?: boolean }): Promise<boolean> {
     try {
       const res = await fetch('/api/hsl-bonus/period-status', {
         method: 'POST',
@@ -854,30 +1099,109 @@ export default function DeptBonusCalculator({
       patchDept(key, { status: next });
       return true;
     } catch (e) {
-      toast.error('Status update failed', { description: e instanceof Error ? e.message : String(e) });
+      if (!opts?.silent) {
+        toast.error('Status update failed', { description: e instanceof Error ? e.message : String(e) });
+      }
       return false;
     }
   }
 
-  async function markReady(key: string) {
+  /** Lock a department's values (saving any pending edits first). Locking
+   *  freezes the inputs and is required before Submit-to-Payroll is enabled.
+   *  Drives the centered loading modal (locking -> locked). */
+  async function lockValues(key: string) {
     const d = state[key];
-    if (d?.dirty) {
-      toast.error('Save your changes first', { description: 'Click Save before marking the week Ready.' });
-      return;
+    if (!d) return;
+    setSubmit({ kind: 'lock', key, phase: 'sending' });
+    const t0 = Date.now();
+    if (d.dirty) {
+      const ok = await saveDept(key);
+      if (!ok) {
+        // Save failed -- stay editable so nothing is lost.
+        setSubmit({ kind: 'lock', key, phase: 'error', msg: 'Could not save before locking. Check your connection and try again.' });
+        return;
+      }
     }
-    const ok = await setStatus(key, 'ready');
+    // Minimum dwell so the loading modal reads as deliberate, not a flash.
+    const wait = Math.max(0, 550 - (Date.now() - t0));
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    setLockedDepts((m) => ({ ...m, [key]: true }));
+    setSubmit({ kind: 'lock', key, phase: 'done' });
+  }
+
+  function unlockValues(key: string) {
+    setLockedDepts((m) => ({ ...m, [key]: false }));
+  }
+
+  /** Submit locked values to payroll. Drives the centered confirmation modal
+   *  (sending -> submitted) rather than a toast. */
+  async function submitToPayroll(key: string) {
+    setSubmit({ kind: 'submit', key, phase: 'sending' });
+    const ok = await setStatus(key, 'ready', { silent: true });
     if (ok) {
-      toast.success(`${DEPARTMENTS.find((x) => x.key === key)?.name ?? key} marked ready`, {
-        description: 'Visible to Accounting in the Payroll Wizard.',
-      });
+      setLockedDepts((m) => ({ ...m, [key]: false }));
+      setSubmit({ kind: 'submit', key, phase: 'done' });
+    } else {
+      setSubmit({ kind: 'submit', key, phase: 'error', msg: 'Could not reach the server. Check your connection and try again.' });
     }
   }
 
+  // -- Overlay open / close / navigation -----------------------------------------
+
+  const open = useCallback((key: string) => setOpenId(key), []);
+  const close = useCallback(() => setOpenId(null), []);
+  const goDept = useCallback(
+    (delta: number) => {
+      setOpenId((cur) => {
+        if (!cur) return cur;
+        const i = visibleDeptKeys.indexOf(cur);
+        if (i < 0) return cur;
+        const n = (i + delta + visibleDeptKeys.length) % visibleDeptKeys.length;
+        return visibleDeptKeys[n] ?? cur;
+      });
+    },
+    [visibleDeptKeys],
+  );
+
+  // If the open department drops out of view (catalog/roster change), close.
+  useEffect(() => {
+    if (openId && !visibleDeptKeys.includes(openId)) setOpenId(null);
+  }, [openId, visibleDeptKeys]);
+
+  // Auto-dismiss the confirmation a moment after it succeeds (lock is lighter,
+  // so it lingers less than a payroll submission).
+  useEffect(() => {
+    if (submit?.phase !== 'done') return;
+    const t = window.setTimeout(() => setSubmit(null), submit.kind === 'lock' ? 1100 : 1900);
+    return () => window.clearTimeout(t);
+  }, [submit]);
+
+  // While the overlay is open: Escape closes it and the page behind it is locked
+  // from scrolling. Move focus into the panel for keyboard users.
+  useEffect(() => {
+    if (!openId) return;
+    const onKey = (e: KeyboardEvent) => {
+      // While the submit modal is up it owns Escape; don't close the panel under it.
+      if (e.key === 'Escape' && !submitRef.current) close();
+    };
+    document.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const t = window.setTimeout(() => panelRef.current?.focus(), 60);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+      window.clearTimeout(t);
+    };
+  }, [openId, close]);
+
   // -- Derived view data ---------------------------------------------------------
 
-  const grandTotal = useMemo(() => {
-    let sum = 0;
-    for (const k of visibleDeptKeys) sum += deptTotal(k, state[k]);
+  const grandTotal = useMemo<Money>(() => {
+    let sum: Money = zeroMoney();
+    for (const k of visibleDeptKeys) {
+      sum = addMoney(sum, deptTotal(k, state[k]));
+    }
     return sum;
   }, [visibleDeptKeys, state, deptTotal]);
 
@@ -886,13 +1210,12 @@ export default function DeptBonusCalculator({
     [visibleDeptKeys, state],
   );
 
-  const filteredKeys = activeFilter === 'all' ? visibleDeptKeys : visibleDeptKeys.filter((k) => k === activeFilter);
-  const oneCard = filteredKeys.length <= 1;
-
-  function isOpen(key: string): boolean {
-    if (key in manualOpen) return manualOpen[key]!;
-    return visibleDeptKeys.length === 1 || activeFilter === key;
-  }
+  const dq = deptSearch.trim().toLowerCase();
+  const filteredDeptKeys = dq
+    ? visibleDeptKeys.filter((k) =>
+        (DEPARTMENTS.find((d) => d.key === k)?.name ?? k).toLowerCase().includes(dq),
+      )
+    : visibleDeptKeys;
 
   if (visibleDeptKeys.length === 0) return null;
 
@@ -907,6 +1230,726 @@ export default function DeptBonusCalculator({
     const s = state[k]?.status;
     return s === 'ready' || s === 'locked';
   }).length;
+  const closingSoon = isLiveWeek && daysLeft <= 2;
+
+  // -- Calculator panel (rendered inside the drawer / focus overlay) -------------
+
+  const renderPanel = (key: string) => {
+    const v = buildDeptView(key);
+    const {
+      d, dept, color, total, common, sharedSet,
+      colMeta, sharedMeta, indivSubtotal, hasIndividual, hasAnyBonus,
+      allMembers, members, cq, entered, toFill,
+    } = v;
+    // Inputs freeze both after submission (status != draft) and once the
+    // manager has locked the values locally ahead of submitting.
+    const statusReadOnly = v.readOnly;
+    const editLocked = !!lockedDepts[key];
+    const readOnly = statusReadOnly || editLocked;
+    const accentSoft = hexA(color, 0.13);
+    const accentBorder = hexA(color, 0.4);
+    const tableReady = !!d?.loaded && hasAnyBonus && allMembers.length > 0;
+    const chipBonuses = [...v.normalCommon, ...v.sharedCommon];
+
+    return (
+      <div className="flex h-full min-h-0 w-full flex-col bg-white dark:bg-[#0b0e15]">
+        {/* Panel header: identity, KPI schema chips, dept nav, mode switch, close */}
+        <div className="flex-none border-b border-zinc-200/80 px-4 py-3.5 dark:border-zinc-800 sm:px-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-2.5">
+              <span
+                className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: color, boxShadow: `0 0 0 4px ${hexA(color, 0.15)}` }}
+                aria-hidden
+              />
+              <div className="min-w-0">
+                <h2 className="truncate text-[17px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+                  {dept?.name ?? key}
+                </h2>
+                <p className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-400">
+                  {allMembers.length} {allMembers.length === 1 ? 'person' : 'people'} · {fmtWeek(weekStart, weekEnd)}
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {visibleDeptKeys.length > 1 && (
+                <>
+                  <PanelIconButton label="Previous department" onClick={() => goDept(-1)}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </PanelIconButton>
+                  <PanelIconButton label="Next department" onClick={() => goDept(1)}>
+                    <ChevronRight className="h-4 w-4" />
+                  </PanelIconButton>
+                </>
+              )}
+              <ViewSwitch mode={mode} onChange={setMode} compact />
+              <PanelIconButton label="Close" onClick={close}>
+                <X className="h-4 w-4" />
+              </PanelIconButton>
+            </div>
+          </div>
+
+          {chipBonuses.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-400">KPIs</span>
+              {chipBonuses.map((b) => (
+                <span
+                  key={b.id}
+                  className="inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10.5px] font-medium"
+                  style={{ color, backgroundColor: accentSoft, borderColor: accentBorder }}
+                  title={b.name}
+                >
+                  <span className="max-w-[12rem] truncate">{b.name}</span>
+                </span>
+              ))}
+              {hasIndividual && (
+                <span className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+                  <User className="h-2.5 w-2.5" /> Individual
+                </span>
+              )}
+              <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
+                → Payout
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Toolbar: people search + progress */}
+        {tableReady && (
+          <div className="flex flex-none flex-col gap-2 border-b border-zinc-100 px-4 py-2.5 dark:border-zinc-800/70 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <div className="relative min-w-0 flex-1 sm:max-w-xs">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+              <input
+                type="search"
+                placeholder={`Search ${allMembers.length} ${allMembers.length === 1 ? 'person' : 'people'}…`}
+                value={cardSearch[key] ?? ''}
+                onChange={(e) => setCardSearch((prev) => ({ ...prev, [key]: e.target.value }))}
+                className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
+              />
+            </div>
+            <div className="flex shrink-0 items-center gap-2 font-mono text-[11px]">
+              <span className="text-zinc-500 dark:text-zinc-400">
+                {entered} / {allMembers.length} entered
+              </span>
+              {toFill > 0 ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
+                  <AlertTriangle className="h-3 w-3" /> {toFill} to fill
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  <Check className="h-3 w-3" /> complete
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Body: the per-person table (scrolls; header + footer pinned) */}
+        <div className="min-h-0 flex-1 overflow-auto">
+          {!d || !d.loaded ? (
+            <DeptTableSkeleton
+              rows={Math.min(10, Math.max(3, rosterByDept.get(key)?.length ?? 6))}
+              cols={colMeta.length + sharedMeta.length + (hasIndividual ? 1 : 0)}
+            />
+          ) : !hasAnyBonus ? (
+            <div className="px-5 py-12 text-center text-xs text-zinc-400">
+              No bonuses assigned to this department yet.
+              <br />
+              Assign one in Accounting → Bonus Catalog.
+            </div>
+          ) : members.length === 0 ? (
+            <div className="px-5 py-10 text-center text-xs text-zinc-400">
+              {cq ? 'No one matches your search.' : 'No team members in this department.'}
+            </div>
+          ) : (
+            <table className="table-keep w-full border-collapse text-left">
+              {/* Header: Member · one column per common / team bonus · Total */}
+              <thead>
+                <tr>
+                  <th className="sticky left-0 top-0 z-[6] min-w-[148px] border-b border-r border-zinc-200 bg-zinc-50 px-3 py-2 align-bottom dark:border-zinc-800 dark:bg-[#0f141b]">
+                    <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                      Member
+                    </span>
+                  </th>
+
+                  {colMeta.map(({ b, allOn, someOn, onCount, appCount }) => (
+                    <th
+                      key={b.id}
+                      className="sticky top-0 z-[4] min-w-[128px] border-b border-l border-zinc-200/70 bg-zinc-50 px-2.5 py-2 align-bottom dark:border-zinc-800/70 dark:bg-zinc-900/70"
+                    >
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-start justify-between gap-1.5">
+                          <span
+                            className="line-clamp-2 text-[11.5px] font-semibold leading-tight text-zinc-800 dark:text-zinc-100"
+                            title={b.name}
+                          >
+                            {b.name}
+                          </span>
+                          <KindDot kind={b.kind} />
+                        </div>
+                        <BonusCurrencyTag bonus={b} fx={fx} />
+                        <button
+                          type="button"
+                          disabled={readOnly || !d?.loaded || appCount === 0}
+                          onClick={() => applyToAll(key, b.id, !allOn)}
+                          title={allOn ? 'Untick for everyone' : 'Tick for everyone'}
+                          className={cn(
+                            'inline-flex w-fit items-center gap-1 rounded-md border px-1.5 py-0.5 transition-colors disabled:opacity-40',
+                            allOn
+                              ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300'
+                              : someOn
+                                ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300'
+                                : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400',
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'flex h-3 w-3 items-center justify-center rounded-[3px] border',
+                              allOn
+                                ? 'border-emerald-500 bg-emerald-500 text-white'
+                                : someOn
+                                  ? 'border-amber-500 bg-amber-500 text-white'
+                                  : 'border-zinc-300 dark:border-zinc-600',
+                            )}
+                          >
+                            {allOn ? <Check className="h-2 w-2" strokeWidth={3.5} /> : someOn ? <Minus className="h-2 w-2" strokeWidth={3.5} /> : null}
+                          </span>
+                          <span className="font-mono text-[9px] font-semibold tabular-nums">
+                            {onCount}/{appCount}
+                          </span>
+                        </button>
+                      </div>
+                    </th>
+                  ))}
+
+                  {sharedMeta.map(({ b, sh, on, perPerson }) => {
+                    const vars = bonusVariables(b);
+                    return (
+                      <th
+                        key={b.id}
+                        className="sticky top-0 z-[4] min-w-[144px] border-b border-l border-violet-200/70 bg-violet-50/70 px-2.5 py-2 align-bottom dark:border-violet-900/50 dark:bg-violet-950/25"
+                      >
+                        <div className="flex flex-col gap-1.5">
+                          <label className="flex items-start gap-1.5">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded accent-violet-600"
+                              disabled={readOnly}
+                              checked={on}
+                              onChange={(ev) => toggleShared(key, b.id, ev.target.checked)}
+                            />
+                            <span
+                              className="line-clamp-2 text-[11.5px] font-semibold leading-tight text-zinc-800 dark:text-zinc-100"
+                              title={b.name}
+                            >
+                              {b.name}
+                            </span>
+                          </label>
+                          <span className="inline-flex w-fit items-center gap-0.5 rounded bg-violet-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                            <Users className="h-2 w-2" /> Team · {fmtMoney(perPerson, effectiveCurrency(key, b))}/ea
+                          </span>
+                          <BonusCurrencyTag bonus={b} fx={fx} />
+                          {on && b.kind === 'formula' && vars.length > 0 && (
+                            <VarFields
+                              vars={vars}
+                              values={sh?.vars}
+                              onChange={(vn, value) => setSharedVar(key, b.id, vn, value)}
+                              disabled={readOnly}
+                              ownerLabel={`${b.name} (whole team)`}
+                              accent="violet"
+                            />
+                          )}
+                        </div>
+                      </th>
+                    );
+                  })}
+
+                  {hasIndividual && (
+                    <th className="sticky top-0 z-[4] min-w-[150px] border-b border-l border-zinc-200/70 bg-zinc-50 px-2.5 py-2 align-bottom dark:border-zinc-800/70 dark:bg-zinc-900/70">
+                      <span className="inline-flex items-center gap-1 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                        <User className="h-2.5 w-2.5" /> Individual
+                      </span>
+                    </th>
+                  )}
+
+                  <th className="sticky right-0 top-0 z-[6] min-w-[96px] border-b border-l border-zinc-200 bg-zinc-50 px-3 py-2 text-right align-bottom dark:border-zinc-800 dark:bg-[#0f141b]">
+                    <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                      Total
+                    </span>
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {members.map((m) => {
+                  const appl = applicableBonuses(key, m.email);
+                  const applSet = new Set(appl.map((b) => b.id));
+                  const mIndividual = appl.filter(
+                    (b) => !common.some((c) => c.id === b.id) && !sharedSet?.has(b.id),
+                  );
+                  const mTotal = memberTotal(key, m, d.shared);
+                  return (
+                    <tr
+                      key={m.email}
+                      className="group/row border-b border-zinc-100 last:border-0 hover:bg-emerald-50/40 dark:border-zinc-800/60 dark:hover:bg-emerald-950/10"
+                    >
+                      {/* Member (sticky) */}
+                      <td className="sticky left-0 z-[2] border-r border-zinc-200/80 bg-white px-3 py-2 align-top group-hover/row:bg-emerald-50/40 dark:border-zinc-800 dark:bg-[#11161c] dark:group-hover/row:bg-emerald-950/20">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
+                            style={{ backgroundColor: hexA(color, 0.16), color }}
+                            aria-hidden
+                          >
+                            {initials(m.name)}
+                          </span>
+                          <span
+                            className="min-w-0 truncate text-[12px] font-medium text-zinc-800 dark:text-zinc-100"
+                            title={m.name}
+                          >
+                            {m.name}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Common bonus cells */}
+                      {colMeta.map(({ b }) => {
+                        const applicable = applSet.has(b.id);
+                        const st = m.applied[b.id];
+                        const on = !!st?.on;
+                        const vars = bonusVariables(b);
+                        const amt = applicable && on ? computeNative(b, st?.vars) : 0;
+                        return (
+                          <td key={b.id} className="border-l border-zinc-100 px-2.5 py-2 align-top dark:border-zinc-800/50">
+                            {!applicable ? (
+                              <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-700">—</span>
+                            ) : (
+                              <div className="flex flex-col gap-1">
+                                <label className="flex items-center gap-1.5">
+                                  <input
+                                    type="checkbox"
+                                    className="h-3.5 w-3.5 shrink-0 rounded accent-emerald-600"
+                                    disabled={readOnly}
+                                    checked={on}
+                                    onChange={(ev) => toggleBonus(key, m.email, b.id, ev.target.checked)}
+                                  />
+                                  <span
+                                    className={cn(
+                                      'font-mono text-[11px] tabular-nums',
+                                      amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                    )}
+                                  >
+                                    {on ? fmtMoney(amt, effectiveCurrency(key, b)) : '—'}
+                                  </span>
+                                </label>
+                                {on && b.kind === 'formula' && vars.length > 0 && (
+                                  <VarFields
+                                    vars={vars}
+                                    values={st?.vars}
+                                    onChange={(vn, value) => setVar(key, m.email, b.id, vn, value)}
+                                    disabled={readOnly}
+                                    ownerLabel={`${b.name} — ${m.name}`}
+                                    accent="emerald"
+                                  />
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+
+                      {/* Team bonus cells (entered once in the header; read-only per person) */}
+                      {sharedMeta.map(({ b, on, perPerson }) => {
+                        const applicable = applSet.has(b.id);
+                        const amt = applicable && on ? perPerson : 0;
+                        return (
+                          <td
+                            key={b.id}
+                            className="border-l border-violet-100/70 bg-violet-50/20 px-2.5 py-2 align-top dark:border-violet-900/30 dark:bg-violet-950/10"
+                          >
+                            {!applicable ? (
+                              <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-700">—</span>
+                            ) : (
+                              <span
+                                className={cn(
+                                  'font-mono text-[11px] tabular-nums',
+                                  amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                )}
+                              >
+                                {on ? fmtMoney(amt, effectiveCurrency(key, b)) : '—'}
+                              </span>
+                            )}
+                          </td>
+                        );
+                      })}
+
+                      {/* Individual bonuses for this member */}
+                      {hasIndividual && (
+                        <td className="border-l border-zinc-100 px-2.5 py-2 align-top dark:border-zinc-800/50">
+                          {mIndividual.length === 0 ? (
+                            <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-700">—</span>
+                          ) : (
+                            <div className="flex flex-col gap-1.5">
+                              {mIndividual.map((b) => {
+                                const st = m.applied[b.id];
+                                const on = !!st?.on;
+                                const vars = bonusVariables(b);
+                                const amt = on ? computeNative(b, st?.vars) : 0;
+                                return (
+                                  <div key={b.id} className="flex flex-col gap-0.5">
+                                    <label className="flex items-center gap-1.5">
+                                      <input
+                                        type="checkbox"
+                                        className="h-3.5 w-3.5 shrink-0 rounded accent-violet-600"
+                                        disabled={readOnly}
+                                        checked={on}
+                                        onChange={(ev) => toggleBonus(key, m.email, b.id, ev.target.checked)}
+                                      />
+                                      <span className="min-w-0 truncate text-[11px] text-zinc-600 dark:text-zinc-300" title={b.name}>
+                                        {b.name}
+                                      </span>
+                                      <BonusCurrencyTag bonus={b} fx={fx} />
+                                      <span
+                                        className={cn(
+                                          'ml-auto shrink-0 font-mono text-[11px] tabular-nums',
+                                          amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                                        )}
+                                      >
+                                        {on ? fmtMoney(amt, effectiveCurrency(key, b)) : '—'}
+                                      </span>
+                                    </label>
+                                    {on && b.kind === 'formula' && vars.length > 0 && (
+                                      <VarFields
+                                        vars={vars}
+                                        values={st?.vars}
+                                        onChange={(vn, value) => setVar(key, m.email, b.id, vn, value)}
+                                        disabled={readOnly}
+                                        ownerLabel={`${b.name} — ${m.name}`}
+                                        accent="violet"
+                                      />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </td>
+                      )}
+
+                      {/* Member total (sticky) */}
+                      <td className="sticky right-0 z-[2] border-l border-zinc-200/80 bg-white px-3 py-2 text-right align-top group-hover/row:bg-emerald-50/40 dark:border-zinc-800 dark:bg-[#11161c] dark:group-hover/row:bg-emerald-950/20">
+                        <span
+                          className={cn(
+                            'font-mono text-[12px] font-bold tabular-nums',
+                            moneyPositive(mTotal) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                          )}
+                        >
+                          {fmtTotals(mTotal)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+
+              {/* Footer: per-column subtotals + dept grand total */}
+              <tfoot>
+                <tr>
+                  <td className="sticky bottom-0 left-0 z-[5] border-r border-t border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-[#0f141b]">
+                    <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+                      Totals
+                    </span>
+                  </td>
+                  {colMeta.map(({ b, subtotal, onCount }) => (
+                    <td key={b.id} className="sticky bottom-0 z-[3] border-l border-t border-zinc-200/70 bg-zinc-100 px-2.5 py-2 dark:border-zinc-800/70 dark:bg-[#10151c]">
+                      <div className="flex flex-col">
+                        <span
+                          className={cn(
+                            'font-mono text-[11px] font-semibold tabular-nums',
+                            subtotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                          )}
+                        >
+                          {fmtMoney(subtotal, effectiveCurrency(key, b))}
+                        </span>
+                        <span className="font-mono text-[9px] text-zinc-400">{onCount} applied</span>
+                      </div>
+                    </td>
+                  ))}
+                  {sharedMeta.map(({ b, subtotal }) => (
+                    <td key={b.id} className="sticky bottom-0 z-[3] border-l border-t border-violet-200/60 bg-violet-100 px-2.5 py-2 dark:border-violet-900/40 dark:bg-violet-950/50">
+                      <span
+                        className={cn(
+                          'font-mono text-[11px] font-semibold tabular-nums',
+                          subtotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                        )}
+                      >
+                        {fmtMoney(subtotal, effectiveCurrency(key, b))}
+                      </span>
+                    </td>
+                  ))}
+                  {hasIndividual && (
+                    <td className="sticky bottom-0 z-[3] border-l border-t border-zinc-200/70 bg-zinc-100 px-2.5 py-2 dark:border-zinc-800/70 dark:bg-[#10151c]">
+                      <span
+                        className={cn(
+                          'font-mono text-[11px] font-semibold tabular-nums',
+                          moneyPositive(indivSubtotal) ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
+                        )}
+                      >
+                        {fmtTotals(indivSubtotal)}
+                      </span>
+                    </td>
+                  )}
+                  <td className="sticky bottom-0 right-0 z-[5] border-l border-t border-zinc-200 bg-zinc-50 px-3 py-2 text-right dark:border-zinc-800 dark:bg-[#0f141b]">
+                    <span className="font-mono text-[12px] font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {fmtTotals(total)}
+                    </span>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+
+        {/* Footer: department subtotal + actions */}
+        <div className="flex flex-none items-center justify-between gap-4 border-t border-zinc-200/80 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-[#0b0e15] sm:px-5">
+          <div className="min-w-0">
+            <div className="font-mono text-[8px] uppercase tracking-[0.16em] text-zinc-400">Department subtotal</div>
+            <div className="tabular-nums font-mono text-2xl font-bold leading-tight text-emerald-600 dark:text-emerald-400">
+              {fmtTotals(total)}
+            </div>
+            <div
+              className={cn(
+                'mt-0.5 flex items-center gap-1 font-mono text-[10px] uppercase tracking-wide',
+                statusReadOnly || editLocked
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : d?.dirty
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-zinc-400',
+              )}
+            >
+              {statusReadOnly ? (
+                'Sent to Accounting'
+              ) : editLocked ? (
+                <>
+                  <Lock className="h-2.5 w-2.5" /> Locked · ready to submit
+                </>
+              ) : d?.dirty ? (
+                'Unsaved changes'
+              ) : (
+                'Saved · lock to submit'
+              )}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {statusReadOnly ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-9 gap-1.5 text-xs"
+                onClick={() => {
+                  unlockValues(key);
+                  void setStatus(key, 'draft');
+                }}
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Reopen
+              </Button>
+            ) : editLocked ? (
+              <>
+                <Button size="sm" variant="outline" className="h-9 gap-1.5 text-xs" onClick={() => unlockValues(key)}>
+                  <Unlock className="h-3.5 w-3.5" /> Unlock
+                </Button>
+                <motion.div whileTap={reduceMotion ? undefined : { scale: 0.96 }}>
+                  <Button
+                    size="sm"
+                    className="h-9 gap-1.5 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
+                    onClick={() => void submitToPayroll(key)}
+                    title={toFill > 0 ? `${toFill} ${toFill === 1 ? 'person has' : 'people have'} a formula bonus still to fill` : undefined}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Submit to Payroll
+                  </Button>
+                </motion.div>
+              </>
+            ) : (
+              <>
+                <Button size="sm" variant="outline" className="h-9 gap-1.5 text-xs" disabled={d?.saving} onClick={() => void saveDept(key)}>
+                  <Save className="h-3.5 w-3.5" /> {d?.saving ? 'Saving…' : 'Save draft'}
+                </Button>
+                <motion.div whileTap={reduceMotion ? undefined : { scale: 0.96 }}>
+                  <Button
+                    size="sm"
+                    className="h-9 gap-1.5 bg-zinc-900 text-xs text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                    disabled={d?.saving || !hasAnyBonus || allMembers.length === 0}
+                    onClick={() => void lockValues(key)}
+                    title="Lock these values to enable Submit to Payroll"
+                  >
+                    <Lock className="h-3.5 w-3.5" /> {d?.saving ? 'Saving…' : 'Lock values'}
+                  </Button>
+                </motion.div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // The side panel never goes below the original 880px base, and extends wider
+  // for column-heavy departments. The responsive max-width on the panel still
+  // caps it so its left edge never slides over the HRIS sidebar (220px) behind.
+  const openColCount = (() => {
+    if (!openId) return 0;
+    const common = commonByDept.get(openId) ?? []; // normal + team-effort columns
+    const hasIndiv = (individualByDept.get(openId)?.size ?? 0) > 0;
+    return common.length + (hasIndiv ? 1 : 0);
+  })();
+  const drawerWidthPx = Math.min(1500, Math.max(880, 280 + openColCount * 150));
+
+  // -- Overlay (drawer / focus), portalled to escape transformed ancestors -------
+
+  const overlay =
+    mounted
+      ? createPortal(
+          // Always-mounted portal so AnimatePresence can play the exit
+          // animation before the overlay leaves the tree.
+          <AnimatePresence>
+            {openId && (
+              <motion.button
+                key="kpi-scrim"
+                type="button"
+                aria-label="Close calculator"
+                onClick={close}
+                className="fixed inset-0 z-[60] cursor-default bg-zinc-950/55 dark:bg-black/70"
+                initial={reduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.42, ease: EASE }}
+              />
+            )}
+            {openId &&
+              (mode === 'focus' ? (
+                <motion.div
+                  key="kpi-focus"
+                  ref={panelRef}
+                  tabIndex={-1}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={`${DEPARTMENTS.find((d) => d.key === openId)?.name ?? openId} KPI calculator`}
+                  className="fixed inset-0 z-[61] flex bg-white outline-none dark:bg-[#0b0e15]"
+                  initial={reduceMotion ? false : { opacity: 0, scale: 1.012 }}
+                  animate={{ opacity: 1, scale: 1, x: 0 }}
+                  exit={reduceMotion ? { opacity: 0 } : { x: '100%' }}
+                  transition={{ duration: 0.55, ease: EASE }}
+                >
+                    {/* Department rail */}
+                    <aside className="hidden w-60 shrink-0 flex-col border-r border-zinc-200/80 bg-zinc-50/60 dark:border-zinc-800 dark:bg-[#0a0d13] md:flex">
+                      <div className="flex-none border-b border-zinc-200/80 px-4 py-3.5 dark:border-zinc-800">
+                        <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-zinc-400">KPI Calculator</p>
+                        <p className="mt-0.5 text-sm font-bold text-zinc-900 dark:text-zinc-100">Departments</p>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-auto p-2">
+                        {visibleDeptKeys.map((k) => {
+                          const st = state[k];
+                          const on = k === openId;
+                          const c = deptColor(k);
+                          const sub = deptTotal(k, st);
+                          const ready = st?.status === 'ready' || st?.status === 'locked';
+                          return (
+                            <button
+                              key={k}
+                              type="button"
+                              onClick={() => open(k)}
+                              className={cn(
+                                'mb-1 flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                                on
+                                  ? 'border-zinc-300 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-900'
+                                  : 'border-transparent hover:bg-white/70 dark:hover:bg-zinc-900/50',
+                              )}
+                            >
+                              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: c }} aria-hidden />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
+                                  {DEPARTMENTS.find((d) => d.key === k)?.name ?? k}
+                                </span>
+                                <span className="block font-mono text-[10px] text-zinc-400">{fmtTotals(sub)}</span>
+                              </span>
+                              {ready ? (
+                                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden />
+                              ) : closingSoon ? (
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </aside>
+
+                    <div className="min-w-0 flex-1" style={{ borderTop: `3px solid ${deptColor(openId)}` }}>
+                      {renderPanel(openId)}
+                    </div>
+                  </motion.div>
+              ) : mode === 'modal' ? (
+                <motion.div
+                  key="kpi-modal"
+                  ref={panelRef}
+                  tabIndex={-1}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={`${DEPARTMENTS.find((d) => d.key === openId)?.name ?? openId} KPI calculator`}
+                  className="fixed left-1/2 top-1/2 z-[61] flex h-[88vh] max-h-[860px] w-[min(1120px,94vw)] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl outline-none dark:border-zinc-800 dark:bg-[#0b0e15]"
+                  style={{ borderTop: `3px solid ${deptColor(openId)}` }}
+                  initial={reduceMotion ? false : { x: '-50%', y: '-48%', scale: 0.96, opacity: 0 }}
+                  animate={{ x: '-50%', y: '-50%', scale: 1, opacity: 1 }}
+                  exit={reduceMotion ? { opacity: 0 } : { x: '-50%', y: '-48%', scale: 0.97, opacity: 0 }}
+                  transition={{ duration: 0.48, ease: EASE }}
+                >
+                  {renderPanel(openId)}
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="kpi-drawer"
+                  ref={panelRef}
+                  tabIndex={-1}
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={`${DEPARTMENTS.find((d) => d.key === openId)?.name ?? openId} KPI calculator`}
+                  className="fixed inset-y-0 right-0 z-[61] flex max-w-[calc(100vw_-_1.5rem)] flex-col shadow-2xl outline-none md:max-w-[calc(100vw_-_220px_-_1.5rem)]"
+                  style={{ width: `${drawerWidthPx}px`, borderTop: `3px solid ${deptColor(openId)}` }}
+                  initial={reduceMotion ? false : { x: '100%' }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={reduceMotion ? { opacity: 0 } : { x: '100%' }}
+                  transition={{ type: 'tween', duration: 0.52, ease: EASE }}
+                >
+                  {renderPanel(openId)}
+                </motion.div>
+              ))}
+          </AnimatePresence>,
+          document.body,
+        )
+      : null;
+
+  // -- Submit confirmation (centered modal), portalled above the overlay --------
+
+  const submitOverlay = mounted
+    ? createPortal(
+        <AnimatePresence>
+          {submit && (
+            <SubmitModal
+              key="kpi-submit-modal"
+              kind={submit.kind}
+              phase={submit.phase}
+              deptName={DEPARTMENTS.find((d) => d.key === submit.key)?.name ?? submit.key}
+              msg={submit.msg}
+              reduce={!!reduceMotion}
+              onClose={() => submit.phase !== 'sending' && setSubmit(null)}
+              onRetry={() => void (submit.kind === 'lock' ? lockValues(submit.key) : submitToPayroll(submit.key))}
+            />
+          )}
+        </AnimatePresence>,
+        document.body,
+      )
+    : null;
+
+  // -- Landing -------------------------------------------------------------------
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -917,7 +1960,7 @@ export default function DeptBonusCalculator({
             <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
               KPI Calculator &middot; Departments
             </p>
-            <h2 className="mt-0.5 text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+            <h2 className="mt-0.5 text-[18px] font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
               {isElevated
                 ? 'All Departments'
                 : visibleDeptKeys.length === 1
@@ -934,46 +1977,29 @@ export default function DeptBonusCalculator({
               />
             </div>
           </div>
-          <motion.div
-            className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3.5 py-1.5 dark:border-zinc-800 dark:bg-zinc-900/60"
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.4, ease: EASE }}
-          >
-            <div className="text-right">
-              <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-400">Projected</div>
-              <div className="tabular-nums font-mono text-base font-bold leading-none text-emerald-600 dark:text-emerald-400">
-                <AnimatedPeso value={grandTotal} />
+          <div className="flex items-stretch gap-2.5">
+            <motion.div
+              className="flex flex-col justify-center rounded-xl border border-emerald-200/80 bg-gradient-to-b from-emerald-50 to-white px-3.5 py-2 text-right dark:border-emerald-900/40 dark:from-emerald-950/30 dark:to-transparent"
+              initial={reduceMotion ? false : { opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.4, ease: EASE }}
+            >
+              <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-emerald-600/80 dark:text-emerald-400/80">
+                Projected · week
+              </div>
+              <div className="tabular-nums font-mono text-xl font-bold leading-none text-emerald-700 dark:text-emerald-300">
+                {fmtTotals(grandTotal)}
+              </div>
+            </motion.div>
+            <div className="flex flex-col justify-center rounded-xl border border-zinc-200 bg-zinc-50/80 px-3.5 py-2 text-right dark:border-zinc-800 dark:bg-zinc-900/60">
+              <div className="font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-400">Headcount</div>
+              <div className="flex items-center justify-end gap-1 text-zinc-700 dark:text-zinc-200">
+                <Users className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                <span className="tabular-nums font-mono text-xl font-bold leading-none">{totalPeople}</span>
               </div>
             </div>
-            <div className="h-7 w-px bg-zinc-200 dark:bg-zinc-700" />
-            <div className="flex items-center gap-1 text-zinc-500">
-              <Users className="h-3.5 w-3.5" aria-hidden />
-              <span className="tabular-nums font-mono text-sm font-semibold">{totalPeople}</span>
-            </div>
-          </motion.div>
-        </div>
-
-        {/* Filter row (department pills; member search lives per-card) */}
-        {visibleDeptKeys.length > 1 && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <LayoutGroup id="dept-filter">
-              <div className="-mx-1 flex max-w-full items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
-                <FilterPill active={activeFilter === 'all'} onClick={() => setActiveFilter('all')} label="All" count={visibleDeptKeys.length} />
-                {visibleDeptKeys.map((k) => (
-                  <FilterPill
-                    key={k}
-                    active={activeFilter === k}
-                    onClick={() => setActiveFilter(k)}
-                    label={DEPARTMENTS.find((d) => d.key === k)?.name ?? k}
-                    color={deptColor(k)}
-                    count={state[k]?.members.length ?? 0}
-                  />
-                ))}
-              </div>
-            </LayoutGroup>
           </div>
-        )}
+        </div>
 
         {isLiveWeek ? (
           <DeadlineBanner
@@ -993,723 +2019,518 @@ export default function DeptBonusCalculator({
             onJumpToLive={() => currentWeekStart && setWeekStart(currentWeekStart)}
           />
         )}
+
+        {/* Calculators toolbar: search + open-as toggle */}
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-400 sm:inline">
+              Department calculators
+            </span>
+            {visibleDeptKeys.length > 1 && (
+              <div className="relative min-w-0 max-w-[260px] flex-1">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
+                <input
+                  type="search"
+                  value={deptSearch}
+                  onChange={(e) => setDeptSearch(e.target.value)}
+                  placeholder="Search departments…"
+                  className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
+                />
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-400">Open as</span>
+            <ViewSwitch mode={mode} onChange={setMode} />
+          </div>
+        </div>
       </div>
 
       {/* Department cards */}
       <motion.div
         className={cn(
-          'grid items-start gap-5 px-4 py-4 sm:px-6',
-          oneCard ? 'mx-auto w-full max-w-3xl grid-cols-1' : 'grid-cols-1 lg:grid-cols-2',
+          'grid gap-3.5 px-4 py-4 sm:px-6',
+          filteredDeptKeys.length <= 1 ? 'mx-auto w-full max-w-3xl grid-cols-1' : 'grid-cols-1 lg:grid-cols-2',
         )}
-        initial="hidden"
+        initial={reduceMotion ? false : 'hidden'}
         animate="show"
-        variants={{ show: { transition: { staggerChildren: 0.07, delayChildren: 0.05 } } }}
+        variants={{ show: { transition: { staggerChildren: 0.06, delayChildren: 0.04 } } }}
       >
-        {filteredKeys.map((key) => {
-          const d = state[key];
-          const dept = DEPARTMENTS.find((x) => x.key === key);
-          const color = deptColor(key);
-          const wp = wallpapers[key];
-          const readOnly = d ? d.status !== 'draft' : false;
-          const total = deptTotal(key, d);
-          const open = isOpen(key);
-          const common = commonByDept.get(key) ?? [];
-          const sharedSet = sharedCommonByDept.get(key);
-          const normalCommon = common.filter((b) => !sharedSet?.has(b.id));
-          const sharedCommon = common.filter((b) => sharedSet?.has(b.id));
-          const allMembers = d?.members ?? [];
-          const cq = (cardSearch[key] ?? '').trim().toLowerCase();
-          const members = cq
-            ? allMembers.filter(
-                (e) => e.name.toLowerCase().includes(cq) || e.email.toLowerCase().includes(cq),
-              )
-            : allMembers;
-          // Pagination (per department) -- clamp the page to the filtered set.
-          const totalPages = Math.max(1, Math.ceil(members.length / MEMBER_PAGE_SIZE));
-          const curPage = Math.min(cardPage[key] ?? 1, totalPages);
-          const pageStart = (curPage - 1) * MEMBER_PAGE_SIZE;
-          const pagedMembers = members.slice(pageStart, pageStart + MEMBER_PAGE_SIZE);
-          const hasAnyBonus =
-            common.length > 0 || (individualByDept.get(key)?.size ?? 0) > 0;
-          const hasIndividual = (individualByDept.get(key)?.size ?? 0) > 0;
-
-          // Per-column rollups for the table (header tri-state + footer subtotals).
-          // Computed over *all* members so the footer reflects the whole dept,
-          // independent of the current search/pagination view.
-          const isApplicable = (email: string, bonusId: string) =>
-            applicableBonuses(key, email).some((x) => x.id === bonusId);
-          const colMeta = normalCommon.map((b) => {
-            const appMembers = allMembers.filter((m) => isApplicable(m.email, b.id));
-            const onCount = appMembers.filter((m) => m.applied[b.id]?.on).length;
-            const subtotal = appMembers.reduce(
-              (s, m) => s + (m.applied[b.id]?.on ? computeAmount(b, m.applied[b.id]?.vars, usdToPhpRate) : 0),
-              0,
-            );
-            return {
-              b,
-              appCount: appMembers.length,
-              onCount,
-              allOn: appMembers.length > 0 && onCount === appMembers.length,
-              someOn: onCount > 0 && onCount < appMembers.length,
-              subtotal,
-            };
-          });
-          const sharedMeta = sharedCommon.map((b) => {
-            const sh = d?.shared?.[b.id];
-            const on = !!sh?.on;
-            const perPerson = on ? computeAmount(b, sh?.vars, usdToPhpRate) : 0;
-            const appCount = allMembers.filter((m) => isApplicable(m.email, b.id)).length;
-            return { b, sh, on, perPerson, subtotal: perPerson * appCount };
-          });
-          const indivSubtotal = allMembers.reduce((s, m) => {
-            const ind = applicableBonuses(key, m.email).filter(
-              (b) => !common.some((c) => c.id === b.id) && !sharedSet?.has(b.id),
-            );
-            return (
-              s +
-              ind.reduce(
-                (ss, b) => ss + (m.applied[b.id]?.on ? computeAmount(b, m.applied[b.id]?.vars, usdToPhpRate) : 0),
-                0,
-              )
-            );
-          }, 0);
-
+        {filteredDeptKeys.map((key) => {
+          const v = buildDeptView(key);
           return (
-            <motion.div
+            <DeptSummaryCard
               key={key}
-              variants={{
-                hidden: { opacity: 0, y: 8, scale: 0.98 },
-                show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.35, ease: EASE } },
-              }}
-              whileHover={{ y: -4 }}
-              className={cn(
-                'group relative overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow hover:shadow-xl dark:bg-zinc-900/40',
-                'border-zinc-200/90 dark:border-zinc-800',
-                isLiveWeek && !readOnly && daysLeft <= 2 && 'ring-1 ring-amber-400/70 dark:ring-amber-500/40',
-              )}
-            >
-              {/* Header row -- the wallpaper is now a compact thumbnail accent,
-                  not a full-bleed hero. The whole row toggles open/closed. */}
-              <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: color }} aria-hidden />
-              <motion.div
-                role="button"
-                tabIndex={0}
-                aria-expanded={open}
-                whileTap={{ scale: 0.994 }}
-                onClick={() => setManualOpen((m) => ({ ...m, [key]: !open }))}
-                onKeyDown={(ev) => {
-                  if (ev.key === 'Enter' || ev.key === ' ') {
-                    ev.preventDefault();
-                    setManualOpen((m) => ({ ...m, [key]: !open }));
-                  }
-                }}
-                className="relative flex w-full cursor-pointer items-center gap-3 p-3 outline-none sm:gap-3.5 sm:p-3.5"
-              >
-                {/* Image thumbnail (a portion of the card, not the whole header) */}
-                <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-xl ring-1 ring-black/5 dark:ring-white/10 sm:h-[68px] sm:w-24">
-                  <div
-                    className="absolute inset-0 bg-cover bg-center group-hover:scale-110"
-                    style={{
-                      backgroundImage: wp?.url ? `url("${wp.url}")` : fallbackBg(color),
-                      backgroundPosition: wp?.position ?? '50% 50%',
-                      transitionProperty: 'transform',
-                      transitionDuration: '700ms',
-                      transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
-                    }}
-                    aria-hidden
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/45 to-transparent" aria-hidden />
-                  <div className="pointer-events-none absolute inset-0 opacity-[0.12] mix-blend-overlay" style={{ backgroundImage: HERO_NOISE }} aria-hidden />
-                  <div className="absolute bottom-1 left-1 flex items-center gap-1 rounded-full bg-black/45 px-1.5 py-0.5 text-white/90 backdrop-blur-sm">
-                    <Users className="h-2.5 w-2.5" aria-hidden />
-                    <span className="tabular-nums font-mono text-[10px]">{d?.members.length ?? 0}</span>
-                  </div>
-                </div>
-
-                {/* Title + description */}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="truncate text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{dept?.name ?? key}</h3>
-                    <HeroBadge status={d?.status ?? 'draft'} warn={isLiveWeek && !readOnly && daysLeft <= 2} />
-                    {d?.dirty && (
-                      <motion.span
-                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400 shadow-[0_0_6px] shadow-amber-400"
-                        title="Unsaved changes"
-                        aria-hidden
-                        animate={{ opacity: [1, 0.35, 1] }}
-                        transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-                      />
-                    )}
-                  </div>
-                  <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-                    {DEPT_DESCRIPTION[key] ?? ''}
-                  </p>
-                </div>
-
-                {/* Projected + chevron */}
-                <div className="flex shrink-0 items-center gap-2.5">
-                  <div className="text-right">
-                    <div className="font-mono text-[8px] uppercase tracking-[0.18em] text-zinc-400">Projected</div>
-                    <div className="tabular-nums font-mono text-sm font-bold leading-none text-emerald-600 dark:text-emerald-400">
-                      <AnimatedPeso value={total} />
-                    </div>
-                  </div>
-                  <motion.span
-                    className="shrink-0 rounded-full bg-zinc-100 p-1 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-300"
-                    animate={{ rotate: open ? 180 : 0 }}
-                    transition={{ type: 'spring', stiffness: 320, damping: 20 }}
-                  >
-                    <ChevronDown className="h-4 w-4" aria-hidden />
-                  </motion.span>
-                </div>
-              </motion.div>
-
-              {/* Card body */}
-              <AnimatePresence initial={false}>
-                {open && (
-                  <motion.section
-                    key="body"
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{
-                      height: { duration: 0.42, ease: EASE },
-                      opacity: { duration: 0.22, ease: 'easeOut' },
-                    }}
-                    style={{ overflow: 'hidden', willChange: 'height' }}
-                  >
-                    <motion.div
-                      className="border-t border-zinc-100 dark:border-zinc-800/70"
-                      initial={{ y: -8 }}
-                      animate={{ y: 0 }}
-                      exit={{ y: -8 }}
-                      transition={{ duration: 0.42, ease: EASE }}
-                    >
-                      {/* Member search + pagination toolbar (standard list controls) */}
-                      {d?.loaded && hasAnyBonus && allMembers.length > 0 && (
-                        <div className="flex flex-col gap-2 px-2.5 pt-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="relative min-w-0 flex-1 sm:max-w-xs">
-                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
-                            <input
-                              type="search"
-                              placeholder="Search name or email..."
-                              value={cardSearch[key] ?? ''}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                setCardSearch((prev) => ({ ...prev, [key]: v }));
-                                setCardPage((prev) => ({ ...prev, [key]: 1 }));
-                              }}
-                              className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
-                            />
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-                            <span className="font-mono text-[10px] text-zinc-500">
-                              {members.length === 0
-                                ? '0 of 0'
-                                : `${pageStart + 1}-${Math.min(pageStart + MEMBER_PAGE_SIZE, members.length)} of ${members.length}`}
-                              {cq && members.length !== allMembers.length && (
-                                <span className="text-zinc-400"> &middot; filtered from {allMembers.length}</span>
-                              )}
-                            </span>
-                            <div className="flex items-center gap-0.5 rounded-md border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60">
-                              <button
-                                type="button"
-                                className="rounded p-1 text-zinc-600 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                                disabled={curPage <= 1}
-                                onClick={() => setCardPage((prev) => ({ ...prev, [key]: Math.max(1, curPage - 1) }))}
-                                aria-label="Previous page"
-                              >
-                                <ChevronLeft className="h-3.5 w-3.5" />
-                              </button>
-                              <span className="min-w-[3rem] text-center font-mono text-[10px] tabular-nums text-zinc-600 dark:text-zinc-400">
-                                {curPage} / {totalPages}
-                              </span>
-                              <button
-                                type="button"
-                                className="rounded p-1 text-zinc-600 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                                disabled={curPage >= totalPages}
-                                onClick={() => setCardPage((prev) => ({ ...prev, [key]: Math.min(totalPages, curPage + 1) }))}
-                                aria-label="Next page"
-                              >
-                                <ChevronRight className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Members */}
-                      {!d || !d.loaded ? (
-                        <div className="px-3.5 py-5 text-center text-xs text-zinc-400">Loading...</div>
-                      ) : !hasAnyBonus ? (
-                        <div className="px-3.5 py-6 text-center text-xs text-zinc-400">
-                          No bonuses assigned to this department yet.
-                          <br />
-                          Assign one in Accounting &rarr; Bonus Catalog.
-                        </div>
-                      ) : members.length === 0 ? (
-                        <div className="px-3.5 py-5 text-center text-xs text-zinc-400">
-                          {cq ? 'No members match your search.' : 'No team members in this department.'}
-                        </div>
-                      ) : (
-                        <div className="px-2.5 pb-1 pt-2.5">
-                          <div className="overflow-x-auto rounded-xl border border-zinc-200/80 dark:border-zinc-800">
-                            <table className="table-keep w-full border-collapse text-left">
-                              {/* Header: Member · one column per common / team bonus · Total */}
-                              <thead>
-                                <tr>
-                                  <th className="sticky left-0 z-[3] min-w-[148px] border-b border-r border-zinc-200 bg-zinc-50 px-3 py-2 align-bottom dark:border-zinc-800 dark:bg-[#0f141b]">
-                                    <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                                      Member
-                                    </span>
-                                  </th>
-
-                                  {colMeta.map(({ b, allOn, someOn, onCount, appCount }) => (
-                                    <th
-                                      key={b.id}
-                                      className="min-w-[128px] border-b border-l border-zinc-200/70 bg-zinc-50 px-2.5 py-2 align-bottom dark:border-zinc-800/70 dark:bg-zinc-900/70"
-                                    >
-                                      <div className="flex flex-col gap-1.5">
-                                        <div className="flex items-start justify-between gap-1.5">
-                                          <span
-                                            className="line-clamp-2 text-[11.5px] font-semibold leading-tight text-zinc-800 dark:text-zinc-100"
-                                            title={b.name}
-                                          >
-                                            {b.name}
-                                          </span>
-                                          <KindDot kind={b.kind} />
-                                        </div>
-                                        <BonusCurrencyTag bonus={b} rate={usdToPhpRate} />
-                                        <button
-                                          type="button"
-                                          disabled={readOnly || !d?.loaded || appCount === 0}
-                                          onClick={() => applyToAll(key, b.id, !allOn)}
-                                          title={allOn ? 'Untick for everyone' : 'Tick for everyone'}
-                                          className={cn(
-                                            'inline-flex w-fit items-center gap-1 rounded-md border px-1.5 py-0.5 transition-colors disabled:opacity-40',
-                                            allOn
-                                              ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300'
-                                              : someOn
-                                                ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300'
-                                                : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400',
-                                          )}
-                                        >
-                                          <span
-                                            className={cn(
-                                              'flex h-3 w-3 items-center justify-center rounded-[3px] border',
-                                              allOn
-                                                ? 'border-emerald-500 bg-emerald-500 text-white'
-                                                : someOn
-                                                  ? 'border-amber-500 bg-amber-500 text-white'
-                                                  : 'border-zinc-300 dark:border-zinc-600',
-                                            )}
-                                          >
-                                            {allOn ? <Check className="h-2 w-2" strokeWidth={3.5} /> : someOn ? <Minus className="h-2 w-2" strokeWidth={3.5} /> : null}
-                                          </span>
-                                          <span className="font-mono text-[9px] font-semibold tabular-nums">
-                                            {onCount}/{appCount}
-                                          </span>
-                                        </button>
-                                      </div>
-                                    </th>
-                                  ))}
-
-                                  {sharedMeta.map(({ b, sh, on, perPerson }) => {
-                                    const vars = bonusVariables(b);
-                                    return (
-                                      <th
-                                        key={b.id}
-                                        className="min-w-[144px] border-b border-l border-violet-200/70 bg-violet-50/70 px-2.5 py-2 align-bottom dark:border-violet-900/50 dark:bg-violet-950/25"
-                                      >
-                                        <div className="flex flex-col gap-1.5">
-                                          <label className="flex items-start gap-1.5">
-                                            <input
-                                              type="checkbox"
-                                              className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded accent-violet-600"
-                                              disabled={readOnly}
-                                              checked={on}
-                                              onChange={(ev) => toggleShared(key, b.id, ev.target.checked)}
-                                            />
-                                            <span
-                                              className="line-clamp-2 text-[11.5px] font-semibold leading-tight text-zinc-800 dark:text-zinc-100"
-                                              title={b.name}
-                                            >
-                                              {b.name}
-                                            </span>
-                                          </label>
-                                          <span className="inline-flex w-fit items-center gap-0.5 rounded bg-violet-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
-                                            <Users className="h-2 w-2" /> Team · {peso(perPerson)}/ea
-                                          </span>
-                                          <BonusCurrencyTag bonus={b} rate={usdToPhpRate} />
-                                          {on && b.kind === 'formula' && vars.length > 0 && (
-                                            <div className="flex flex-wrap gap-1">
-                                              {vars.map((v) => (
-                                                <label key={v} className="flex items-center gap-1">
-                                                  <span className="font-mono text-[9px] text-zinc-400">{v}</span>
-                                                  <Input
-                                                    type="number"
-                                                    inputMode="decimal"
-                                                    aria-label={`${v} for the whole team`}
-                                                    disabled={readOnly}
-                                                    value={sh?.vars?.[v] ?? ''}
-                                                    onChange={(ev) => setSharedVar(key, b.id, v, ev.target.value)}
-                                                    className="h-6 w-14 px-1 text-center text-[11px] tabular-nums"
-                                                  />
-                                                </label>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </th>
-                                    );
-                                  })}
-
-                                  {hasIndividual && (
-                                    <th className="min-w-[150px] border-b border-l border-zinc-200/70 bg-zinc-50 px-2.5 py-2 align-bottom dark:border-zinc-800/70 dark:bg-zinc-900/70">
-                                      <span className="inline-flex items-center gap-1 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                                        <User className="h-2.5 w-2.5" /> Individual
-                                      </span>
-                                    </th>
-                                  )}
-
-                                  <th className="sticky right-0 z-[3] min-w-[96px] border-b border-l border-zinc-200 bg-zinc-50 px-3 py-2 text-right align-bottom dark:border-zinc-800 dark:bg-[#0f141b]">
-                                    <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                                      Total
-                                    </span>
-                                  </th>
-                                </tr>
-                              </thead>
-
-                              <motion.tbody
-                                initial="hidden"
-                                animate="show"
-                                variants={{ show: { transition: { staggerChildren: 0.02, delayChildren: 0.04 } } }}
-                              >
-                                {pagedMembers.map((m) => {
-                                  const appl = applicableBonuses(key, m.email);
-                                  const applSet = new Set(appl.map((b) => b.id));
-                                  const mIndividual = appl.filter(
-                                    (b) => !common.some((c) => c.id === b.id) && !sharedSet?.has(b.id),
-                                  );
-                                  const mTotal = memberTotal(key, m, d.shared);
-                                  return (
-                                    <motion.tr
-                                      key={m.email}
-                                      variants={{ hidden: { opacity: 0, y: 4 }, show: { opacity: 1, y: 0 } }}
-                                      className="group/row border-b border-zinc-100 last:border-0 hover:bg-emerald-50/40 dark:border-zinc-800/60 dark:hover:bg-emerald-950/10"
-                                    >
-                                      {/* Member (sticky) */}
-                                      <td className="sticky left-0 z-[2] border-r border-zinc-200/80 bg-white px-3 py-2 align-top group-hover/row:bg-emerald-50/40 dark:border-zinc-800 dark:bg-[#11161c] dark:group-hover/row:bg-emerald-950/20">
-                                        <div className="flex items-center gap-2">
-                                          <span
-                                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold"
-                                            style={{ backgroundColor: hexA(color, 0.16), color }}
-                                            aria-hidden
-                                          >
-                                            {initials(m.name)}
-                                          </span>
-                                          <span
-                                            className="min-w-0 truncate text-[12px] font-medium text-zinc-800 dark:text-zinc-100"
-                                            title={m.name}
-                                          >
-                                            {m.name}
-                                          </span>
-                                        </div>
-                                      </td>
-
-                                      {/* Common bonus cells */}
-                                      {colMeta.map(({ b }) => {
-                                        const applicable = applSet.has(b.id);
-                                        const st = m.applied[b.id];
-                                        const on = !!st?.on;
-                                        const vars = bonusVariables(b);
-                                        const amt = applicable && on ? computeAmount(b, st?.vars, usdToPhpRate) : 0;
-                                        return (
-                                          <td key={b.id} className="border-l border-zinc-100 px-2.5 py-2 align-top dark:border-zinc-800/50">
-                                            {!applicable ? (
-                                              <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-700">—</span>
-                                            ) : (
-                                              <div className="flex flex-col gap-1">
-                                                <label className="flex items-center gap-1.5">
-                                                  <input
-                                                    type="checkbox"
-                                                    className="h-3.5 w-3.5 shrink-0 rounded accent-emerald-600"
-                                                    disabled={readOnly}
-                                                    checked={on}
-                                                    onChange={(ev) => toggleBonus(key, m.email, b.id, ev.target.checked)}
-                                                  />
-                                                  <span
-                                                    className={cn(
-                                                      'font-mono text-[11px] tabular-nums',
-                                                      amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
-                                                    )}
-                                                  >
-                                                    {on ? peso(amt) : '—'}
-                                                  </span>
-                                                </label>
-                                                {on && b.kind === 'formula' && vars.length > 0 && (
-                                                  <div className="flex flex-wrap gap-1 pl-5">
-                                                    {vars.map((v) => (
-                                                      <label key={v} className="flex items-center gap-0.5">
-                                                        <span className="font-mono text-[9px] text-zinc-400">{v}</span>
-                                                        <Input
-                                                          type="number"
-                                                          inputMode="decimal"
-                                                          aria-label={`${v} for ${m.name}`}
-                                                          disabled={readOnly}
-                                                          value={st?.vars?.[v] ?? ''}
-                                                          onChange={(ev) => setVar(key, m.email, b.id, v, ev.target.value)}
-                                                          className="h-6 w-14 px-1 text-center text-[11px] tabular-nums"
-                                                        />
-                                                      </label>
-                                                    ))}
-                                                  </div>
-                                                )}
-                                              </div>
-                                            )}
-                                          </td>
-                                        );
-                                      })}
-
-                                      {/* Team bonus cells (entered once in the header; read-only per person) */}
-                                      {sharedMeta.map(({ b, on, perPerson }) => {
-                                        const applicable = applSet.has(b.id);
-                                        const amt = applicable && on ? perPerson : 0;
-                                        return (
-                                          <td
-                                            key={b.id}
-                                            className="border-l border-violet-100/70 bg-violet-50/20 px-2.5 py-2 align-top dark:border-violet-900/30 dark:bg-violet-950/10"
-                                          >
-                                            {!applicable ? (
-                                              <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-700">—</span>
-                                            ) : (
-                                              <span
-                                                className={cn(
-                                                  'font-mono text-[11px] tabular-nums',
-                                                  amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
-                                                )}
-                                              >
-                                                {on ? peso(amt) : '—'}
-                                              </span>
-                                            )}
-                                          </td>
-                                        );
-                                      })}
-
-                                      {/* Individual bonuses for this member */}
-                                      {hasIndividual && (
-                                        <td className="border-l border-zinc-100 px-2.5 py-2 align-top dark:border-zinc-800/50">
-                                          {mIndividual.length === 0 ? (
-                                            <span className="font-mono text-[11px] text-zinc-300 dark:text-zinc-700">—</span>
-                                          ) : (
-                                            <div className="flex flex-col gap-1.5">
-                                              {mIndividual.map((b) => {
-                                                const st = m.applied[b.id];
-                                                const on = !!st?.on;
-                                                const vars = bonusVariables(b);
-                                                const amt = on ? computeAmount(b, st?.vars, usdToPhpRate) : 0;
-                                                return (
-                                                  <div key={b.id} className="flex flex-col gap-0.5">
-                                                    <label className="flex items-center gap-1.5">
-                                                      <input
-                                                        type="checkbox"
-                                                        className="h-3.5 w-3.5 shrink-0 rounded accent-violet-600"
-                                                        disabled={readOnly}
-                                                        checked={on}
-                                                        onChange={(ev) => toggleBonus(key, m.email, b.id, ev.target.checked)}
-                                                      />
-                                                      <span className="min-w-0 truncate text-[11px] text-zinc-600 dark:text-zinc-300" title={b.name}>
-                                                        {b.name}
-                                                      </span>
-                                                      <BonusCurrencyTag bonus={b} rate={usdToPhpRate} />
-                                                      <span
-                                                        className={cn(
-                                                          'ml-auto shrink-0 font-mono text-[11px] tabular-nums',
-                                                          amt > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
-                                                        )}
-                                                      >
-                                                        {on ? peso(amt) : '—'}
-                                                      </span>
-                                                    </label>
-                                                    {on && b.kind === 'formula' && vars.length > 0 && (
-                                                      <div className="flex flex-wrap gap-1 pl-5">
-                                                        {vars.map((v) => (
-                                                          <label key={v} className="flex items-center gap-0.5">
-                                                            <span className="font-mono text-[9px] text-zinc-400">{v}</span>
-                                                            <Input
-                                                              type="number"
-                                                              inputMode="decimal"
-                                                              aria-label={`${v} for ${m.name}`}
-                                                              disabled={readOnly}
-                                                              value={st?.vars?.[v] ?? ''}
-                                                              onChange={(ev) => setVar(key, m.email, b.id, v, ev.target.value)}
-                                                              className="h-6 w-14 px-1 text-center text-[11px] tabular-nums"
-                                                            />
-                                                          </label>
-                                                        ))}
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          )}
-                                        </td>
-                                      )}
-
-                                      {/* Member total (sticky) */}
-                                      <td className="sticky right-0 z-[2] border-l border-zinc-200/80 bg-white px-3 py-2 text-right align-top group-hover/row:bg-emerald-50/40 dark:border-zinc-800 dark:bg-[#11161c] dark:group-hover/row:bg-emerald-950/20">
-                                        <span
-                                          className={cn(
-                                            'font-mono text-[12px] font-bold tabular-nums',
-                                            mTotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
-                                          )}
-                                        >
-                                          <AnimatedPeso value={mTotal} />
-                                        </span>
-                                      </td>
-                                    </motion.tr>
-                                  );
-                                })}
-                              </motion.tbody>
-
-                              {/* Footer: per-column subtotals + dept grand total */}
-                              <tfoot>
-                                <tr>
-                                  <td className="sticky left-0 z-[2] border-r border-t border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-[#0f141b]">
-                                    <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
-                                      Totals
-                                    </span>
-                                  </td>
-                                  {colMeta.map(({ b, subtotal, onCount }) => (
-                                    <td key={b.id} className="border-l border-t border-zinc-200/70 bg-zinc-50/60 px-2.5 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/50">
-                                      <div className="flex flex-col">
-                                        <span
-                                          className={cn(
-                                            'font-mono text-[11px] font-semibold tabular-nums',
-                                            subtotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
-                                          )}
-                                        >
-                                          {peso(subtotal)}
-                                        </span>
-                                        <span className="font-mono text-[9px] text-zinc-400">{onCount} applied</span>
-                                      </div>
-                                    </td>
-                                  ))}
-                                  {sharedMeta.map(({ b, subtotal }) => (
-                                    <td key={b.id} className="border-l border-t border-violet-200/60 bg-violet-50/40 px-2.5 py-2 dark:border-violet-900/40 dark:bg-violet-950/20">
-                                      <span
-                                        className={cn(
-                                          'font-mono text-[11px] font-semibold tabular-nums',
-                                          subtotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
-                                        )}
-                                      >
-                                        {peso(subtotal)}
-                                      </span>
-                                    </td>
-                                  ))}
-                                  {hasIndividual && (
-                                    <td className="border-l border-t border-zinc-200/70 bg-zinc-50/60 px-2.5 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/50">
-                                      <span
-                                        className={cn(
-                                          'font-mono text-[11px] font-semibold tabular-nums',
-                                          indivSubtotal > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400 dark:text-zinc-600',
-                                        )}
-                                      >
-                                        {peso(indivSubtotal)}
-                                      </span>
-                                    </td>
-                                  )}
-                                  <td className="sticky right-0 z-[2] border-l border-t border-zinc-200 bg-zinc-50 px-3 py-2 text-right dark:border-zinc-800 dark:bg-[#0f141b]">
-                                    <span className="font-mono text-[12px] font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
-                                      <AnimatedPeso value={total} />
-                                    </span>
-                                  </td>
-                                </tr>
-                              </tfoot>
-                            </table>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Footer */}
-                      <div className="flex items-center justify-between gap-2 border-t border-zinc-100 px-3.5 py-2.5 dark:border-zinc-800/70">
-                        <span
-                          className={cn(
-                            'font-mono text-[10px] uppercase tracking-wide',
-                            readOnly ? 'text-emerald-500' : d?.dirty ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-400',
-                          )}
-                        >
-                          {readOnly ? 'Sent to Accounting' : d?.dirty ? 'Unsaved changes' : 'Saved -- not yet submitted'}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          {readOnly ? (
-                            <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => void setStatus(key, 'draft')}>
-                              <RefreshCw className="h-3.5 w-3.5" /> Reopen
-                            </Button>
-                          ) : (
-                            <>
-                              <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" disabled={d?.saving} onClick={() => void saveDept(key)}>
-                                <Save className="h-3.5 w-3.5" /> {d?.saving ? 'Saving...' : 'Save'}
-                              </Button>
-                              <motion.div whileTap={{ scale: 0.95 }}>
-                                <Button
-                                  size="sm"
-                                  className="h-7 gap-1.5 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
-                                  disabled={d?.dirty}
-                                  onClick={() => void markReady(key)}
-                                >
-                                  <CheckCircle2 className="h-3.5 w-3.5" /> Mark Ready
-                                </Button>
-                              </motion.div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </motion.div>
-                  </motion.section>
-                )}
-              </AnimatePresence>
-            </motion.div>
+              name={v.dept?.name ?? key}
+              desc={DEPT_DESCRIPTION[key] ?? ''}
+              color={v.color}
+              wp={v.wp}
+              monogram={initials(v.dept?.name ?? key)}
+              headcount={v.allMembers.length}
+              status={v.d?.status ?? 'draft'}
+              warn={closingSoon && !v.readOnly}
+              dirty={!!v.d?.dirty}
+              projected={v.total}
+              toFill={v.toFill}
+              hasAnyBonus={v.hasAnyBonus}
+              loading={!v.d?.loaded}
+              isOpen={openId === key}
+              reduce={!!reduceMotion}
+              onOpen={() => open(key)}
+            />
           );
         })}
       </motion.div>
+
+      {filteredDeptKeys.length === 0 && (
+        <div className="mx-4 mb-6 rounded-xl border border-dashed border-zinc-300 px-6 py-12 text-center text-sm text-zinc-400 dark:border-zinc-700 sm:mx-6">
+          No departments match “{deptSearch}”.
+        </div>
+      )}
+
+      {overlay}
+      {submitOverlay}
     </div>
   );
 }
 
 // -- Bits -----------------------------------------------------------------------
 
-/** Sky chip flagging a USD-denominated bonus. For a flat bonus it shows the
- *  native "$X"; for a formula it shows "USD" (the result varies with inputs).
- *  The peso figures in the grid are the FX-converted amounts that get paid; this
- *  chip explains why a "$50" library bonus appears as a peso total. Renders
- *  nothing for PHP bonuses so the common case stays uncluttered. */
-function BonusCurrencyTag({ bonus, rate }: { bonus: BonusDef; rate: number }) {
-  if ((bonus.currency ?? 'PHP') !== 'USD') return null;
+/** Landing card: a department's at-a-glance summary. Opens the calculator. */
+function DeptSummaryCard({
+  name,
+  desc,
+  color,
+  wp,
+  monogram,
+  headcount,
+  status,
+  warn,
+  dirty,
+  projected,
+  toFill,
+  hasAnyBonus,
+  loading,
+  isOpen,
+  reduce,
+  onOpen,
+}: {
+  name: string;
+  desc: string;
+  color: string;
+  wp: Wallpaper | undefined;
+  monogram: string;
+  headcount: number;
+  status: BonusStatus;
+  warn: boolean;
+  dirty: boolean;
+  projected: Money;
+  toFill: number;
+  hasAnyBonus: boolean;
+  loading: boolean;
+  isOpen: boolean;
+  reduce: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <motion.button
+      type="button"
+      onClick={onOpen}
+      variants={{
+        hidden: { opacity: 0, y: 8, scale: 0.98 },
+        show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.32, ease: EASE } },
+      }}
+      whileHover={reduce ? undefined : { y: -3 }}
+      whileTap={reduce ? undefined : { scale: 0.995 }}
+      className={cn(
+        'group relative flex items-center gap-3.5 overflow-hidden rounded-2xl border bg-white p-3.5 text-left shadow-sm transition-shadow hover:shadow-lg dark:bg-zinc-900/40',
+        isOpen ? 'border-transparent' : 'border-zinc-200/90 dark:border-zinc-800',
+      )}
+      style={isOpen ? { boxShadow: `0 0 0 2px ${color}` } : undefined}
+    >
+      <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: color }} aria-hidden />
+
+      {/* Thumbnail / monogram tile */}
+      <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl ring-1 ring-black/5 dark:ring-white/10">
+        {wp?.url ? (
+          <>
+            <div
+              className="absolute inset-0 bg-cover bg-center transition-transform duration-700 ease-out group-hover:scale-110"
+              style={{ backgroundImage: `url("${wp.url}")`, backgroundPosition: wp.position }}
+              aria-hidden
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/45 to-transparent" aria-hidden />
+            <div className="pointer-events-none absolute inset-0 opacity-[0.12] mix-blend-overlay" style={{ backgroundImage: HERO_NOISE }} aria-hidden />
+          </>
+        ) : (
+          <div
+            className="absolute inset-0 flex items-center justify-center font-mono text-lg font-bold"
+            style={{ backgroundColor: hexA(color, 0.14), color }}
+            aria-hidden
+          >
+            {monogram}
+          </div>
+        )}
+        <div className="absolute bottom-1 left-1 flex items-center gap-1 rounded-full bg-black/45 px-1.5 py-0.5 text-white/90 backdrop-blur-sm">
+          <Users className="h-2.5 w-2.5" aria-hidden />
+          {loading ? (
+            <Skeleton className="h-2 w-3.5 bg-white/40 dark:bg-white/40" />
+          ) : (
+            <span className="tabular-nums font-mono text-[10px]">{headcount}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Identity + status */}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{name}</span>
+          <HeroBadge status={status} warn={warn} />
+          {dirty && (
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
+              title="Unsaved changes"
+              aria-hidden
+            />
+          )}
+        </div>
+        <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">{desc}</p>
+        {hasAnyBonus && toFill > 0 && (
+          <p className="mt-1 font-mono text-[10.5px] text-amber-600 dark:text-amber-400">
+            {toFill} {toFill === 1 ? 'person' : 'people'} to fill
+          </p>
+        )}
+      </div>
+
+      {/* Projected + open affordance */}
+      <div className="flex shrink-0 items-center gap-3">
+        <div className="text-right">
+          <div className="font-mono text-[8px] uppercase tracking-[0.16em] text-zinc-400">Projected</div>
+          {loading ? (
+            <Skeleton className="ml-auto mt-1 h-4 w-16" />
+          ) : (
+            <div className="tabular-nums font-mono text-base font-bold leading-none text-emerald-600 dark:text-emerald-400">
+              {fmtTotals(projected)}
+            </div>
+          )}
+        </div>
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200 text-zinc-400 transition-colors group-hover:border-zinc-300 group-hover:text-zinc-600 dark:border-zinc-700 dark:group-hover:border-zinc-600 dark:group-hover:text-zinc-300">
+          <ChevronRight className="h-4 w-4" aria-hidden />
+        </span>
+      </div>
+    </motion.button>
+  );
+}
+
+/** Labeled numeric inputs for a formula bonus's variables. One tidy field per
+ *  variable (uppercase label over a centered number box), wrapping neatly. The
+ *  whole group reveals when its bonus is ticked on; each input has an animated
+ *  focus ring, selects its contents on focus, and an empty required value gets
+ *  an amber cue so it's obvious what's still "to fill". `accent` matches the
+ *  column's identity (emerald for common, violet for team / individual). */
+function VarFields({
+  vars,
+  values,
+  onChange,
+  disabled,
+  ownerLabel,
+  accent = 'emerald',
+}: {
+  vars: string[];
+  values: Record<string, string> | undefined;
+  onChange: (varName: string, value: string) => void;
+  disabled?: boolean;
+  ownerLabel: string;
+  accent?: 'emerald' | 'violet';
+}) {
+  const reduce = useReducedMotion();
+  const ring =
+    accent === 'violet'
+      ? 'focus:border-violet-400 focus:ring-violet-300/45 dark:focus:border-violet-500 dark:focus:ring-violet-500/30'
+      : 'focus:border-emerald-400 focus:ring-emerald-300/45 dark:focus:border-emerald-500 dark:focus:ring-emerald-500/30';
+  return (
+    <motion.div
+      className="flex flex-wrap gap-x-2 gap-y-1.5 pt-1"
+      initial={reduce ? false : { opacity: 0, y: -3 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: EASE }}
+    >
+      {vars.map((vn) => {
+        const v = values?.[vn] ?? '';
+        const empty = !String(v).trim();
+        return (
+          <label key={vn} className="group/field flex flex-col gap-0.5">
+            <span className="pl-0.5 font-mono text-[8.5px] font-semibold uppercase tracking-wider text-zinc-500 transition-colors group-focus-within/field:text-zinc-800 dark:text-zinc-400 dark:group-focus-within/field:text-zinc-100">
+              {vn}
+            </span>
+            <input
+              type="number"
+              inputMode="decimal"
+              aria-label={`${vn} — ${ownerLabel}`}
+              disabled={disabled}
+              value={v}
+              placeholder="0"
+              onChange={(e) => onChange(vn, e.target.value)}
+              onFocus={(e) => e.currentTarget.select()}
+              className={cn(
+                'h-7 w-[64px] rounded-md border bg-white px-1.5 text-center text-[11.5px] tabular-nums text-zinc-900 outline-none transition-[border-color,box-shadow,background-color] duration-150 placeholder:text-zinc-300 focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-900/70 dark:text-zinc-100 dark:placeholder:text-zinc-700',
+                ring,
+                empty && !disabled
+                  ? 'border-amber-300/80 dark:border-amber-700/50'
+                  : 'border-zinc-200 dark:border-zinc-700',
+              )}
+            />
+          </label>
+        );
+      })}
+    </motion.div>
+  );
+}
+
+/** Shimmer placeholder that mirrors the per-person table while a department's
+ *  saved values load. The column count comes from the already-loaded catalog,
+ *  so the skeleton lines up with the real grid that replaces it (no layout
+ *  shift). A small per-element animation delay gives the pulse a gentle wave. */
+function DeptTableSkeleton({ rows, cols }: { rows: number; cols: number }) {
+  const nameW = [124, 96, 142, 108, 88, 132, 100, 116, 92, 120];
+  return (
+    <div className="px-3 py-2.5 sm:px-4" aria-busy="true" aria-label="Loading values">
+      {/* Column header strip */}
+      <div className="mb-1 flex items-center gap-3 border-b border-zinc-100 px-1 pb-3 dark:border-zinc-800/60">
+        <Skeleton className="h-2.5 w-14" />
+        <div className="ml-auto flex items-center gap-5">
+          {Array.from({ length: Math.max(0, cols) }).map((_, i) => (
+            <Skeleton key={i} className="h-2.5 w-16" />
+          ))}
+          <Skeleton className="h-2.5 w-12" />
+        </div>
+      </div>
+      {/* Rows */}
+      {Array.from({ length: rows }).map((_, r) => (
+        <div
+          key={r}
+          className="flex items-center gap-3 border-b border-zinc-50 py-3 last:border-0 dark:border-zinc-800/40"
+        >
+          <Skeleton className="h-6 w-6 shrink-0 rounded-full" style={{ animationDelay: `${r * 70}ms` }} />
+          <Skeleton className="h-3.5 shrink-0" style={{ width: nameW[r % nameW.length], animationDelay: `${r * 70}ms` }} />
+          <div className="ml-auto flex items-center gap-5">
+            {Array.from({ length: Math.max(0, cols) }).map((_, c) => (
+              <Skeleton key={c} className="h-4 w-14" style={{ animationDelay: `${r * 70 + c * 45}ms` }} />
+            ))}
+            <Skeleton className="h-4 w-16" style={{ animationDelay: `${r * 70 + cols * 45}ms` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Centered loading/confirmation modal for the two committing actions: locking
+ *  a department's values, and submitting them to payroll. Blurs and dims the
+ *  calculator behind it so the focus is the modal. Shows a live "sending" state,
+ *  then a success (or error) confirmation, instead of a fire-and-forget toast.
+ *  Owns its own Escape/scrim close once it's past sending. Portalled by parent. */
+function SubmitModal({
+  kind,
+  phase,
+  deptName,
+  msg,
+  onClose,
+  onRetry,
+  reduce,
+}: {
+  kind: 'lock' | 'submit';
+  phase: 'sending' | 'done' | 'error';
+  deptName: string;
+  msg?: string;
+  onClose: () => void;
+  onRetry: () => void;
+  reduce: boolean;
+}) {
+  useEffect(() => {
+    if (phase === 'sending') return; // can't dismiss mid-action
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [phase, onClose]);
+
+  const dept = <span className="font-semibold text-zinc-700 dark:text-zinc-300">{deptName}</span>;
+  const copy = {
+    sendingTitle: kind === 'lock' ? 'Locking values…' : 'Sending to Payroll…',
+    sendingBody:
+      kind === 'lock' ? (
+        <>Freezing {dept}&rsquo;s values so they&rsquo;re ready to submit.</>
+      ) : (
+        <>Submitting {dept}&rsquo;s values to Accounting. Please keep this window open.</>
+      ),
+    doneTitle: kind === 'lock' ? 'Values locked' : 'Submitted to Payroll',
+    doneBody:
+      kind === 'lock' ? (
+        <>{dept} is locked. Submit to Payroll when you&rsquo;re ready.</>
+      ) : (
+        <>{dept} is ready. Accounting can see it in the Payroll Wizard.</>
+      ),
+    errorTitle: kind === 'lock' ? 'Couldn’t lock' : 'Couldn’t submit',
+  };
+  const DoneIcon = kind === 'lock' ? Lock : Check;
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+      role="alertdialog"
+      aria-modal="true"
+      aria-label={kind === 'lock' ? 'Lock values' : 'Submit to payroll'}
+      initial={reduce ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.24, ease: EASE }}
+    >
+      {/* Scrim blurs + dims the calculator so the modal is the only focus. */}
+      <button
+        type="button"
+        aria-label="Close"
+        disabled={phase === 'sending'}
+        onClick={phase === 'sending' ? undefined : onClose}
+        className="absolute inset-0 cursor-default bg-zinc-950/45 backdrop-blur-md disabled:cursor-default dark:bg-black/65"
+      />
+      <motion.div
+        className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-[#0e1117]"
+        initial={reduce ? false : { opacity: 0, scale: 0.94, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 4 }}
+        transition={{ duration: 0.32, ease: EASE }}
+      >
+        <div className="flex flex-col items-center gap-3 px-6 py-8 text-center">
+          {phase === 'sending' && (
+            <>
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/40">
+                <Loader2 className="h-7 w-7 animate-spin text-emerald-600 dark:text-emerald-400" aria-hidden />
+              </span>
+              <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">{copy.sendingTitle}</div>
+              <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{copy.sendingBody}</p>
+            </>
+          )}
+          {phase === 'done' && (
+            <>
+              <motion.span
+                className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950/50"
+                initial={reduce ? false : { scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: 'spring', stiffness: 320, damping: 18 }}
+              >
+                <DoneIcon className="h-7 w-7 text-emerald-600 dark:text-emerald-400" strokeWidth={kind === 'lock' ? 2.5 : 3} aria-hidden />
+              </motion.span>
+              <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">{copy.doneTitle}</div>
+              <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{copy.doneBody}</p>
+              <Button size="sm" className="mt-1 h-8 bg-emerald-600 text-xs text-white hover:bg-emerald-700" onClick={onClose}>
+                Done
+              </Button>
+            </>
+          )}
+          {phase === 'error' && (
+            <>
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-red-100 dark:bg-red-950/50">
+                <AlertTriangle className="h-7 w-7 text-red-600 dark:text-red-400" aria-hidden />
+              </span>
+              <div className="text-base font-bold text-zinc-900 dark:text-zinc-100">{copy.errorTitle}</div>
+              <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{msg ?? 'Something went wrong.'}</p>
+              <div className="mt-1 flex gap-2">
+                <Button size="sm" variant="outline" className="h-8 text-xs" onClick={onClose}>
+                  Close
+                </Button>
+                <Button size="sm" className="h-8 bg-emerald-600 text-xs text-white hover:bg-emerald-700" onClick={onRetry}>
+                  Try again
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/** The three ways the calculator can open, shared by the landing "Open as"
+ *  toggle and the in-panel switcher so a manager can move between them from
+ *  any view. */
+const VIEW_MODES: { mode: OpenMode; label: string; Icon: typeof PanelRight }[] = [
+  { mode: 'drawer', label: 'Side panel', Icon: PanelRight },
+  { mode: 'modal', label: 'Modal', Icon: AppWindow },
+  { mode: 'focus', label: 'Full screen', Icon: Maximize2 },
+];
+
+/** Segmented control to switch between Side panel / Modal / Full screen.
+ *  `compact` drops the labels (used in the tight in-panel header). */
+function ViewSwitch({ mode, onChange, compact }: { mode: OpenMode; onChange: (m: OpenMode) => void; compact?: boolean }) {
+  return (
+    <div className="flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60">
+      {VIEW_MODES.map(({ mode: m, label, Icon }) => {
+        const active = mode === m;
+        return (
+          <button
+            key={m}
+            type="button"
+            onClick={() => onChange(m)}
+            aria-pressed={active}
+            aria-label={label}
+            title={label}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+              active
+                ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" aria-hidden />
+            {!compact && <span className="hidden sm:inline">{label}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Small ghost icon button used in the calculator panel header. */
+function PanelIconButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Sky chip flagging a non-PHP (USD/COP) bonus. For a flat bonus it shows the
+ *  native amount (e.g. "$X" / "COP$X"); for a formula it shows the currency code
+ *  (the result varies with inputs). The peso figures in the grid are the
+ *  FX-converted amounts that get paid; this chip explains why a "$50" bonus
+ *  appears as a peso total. Renders nothing for PHP bonuses so the common case
+ *  stays uncluttered. */
+function BonusCurrencyTag({ bonus, fx }: { bonus: BonusDef; fx: FxRates }) {
+  const currency = bonus.currency ?? 'PHP';
+  if (currency === 'PHP') return null;
+  const sym = CURRENCY_SYMBOL[currency] ?? '';
+  const digits = currency === 'COP' ? 0 : 2;
   const label =
     bonus.kind === 'flat'
-      ? `${CURRENCY_SYMBOL.USD}${nativeFlatAmount(bonus).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      : 'USD';
+      ? `${sym}${nativeFlatAmount(bonus).toLocaleString(CURRENCY_LOCALE[currency] ?? 'en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`
+      : currency;
+  const phpEquiv = phpPerUnit(currency, fx);
   return (
     <span
       className="inline-flex w-fit items-center gap-0.5 rounded bg-sky-100 px-1 py-0.5 font-mono text-[8px] font-semibold uppercase tracking-wide text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
-      title={`USD bonus — paid in PHP, converted at ${PESO}${rate.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/$1`}
+      title={`${currency} bonus — paid in PHP, converted at ${PESO}${phpEquiv.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}/${sym}1`}
     >
       {label}
     </span>
   );
-}
-
-/** Peso figure that springs to its new value whenever it changes. */
-function AnimatedPeso({ value }: { value: number }) {
-  const spring = useSpring(value, { stiffness: 150, damping: 24, mass: 0.6 });
-  const [shown, setShown] = useState(value);
-  useEffect(() => {
-    spring.set(value);
-  }, [spring, value]);
-  useEffect(() => spring.on('change', (v) => setShown(v)), [spring]);
-  return <>{peso(shown)}</>;
 }
 
 /** Compact flat/formula indicator for a bonus column header. */
@@ -1946,44 +2767,6 @@ function PastWeekBanner({
         </button>
       )}
     </div>
-  );
-}
-
-function FilterPill({
-  active,
-  onClick,
-  label,
-  color,
-  count,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  color?: string;
-  count: number;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'relative flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-        active
-          ? 'border-transparent text-white dark:text-zinc-900'
-          : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300 dark:hover:bg-zinc-800/60',
-      )}
-    >
-      {active && (
-        <motion.span
-          layoutId="dept-filter-active"
-          className="absolute inset-0 -z-10 rounded-full bg-zinc-900 dark:bg-zinc-100"
-          transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-        />
-      )}
-      {color && <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} aria-hidden />}
-      <span className="max-w-[10rem] truncate">{label}</span>
-      <span className={cn('tabular-nums font-mono text-[10px]', active ? 'opacity-70' : 'text-zinc-400')}>{count}</span>
-    </button>
   );
 }
 

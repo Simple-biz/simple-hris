@@ -7,6 +7,8 @@ import {
   listHubstaffUploads,
   getUploadedSourceFiles,
 } from '@/lib/supabase/hubstaff-hours-db';
+import { listSystemBonuses } from '@/lib/supabase/system-bonuses-db';
+import type { SystemBonus } from '@/lib/payment-catalog/system-bonus';
 
 export type HubstaffUploadMeta = {
   id: string;
@@ -23,6 +25,8 @@ export type InitialAccountingData = {
   sourceFiles: string[];
   /** Rich uploads list. Same shape PayrollWizard consumes via /api/hubstaff-hours?source_files=1. */
   hubstaffUploads: HubstaffUploadMeta[];
+  /** Editable PAB + Tech bonus rows (Payment Catalog System Bonuses tab). */
+  systemBonuses: SystemBonus[];
 };
 
 const ACCOUNTING_ROLES = new Set([
@@ -39,10 +43,11 @@ export function hasAccountingRole(roles: string[]): boolean {
 }
 
 export async function prefetchAccountingData(): Promise<InitialAccountingData> {
-  const [employeesResult, ratesResult, uploadsResult] = await Promise.all([
+  const [employeesResult, ratesResult, uploadsResult, systemBonusesResult] = await Promise.all([
     getEmployees().catch(() => ({ employees: [] as EmployeeRow[], error: null })),
     getEmployeeHourlyRatesRows().catch(() => ({ rows: [] as EmployeeHourlyRateRow[], error: null })),
     listHubstaffUploads().catch(() => [] as Awaited<ReturnType<typeof listHubstaffUploads>>),
+    listSystemBonuses().catch(() => ({ bonuses: [] as SystemBonus[], error: null })),
   ]);
 
   // Accounting surfaces (Payroll Wizard + Overview) follow the Initialized batch:
@@ -72,5 +77,6 @@ export async function prefetchAccountingData(): Promise<InitialAccountingData> {
     hourlyRates: ratesResult.rows ?? [],
     sourceFiles,
     hubstaffUploads: orderedUploads,
+    systemBonuses: systemBonusesResult.bonuses ?? [],
   };
 }

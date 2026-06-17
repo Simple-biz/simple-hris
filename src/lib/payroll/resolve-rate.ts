@@ -34,6 +34,7 @@ import {
   type PayCurrency,
   defaultOtRate,
 } from '@/lib/payment-catalog/pay-structure';
+import { phpPerUnit, type FxRates } from '@/lib/fx/currency-fx';
 import { normEmail } from '@/lib/email/norm-email';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 
@@ -77,13 +78,15 @@ export function buildCatalogRateIndex(structures: PayStructure[]): CatalogRateIn
   return { byEmail, byDeptKey };
 }
 
-function toResolved(s: PayStructure, fxRate: number): ResolvedCatalogRate {
+function toResolved(s: PayStructure, fx: FxRates): ResolvedCatalogRate {
   const regNative = Number.isFinite(s.regularRate) ? s.regularRate : 0;
   // OT is optional in the catalog; fall back to the documented 1.5× default so a
   // catalog-covered employee never mixes a catalog regular with a sheet OT.
   const otNative =
     s.otRate != null && Number.isFinite(s.otRate) ? s.otRate : defaultOtRate(regNative);
-  const factor = s.currency === 'USD' ? fxRate : 1;
+  // PHP-equivalent of 1 unit of the structure's currency (USD via usdToPhp, COP
+  // via the USD-anchored cross-rate, PHP -> 1).
+  const factor = phpPerUnit(s.currency, fx);
   return {
     regPhp: regNative * factor,
     otPhp: otNative * factor,
@@ -100,19 +103,19 @@ function toResolved(s: PayStructure, fxRate: number): ResolvedCatalogRate {
  * caller then falls back to the sheet rate, then the department base.
  *
  * @param emails one or more alias emails (work / personal / alternates).
- * @param fxRate USD→PHP rate used to convert USD structures to PHP-equivalent.
+ * @param fx USD-anchored FX rates used to convert USD/COP structures to PHP-equivalent.
  */
 export function resolveEmployeeCatalogRate(
   index: CatalogRateIndex,
   emails: string | Iterable<string>,
-  fxRate: number,
+  fx: FxRates,
 ): ResolvedCatalogRate | null {
   const list = typeof emails === 'string' ? [emails] : Array.from(emails);
   for (const e of list) {
     const em = normEmail(e);
     if (!em) continue;
     const s = index.byEmail.get(em);
-    if (s) return toResolved(s, fxRate);
+    if (s) return toResolved(s, fx);
   }
   return null;
 }
@@ -127,12 +130,12 @@ export function resolveEmployeeCatalogRate(
 export function resolveDeptCatalogRate(
   index: CatalogRateIndex,
   deptRaw: string | null | undefined,
-  fxRate: number,
+  fx: FxRates,
 ): ResolvedCatalogRate | null {
   if (!deptRaw) return null;
   // Accept either a raw department name or an already-canonical key.
   const key = normalizeDeptToKey(deptRaw) ?? (index.byDeptKey.has(deptRaw) ? deptRaw : null);
   if (!key) return null;
   const s = index.byDeptKey.get(key);
-  return s ? toResolved(s, fxRate) : null;
+  return s ? toResolved(s, fx) : null;
 }

@@ -29,8 +29,6 @@ import {
   yearMonthKey,
 } from '@/lib/pab-period-settings';
 import {
-  PAB_BONUS_PHP,
-  TECH_BONUS_PHP,
   applyPabAdjustments,
   computeEmployeeBonus,
   getHslAdjustedEnd,
@@ -39,6 +37,9 @@ import {
   isTechBonusWeek as gateIsTechBonusWeek,
   pabMonthFromWeekStart,
 } from '@/lib/payroll/dispatch-bonuses';
+import { listSystemBonuses } from '@/lib/supabase/system-bonuses-db';
+import { resolveSystemBonuses, isDeptEligible } from '@/lib/payment-catalog/system-bonus';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
   buildPabCalendarWeeks,
   checkHslPabEligibility,
@@ -57,7 +58,8 @@ import {
   resolveEmployeeCatalogRate,
   resolveDeptCatalogRate,
 } from '@/lib/payroll/resolve-rate';
-import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
+import { buildFxRates, USD_TO_COP_SETTINGS_KEY } from '@/lib/fx/currency-fx';
+import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 
 const NON_DATE_COLS = new Set([
   'id',
@@ -368,9 +370,17 @@ export interface MemberMonthlyPay {
    *  (the live-cycle override) rather than the sheet/history. PHP-equivalent. */
   rateFromCatalog: boolean;
   /** Native currency of the catalog rate ('USD' when a USD structure applied). */
-  rateCurrency: 'PHP' | 'USD' | null;
+  rateCurrency: PayCurrency | null;
   startDate: string | null;
   department: string | null;
+  /** Configured PAB amount (PHP) from the Payment Catalog System Bonuses tab. */
+  pabBonusAmountPHP: number;
+  /** Configured Tech amount (PHP) from the Payment Catalog System Bonuses tab. */
+  techBonusAmountPHP: number;
+  /** False when this employee's department is excluded from the PAB allowlist. */
+  pabDeptEligible: boolean;
+  /** False when this employee's department is excluded from the Tech allowlist. */
+  techDeptEligible: boolean;
   weeks: MemberMonthlyPayWeek[];
   totals: {
     totalSec: number;
@@ -445,17 +455,23 @@ export async function computeMemberMonthlyPay(args: {
 
   // Step 1: Fetch master + rates + PAB overrides in parallel. We need the master
   // row first to know this employee's alias emails before querying Hubstaff.
-  const [masterMin, rates, pabOverridesValue, rateHistory, holidaySettings, fxValue, payStructuresResult] =
+  const [masterMin, rates, pabOverridesValue, rateHistory, holidaySettings, fxValues, payStructuresResult, systemBonusesResult] =
     await Promise.all([
       fetchMasterRowsForEmail(new Set([emailNorm])),
       getEmployeeHourlyRatesRows(),
       getAppSetting(PAB_PERIOD_OVERRIDES_KEY),
       fetchAllRateHistory(),
       getAppSettings([US_HOLIDAYS_ENABLED_KEY, US_HOLIDAYS_LIST_KEY]),
-      getAppSetting('usd_to_php_rate'),
+      getAppSettings(['usd_to_php_rate', USD_TO_COP_SETTINGS_KEY]),
       listPayStructures(),
+      listSystemBonuses(),
     ]);
-  const fxRate = effectiveUsdToPhpRateFromStored(fxValue);
+  // USD-anchored FX (usdToPhp + usdToCop) used to resolve catalog rates.
+  const fx = buildFxRates(fxValues);
+
+  // PAB + Tech amounts + per-department allowlist (Payment Catalog System
+  // Bonuses). Must mirror current-pay.ts so the estimate matches dispatch.
+  const sysBonuses = resolveSystemBonuses(systemBonusesResult.bonuses);
 
   const holidayEnabled =
     holidaySettings[US_HOLIDAYS_ENABLED_KEY] == null ? true : holidaySettings[US_HOLIDAYS_ENABLED_KEY] === 'true';
@@ -512,9 +528,9 @@ export async function computeMemberMonthlyPay(args: {
     (args.year === nowForMonth.getFullYear() && args.month >= nowForMonth.getMonth());
   // Priority: individual (employee) catalog → sheet rate → department base.
   const catIdx = buildCatalogRateIndex(payStructuresResult.structures);
-  const empCat = viewedIsCurrentOrFuture ? resolveEmployeeCatalogRate(catIdx, aliasNorms, fxRate) : null;
+  const empCat = viewedIsCurrentOrFuture ? resolveEmployeeCatalogRate(catIdx, aliasNorms, fx) : null;
   const deptCat = viewedIsCurrentOrFuture
-    ? resolveDeptCatalogRate(catIdx, masterRow?.department ?? rateRow?.department ?? null, fxRate)
+    ? resolveDeptCatalogRate(catIdx, masterRow?.department ?? rateRow?.department ?? null, fx)
     : null;
 
   const hasSheet = sheetRegularRate != null || sheetOtRate != null;
@@ -525,6 +541,11 @@ export async function computeMemberMonthlyPay(args: {
   const otRate = empCat?.otPhp ?? baseOt;
   const hasRates = regularRate != null || otRate != null;
   const mesaMember = rateRow?.mesa_member === true;
+
+  // System-bonus dept eligibility (master department wins, rate dept is fallback).
+  const empDeptKey = normalizeDeptToKey(masterRow?.department ?? rateRow?.department ?? null);
+  const pabDeptEligible = isDeptEligible(sysBonuses.pab, empDeptKey);
+  const techDeptEligible = isDeptEligible(sysBonuses.tech, empDeptKey);
   // Per-week MESA contribution. When the `mesa_start_date` column lands on
   // `employee_hourly_rates`, gate this by `week_start >= mesa_start_date` —
   // for now every MESA member with rates contributes ₱100 every active week.
@@ -745,6 +766,10 @@ export async function computeMemberMonthlyPay(args: {
       isPabEligible: isPabElig,
       isTechBonusWeek: isTechWeek && techSalaryReached,
       hasThirtyDays: has30,
+      pabAmountPHP: sysBonuses.pab.amountPHP,
+      techAmountPHP: sysBonuses.tech.amountPHP,
+      pabDeptEligible,
+      techDeptEligible,
     });
 
     // MESA deduction: ₱100 per week, applied only to weeks where the
@@ -832,6 +857,10 @@ export async function computeMemberMonthlyPay(args: {
       rateCurrency: empCat?.currency ?? (hasSheet ? null : deptCat?.currency ?? null),
       startDate: masterRow?.start_date ?? null,
       department: masterRow?.department ?? null,
+      pabBonusAmountPHP: sysBonuses.pab.amountPHP,
+      techBonusAmountPHP: sysBonuses.tech.amountPHP,
+      pabDeptEligible,
+      techDeptEligible,
       weeks,
       totals: {
         totalSec,
@@ -855,6 +884,3 @@ export async function computeMemberMonthlyPay(args: {
     error: null,
   };
 }
-
-export const PAB_BONUS_PHP_EXPORT = PAB_BONUS_PHP;
-export const TECH_BONUS_PHP_EXPORT = TECH_BONUS_PHP;

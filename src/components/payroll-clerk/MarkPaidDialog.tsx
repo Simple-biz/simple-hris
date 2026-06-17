@@ -10,7 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, CircleDashed, Gauge, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatPHP, formatUSD, type ProcessorId, type QueueRow } from './mock-queue';
+import { formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
 
 export type DispatchStatus = 'paid' | 'not_paid' | 'threshold' | 'problem';
 
@@ -420,7 +420,7 @@ export default function MarkPaidDialog({
               </AnimatePresence>
 
               <div className="mt-2.5 font-mono text-[2.65rem] font-black leading-none tracking-tight text-white drop-shadow-sm">
-                {formatUSD(row?.amountUSD ?? null)}
+                {row?.payCurrency === 'COP' ? formatCOP(row?.amountCOP ?? null) : formatUSD(row?.amountUSD ?? null)}
               </div>
               <div className="mt-1.5 font-mono text-[13px] font-semibold tracking-wide text-white/65">
                 {formatPHP(row?.amountPHP ?? null)}

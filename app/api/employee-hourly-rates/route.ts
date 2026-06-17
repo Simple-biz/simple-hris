@@ -10,8 +10,8 @@ import {
   resolveEmployeeCatalogRate,
   resolveDeptCatalogRate,
 } from "@/lib/payroll/resolve-rate";
-import { getAppSetting } from "@/lib/supabase/app-settings";
-import { effectiveUsdToPhpRateFromStored } from "@/lib/fx/usd-php";
+import { getAppSettings } from "@/lib/supabase/app-settings";
+import { buildFxRates } from "@/lib/fx/currency-fx";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,10 +24,10 @@ export async function GET(req: NextRequest) {
       // the requested ?email= is resolved against the session, never trusted raw.
       const authz = await authorizeEmailAccess(email);
       if (!authz.ok) return deniedResponse(authz);
-      const [{ row, error }, payStructures, fxValue] = await Promise.all([
+      const [{ row, error }, payStructures, fxValues] = await Promise.all([
         getEmployeeHourlyRateRowByEmail(authz.effectiveEmail),
         listPayStructures(),
-        getAppSetting("usd_to_php_rate"),
+        getAppSettings(["usd_to_php_rate", "usd_to_cop_rate"]),
       ]);
       // "Your current rate" with priority: individual catalog → sheet (the row)
       // → department base. The individual catalog rate overrides the row; the
@@ -36,14 +36,14 @@ export async function GET(req: NextRequest) {
       // history elsewhere ("live cycle only").
       let outRow = row;
       if (row) {
-        const fxRate = effectiveUsdToPhpRateFromStored(fxValue);
+        const fx = buildFxRates(fxValues);
         const catIdx = buildCatalogRateIndex(payStructures.structures);
         const emails = [authz.effectiveEmail, row.work_email ?? "", row.personal_email ?? ""];
-        const empCat = resolveEmployeeCatalogRate(catIdx, emails, fxRate);
+        const empCat = resolveEmployeeCatalogRate(catIdx, emails, fx);
         const hasSheet =
           (row.regular_rate != null && row.regular_rate !== "") ||
           (row.ot_rate != null && row.ot_rate !== "");
-        const deptCat = hasSheet ? null : resolveDeptCatalogRate(catIdx, row.department, fxRate);
+        const deptCat = hasSheet ? null : resolveDeptCatalogRate(catIdx, row.department, fx);
         const applied = empCat ?? deptCat;
         if (applied) {
           outRow = {

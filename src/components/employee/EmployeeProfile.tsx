@@ -32,7 +32,7 @@ import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import { PROCESSOR_OPTIONS, type ProcessorId } from '@/lib/employee-payment-processors';
-import { SKILL_SET_TITLES, hasAnySkillSetContent } from '@/lib/skill-set-titles';
+import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-titles';
 import {
   PreferredPaymentMethodRadios,
   PayoutDetailsFields,
@@ -603,6 +603,9 @@ export default function EmployeeProfile({
   const [skillSetLoaded, setSkillSetLoaded] = useState(false);
   const [skillSetSaving, setSkillSetSaving] = useState(false);
   const [skillSetSavedAt, setSkillSetSavedAt] = useState<string | null>(null);
+  // True once the employee explicitly picks "Custom title…" so the free-text
+  // input stays open even if the typed value happens to match a preset.
+  const [roleTitleCustom, setRoleTitleCustom] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -786,6 +789,12 @@ export default function EmployeeProfile({
     master?.name?.trim() || employeeEmail.split('@')[0]?.replace(/\./g, ' ') || '—';
 
   const employmentDepartment = master?.department?.trim() || null;
+  // Role / Title suggestions tailored to the employee's department (falls back
+  // to the general list when the department is unknown).
+  const roleTitleOptions = useMemo(
+    () => getTitlesForDepartment(employmentDepartment),
+    [employmentDepartment],
+  );
   const reg = parseRate(rate?.regular_rate ?? null);
   const ot = parseRate(rate?.ot_rate ?? null);
 
@@ -935,6 +944,12 @@ export default function EmployeeProfile({
   const needsProfilePhoto = !displayProfilePhotoUrl && !googlePhotoUrl;
   const needsPayoutSetup = !isPayoutComplete((bankInfo as unknown as Record<string, unknown>) ?? null);
   const needsSkillSetSetup = skillSetLoaded && !hasAnySkillSetContent(skillSet);
+
+  // Show the free-text title input when the employee opted into "Custom title…"
+  // or when a previously-saved title isn't one of this department's suggestions.
+  const showCustomRoleInput =
+    roleTitleCustom ||
+    (!!skillSet.role_title.trim() && !roleTitleOptions.includes(skillSet.role_title));
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-[#0a0a0a]">
@@ -1415,28 +1430,48 @@ export default function EmployeeProfile({
                             description="Add your role, current focus, skills, or strengths so teammates can understand how to collaborate with you."
                           />
                         )}
-                        <label className="block">
+                        <div className="block">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className="text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
                               Role / Title
                             </span>
                             <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                              Shown on your My Team card
+                              {employmentDepartment
+                                ? `${employmentDepartment} roles · shown on your My Team card`
+                                : 'Shown on your My Team card'}
                             </span>
                           </div>
                           <SmoothSelect
                             aria-label="Role / Title"
-                            value={skillSet.role_title}
-                            onChange={(v) =>
-                              setSkillSet((s) => ({ ...s, role_title: v }))
-                            }
+                            value={showCustomRoleInput ? '__custom__' : skillSet.role_title}
+                            onChange={(v) => {
+                              if (v === '__custom__') {
+                                setRoleTitleCustom(true);
+                                return;
+                              }
+                              setRoleTitleCustom(false);
+                              setSkillSet((s) => ({ ...s, role_title: v }));
+                            }}
                             triggerClassName="mt-1.5 w-full"
                             options={[
                               { value: '', label: 'Select a title...' },
-                              ...SKILL_SET_TITLES.map((title) => ({ value: title, label: title })),
+                              ...roleTitleOptions.map((title) => ({ value: title, label: title })),
+                              { value: '__custom__', label: '✏️  Custom title…' },
                             ]}
                           />
-                        </label>
+                          {showCustomRoleInput && (
+                            <input
+                              type="text"
+                              value={skillSet.role_title}
+                              onChange={(e) =>
+                                setSkillSet((s) => ({ ...s, role_title: e.target.value }))
+                              }
+                              placeholder="Type your own title…"
+                              maxLength={80}
+                              className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-orange-500/40 dark:focus:ring-orange-500/20"
+                            />
+                          )}
+                        </div>
                         <ProjectsField
                           projects={skillSet.projects}
                           current={skillSet.current_projects}

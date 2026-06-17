@@ -20,7 +20,7 @@ import {
 } from "@/lib/hubstaff/calendar-column-dedupe";
 import { processorIdFromBankPreferred } from "@/components/payroll-clerk/mock-queue";
 import { normEmail } from "@/lib/email/norm-email";
-import { effectiveUsdToPhpRateFromStored } from "@/lib/fx/usd-php";
+import { buildFxRates } from "@/lib/fx/currency-fx";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
 import {
   buildCatalogRateIndex,
@@ -464,6 +464,7 @@ async function loadUrgentDispatchRows(): Promise<PaymentDispatchRow[]> {
       recipient_swift_code: o.swift_code ?? null,
       amount_usd: fx > 0 ? Math.round((amountPhp / fx) * 100) / 100 : null,
       amount_php: amountPhp,
+      amount_cop: null,
       transaction_id: o.transaction_id ?? "",
       bank_used: o.bank_used ?? "",
       sent_date: basis ?? "",
@@ -832,13 +833,15 @@ export async function seedMissingDisbursementRecords(): Promise<{
   );
   if (unseeded.length === 0) return { seeded: 0, error: null };
 
-  // FX rate from app_settings — same effective resolution the wizard uses.
-  const { data: fxData } = await supabase
+  // FX rates from app_settings — same effective resolution the wizard uses.
+  const { data: fxRows } = await supabase
     .from("app_settings")
-    .select("value")
-    .eq("key", "usd_to_php_rate")
-    .maybeSingle();
-  const fxRate = effectiveUsdToPhpRateFromStored((fxData as { value?: string } | null)?.value);
+    .select("key,value")
+    .in("key", ["usd_to_php_rate", "usd_to_cop_rate"]);
+  const fxValues: Record<string, string | null> = {};
+  for (const r of (fxRows ?? []) as { key: string; value: string | null }[]) fxValues[r.key] = r.value;
+  const fx = buildFxRates(fxValues);
+  const fxRate = fx.usdToPhp;
 
   // Pull the rest of the wizard's authoritative pay context in parallel:
   //  - Payment Catalog pay structures (individual + department) for the rate overlay,
@@ -978,8 +981,8 @@ export async function seedMissingDisbursementRecords(): Promise<{
       // individual catalog rate OVERRIDES the per-day history; the department
       // rate is a pure fallback for employees with no sheet rate at all.
       const sheetRate = rateByEmail.get(email);
-      const empCat = resolveEmployeeCatalogRate(catalogIndex, email, fxRate);
-      const deptCat = resolveDeptCatalogRate(catalogIndex, deptByEmail.get(email) ?? null, fxRate);
+      const empCat = resolveEmployeeCatalogRate(catalogIndex, email, fx);
+      const deptCat = resolveDeptCatalogRate(catalogIndex, deptByEmail.get(email) ?? null, fx);
       const catalogOverride = empCat ? { reg: empCat.regPhp, ot: empCat.otPhp } : null;
       const hasSheet = sheetRate != null && (sheetRate.reg != null || sheetRate.ot != null);
       const baseRate = hasSheet

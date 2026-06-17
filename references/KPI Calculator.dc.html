@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;background:#07090e;}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-thumb{background:#222937;border-radius:8px;border:2px solid #07090e;}
+::-webkit-scrollbar-track{background:transparent;}
+.kpi-input::placeholder{color:#3a4150;}
+.kpi-input:focus{outline:none;border-color:#7dd3fc !important;box-shadow:0 0 0 3px rgba(125,211,252,.16);}
+.kpi-search::placeholder{color:#4a5161;}
+.kpi-search:focus{outline:none;border-color:#7dd3fc !important;}
+@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+@keyframes fadeOut{from{opacity:1;}to{opacity:0;}}
+@keyframes slideIn{from{transform:translateX(100%);}to{transform:translateX(0);}}
+@keyframes slideOut{from{transform:translateX(0);}to{transform:translateX(100%);}}
+@keyframes focusIn{from{opacity:0;transform:scale(.985);}to{opacity:1;transform:scale(1);}}
+@keyframes focusOut{from{opacity:1;transform:scale(1);}to{opacity:0;transform:scale(.992);}}
+@keyframes loadbar{from{width:0%;}to{width:100%;}}
+</style>
+</helmet>
+<div style="min-height:100vh;background:radial-gradient(140% 90% at 50% -10%,#0c1018 0%,#07090e 60%);color:#e8eaf0;font-family:-apple-system,'Helvetica Neue',Helvetica,Arial,sans-serif;padding-bottom:48px;">
+  <div style="max-width:1480px;margin:0 auto;padding:22px 28px 0;">
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:24px;flex-wrap:wrap;">
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.18em;color:#5a6173;">KPI CALCULATOR · DEPARTMENTS</div>
+        <div style="font-size:27px;font-weight:700;margin:5px 0 16px;letter-spacing:-.01em;">My Departments</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.1);background:#0e1118;display:flex;align-items:center;justify-content:center;color:#8b93a7;font-size:15px;">‹</div>
+          <div style="display:flex;align-items:center;gap:11px;border:1px solid rgba(255,255,255,.1);background:#0e1118;border-radius:10px;padding:9px 14px;">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:13px;color:#cfd6e4;">Jun 7 – Jun 13</span>
+            <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:7px;height:7px;border-radius:50%;background:#4ade80;box-shadow:0 0 8px #4ade80;"></span><span style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.12em;color:#5fe39a;">LIVE</span></span>
+            <span style="color:#5a6173;font-size:11px;">▾</span>
+          </div>
+          <div style="width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.1);background:#0e1118;display:flex;align-items:center;justify-content:center;color:#8b93a7;font-size:15px;">›</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:14px;">
+        <div style="text-align:right;border:1px solid rgba(74,222,128,.18);border-radius:13px;padding:11px 17px;background:linear-gradient(180deg,rgba(74,222,128,.07),rgba(74,222,128,.01));">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.14em;color:#6d8a78;">PROJECTED · WEEK</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#e8f7ee;margin-top:4px;">{{ grandTotalFmt }}</div>
+        </div>
+        <div style="text-align:right;border:1px solid rgba(255,255,255,.08);border-radius:13px;padding:11px 17px;background:#0d1017;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.14em;color:#5a6173;">HEADCOUNT</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:#cfd6e4;margin-top:4px;">{{ headcount }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="height:18px;"></div>
+
+    <sc-if value="{{ pending }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid rgba(245,100,80,.22);background:linear-gradient(90deg,rgba(245,100,80,.11),rgba(245,100,80,.02));border-radius:12px;padding:11px 18px;margin:2px 0 20px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="color:#f08a6e;font-size:14px;">⚠</span>
+          <span style="font-size:13px;color:#e8c4ba;"><b style="color:#fff;">{{ notSubmittedCount }} of {{ allCount }} departments</b> not yet submitted. <span style="color:#9aa0ad;">Week Jun 7 – Jun 13 · feeds this week's payroll · payroll window closing</span></span>
+        </div>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#f0a98f;white-space:nowrap;">{{ readyLabel }}</span>
+      </div>
+    </sc-if>
+    <sc-if value="{{ allSubmitted }}">
+      <div style="display:flex;align-items:center;gap:12px;border:1px solid rgba(74,222,128,.25);background:linear-gradient(90deg,rgba(74,222,128,.1),rgba(74,222,128,.02));border-radius:12px;padding:11px 18px;margin:2px 0 20px;">
+        <span style="color:#5fe39a;font-size:14px;">✓</span>
+        <span style="font-size:13px;color:#c4e8d3;"><b style="color:#fff;">All {{ allCount }} departments submitted</b> for Week Jun 7 – Jun 13. Payroll is ready to process.</span>
+      </div>
+    </sc-if>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 14px;flex-wrap:wrap;">
+      <div style="display:flex;align-items:center;gap:14px;flex:1;min-width:240px;">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;color:#5a6173;white-space:nowrap;">DEPARTMENT CALCULATORS</span>
+        <div style="position:relative;flex:1;max-width:300px;">
+          <span style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:#5a6173;font-size:13px;">⌕</span>
+          <input class="kpi-search" type="text" value="{{ deptSearch }}" onInput="{{ onDeptSearch }}" placeholder="Search departments…" style="width:100%;background:#0d1017;border:1px solid rgba(255,255,255,.09);border-radius:9px;padding:8px 12px 8px 30px;color:#e8eaf0;font-size:13px;font-family:inherit;" />
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.1em;color:#5a6173;">OPEN AS</span>
+        <div style="display:flex;background:#0d1017;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:3px;gap:3px;">
+          <sc-if value="{{ isDrawer }}" hint-placeholder-val="{{ true }}"><div style="padding:6px 13px;border-radius:7px;background:#1c2434;color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;"><span style="width:15px;height:13px;border:1.5px solid #7dd3fc;border-radius:3px;border-right-width:5px;"></span>Side panel</div></sc-if>
+          <sc-if value="{{ isDrawerOff }}"><button onClick="{{ setDrawer }}" style="padding:6px 13px;border:none;background:none;color:#8b93a7;font-size:12px;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:8px;" style-hover="color:#c2c9d6;"><span style="width:15px;height:13px;border:1.5px solid #555c6b;border-radius:3px;border-right-width:5px;"></span>Side panel</button></sc-if>
+          <sc-if value="{{ isFocus }}"><div style="padding:6px 13px;border-radius:7px;background:#1c2434;color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;"><span style="width:15px;height:11px;border:1.5px solid #7dd3fc;border-radius:3px;"></span>Full screen</div></sc-if>
+          <sc-if value="{{ isFocusOff }}"><button onClick="{{ setFocus }}" style="padding:6px 13px;border:none;background:none;color:#8b93a7;font-size:12px;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:8px;" style-hover="color:#c2c9d6;"><span style="width:15px;height:11px;border:1.5px solid #555c6b;border-radius:3px;"></span>Full screen</button></sc-if>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;">
+      <sc-for list="{{ cards }}" as="c" hint-placeholder-count="6">
+        <button onClick="{{ c.onOpen }}" style="position:relative;text-align:left;width:100%;border:1px solid rgba(255,255,255,.07);background:#0d1017;border-radius:16px;padding:16px 18px;display:flex;align-items:center;gap:16px;cursor:pointer;font-family:inherit;color:inherit;overflow:hidden;transition:border-color .15s,background .15s,transform .1s;" style-hover="border-color:rgba(255,255,255,.17);background:#0f131c;" style-active="transform:scale(.995);">
+          <div style="position:absolute;left:0;top:0;right:0;height:3px;background:{{ c.accent }};opacity:.85;"></div>
+          <div style="position:relative;flex:0 0 auto;width:64px;height:64px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;background:{{ c.accentSoft }};color:{{ c.accent }};border:1px solid {{ c.accentBorder }};">
+            {{ c.monogram }}
+            <div style="position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:3px;background:#11151d;border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:2px 7px;color:#aab2c2;">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"></circle><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8z"></path></svg>
+              <span style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;">{{ c.count }}</span>
+            </div>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <span style="font-size:16px;font-weight:700;color:#f0f2f7;">{{ c.name }}</span>
+              <sc-if value="{{ c.statusReady }}" hint-placeholder-val="{{ true }}">
+                <span style="display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(74,222,128,.35);background:rgba(74,222,128,.1);color:#5fe39a;border-radius:20px;padding:2px 9px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.07em;">✓ READY</span>
+              </sc-if>
+              <sc-if value="{{ c.actionNeeded }}">
+                <span style="display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(245,165,36,.4);background:rgba(245,165,36,.1);color:#f6b65a;border-radius:20px;padding:2px 9px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.05em;">⚠ ACTION NEEDED</span>
+              </sc-if>
+            </div>
+            <div style="margin-top:5px;color:#7b8398;font-size:13px;line-height:1.45;max-width:48ch;">{{ c.desc }}</div>
+            <sc-if value="{{ c.hasRemaining }}">
+              <div style="margin-top:7px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#f6b65a;">{{ c.remainingLabel }}</div>
+            </sc-if>
+          </div>
+          <div style="flex:0 0 auto;display:flex;align-items:center;gap:16px;">
+            <div style="text-align:right;">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.14em;color:#5a6173;">PROJECTED</div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:700;color:{{ c.amountColor }};margin-top:3px;">{{ c.projectedFmt }}</div>
+            </div>
+            <div style="width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;color:#8b93a7;">▾</div>
+          </div>
+          <sc-if value="{{ c.isOpen }}">
+            <div style="position:absolute;inset:0;border:2px solid {{ c.accent }};border-radius:16px;pointer-events:none;"></div>
+          </sc-if>
+        </button>
+      </sc-for>
+    </div>
+
+    <sc-if value="{{ noCards }}"><div style="padding:48px;text-align:center;color:#5a6173;font-size:13px;border:1px dashed rgba(255,255,255,.1);border-radius:14px;">No departments match your search.</div></sc-if>
+
+    <div style="text-align:center;margin-top:34px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#3f4757;">Developed by AI/API Team · Simple.biz © 2026</div>
+  </div>
+
+  {{ overlay }}
+  {{ switchLoader }}
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1480,&quot;height&quot;:940},&quot;defaultView&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;drawer&quot;,&quot;focus&quot;],&quot;default&quot;:&quot;drawer&quot;,&quot;tsType&quot;:&quot;'drawer'|'focus'&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;comfortable&quot;,&quot;compact&quot;],&quot;default&quot;:&quot;comfortable&quot;,&quot;tsType&quot;:&quot;'comfortable'|'compact'&quot;},&quot;highlightIncomplete&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  static DEPTS = [
+    {id:'accounting',name:'Accounting',count:18,color:'#4ade80',role:'Accountant',submitted:true,fill:'full',desc:'Keeps the books accurate and invoices flowing on time.',metrics:[{key:'invoices',label:'Invoices',w:9,min:40,max:160},{key:'accuracy',label:'Accuracy',suffix:'%',w:0,min:95,max:100}]},
+    {id:'aiapi',name:'AI/API Team',count:18,color:'#22d3ee',role:'Engineer',submitted:true,fill:'full',desc:'Builds and maintains the automations and integrations teams rely on.',metrics:[{key:'tasks',label:'Tasks',w:58,min:10,max:50},{key:'uptime',label:'Uptime',suffix:'%',w:0,min:97,max:100}]},
+    {id:'callback',name:'Callback',count:13,color:'#2dd4bf',role:'Caller',submitted:true,fill:'full',desc:'Re-engages prospects through callbacks and converts them into booked appointments.',metrics:[{key:'calls',label:'Calls',w:1.5,min:40,max:160},{key:'booked',label:'Booked',w:55,min:2,max:14},{key:'show',label:'Show',suffix:'%',w:0,min:55,max:95}]},
+    {id:'clientva',name:'Client VA',count:60,color:'#38bdf8',role:'Virtual Assistant',submitted:true,fill:'full',desc:'Dedicated virtual assistants embedded directly with client accounts.',metrics:[{key:'hours',label:'Hours',w:7,min:20,max:42},{key:'score',label:'Client',suffix:'/10',w:8,min:6,max:10}]},
+    {id:'discovery',name:'Discovery',count:2,color:'#34d399',role:'Closer',submitted:true,fill:'full',desc:'Runs discovery calls and surfaces fresh sales opportunities each week.',metrics:[{key:'calls',label:'Disc Calls',w:35,min:30,max:120},{key:'opps',label:'Opps',w:420,min:2,max:12}]},
+    {id:'edit',name:'Edit',count:52,color:'#60a5fa',role:'Editor',submitted:true,fill:'full',desc:'Polishes and finalizes client tickets, turning rough drafts into delivered work.',metrics:[{key:'tickets',label:'Tickets',w:19,min:10,max:60},{key:'qa',label:'QA Pass',suffix:'%',w:0,min:80,max:100}]},
+    {id:'hr',name:'HR',count:6,color:'#f472b6',role:'HR Specialist',submitted:true,fill:'full',desc:'Recruits, onboards, and supports the workforce, keeping new talent flowing in.',metrics:[{key:'hires',label:'Hires',w:1400,min:1,max:6},{key:'cases',label:'Cases Closed',w:45,min:10,max:60}]},
+    {id:'leadgen',name:'Lead Gen',count:237,color:'#f59e0b',role:'Appointment Setter',submitted:false,fill:'empty',desc:'Books qualified appointments and keeps the sales pipeline full.',metrics:[{key:'appts',label:'Appts Set',w:35,min:5,max:40},{key:'qualified',label:'Qualified',w:65,min:2,max:20},{key:'show',label:'Show',suffix:'%',w:0,min:40,max:90}]},
+    {id:'pmteam',name:'PM Team',count:43,color:'#818cf8',role:'Project Manager',submitted:false,fill:'full',desc:'Coordinates projects across teams and keeps delivery on schedule.',metrics:[{key:'projects',label:'Projects',w:1600,min:4,max:20},{key:'ontime',label:'On-Time',suffix:'%',w:60,min:70,max:100}]},
+    {id:'qc',name:'QC',count:11,color:'#fb923c',role:'QC Analyst',submitted:true,fill:'full',desc:'Quality-checks finished units before they ship, protecting output standards.',metrics:[{key:'units',label:'Units QC',w:9,min:120,max:420},{key:'defects',label:'Defects',w:28,min:2,max:30}]},
+    {id:'sales',name:'Sales Assistant',count:9,color:'#a78bfa',role:'Sales Assistant',submitted:true,fill:'full',desc:'Backs up the sales team and closes assisted deals week over week.',metrics:[{key:'deals',label:'Assisted Deals',w:700,min:1,max:8},{key:'revenue',label:'Rev (k₱)',w:30,min:20,max:120}]},
+    {id:'sitebuilding',name:'Site Building',count:15,color:'#94a3b8',role:'Web Builder',submitted:true,fill:'full',desc:'Builds and launches client websites end to end.',metrics:[{key:'sites',label:'Sites Live',w:620,min:1,max:5},{key:'qa',label:'QA',suffix:'%',w:0,min:80,max:100}]},
+    {id:'social',name:'Social Media',count:33,color:'#e879f9',role:'Social Manager',submitted:true,fill:'full',desc:'Runs the social channels and grows audience, reach, and engagement.',metrics:[{key:'posts',label:'Posts',w:0,min:8,max:40},{key:'eng',label:'Engage',suffix:'%',w:0,min:1,max:12}]},
+    {id:'usmgr',name:'US - Manager Bonus',count:12,color:'#fb7185',role:'Team Lead',submitted:false,fill:'empty',desc:'US-based team leads recognized for leadership and overall team performance.',metrics:[{key:'score',label:'Team Score',suffix:'/100',w:140,min:60,max:98},{key:'lead',label:'Leadership',suffix:'/10',w:900,min:5,max:10}]}
+  ];
+  static FIRST = ['Maria','Jose','Anna','Liam','Sofia','Mateo','Aria','Diego','Lucia','Ivan','Nina','Paolo','Rhea','Carlo','Mika','Bea','Jun','Tala','Reyna','Kim','Andre','Vince','Joy','Mila','Theo','Cara','Niko','Elsa','Ramon','Trish','Gabe','Lara','Dino','Faye','Ken','Joana','Marco','Selene','Ravi','Pia'];
+  static LAST = ['Santos','Cruz','Reyes','Garcia','Lim','Tan','Dela Rosa','Mendoza','Aquino','Velasco','Navarro','Castro','Ramos','Flores','Yu','Sy','Ong','Villa','Bautista','Pascual','Domingo','Galang','Ibarra','Padilla','Soriano','Marquez','Espino','Rivera','Aguilar','Bello','Cuevas','Diaz','Estrada','Fajardo','Gomez','Herrera','Jacinto','Lozano','Mercado','Nieto'];
+
+  depts = Component.DEPTS;
+  vals = this.buildVals();
+  state = { mode: (this.props && this.props.defaultView) || 'drawer', openId: null, search: '', deptSearch: '', closing: false, switching: false };
+
+  rand(s){ const x = Math.sin(s) * 43758.5453; return x - Math.floor(x); }
+  buildVals(){
+    const v = {};
+    Component.DEPTS.forEach((d,di)=>{
+      if(d.fill === 'empty') return;
+      for(let r=0;r<d.count;r++){
+        d.metrics.forEach((m,ci)=>{
+          const t = this.rand(di*1000 + r*17 + ci*3 + 1);
+          v[d.id+':'+r+':'+m.key] = String(Math.round(m.min + t*(m.max-m.min)));
+        });
+      }
+    });
+    return v;
+  }
+  rowName(id,r){ return Component.FIRST[(this.deptIndex(id)*7 + r*13) % Component.FIRST.length] + ' ' + Component.LAST[(this.deptIndex(id)*5 + r*11) % Component.LAST.length]; }
+  deptIndex(id){ return this.depts.findIndex(d=>d.id===id); }
+  payout(d,r){
+    let p=0, complete=true;
+    d.metrics.forEach(m=>{
+      const val = this.vals[d.id+':'+r+':'+m.key];
+      if(val===undefined || val==='') complete=false;
+      else p += (parseFloat(val)||0) * m.w;
+    });
+    return { p: Math.round(p), complete };
+  }
+  deptStats(d){
+    let sub=0, rem=0;
+    for(let r=0;r<d.count;r++){ const {p,complete}=this.payout(d,r); sub+=p; if(!complete) rem++; }
+    return { sub, rem, ready: d.submitted && rem===0, entered: d.count-rem };
+  }
+  monogram(name){
+    const w = name.replace(/[^A-Za-z ]/g,' ').split(' ').filter(Boolean);
+    if(w[0] && w[0].length<=3 && w[0]===w[0].toUpperCase()) return w[0];
+    if(w.length>=2) return (w[0][0]+w[1][0]).toUpperCase();
+    return (w[0]||'?').slice(0,2).toUpperCase();
+  }
+  fmt(n){ return '₱'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  hexA(hex,a){ const n=parseInt(hex.slice(1),16); return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'; }
+
+  open(id){ clearTimeout(this._ct); this.setState({openId:id, search:'', closing:false}); }
+  close(){ if(this.state.closing) return; this.setState({closing:true}); this._ct=setTimeout(()=>this.setState({openId:null, closing:false}), 320); }
+  setMode(m){
+    if(m==='focus' && this.state.mode!=='focus'){
+      clearTimeout(this._st);
+      this.setState({mode:'focus', switching:true});
+      this._st=setTimeout(()=>this.setState({switching:false}), 2000);
+    } else {
+      this.setState({mode:m});
+    }
+  }
+  renderSwitchLoader(){
+    const h=React.createElement;
+    return h('div',{style:{position:'fixed',inset:0,zIndex:90,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(7,9,14,.86)',backdropFilter:'blur(6px)',WebkitBackdropFilter:'blur(6px)',animation:'fadeIn .2s ease'}},
+      h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:'18px'}},
+        h('div',{style:{width:'46px',height:'38px',border:'2px solid #7dd3fc',borderRadius:'6px',boxShadow:'0 0 24px rgba(125,211,252,.4)'}}),
+        h('div',{style:{fontFamily:'JetBrains Mono,monospace',fontSize:'12px',letterSpacing:'.16em',color:'#cfd6e4',textTransform:'uppercase'}}, 'Switching to full screen'),
+        h('div',{style:{width:'280px',height:'4px',borderRadius:'4px',background:'rgba(255,255,255,.08)',overflow:'hidden'}},
+          h('div',{style:{height:'100%',borderRadius:'4px',background:'linear-gradient(90deg,#38bdf8,#7dd3fc)',boxShadow:'0 0 12px rgba(125,211,252,.6)',animation:'loadbar 2s linear forwards'}})
+        )
+      )
+    );
+  }
+  go(delta){ const i=this.deptIndex(this.state.openId); const n=(i+delta+this.depts.length)%this.depts.length; this.setState({openId:this.depts[n].id, search:''}); }
+  upd(k,v){ this.vals[k]=v; this.forceUpdate(); }
+  submit(id){ const d=this.depts.find(x=>x.id===id); d.submitted=true; this.forceUpdate(); }
+  fillDown(d,m){ const v=this.vals[d.id+':0:'+m.key]||''; for(let r=0;r<d.count;r++) this.vals[d.id+':'+r+':'+m.key]=v; this.forceUpdate(); }
+  cellKey(e,ci,r){ if(e.key==='Enter'){ e.preventDefault(); const n=document.querySelector('[data-cell="'+ci+'-'+(r+1)+'"]'); if(n) n.focus(); } }
+
+  renderRow(d,r,acc,rowH,tmpl,highlight){
+    const h=React.createElement;
+    const nm=this.rowName(d.id,r);
+    const {p,complete}=this.payout(d,r);
+    const cells=[
+      h('div',{key:'i',style:{fontFamily:'JetBrains Mono,monospace',fontSize:'11px',color:'#5a6173',textAlign:'right'}}, r+1),
+      h('div',{key:'n',style:{minWidth:0}},
+        h('div',{style:{fontSize:'13px',color:'#e2e6ee',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}, nm),
+        h('div',{style:{fontSize:'10px',color:'#5a6173',fontFamily:'JetBrains Mono,monospace'}}, d.role)
+      )
+    ];
+    d.metrics.forEach((m,ci)=>{
+      const key=d.id+':'+r+':'+m.key;
+      cells.push(h('div',{key:m.key,style:{display:'flex',alignItems:'center',gap:'4px'}},
+        h('input',{className:'kpi-input',type:'text',inputMode:'decimal',value:this.vals[key]||'',placeholder:'—','data-cell':ci+'-'+r,
+          onChange:e=>this.upd(key,e.target.value), onFocus:e=>e.target.select(), onKeyDown:e=>this.cellKey(e,ci,r),
+          style:{width:'100%',minWidth:0,background:'#0e131c',border:'1px solid rgba(255,255,255,.09)',borderRadius:'7px',padding:'6px 8px',color:'#e8eaf0',fontFamily:'JetBrains Mono,monospace',fontSize:'12.5px',textAlign:'right'}}),
+        m.suffix ? h('span',{style:{fontFamily:'JetBrains Mono,monospace',fontSize:'10px',color:'#5a6173',flex:'0 0 auto'}}, m.suffix) : null
+      ));
+    });
+    cells.push(h('div',{key:'p',style:{textAlign:'right',fontFamily:'JetBrains Mono,monospace',fontSize:'13px',fontWeight:600,color:p>0?'#cfe9d8':'#4a5161'}}, '₱'+p.toLocaleString('en-US')));
+    return h('div',{key:'row-'+r,style:{display:'grid',gridTemplateColumns:tmpl,alignItems:'center',gap:'8px',padding:'0 16px',height:rowH+'px',borderBottom:'1px solid rgba(255,255,255,.04)',borderLeft:'2px solid '+((!complete&&highlight)?acc.warn:'transparent'),background:(!complete&&highlight)?'rgba(245,165,36,.045)':'transparent'}}, ...cells);
+  }
+
+  renderCalc(d){
+    const h=React.createElement;
+    const acc={c:d.color, soft:this.hexA(d.color,.14), border:this.hexA(d.color,.4), warn:'#f5a524'};
+    const density=(this.props&&this.props.density)||'comfortable';
+    const highlight=(this.props&&this.props.highlightIncomplete)!==false;
+    const rowH = density==='compact'?34:42;
+    const tmpl = '34px minmax(150px,1.5fr) '+d.metrics.map(()=>'minmax(86px,1fr)').join(' ')+' 116px';
+    const st=this.deptStats(d);
+    const q=this.state.search.trim().toLowerCase();
+    const rows=[];
+    for(let r=0;r<d.count;r++){
+      if(q && this.rowName(d.id,r).toLowerCase().indexOf(q)<0) continue;
+      rows.push(this.renderRow(d,r,acc,rowH,tmpl,highlight));
+    }
+
+    // header bar
+    const header = h('div',{key:'hd',style:{flex:'0 0 auto',padding:'18px 22px 14px',borderBottom:'1px solid rgba(255,255,255,.06)'}},
+      h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'14px'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:'12px',minWidth:0}},
+          h('span',{style:{width:'10px',height:'10px',borderRadius:'50%',background:acc.c,boxShadow:'0 0 10px '+acc.c,flex:'0 0 auto'}}),
+          h('div',{style:{minWidth:0}},
+            h('div',{style:{fontSize:'19px',fontWeight:700,color:'#f0f2f7',whiteSpace:'nowrap'}}, d.name),
+            h('div',{style:{fontFamily:'JetBrains Mono,monospace',fontSize:'11px',color:'#6d7588',marginTop:'2px'}}, d.count+' people · Week Jun 7 – Jun 13')
+          )
+        ),
+        h('div',{style:{display:'flex',alignItems:'center',gap:'8px',flex:'0 0 auto'}},
+          h('button',{onClick:()=>this.go(-1),title:'Previous department',style:btn('ghost')}, '‹'),
+          h('button',{onClick:()=>this.go(1),title:'Next department',style:btn('ghost')}, '›'),
+          h('button',{onClick:()=>this.setMode(this.state.mode==='drawer'?'focus':'drawer'),title:'Switch view',style:{...btn('ghost'),width:'auto',padding:'0 12px',fontSize:'12px',fontFamily:'JetBrains Mono,monospace'}}, this.state.mode==='drawer'?'⤢':'⤡'),
+          h('button',{onClick:()=>this.close(),title:'Close',style:btn('ghost')}, '✕')
+        )
+      ),
+      // KPI schema chips
+      h('div',{style:{display:'flex',alignItems:'center',gap:'7px',marginTop:'13px',flexWrap:'wrap'}},
+        h('span',{style:{fontFamily:'JetBrains Mono,monospace',fontSize:'9px',letterSpacing:'.12em',color:'#5a6173'}}, 'KPIS'),
+        ...d.metrics.map(m=>h('span',{key:m.key,style:{fontFamily:'JetBrains Mono,monospace',fontSize:'11px',color:acc.c,background:acc.soft,border:'1px solid '+acc.border,borderRadius:'6px',padding:'2px 8px'}}, m.label+(m.suffix||''))),
+        h('span',{style:{fontFamily:'JetBrains Mono,monospace',fontSize:'11px',color:'#cfe9d8',background:'rgba(74,222,128,.08)',border:'1px solid rgba(74,222,128,.25)',borderRadius:'6px',padding:'2px 8px'}}, '→ Payout')
+      )
+    );
+
+    // toolbar
+    const toolbar = h('div',{key:'tb',style:{flex:'0 0 auto',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'12px',padding:'12px 22px',borderBottom:'1px solid rgba(255,255,255,.06)'}},
+      h('div',{style:{position:'relative',flex:'1',maxWidth:'280px'}},
+        h('span',{style:{position:'absolute',left:'10px',top:'50%',transform:'translateY(-50%)',color:'#5a6173',fontSize:'12px'}}, '⌕'),
+        h('input',{className:'kpi-search',type:'text',value:this.state.search,placeholder:'Search '+d.count+' people…',onChange:e=>this.setState({search:e.target.value}),
+          style:{width:'100%',background:'#0e131c',border:'1px solid rgba(255,255,255,.09)',borderRadius:'8px',padding:'7px 10px 7px 26px',color:'#e8eaf0',fontSize:'12.5px',fontFamily:'inherit'}})
+      ),
+      h('div',{style:{display:'flex',alignItems:'center',gap:'8px',fontFamily:'JetBrains Mono,monospace',fontSize:'11px'}},
+        h('span',{style:{color:'#7b8398'}}, st.entered+' / '+d.count+' entered'),
+        st.rem>0 ? h('span',{style:{color:acc.warn,background:'rgba(245,165,36,.1)',border:'1px solid rgba(245,165,36,.3)',borderRadius:'6px',padding:'2px 8px'}}, st.rem+' to fill') : h('span',{style:{color:'#5fe39a',background:'rgba(74,222,128,.08)',border:'1px solid rgba(74,222,128,.25)',borderRadius:'6px',padding:'2px 8px'}}, 'complete')
+      )
+    );
+
+    // table header
+    const colHead = h('div',{key:'ch',style:{position:'sticky',top:0,zIndex:2,display:'grid',gridTemplateColumns:tmpl,alignItems:'center',gap:'8px',padding:'9px 16px',background:'#0b0e15',borderBottom:'1px solid rgba(255,255,255,.08)',fontFamily:'JetBrains Mono,monospace',fontSize:'9.5px',letterSpacing:'.08em',color:'#5a6173',textTransform:'uppercase'}},
+      h('div',{style:{textAlign:'right'}}, '#'),
+      h('div',{}, 'Name'),
+      ...d.metrics.map((m,ci)=>h('div',{key:m.key,style:{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:'5px'}},
+        h('span',{}, m.label),
+        h('button',{onClick:()=>this.fillDown(d,m),title:'Fill this column down from row 1',style:{border:'1px solid rgba(255,255,255,.12)',background:'#11151d',color:'#8b93a7',borderRadius:'5px',cursor:'pointer',fontSize:'10px',lineHeight:1,padding:'2px 4px'}}, '↓')
+      )),
+      h('div',{style:{textAlign:'right'}}, 'Payout')
+    );
+
+    const scroll = h('div',{key:'sc',style:{flex:'1 1 auto',overflow:'auto',minHeight:0}}, colHead, rows.length?rows:h('div',{style:{padding:'40px',textAlign:'center',color:'#5a6173',fontSize:'13px'}}, 'No one matches “'+this.state.search+'”.'));
+
+    // footer
+    const done = d.submitted && st.rem===0;
+    const footer = h('div',{key:'ft',style:{flex:'0 0 auto',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'16px',padding:'14px 22px',borderTop:'1px solid rgba(255,255,255,.08)',background:'#0b0e15'}},
+      h('div',{},
+        h('div',{style:{fontFamily:'JetBrains Mono,monospace',fontSize:'9px',letterSpacing:'.14em',color:'#5a6173'}}, 'DEPARTMENT SUBTOTAL'),
+        h('div',{style:{fontFamily:'JetBrains Mono,monospace',fontSize:'24px',fontWeight:700,color:st.sub>0?'#e8f7ee':'#8b93a7',marginTop:'2px'}}, this.fmt(st.sub))
+      ),
+      h('div',{style:{display:'flex',alignItems:'center',gap:'10px'}},
+        h('button',{onClick:()=>this.close(),style:btn('soft')}, 'Save draft'),
+        done
+          ? h('div',{style:{display:'inline-flex',alignItems:'center',gap:'7px',padding:'10px 18px',borderRadius:'9px',background:'rgba(74,222,128,.12)',border:'1px solid rgba(74,222,128,.4)',color:'#5fe39a',fontWeight:600,fontSize:'13px'}}, '✓ Submitted')
+          : h('button',{onClick:()=>this.submit(d.id),style:btn('primary')}, st.rem>0 ? 'Submit · '+st.rem+' incomplete' : 'Submit to payroll')
+      )
+    );
+
+    function btn(kind){
+      const base={height:'38px',minWidth:'38px',borderRadius:'9px',cursor:'pointer',fontFamily:'inherit',fontSize:'15px',display:'inline-flex',alignItems:'center',justifyContent:'center',border:'1px solid rgba(255,255,255,.12)',background:'#11151d',color:'#aab2c2'};
+      if(kind==='ghost') return {...base,width:'38px',padding:0};
+      if(kind==='soft') return {...base,padding:'0 16px',fontSize:'13px'};
+      if(kind==='primary') return {height:'38px',padding:'0 20px',borderRadius:'9px',cursor:'pointer',fontFamily:'inherit',fontSize:'13px',fontWeight:600,border:'1px solid rgba(125,211,252,.5)',background:'linear-gradient(180deg,#2f74a8,#235a86)',color:'#eaf6ff'};
+      return base;
+    }
+
+    return [header, toolbar, scroll, footer];
+  }
+
+  renderOverlay(){
+    const h=React.createElement;
+    const d=this.depts.find(x=>x.id===this.state.openId);
+    if(!d) return null;
+    const acc=d.color;
+    const closing=this.state.closing;
+
+    if(this.state.mode==='focus'){
+      const rail=h('div',{style:{flex:'0 0 248px',borderRight:'1px solid rgba(255,255,255,.07)',display:'flex',flexDirection:'column',background:'#0a0d13'}},
+        h('div',{style:{padding:'18px 18px 12px',borderBottom:'1px solid rgba(255,255,255,.06)'}},
+          h('div',{style:{fontFamily:'JetBrains Mono,monospace',fontSize:'9px',letterSpacing:'.16em',color:'#5a6173'}}, 'KPI CALCULATOR'),
+          h('div',{style:{fontSize:'16px',fontWeight:700,marginTop:'4px'}}, 'Departments')
+        ),
+        h('div',{style:{flex:1,overflow:'auto',padding:'8px'}},
+          ...this.depts.map(dd=>{ const s=this.deptStats(dd); const on=dd.id===d.id;
+            return h('button',{key:dd.id,onClick:()=>this.open(dd.id),style:{width:'100%',textAlign:'left',display:'flex',alignItems:'center',gap:'9px',padding:'9px 11px',marginBottom:'2px',borderRadius:'9px',border:'1px solid '+(on?this.hexA(dd.color,.5):'transparent'),background:on?this.hexA(dd.color,.1):'transparent',cursor:'pointer',fontFamily:'inherit',color:'inherit'}},
+              h('span',{style:{width:'8px',height:'8px',borderRadius:'50%',background:dd.color,flex:'0 0 auto'}}),
+              h('div',{style:{flex:1,minWidth:0}},
+                h('div',{style:{fontSize:'13px',color:on?'#fff':'#c2c9d6',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}, dd.name),
+                h('div',{style:{fontFamily:'JetBrains Mono,monospace',fontSize:'10px',color:'#5a6173'}}, this.fmt(s.sub))
+              ),
+              s.ready ? h('span',{style:{color:'#5fe39a',fontSize:'11px'}}, '✓') : h('span',{style:{color:'#f6b65a',fontSize:'11px'}}, '⚠')
+            );
+          })
+        )
+      );
+      return h('div',{style:{position:'fixed',inset:0,zIndex:60,background:'#07090e',display:'flex',transformOrigin:'center',willChange:'opacity,transform',animation:closing?'focusOut .42s cubic-bezier(.4,0,1,1) forwards':'focusIn .58s cubic-bezier(.22,1,.36,1)'}},
+        rail,
+        h('div',{style:{flex:1,display:'flex',flexDirection:'column',minWidth:0,borderTop:'3px solid '+acc}}, ...this.renderCalc(d))
+      );
+    }
+
+    // drawer
+    return h('div',{style:{position:'fixed',inset:0,zIndex:60}},
+      h('div',{onClick:()=>this.close(),style:{position:'absolute',inset:0,background:'rgba(4,6,10,.62)',backdropFilter:'blur(3px)',WebkitBackdropFilter:'blur(3px)',animation:closing?'fadeOut .32s ease forwards':'fadeIn .32s ease'}}),
+      h('div',{style:{position:'absolute',top:0,right:0,height:'100vh',width:'min(760px,95vw)',background:'#0b0e15',borderLeft:'1px solid '+this.hexA(acc,.5),borderTop:'3px solid '+acc,boxShadow:'-30px 0 90px rgba(0,0,0,.6)',display:'flex',flexDirection:'column',willChange:'transform',animation:closing?'slideOut .34s cubic-bezier(.5,0,.84,0) forwards':'slideIn .44s cubic-bezier(.22,1,.36,1)'}},
+        ...this.renderCalc(d)
+      )
+    );
+  }
+
+  renderVals(){
+    const depts=this.depts;
+    let grand=0, ready=0, notSub=0;
+    const cards=depts.map(d=>{
+      const s=this.deptStats(d);
+      grand+=s.sub;
+      if(s.ready) ready++;
+      if(!d.submitted) notSub++;
+      return {
+        id:d.id, name:d.name, count:d.count, desc:d.desc,
+        accent:d.color, accentSoft:this.hexA(d.color,.14), accentBorder:this.hexA(d.color,.4),
+        monogram:this.monogram(d.name),
+        statusReady:s.ready, actionNeeded:!s.ready,
+        hasRemaining:s.rem>0, remainingLabel:s.rem+' of '+d.count+' not entered',
+        projectedFmt:this.fmt(s.sub), amountColor:s.sub>0?'#5fe39a':'#5a6173',
+        isOpen:this.state.openId===d.id,
+        onOpen:()=>this.open(d.id)
+      };
+    });
+    let head=0; depts.forEach(d=>head+=d.count);
+    const dq=this.state.deptSearch.trim().toLowerCase();
+    const visCards = dq ? cards.filter(c=>c.name.toLowerCase().indexOf(dq)>=0) : cards;
+    return {
+      cards:visCards, noCards:visCards.length===0,
+      deptSearch:this.state.deptSearch,
+      onDeptSearch:e=>this.setState({deptSearch:e.target.value}),
+      allCount:depts.length,
+      headcount:head.toLocaleString('en-US'),
+      grandTotalFmt:this.fmt(grand),
+      readyLabel:ready+' / '+depts.length+' ready',
+      notSubmittedCount:notSub,
+      pending:notSub>0, allSubmitted:notSub===0,
+      isDrawer:this.state.mode==='drawer', isDrawerOff:this.state.mode!=='drawer',
+      isFocus:this.state.mode==='focus', isFocusOff:this.state.mode!=='focus',
+      setDrawer:()=>this.setMode('drawer'), setFocus:()=>this.setMode('focus'),
+      overlay:this.state.openId?this.renderOverlay():null,
+      switchLoader:this.state.switching?this.renderSwitchLoader():null
+    };
+  }
+}
+</script>
+</body>
+</html>

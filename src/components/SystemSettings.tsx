@@ -4,13 +4,11 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Settings,
   Clock,
-  Laptop,
   CheckCircle2,
   AlertTriangle,
   Loader2,
   Lock,
   Users,
-  ToggleRight,
   ShieldAlert,
   Activity,
   ClipboardList,
@@ -21,7 +19,6 @@ import {
   Trash2,
   Sparkles,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
@@ -100,18 +97,6 @@ const DEPARTMENTS = [
 ] as const;
 
 
-// ─── Payroll Rules ────────────────────────────────────────────────────────────
-
-/** Shown in the left column under Payroll Rules. */
-const RULES_GENERAL = [
-  { key: 'tech_bonus_enabled', label: 'Technology Bonus', description: '₱1,850 per employee per cycle', icon: Laptop, color: 'violet' as const, defaultEnabled: true },
-] as const;
-
-const RULE_COLORS: Record<string, { activeBorder: string; activeBg: string }> = {
-  violet:  { activeBorder: 'border-violet-200 dark:border-violet-800/50',   activeBg: 'bg-violet-50/60 dark:bg-violet-950/10' },
-  emerald: { activeBorder: 'border-emerald-200 dark:border-emerald-800/50', activeBg: 'bg-emerald-50/60 dark:bg-emerald-950/10' },
-};
-
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
 async function fetchSetting(key: string): Promise<string | null> {
@@ -151,43 +136,6 @@ async function postAuditLog(
 }
 
 // ─── Rule Row ─────────────────────────────────────────────────────────────────
-
-type RuleDef = (typeof RULES_GENERAL)[number];
-
-function RuleRow({
-  rule,
-  enabled,
-  saveState,
-  onToggle,
-}: {
-  rule: RuleDef;
-  enabled: boolean;
-  saveState: SaveState;
-  onToggle: (key: string, val: boolean) => void;
-}) {
-  const c = RULE_COLORS[rule.color];
-
-  return (
-    <div className={cn(
-      'flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-all duration-200',
-      enabled
-        ? `${c.activeBorder} ${c.activeBg} shadow-sm`
-        : 'border-zinc-200 bg-white dark:border-zinc-700/60 dark:bg-zinc-800/40',
-    )}>
-      <rule.icon className={cn('h-3.5 w-3.5 flex-shrink-0', enabled ? 'text-zinc-600 dark:text-zinc-300' : 'text-zinc-400 dark:text-zinc-500')} />
-      <div className="min-w-0 flex-1">
-        <p className={cn('text-xs font-semibold', enabled ? 'text-zinc-900 dark:text-white' : 'text-zinc-500 dark:text-zinc-400')}>{rule.label}</p>
-        <p className="text-[10px] text-zinc-400 dark:text-zinc-500">{rule.description}</p>
-      </div>
-      <div className="flex flex-shrink-0 items-center gap-2">
-        {saveState === 'saving' && <Loader2 className="h-3 w-3 animate-spin text-zinc-400" />}
-        {saveState === 'saved'  && <CheckCircle2 className="h-3 w-3 text-emerald-500" />}
-        {saveState === 'error'  && <AlertTriangle className="h-3 w-3 text-red-400" />}
-        <Toggle checked={enabled} onChange={(v) => onToggle(rule.key, v)} disabled={saveState === 'saving'} />
-      </div>
-    </div>
-  );
-}
 
 // ─── Dept OT Row ──────────────────────────────────────────────────────────────
 
@@ -254,9 +202,6 @@ function DeptOtRow({
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function SystemSettings({ sessionEmail }: { sessionEmail?: string | null }) {
-  const [rules, setRules] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(RULES_GENERAL.map((r) => [r.key, r.defaultEnabled])),
-  );
   const [deptOt, setDeptOt] = useState<Record<string, boolean>>(
     Object.fromEntries(DEPARTMENTS.map((d) => [`ot_dept_${d.key}`, true])),
   );
@@ -275,14 +220,6 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
   // ── Load settings ──
   useEffect(() => {
     const load = async () => {
-      const ruleResults = await Promise.all(
-        RULES_GENERAL.map(async (r) => {
-          const val = await fetchSetting(r.key).catch(() => null);
-          return [r.key, val === null ? r.defaultEnabled : val === 'true'] as const;
-        }),
-      );
-      setRules(Object.fromEntries(ruleResults));
-
       const gval = await fetchSetting('ot_global_suspended').catch(() => null);
       setGlobalOtSuspended(gval === 'true');
 
@@ -339,15 +276,6 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
       setTimeout(() => setSaveStates((p) => ({ ...p, [key]: 'idle' })), 3000);
     }
   }, []);
-
-  const handleRuleToggle = useCallback((key: string, val: boolean) => {
-    const rule = RULES_GENERAL.find((r) => r.key === key);
-    persist(key, val, rule?.label ?? key, setRules, {
-      action:      'settings.rule.toggle',
-      resource_id: key,
-      details:     { setting: rule?.label ?? key, value: val },
-    });
-  }, [persist]);
 
   const handleGlobalOt = useCallback(async (val: boolean) => {
     setGlobalOtSuspended(val);
@@ -472,7 +400,6 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
     toast.success(`Added ${added} federal holiday${added > 1 ? 's' : ''} for ${year}`);
   }, [holidays, persistHolidayList]);
 
-  const activeRules = RULES_GENERAL.filter((r) => rules[r.key]).length;
   const otOffCount  = DEPARTMENTS.filter((d) => deptOt[`ot_dept_${d.key}`] === false).length;
 
   return (
@@ -492,10 +419,6 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 dark:border-violet-800/50 dark:bg-violet-950/20">
-              <ToggleRight className="h-3 w-3 text-violet-500" />
-              <span className="text-[10px] font-semibold text-violet-700 dark:text-violet-400">{activeRules} rules active</span>
-            </div>
             {globalOtSuspended && (
               <div className="flex items-center gap-1.5 rounded-full border border-red-300 bg-red-100 px-2.5 py-1 dark:border-red-800 dark:bg-red-950/40">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
@@ -526,19 +449,8 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
               <ShieldAlert className="h-3.5 w-3.5 text-orange-500" />
               <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300">Payroll Rules</span>
             </div>
-            <div className="space-y-1.5">
-              {RULES_GENERAL.map((rule) => (
-                <RuleRow
-                  key={rule.key}
-                  rule={rule}
-                  enabled={rules[rule.key] ?? rule.defaultEnabled}
-                  saveState={saveStates[rule.key] ?? 'idle'}
-                  onToggle={handleRuleToggle}
-                />
-              ))}
-            </div>
 
-            <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+            <div className="mt-3">
               <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Panels</p>
               <div className="space-y-1.5">
                 <button
@@ -585,7 +497,6 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
             <div className="mb-2.5 flex items-center gap-2">
               <Users className="h-3.5 w-3.5 text-blue-500" />
               <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300">Access Control</span>
-              <Badge variant="outline" className="ml-auto h-4 border-zinc-200 px-1.5 text-[9px] text-zinc-400 dark:border-zinc-700 dark:text-zinc-500">Soon</Badge>
             </div>
             <div className="space-y-1.5">
               {/* Audit Log — clickable, switches to audit tab */}
@@ -607,19 +518,19 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
                 <ChevronRight className={cn('mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-300 dark:text-zinc-600', rightTab === 'audit' && 'text-indigo-400')} />
               </button>
 
-              {/* Placeholder items */}
-              {[
-                { label: 'Role Management',  desc: 'Admin, Payroll Mgr, HR, Finance, Viewer' },
-                { label: 'Session Policies', desc: 'Timeout, 2FA and password policies' },
-              ].map((item) => (
-                <div key={item.label} className="flex items-start gap-2 rounded-md border border-dashed border-zinc-200 bg-zinc-50/60 px-2.5 py-2 opacity-50 dark:border-zinc-700 dark:bg-zinc-800/20">
-                  <Lock className="mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-400" />
-                  <div>
-                    <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">{item.label}</p>
-                    <p className="text-[10px] text-zinc-400 dark:text-zinc-600">{item.desc}</p>
-                  </div>
+              {/* Role Management + Session Policies now live in the Admin area
+                  (Admin → Roles & permissions). */}
+              <a
+                href="/admin?tab=roles"
+                className="flex items-start gap-2 rounded-md border border-zinc-200 bg-zinc-50/60 px-2.5 py-2 text-left transition-colors hover:border-blue-200 hover:bg-blue-50/30 dark:border-zinc-700 dark:bg-zinc-800/20 dark:hover:border-blue-800/40"
+              >
+                <Lock className="mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-400" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">Role Management &amp; Sessions</p>
+                  <p className="text-[10px] text-zinc-400 dark:text-zinc-600">Manage roles, permissions &amp; session policies in Admin</p>
                 </div>
-              ))}
+                <ChevronRight className="mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-300 dark:text-zinc-600" />
+              </a>
             </div>
           </div>
 

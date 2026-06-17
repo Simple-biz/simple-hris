@@ -50,7 +50,7 @@ import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
 import { useWizardFollow } from '@/hooks/useWizardFollow';
 import { cn } from '@/lib/utils';
-import { formatMoney, normalizeCurrency, sumByCurrency } from '@/lib/contractor-currency';
+import { formatMoney, normalizeCurrency, sumByCurrency, CONTRACTOR_CURRENCIES } from '@/lib/contractor-currency';
 import { InvoiceViewDialog, type SavedInvoice } from '@/components/contractor/InvoiceReceiptDialog';
 import { KPI_BONUS_ID, DEPARTMENTS, FORMULA_DEPT_KEYS, MANAGER_BONUS_DEPT_KEYS, ACCOUNTING_WEEKDAY_METRICS, calcLeadGenBonus, isDevsDelivery, isDevsChecking, isJeromeRosero, isTeal } from '@/lib/payroll/department-bonus';
 import { Button } from '@/components/ui/button';
@@ -93,6 +93,7 @@ import {
   resolveDeptCatalogRate,
 } from '@/lib/payroll/resolve-rate';
 import type { PayStructure } from '@/lib/payment-catalog/pay-structure';
+import { resolveSystemBonuses, isDeptEligible } from '@/lib/payment-catalog/system-bonus';
 import { normEmail } from '@/lib/email/norm-email';
 import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 import { sortHubstaffColumnsForDisplay } from '@/lib/supabase/hubstaff-hours-db';
@@ -108,6 +109,13 @@ import {
   USD_TO_PHP_DECIMAL_SHIFT,
   effectiveUsdToPhpRateFromStored,
 } from '@/lib/fx/usd-php';
+import {
+  OFFICIAL_USD_TO_COP_RATE,
+  effectiveUsdToCopRateFromStored,
+  copPerPhp,
+  phpPerCop,
+  type FxRates,
+} from '@/lib/fx/currency-fx';
 import { logAudit, valuesDiffer } from '@/lib/audit/client-log';
 import type { AuditCycleContext } from '@/lib/supabase/audit-log';
 import AuditTrailPanel from '@/components/payroll-clerk/AuditTrailPanel';
@@ -471,10 +479,6 @@ function parseRateField(v: string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-const COMMON_BONUSES: { id: string; label: string; amount: number }[] = [
-  { id: 'tech_bonus', label: 'Technology Bonus', amount: 1850 },
-  { id: 'perfect_attendance', label: 'Perfect Attendance Bonus', amount: 5000 },
-];
 
 
 /** Known non-date Hubstaff column names (lowercase). Used as a quick-reject before date parsing. */
@@ -997,6 +1001,18 @@ export default function PayrollWizard({
   const [usdToPhpSaving, setUsdToPhpSaving] = useState(false);
   const [usdToPhpEditing, setUsdToPhpEditing] = useState(false);
 
+  /** USD → COP (COP per $1). Saved in app_settings `usd_to_cop_rate`. The USD-
+   *  anchored second rate; PHP↔COP is derived from this + usdToPhpRate. */
+  const [usdToCopRate, setUsdToCopRate] = useState<number>(OFFICIAL_USD_TO_COP_RATE);
+  const [usdToCopInput, setUsdToCopInput] = useState<string>(String(OFFICIAL_USD_TO_COP_RATE));
+  const [usdToCopSaving, setUsdToCopSaving] = useState(false);
+  const [usdToCopEditing, setUsdToCopEditing] = useState(false);
+  /** The two USD-anchored rates bundled for resolve-rate.ts. */
+  const fxRates = useMemo<FxRates>(
+    () => ({ usdToPhp: usdToPhpRate, usdToCop: usdToCopRate }),
+    [usdToPhpRate, usdToCopRate],
+  );
+
   const [activeDeptTab, setActiveDeptTab] = useState('accounting');
   const [accountingDeptModalOpen, setAccountingDeptModalOpen] = useState(false);
   const [ticketsModalEmail, setTicketsModalEmail] = useState<string | null>(null);
@@ -1051,6 +1067,8 @@ export default function PayrollWizard({
   const [additionsSavedAt, setAdditionsSavedAt] = useState<Date | null>(null);
   const [lockedPabSnapshot, setLockedPabSnapshot] = useState<Record<string, 'eligible' | 'ineligible' | 'in_progress'> | null>(null);
   const [validationSearch, setValidationSearch] = useState('');
+  /** Active department in the Validation step's per-department final-pay view. */
+  const [validationDeptTab, setValidationDeptTab] = useState<string | null>(null);
   const [pendingDisputeRows, setPendingDisputeRows] = useState<Array<{
     id: string;
     work_email: string;
@@ -1641,12 +1659,16 @@ export default function PayrollWizard({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' });
-        const json = (await res.json()) as { value: string | null; error: string | null };
+        const res = await fetch('/api/app-settings?keys=usd_to_php_rate,usd_to_cop_rate', { cache: 'no-store' });
+        const json = (await res.json()) as { values?: Record<string, string | null>; error: string | null };
         if (cancelled) return;
-        const rate = effectiveUsdToPhpRateFromStored(json.value);
-        setUsdToPhpRate(rate);
-        setUsdToPhpInput(String(rate));
+        const values = json.values ?? {};
+        const phpRate = effectiveUsdToPhpRateFromStored(values['usd_to_php_rate']);
+        setUsdToPhpRate(phpRate);
+        setUsdToPhpInput(String(phpRate));
+        const copRate = effectiveUsdToCopRateFromStored(values['usd_to_cop_rate']);
+        setUsdToCopRate(copRate);
+        setUsdToCopInput(String(copRate));
       } catch {
         // keep defaults
       }
@@ -1851,6 +1873,27 @@ export default function PayrollWizard({
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
+      void persistExclusions(next);
+      return next;
+    });
+  }, [persistExclusions]);
+
+  /**
+   * Bulk-set the "do not pay" flag for many employees at once (Validation step's
+   * per-department "exclude all" master tickbox). `exclude=true` flags everyone
+   * in the list, `false` clears them.
+   */
+  const setExcludedMany = React.useCallback((emails: string[], exclude: boolean) => {
+    const keys = emails
+      .map((e) => normEmail(e) ?? e.trim().toLowerCase())
+      .filter(Boolean) as string[];
+    if (keys.length === 0) return;
+    setExcludedEmails((prev) => {
+      const next = new Set(prev);
+      for (const k of keys) {
+        if (exclude) next.add(k);
+        else next.delete(k);
+      }
       void persistExclusions(next);
       return next;
     });
@@ -2106,12 +2149,12 @@ export default function PayrollWizard({
         const empCat = resolveEmployeeCatalogRate(
           catIdx,
           [em, row.work_email ?? '', row.personal_email ?? ''],
-          usdToPhpRate,
+          fxRates,
         );
         const hasSheet =
           (row.regular_rate != null && row.regular_rate !== '') ||
           (row.ot_rate != null && row.ot_rate !== '');
-        const deptCat = hasSheet ? null : resolveDeptCatalogRate(catIdx, row.department, usdToPhpRate);
+        const deptCat = hasSheet ? null : resolveDeptCatalogRate(catIdx, row.department, fxRates);
         const applied = empCat ?? deptCat;
         if (applied) {
           idx.set(em, { ...row, regular_rate: String(applied.regPhp), ot_rate: String(applied.otPhp) });
@@ -2119,7 +2162,7 @@ export default function PayrollWizard({
       }
     }
     return idx;
-  }, [hourlyRateRows, masterEmployees, payStructures, isReplay, usdToPhpRate]);
+  }, [hourlyRateRows, masterEmployees, payStructures, isReplay, fxRates]);
 
   // Lookup maps over masterEmployees, built once per roster change. The Step 2
   // calc, the department auto-assign effect, and dispatchData each need to match
@@ -4039,6 +4082,31 @@ export default function PayrollWizard({
     return out;
   }, [managerBonusRaw, effectiveCalcResults, masterIndex]);
 
+  // PAB + Tech amounts + per-department allowlist come from the Payment Catalog
+  // System Bonuses tab (prefetched into initialData). Falls back to the legacy
+  // constants + "applies to everyone" when no rows exist (pre-migration).
+  const sysBonusCfg = useMemo(
+    () => resolveSystemBonuses(initialData?.systemBonuses ?? []),
+    [initialData],
+  );
+  const pabAmountPhp = sysBonusCfg.pab.amountPHP;
+  const techAmountPhp = sysBonusCfg.tech.amountPHP;
+  // employeeDepts is keyed by the raw Hubstaff email; some rows match only the
+  // lower-cased key, so check both (mirrors the existing HSL dept checks).
+  const deptKeyForEmail = useCallback(
+    (email: string): string | null =>
+      employeeDepts[email] ?? employeeDepts[(email ?? '').toLowerCase()] ?? null,
+    [employeeDepts],
+  );
+  const isPabDeptEligible = useCallback(
+    (email: string) => isDeptEligible(sysBonusCfg.pab, deptKeyForEmail(email)),
+    [sysBonusCfg, deptKeyForEmail],
+  );
+  const isTechDeptEligible = useCallback(
+    (email: string) => isDeptEligible(sysBonusCfg.tech, deptKeyForEmail(email)),
+    [sysBonusCfg, deptKeyForEmail],
+  );
+
   const bonusTotals = useMemo(() => {
     const result: Record<string, number> = {};
 
@@ -4090,19 +4158,25 @@ export default function PayrollWizard({
       }
     }
 
-    // Common bonuses (Technology, Perfect Attendance) — always toggle-based for every dept
+    // Common bonuses (Technology, Perfect Attendance) — toggle-based, with the
+    // amount + per-department allowlist resolved from the Payment Catalog
+    // System Bonuses tab. A department excluded from a bonus contributes 0 even
+    // when the toggle is on.
     for (const [email, deptKey] of Object.entries(employeeDepts)) {
       if (!deptKey) continue;
       const toggles = employeeBonuses[email] ?? {};
       let commonTotal = 0;
-      for (const cb of COMMON_BONUSES) {
-        if (toggles[cb.id]) commonTotal += cb.amount;
+      if (toggles['perfect_attendance'] && isDeptEligible(sysBonusCfg.pab, deptKey)) {
+        commonTotal += pabAmountPhp;
+      }
+      if (toggles['tech_bonus'] && isDeptEligible(sysBonusCfg.tech, deptKey)) {
+        commonTotal += techAmountPhp;
       }
       result[email] = (result[email] ?? 0) + commonTotal;
     }
 
     return result;
-  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, ssdKpiAmounts, resolvedManagerBonus]);
+  }, [effectiveCalcResults, employeeDepts, employeeBonuses, employeeMetrics, deptMetrics, ssdKpiAmounts, resolvedManagerBonus, sysBonusCfg, pabAmountPhp, techAmountPhp]);
 
   /**
    * Effective bonus per employee: the auto-computed subtotal (PAB + Tech + KPI +
@@ -4131,7 +4205,7 @@ export default function PayrollWizard({
     };
 
     const commonBonusPhp = (id: string) =>
-      COMMON_BONUSES.find((b) => b.id === id)?.amount ?? 0;
+      id === 'perfect_attendance' ? pabAmountPhp : id === 'tech_bonus' ? techAmountPhp : 0;
 
     // Derive the latest weekly pay period: prefer parsed range from the source filename,
     // otherwise compute Mon–Sun around the latest parseable date column in the dataset.
@@ -4309,7 +4383,11 @@ export default function PayrollWizard({
       // The paystub pipeline is PHP-only; attaching bonuses without a rate
       // produces misleading totals.
       const hasRates = r.regularRate != null || r.otRate != null;
-      const pabBonus = hasRates && isFinalPabWeek && toggles.perfect_attendance
+      // Department allowlist (Payment Catalog System Bonuses) — a department not
+      // assigned a bonus gets 0 regardless of attendance/service (e.g. US managers).
+      const pabDeptOk = isPabDeptEligible(r.email);
+      const techDeptOk = isTechDeptEligible(r.email);
+      const pabBonus = hasRates && isFinalPabWeek && toggles.perfect_attendance && pabDeptOk
         ? commonBonusPhp('perfect_attendance')
         : 0;
       // Tech Bonus: paid in the 3rd paycheck of the month, but only after the
@@ -4317,14 +4395,15 @@ export default function PayrollWizard({
       // Manual toggle can opt-in earlier (still requires 30-day service).
       const hasThirtyDays = hasThirtyDaysByWeek(r.email);
       const techBonus =
-        hasRates && hasThirtyDays && (isTechBonusWeek || toggles.tech_bonus)
+        hasRates && hasThirtyDays && (isTechBonusWeek || toggles.tech_bonus) && techDeptOk
           ? commonBonusPhp('tech_bonus')
           : 0;
       const rawBonusTotal = hasRates ? (bonusTotals[r.email] ?? 0) : 0;
       // Strip out the month-wide PAB/tech amounts that `bonusTotals` may include,
       // then re-add the week-gated versions so weekly paystubs get the right total.
-      const toggledPab = toggles.perfect_attendance ? commonBonusPhp('perfect_attendance') : 0;
-      const toggledTech = toggles.tech_bonus ? commonBonusPhp('tech_bonus') : 0;
+      // Mirror the dept-eligibility gate used in bonusTotals so the strip matches.
+      const toggledPab = toggles.perfect_attendance && pabDeptOk ? commonBonusPhp('perfect_attendance') : 0;
+      const toggledTech = toggles.tech_bonus && techDeptOk ? commonBonusPhp('tech_bonus') : 0;
       const autoOtherBonuses = hasRates ? Math.max(0, rawBonusTotal - toggledPab - toggledTech) : 0;
       // Accounting Adj. is a signed delta added on top — it never replaces the auto
       // bonuses, so PAB/Tech/KPI/dept amounts remain. Fold it into other_bonuses so
@@ -4405,6 +4484,10 @@ export default function PayrollWizard({
     calcSourceFile,
     hubstaffColsForPab,
     pabPeriodSettings.validManualRange,
+    pabAmountPhp,
+    techAmountPhp,
+    isPabDeptEligible,
+    isTechDeptEligible,
   ]);
 
   /**
@@ -6469,6 +6552,130 @@ export default function PayrollWizard({
               </p>
             </div>
 
+            {/* USD → COP exchange rate (the second USD-anchored leg) */}
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 dark:border-amber-800/50 dark:bg-amber-950/30">
+              <DollarSign className="h-4 w-4 shrink-0 text-amber-500" />
+              <div className="flex flex-1 flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-amber-900 dark:text-amber-200">USD → COP Rate</span>
+                <span className="text-xs text-amber-700/70 dark:text-amber-400/70">(1 USD =)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                    COP$
+                  </span>
+                  <Input
+                    type="number"
+                    min="0.01"
+                    step="1"
+                    value={usdToCopInput}
+                    readOnly={!usdToCopEditing}
+                    onChange={(e) => setUsdToCopInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && usdToCopEditing) {
+                        const parsed = parseFloat(usdToCopInput);
+                        if (Number.isFinite(parsed) && parsed > 0) {
+                          const prevRate = usdToCopRate;
+                          setUsdToCopRate(parsed);
+                          setUsdToCopSaving(true);
+                          void logAudit({
+                            user_name: sessionEmail ?? 'anonymous',
+                            user_role: sessionRole ?? 'user',
+                            action: 'wizard.fx_rate_changed',
+                            resource: 'usd_to_cop_rate',
+                            cycle: auditCycle,
+                            details: { previous_value: prevRate, new_value: parsed },
+                          });
+                          fetch('/api/app-settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ key: 'usd_to_cop_rate', value: String(parsed) }),
+                          })
+                            .then(async (res) => {
+                              const json = (await res.json()) as { error: string | null };
+                              if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+                              toast.success(`Rate saved: COP$${parsed.toLocaleString('es-CO')} / USD`);
+                              cursorOverlayRef.current?.broadcastSave();
+                              setUsdToCopEditing(false);
+                            })
+                            .catch((err: unknown) =>
+                              toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`),
+                            )
+                            .finally(() => setUsdToCopSaving(false));
+                        }
+                      }
+                    }}
+                    className={`h-8 min-w-[8rem] border-amber-300 pl-11 pr-2 font-mono text-sm tabular-nums dark:border-amber-700 ${usdToCopEditing ? 'bg-white dark:bg-zinc-950' : 'cursor-default bg-amber-50 dark:bg-amber-950/40'}`}
+                  />
+                </div>
+                {!usdToCopEditing ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8 bg-amber-600 px-3 text-xs font-semibold text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-white"
+                    onClick={() => setUsdToCopEditing(true)}
+                  >
+                    Edit rate
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={usdToCopSaving}
+                    className="h-8 bg-green-600 px-3 text-xs font-semibold text-white hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-400 dark:text-white"
+                    onClick={() => {
+                      const parsed = parseFloat(usdToCopInput);
+                      if (!Number.isFinite(parsed) || parsed <= 0) {
+                        toast.error('Enter a valid positive rate');
+                        return;
+                      }
+                      const prevRate = usdToCopRate;
+                      setUsdToCopRate(parsed);
+                      setUsdToCopSaving(true);
+                      void logAudit({
+                        user_name: sessionEmail ?? 'anonymous',
+                        user_role: sessionRole ?? 'user',
+                        action: 'wizard.fx_rate_changed',
+                        resource: 'usd_to_cop_rate',
+                        cycle: auditCycle,
+                        details: { previous_value: prevRate, new_value: parsed },
+                      });
+                      fetch('/api/app-settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: 'usd_to_cop_rate', value: String(parsed) }),
+                      })
+                        .then(async (res) => {
+                          const json = (await res.json()) as { error: string | null };
+                          if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+                          toast.success(`Rate saved: COP$${parsed.toLocaleString('es-CO')} / USD`);
+                          setUsdToCopEditing(false);
+                        })
+                        .catch((err: unknown) =>
+                          toast.error(`Failed to save rate: ${err instanceof Error ? err.message : 'Unknown error'}`),
+                        )
+                        .finally(() => setUsdToCopSaving(false));
+                    }}
+                  >
+                    {usdToCopSaving ? <Loader2 className="h-3 w-3 animate-spin text-white" /> : 'Apply & Save'}
+                  </Button>
+                )}
+              </div>
+              <p className="w-full text-xs text-amber-700/60 dark:text-amber-400/60">
+                Colombian-paid people are converted from USD at this rate for the COP dispatch tab.
+                Current: <span className="font-mono font-semibold">COP${usdToCopRate.toLocaleString('es-CO')}</span> = $1 USD.{' '}
+                Derived PHP ↔ COP:{' '}
+                <span className="font-mono font-semibold">
+                  ₱1 = COP${copPerPhp(fxRates).toLocaleString('es-CO', { maximumFractionDigits: 2 })}
+                </span>{' '}
+                ·{' '}
+                <span className="font-mono font-semibold">
+                  COP$1 = ₱{phpPerCop(fxRates).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
+                </span>
+                {' '}(USD is the anchor — PHP↔COP is computed, not set directly).
+              </p>
+            </div>
+
             {hourlyRatesError && (
               <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -6953,13 +7160,13 @@ export default function PayrollWizard({
                   </div>
                 )}
                 <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  Assign employees to departments and apply bonuses. All 12 departments share a{' '}
+                  Assign employees to departments and apply bonuses. Assigned departments share a{' '}
                   <span className="font-semibold text-indigo-600 dark:text-indigo-400">
-                    Technology Bonus (₱1,850)
+                    Technology Bonus ({formatPHP(techAmountPhp)})
                   </span>{' '}
                   and a{' '}
                   <span className="font-semibold text-indigo-600 dark:text-indigo-400">
-                    Perfect Attendance Bonus (₱5,000)
+                    Perfect Attendance Bonus ({formatPHP(pabAmountPhp)})
                   </span>.
                 </p>
                 {pabMonthRange && (
@@ -8253,7 +8460,7 @@ export default function PayrollWizard({
                               Tech<br />
                               <span className="font-mono font-normal text-zinc-400">
                                 {techBonusWeekInfo.isTechBonusWeek ? 'week 3 - ' : ''}
-                                {formatPHP(1850)}
+                                {formatPHP(techAmountPhp)}
                               </span>
                             </TableHead>
                             {/* Toggle-based dept bonus columns */}
@@ -8387,7 +8594,7 @@ export default function PayrollWizard({
                                               : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
                                         )}
                                       >
-                                        <span>{status === 'eligible' ? '+₱5,000' : label}</span>
+                                        <span>{status === 'eligible' ? (isPabDeptEligible(emp.email) ? `+${formatPHP(pabAmountPhp)}` : label) : label}</span>
                                       </button>
                                     </TableCell>
                                   );
@@ -8415,13 +8622,13 @@ export default function PayrollWizard({
                                             : 'Less than 30 days of service — click to grant manually.';
                                   return (
                                     <TableCell className="px-1 py-1.5 text-center">
-                                      {techOn ? (
+                                      {techOn && isTechDeptEligible(emp.email) ? (
                                         <span className="inline-flex items-center gap-1">
                                           <span
                                             title={titleText}
                                             className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30"
                                           >
-                                            +{formatPHP(1850)}
+                                            +{formatPHP(techAmountPhp)}
                                           </span>
                                           <button
                                             type="button"
@@ -9389,7 +9596,7 @@ export default function PayrollWizard({
               </h2>
               <p className="text-xs text-zinc-600 dark:text-zinc-400">
                 HSL runs Mon&ndash;Sun weeks (&ge;5 days at &ge;7 h). KPI bonuses are pulled from the manager KPI Calculator.
-                PAB (&thinsp;&#8369;5,000) and Tech Bonus (&thinsp;&#8369;1,850) are shown per-row and included in Total Pay.
+                PAB ({formatPHP(pabAmountPhp)}) and Tech Bonus ({formatPHP(techAmountPhp)}) are shown per-row and included in Total Pay.
                 Use the Adjustment column to adjust any employee&apos;s bonus before dispatch.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
@@ -9545,9 +9752,11 @@ export default function PayrollWizard({
                             // Adj. is a signed delta added on top of the KPI bonus, never a replacement.
                             const effectiveBonus = kpiBonus + (override ?? 0);
                             const paStatus = effectivePabStatus.get(em) ?? 'in_progress';
-                            const pabAmt = paStatus === 'eligible' ? 5000 : 0;
-                            const techOn = techBonusEligible.has(r.email);
-                            const techAmt = techOn ? 1850 : 0;
+                            const pabDeptOk = isPabDeptEligible(r.email);
+                            const techDeptOk = isTechDeptEligible(r.email);
+                            const pabAmt = paStatus === 'eligible' && pabDeptOk ? pabAmountPhp : 0;
+                            const techOn = techBonusEligible.has(r.email) && techDeptOk;
+                            const techAmt = techOn ? techAmountPhp : 0;
                             // Orphanage pay — manual positive amount added on top of total pay.
                             const hasOrphanage = orphanageAmounts[r.email] !== undefined;
                             const orphanagePay = orphanageAmounts[r.email] ?? 0;
@@ -9609,7 +9818,7 @@ export default function PayrollWizard({
                                           : 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-400/40 hover:bg-indigo-200 focus:ring-indigo-400 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-500/30 dark:hover:bg-indigo-900/60',
                                     )}
                                   >
-                                    {paStatus === 'eligible' ? '+₱5,000' : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
+                                    {paStatus === 'eligible' ? (pabDeptOk ? `+${formatPHP(pabAmountPhp)}` : '✓ Eligible') : paStatus === 'ineligible' ? '✗ Ineligible' : '⏳ In Progress'}
                                   </button>
                                 </td>
                                 {/* Tech Bonus — auto-detected; accounting can manually grant */}
@@ -9619,7 +9828,7 @@ export default function PayrollWizard({
                                       title={techBonusManualGrants.has(r.email) ? 'Manually granted by Accounting this session.' : 'Auto-applied: salary date lands in the 3rd full Mon–Sun week.'}
                                       className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold leading-none text-sky-700 ring-1 ring-sky-400/40 dark:bg-sky-900/40 dark:text-sky-300 dark:ring-sky-500/30"
                                     >
-                                      +{formatPHP(1850)}
+                                      +{formatPHP(techAmountPhp)}
                                     </span>
                                   ) : (
                                     <button
@@ -9726,8 +9935,8 @@ export default function PayrollWizard({
                               totalAdj += bonusOverrides[r.email] ?? 0;
                               totalOrphanage += orphanageAmounts[r.email] ?? 0;
                               const st = effectivePabStatus.get(em) ?? 'in_progress';
-                              if (st === 'eligible') totalPab += 5000;
-                              if (techBonusEligible.has(r.email)) totalTech += 1850;
+                              if (st === 'eligible' && isPabDeptEligible(r.email)) totalPab += pabAmountPhp;
+                              if (techBonusEligible.has(r.email) && isTechDeptEligible(r.email)) totalTech += techAmountPhp;
                               const wp = weekendPremiumByEmail.get(em);
                               if (wp) totalWkndPremium += wp.regPremiumPHP + wp.otPremiumPHP;
                             }
@@ -9891,7 +10100,7 @@ export default function PayrollWizard({
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
                 <span className="rounded-full border border-emerald-300/70 bg-emerald-50 px-2.5 py-0.5 font-medium text-emerald-800 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-200">
-                  {approvedInvoices.length} approved · {(['PHP', 'USD'] as const).filter((c) => approvedByCurrency[c] !== 0).map((c) => formatMoney(approvedByCurrency[c], c)).join(' + ') || formatMoney(0, 'PHP')}
+                  {approvedInvoices.length} approved · {CONTRACTOR_CURRENCIES.filter((c) => approvedByCurrency[c] !== 0).map((c) => formatMoney(approvedByCurrency[c], c)).join(' + ') || formatMoney(0, 'PHP')}
                 </span>
                 {pendingInvoices.length > 0 && (
                   <span className="rounded-full border border-amber-300/70 bg-amber-50 px-2.5 py-0.5 font-medium text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
@@ -9996,7 +10205,7 @@ export default function PayrollWizard({
                   </tbody>
                   {approvedInvoices.length > 0 && (
                     <tfoot className="border-t-2 border-emerald-200/60 bg-emerald-50/40 dark:border-emerald-800/40 dark:bg-emerald-950/30">
-                      {(['PHP', 'USD'] as const).filter((c) => approvedByCurrency[c] !== 0).map((c) => (
+                      {CONTRACTOR_CURRENCIES.filter((c) => approvedByCurrency[c] !== 0).map((c) => (
                         <tr key={c}>
                           <td colSpan={3} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
                             Approved total ({c})
@@ -10344,165 +10553,274 @@ export default function PayrollWizard({
               );
             })()}
 
-            {/* Final Pay Table */}
+            {/* Final Pay Table — separated per department (mirrors the Additions
+                step's department rail). Each department has its own table plus a
+                master "exclude all" tickbox in the Exclude header. */}
             {(() => {
               const vNeedle = validationSearch.toLowerCase().trim();
-              const filteredFinalRows = vNeedle
-                ? finalPayRows.filter(row => [row.name, row.email, row.deptName].join(' ').toLowerCase().includes(vNeedle))
-                : finalPayRows;
+              const UNASSIGNED = '__unassigned__';
+
+              // Bucket every final-pay row by department (DEPARTMENTS order; an
+              // "Unassigned" bucket collects anyone without a department).
+              const groupMap = new Map<string, typeof finalPayRows>();
+              for (const row of finalPayRows) {
+                const k = row.deptKey ?? UNASSIGNED;
+                const arr = groupMap.get(k);
+                if (arr) arr.push(row);
+                else groupMap.set(k, [row]);
+              }
+              const deptGroups: { key: string; name: string; rows: typeof finalPayRows }[] = [
+                ...DEPARTMENTS.filter(d => groupMap.has(d.key)).map(d => ({
+                  key: d.key,
+                  name: d.name,
+                  rows: groupMap.get(d.key)!,
+                })),
+                ...(groupMap.has(UNASSIGNED)
+                  ? [{ key: UNASSIGNED, name: 'Unassigned', rows: groupMap.get(UNASSIGNED)! }]
+                  : []),
+              ];
+
+              if (deptGroups.length === 0) {
+                return (
+                  <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white/50 py-10 text-center text-sm text-zinc-400 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25">
+                    No Hubstaff data. Complete Steps 1–3 first.
+                  </div>
+                );
+              }
+
+              const activeKey = deptGroups.some(g => g.key === validationDeptTab)
+                ? (validationDeptTab as string)
+                : deptGroups[0].key;
+              const activeGroup = deptGroups.find(g => g.key === activeKey)!;
+
+              const filteredRows = vNeedle
+                ? activeGroup.rows.filter(row => [row.name, row.email].join(' ').toLowerCase().includes(vNeedle))
+                : activeGroup.rows;
+
+              // Master "exclude all" state for the active department (operates on
+              // the whole department, not just the search-filtered subset).
+              const deptEmails = activeGroup.rows.map(r => r.email);
+              const deptExcludedCount = activeGroup.rows.filter(r => r.excluded).length;
+              const allDeptExcluded = activeGroup.rows.length > 0 && deptExcludedCount === activeGroup.rows.length;
+              const someDeptExcluded = deptExcludedCount > 0 && !allDeptExcluded;
+
+              // Per-department payable subtotal for the table footer.
+              const deptPayable = activeGroup.rows.filter(r => !r.excluded);
+              const deptInitial = deptPayable.reduce((s, r) => s + (r.initialPay ?? 0), 0);
+              const deptBonuses = deptPayable.reduce((s, r) => s + r.bonusTotal, 0);
+              const deptFinal = deptPayable.reduce((s, r) => s + r.finalPay, 0);
+
               return (
-              <div className="space-y-3">
-                <div className="relative">
-                  <svg
-                    className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
-                    fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
-                  >
-                    <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-                  </svg>
-                  <Input
-                    placeholder="Search name, email, department…"
-                    value={validationSearch}
-                    onChange={(e) => setValidationSearch(e.target.value)}
-                    className="h-9 rounded-lg border-zinc-200 bg-white pl-8 pr-8 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
-                  />
-                  {validationSearch && (
-                    <button
-                      type="button"
-                      onClick={() => setValidationSearch('')}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-                      aria-label="Clear search"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-
-              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white/50 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50/90 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
-                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                  Final Pay Breakdown
-                  {vNeedle && <span className="ml-1 font-normal text-zinc-400">— {filteredFinalRows.length} of {finalPayRows.length}</span>}
-                </span>
-                <span className="max-w-full truncate text-[10px] text-zinc-400">
-                  {finalPayRows.length} employees
-                  {calcSourceFile && <> · <span className="font-mono">{calcSourceFile}</span></>}
-                </span>
-              </div>
-
-              <div
-                className="overflow-auto [-ms-overflow-style:none] [scrollbar-gutter:stable]"
-                style={{ maxHeight: 'min(62vh, calc(100dvh - 26rem))' }}
-              >
-                <Table>
-                  <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
-                    <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
-                      <TableHead className="min-w-[140px] px-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">Employee</TableHead>
-                      <TableHead className="min-w-[100px] px-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">Department</TableHead>
-                      <TableHead className="min-w-[70px] px-2 text-right text-xs font-medium text-zinc-600 dark:text-zinc-400">Hrs</TableHead>
-                      <TableHead className="min-w-[110px] px-2 text-right text-xs font-medium text-zinc-600 dark:text-zinc-400">Initial Pay</TableHead>
-                      <TableHead className="min-w-[110px] px-2 text-right text-xs font-medium text-emerald-600 dark:text-emerald-400">Bonuses</TableHead>
-                      <TableHead className="min-w-[120px] px-2 text-right text-xs font-semibold text-indigo-600 dark:text-indigo-400">Final Pay</TableHead>
-                      <TableHead className="min-w-[80px] px-2 text-center text-xs font-medium text-zinc-600 dark:text-zinc-400">Exclude</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredFinalRows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="py-10 text-center text-sm text-zinc-400">
-                          {vNeedle ? <>No employees match &quot;{vNeedle}&quot;</> : 'No Hubstaff data. Complete Steps 1–3 first.'}
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      filteredFinalRows.map((row, i) => (
-                        <TableRow
-                          key={`${row.email}-${i}`}
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+                  {/* Department rail */}
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
+                    <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
+                      Departments
+                    </p>
+                    {deptGroups.map(g => {
+                      const isActive = g.key === activeKey;
+                      const exCount = g.rows.filter(r => r.excluded).length;
+                      return (
+                        <motion.button
+                          key={g.key}
+                          type="button"
+                          onClick={() => { setValidationDeptTab(g.key); setValidationSearch(''); }}
+                          whileTap={{ scale: 0.97 }}
                           className={cn(
-                            'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30',
-                            row.excluded && 'bg-rose-50/40 dark:bg-rose-950/15',
+                            'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium xl:w-full xl:justify-between',
+                            isActive
+                              ? 'border-indigo-500/50 text-indigo-700 dark:text-indigo-300'
+                              : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50',
                           )}
                         >
-                          <TableCell className={cn('px-3 py-2.5', row.excluded && 'opacity-55')}>
-                            <div className="flex items-center gap-1.5">
-                              <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
-                                {row.name || '—'}
-                              </div>
-                              {row.excluded && (
-                                <Badge className="shrink-0 border-rose-500/30 bg-rose-500/10 text-[9px] uppercase tracking-wide text-rose-600 dark:text-rose-400">
-                                  Do not pay
-                                </Badge>
-                              )}
-                            </div>
-                            <div className="font-mono text-[10px] text-zinc-400 truncate">{row.email}</div>
-                          </TableCell>
-                          <TableCell className={cn('px-2 py-2.5', row.excluded && 'opacity-55')}>
-                            {row.deptKey ? (
-                              <Badge
-                                variant="outline"
-                                className="border-indigo-500/30 text-[10px] text-indigo-600 dark:border-indigo-500/20 dark:text-indigo-400"
-                              >
-                                {row.deptName}
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="border-amber-500/30 text-[10px] text-amber-600 dark:text-amber-400">
-                                Unassigned
-                              </Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-400', row.excluded && 'opacity-55')}>
-                            {row.totalHours.toFixed(1)}
-                          </TableCell>
-                          <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300', row.excluded && 'opacity-55')}>
-                            {row.initialPay != null ? formatPHP(row.initialPay) : '—'}
-                          </TableCell>
-                          <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums font-semibold', row.excluded && 'opacity-55')}>
-                            {row.bonusTotal > 0 ? (
-                              <span className="text-emerald-600 dark:text-emerald-400">+{formatPHP(row.bonusTotal)}</span>
-                            ) : (
-                              <span className="text-zinc-400">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums font-bold', row.excluded ? 'text-zinc-400 line-through dark:text-zinc-600' : 'text-indigo-700 dark:text-indigo-300')}>
-                            {formatPHP(row.finalPay)}
-                          </TableCell>
-                          <TableCell className="px-2 py-2.5 text-center">
-                            <input
-                              type="checkbox"
-                              checked={row.excluded}
-                              onChange={() => toggleExcluded(row.email)}
-                              disabled={isReplay}
-                              aria-label={`Exclude ${row.name || row.email} from pay`}
-                              title={row.excluded ? 'Excluded from pay — untick to pay' : 'Tick to exclude from pay (do not pay this cycle)'}
-                              className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600"
+                          {isActive && (
+                            <motion.span
+                              layoutId="validation-dept-active-bg"
+                              className="absolute inset-0 rounded-[7px] bg-indigo-600/10 dark:bg-indigo-500/15"
+                              transition={{ type: 'spring', stiffness: 400, damping: 34 }}
                             />
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                  {/* Grand total footer */}
-                  {finalPayRows.length > 0 && (
-                    <tfoot>
-                      <tr className="border-t-2 border-zinc-300 bg-zinc-100/80 dark:border-zinc-700 dark:bg-zinc-900/60">
-                        <td colSpan={3} className="px-3 py-2.5 text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                          Grand Total ({payableFinalRows.length} payable{excludedCount > 0 ? ` · ${excludedCount} excluded` : ''})
-                        </td>
-                        <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-zinc-800 dark:text-zinc-200">
-                          {formatPHP(grandInitial)}
-                        </td>
-                        <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                          +{formatPHP(grandBonuses)}
-                        </td>
-                        <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-indigo-700 dark:text-indigo-300">
-                          {formatPHP(grandFinal)}
-                        </td>
-                        <td className="px-2 py-2.5" />
-                      </tr>
-                    </tfoot>
-                  )}
-                </Table>
-              </div>
-            </div>
-            </div>
+                          )}
+                          <span className="relative truncate">{g.name}</span>
+                          <span className="relative flex shrink-0 items-center gap-1">
+                            {exCount > 0 && (
+                              <span
+                                className="rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                                title={`${exCount} excluded from pay`}
+                              >
+                                {exCount}
+                              </span>
+                            )}
+                            <span
+                              className={cn(
+                                'rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                                isActive
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400',
+                              )}
+                            >
+                              {g.rows.length}
+                            </span>
+                          </span>
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Active department's final-pay table */}
+                  <div className="min-w-0 flex-1 space-y-3">
+                    <div className="relative">
+                      <svg
+                        className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
+                        fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+                      >
+                        <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+                      </svg>
+                      <Input
+                        placeholder={`Search ${activeGroup.name} by name or email…`}
+                        value={validationSearch}
+                        onChange={(e) => setValidationSearch(e.target.value)}
+                        className="h-9 rounded-lg border-zinc-200 bg-white pl-8 pr-8 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+                      />
+                      {validationSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setValidationSearch('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                          aria-label="Clear search"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white/50 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50/90 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+                        <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                          {activeGroup.name} — Final Pay
+                          {vNeedle && <span className="ml-1 font-normal text-zinc-400">— {filteredRows.length} of {activeGroup.rows.length}</span>}
+                        </span>
+                        <span className="max-w-full truncate text-[10px] text-zinc-400">
+                          {activeGroup.rows.length} employee{activeGroup.rows.length !== 1 ? 's' : ''}
+                          {deptExcludedCount > 0 && <> · <span className="font-semibold text-rose-600 dark:text-rose-400">{deptExcludedCount} excluded</span></>}
+                        </span>
+                      </div>
+
+                      <div
+                        className="overflow-auto [-ms-overflow-style:none] [scrollbar-gutter:stable]"
+                        style={{ maxHeight: 'min(62vh, calc(100dvh - 26rem))' }}
+                      >
+                        <Table>
+                          <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-zinc-100/95 [&_th]:shadow-[0_1px_0_0_rgb(228_228_231)] dark:[&_th]:bg-zinc-900/95 dark:[&_th]:shadow-[0_1px_0_0_rgb(39_39_42)]">
+                            <TableRow className="border-zinc-200 hover:bg-transparent dark:border-zinc-800">
+                              <TableHead className="min-w-[160px] px-3 text-xs font-medium text-zinc-600 dark:text-zinc-400">Employee</TableHead>
+                              <TableHead className="min-w-[70px] px-2 text-right text-xs font-medium text-zinc-600 dark:text-zinc-400">Hrs</TableHead>
+                              <TableHead className="min-w-[110px] px-2 text-right text-xs font-medium text-zinc-600 dark:text-zinc-400">Initial Pay</TableHead>
+                              <TableHead className="min-w-[110px] px-2 text-right text-xs font-medium text-emerald-600 dark:text-emerald-400">Bonuses</TableHead>
+                              <TableHead className="min-w-[120px] px-2 text-right text-xs font-semibold text-indigo-600 dark:text-indigo-400">Final Pay</TableHead>
+                              <TableHead className="min-w-[96px] px-2 text-center text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={allDeptExcluded}
+                                    ref={(el) => { if (el) el.indeterminate = someDeptExcluded; }}
+                                    onChange={() => setExcludedMany(deptEmails, !allDeptExcluded)}
+                                    disabled={isReplay || activeGroup.rows.length === 0}
+                                    aria-label={`Exclude all employees in ${activeGroup.name} from pay`}
+                                    title={allDeptExcluded
+                                      ? `Include all ${activeGroup.name} in pay`
+                                      : `Exclude all ${activeGroup.name} from pay (do not pay this cycle)`}
+                                    className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600"
+                                  />
+                                  <span>Exclude</span>
+                                </div>
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {filteredRows.length === 0 ? (
+                              <TableRow>
+                                <TableCell colSpan={6} className="py-10 text-center text-sm text-zinc-400">
+                                  {vNeedle ? <>No employees match &quot;{vNeedle}&quot;</> : 'No employees in this department.'}
+                                </TableCell>
+                              </TableRow>
+                            ) : (
+                              filteredRows.map((row, i) => (
+                                <TableRow
+                                  key={`${row.email}-${i}`}
+                                  className={cn(
+                                    'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900/30',
+                                    row.excluded && 'bg-rose-50/40 dark:bg-rose-950/15',
+                                  )}
+                                >
+                                  <TableCell className={cn('px-3 py-2.5', row.excluded && 'opacity-55')}>
+                                    <div className="flex items-center gap-1.5">
+                                      <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
+                                        {row.name || '—'}
+                                      </div>
+                                      {row.excluded && (
+                                        <Badge className="shrink-0 border-rose-500/30 bg-rose-500/10 text-[9px] uppercase tracking-wide text-rose-600 dark:text-rose-400">
+                                          Do not pay
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="font-mono text-[10px] text-zinc-400 truncate">{row.email}</div>
+                                  </TableCell>
+                                  <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-600 dark:text-zinc-400', row.excluded && 'opacity-55')}>
+                                    {row.totalHours.toFixed(1)}
+                                  </TableCell>
+                                  <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300', row.excluded && 'opacity-55')}>
+                                    {row.initialPay != null ? formatPHP(row.initialPay) : '—'}
+                                  </TableCell>
+                                  <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums font-semibold', row.excluded && 'opacity-55')}>
+                                    {row.bonusTotal > 0 ? (
+                                      <span className="text-emerald-600 dark:text-emerald-400">+{formatPHP(row.bonusTotal)}</span>
+                                    ) : (
+                                      <span className="text-zinc-400">—</span>
+                                    )}
+                                  </TableCell>
+                                  <TableCell className={cn('px-2 py-2.5 text-right font-mono text-xs tabular-nums font-bold', row.excluded ? 'text-zinc-400 line-through dark:text-zinc-600' : 'text-indigo-700 dark:text-indigo-300')}>
+                                    {formatPHP(row.finalPay)}
+                                  </TableCell>
+                                  <TableCell className="px-2 py-2.5 text-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={row.excluded}
+                                      onChange={() => toggleExcluded(row.email)}
+                                      disabled={isReplay}
+                                      aria-label={`Exclude ${row.name || row.email} from pay`}
+                                      title={row.excluded ? 'Excluded from pay — untick to pay' : 'Tick to exclude from pay (do not pay this cycle)'}
+                                      className="h-4 w-4 cursor-pointer rounded border-zinc-300 accent-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600"
+                                    />
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            )}
+                          </TableBody>
+                          {/* Department subtotal footer (payable rows only) */}
+                          {activeGroup.rows.length > 0 && (
+                            <tfoot>
+                              <tr className="border-t-2 border-zinc-300 bg-zinc-100/80 dark:border-zinc-700 dark:bg-zinc-900/60">
+                                <td colSpan={2} className="px-3 py-2.5 text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                                  {activeGroup.name} Subtotal ({deptPayable.length} payable{deptExcludedCount > 0 ? ` · ${deptExcludedCount} excluded` : ''})
+                                </td>
+                                <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-zinc-800 dark:text-zinc-200">
+                                  {formatPHP(deptInitial)}
+                                </td>
+                                <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                                  +{formatPHP(deptBonuses)}
+                                </td>
+                                <td className="px-2 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-indigo-700 dark:text-indigo-300">
+                                  {formatPHP(deptFinal)}
+                                </td>
+                                <td className="px-2 py-2.5" />
+                              </tr>
+                            </tfoot>
+                          )}
+                        </Table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               );
             })()}
 
@@ -10762,9 +11080,6 @@ export default function PayrollWizard({
                     } catch {
                       /* staging succeeded; lock write is best-effort + retryable */
                     }
-                    toast.success('Locked in & sent to Payment Dispatch', {
-                      description: `${employees.length} payable paystub${employees.length === 1 ? '' : 's'} staged${excludedRows.length > 0 ? ` · ${excludedRows.length} excluded` : ''}. Lenny emails each one on Mark Paid.`,
-                    });
                     void publishFinalPaySnapshot();
                     cursorOverlayRef.current?.broadcastSave();
                     setReportSnapshot({

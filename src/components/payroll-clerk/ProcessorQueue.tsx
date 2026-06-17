@@ -9,7 +9,17 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { PROCESSORS, formatPHP, formatUSD, type ProcessorId, type QueueRow } from './mock-queue';
+import { PROCESSORS, formatPHP, formatUSD, formatCOP, type ProcessorId, type QueueRow } from './mock-queue';
+import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
+
+/** Primary (native) amount string for a row: COP people show COP, everyone else
+ *  shows USD (the PHP-equivalent is always the secondary line). */
+function rowPrimaryAmount(row: QueueRow): string {
+  return row.payCurrency === 'COP' ? formatCOP(row.amountCOP) : formatUSD(row.amountUSD);
+}
+function rowPrimaryNull(row: QueueRow): boolean {
+  return row.payCurrency === 'COP' ? row.amountCOP == null : row.amountUSD == null;
+}
 import {
   buildPendingRows,
   dispatchClientFilename,
@@ -38,6 +48,16 @@ interface ProcessorQueueProps {
   periodEnd?: string | null;
   /** Silent re-pull of the queue (e.g. to surface a row sent back from Done). */
   onRefresh?: () => void | Promise<void>;
+  /**
+   * Overrides the heading + subheading shown in the "All" view (processor ===
+   * null). The USD tab uses this so it reads "USD payments" instead of the
+   * generic "All pending payments".
+   */
+  allLabel?: { title: string; subtitle: string };
+  /** Native currency of this tab's headline total. 'COP' shows the COP total;
+   *  anything else (default) shows the USD total. Per-row amounts always follow
+   *  each row's own `payCurrency`. */
+  nativeCurrency?: PayCurrency;
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -143,7 +163,7 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, onRefresh }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -203,8 +223,12 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, o
 
   const totalUSD = filtered.reduce((sum, r) => sum + (r.amountUSD ?? 0), 0);
   const totalPHP = filtered.reduce((sum, r) => sum + (r.amountPHP ?? 0), 0);
+  const totalCOP = filtered.reduce((sum, r) => sum + (r.amountCOP ?? 0), 0);
   const totalOT = filtered.reduce((sum, r) => sum + (r.otHours ?? 0), 0);
-  const allAmountsNull = filtered.length > 0 && filtered.every((r) => r.amountUSD == null);
+  const isCop = nativeCurrency === 'COP';
+  const headlineTotal = isCop ? formatCOP(totalCOP) : formatUSD(totalUSD);
+  const allAmountsNull =
+    filtered.length > 0 && filtered.every((r) => (isCop ? r.amountCOP == null : r.amountUSD == null));
 
   const PAGE_SIZE = 25;
   const [page, setPage] = useState(1);
@@ -223,12 +247,12 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, o
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-white">
-              {processor ? meta?.label : 'All pending payments'}
+              {processor ? meta?.label : allLabel?.title ?? 'All pending payments'}
             </h2>
             <p className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">
               {processor
                 ? `${meta?.blurb ?? ''} · send via ${meta?.label}, then mark paid`
-                : 'Everything Lenny still has to dispatch this cycle.'}
+                : allLabel?.subtitle ?? 'Everything Lenny still has to dispatch this cycle.'}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs sm:gap-3">
@@ -243,7 +267,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, periodStart, periodEnd, o
             {!allAmountsNull && (
               <div className="flex items-baseline gap-2 rounded-md border border-orange-100 bg-white/80 px-2 py-0.5 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/20">
                 <span className="font-mono text-[12px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                  {formatUSD(totalUSD)}
+                  {headlineTotal}
                 </span>
                 <span className="font-mono text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
                   {formatPHP(totalPHP)}
@@ -456,10 +480,10 @@ const QueueRowItem = React.memo(function QueueRowItem({
               <div
                 className={cn(
                   'font-mono text-sm font-semibold tabular-nums',
-                  row.amountUSD == null ? 'text-zinc-400' : 'text-zinc-900 dark:text-zinc-100',
+                  rowPrimaryNull(row) ? 'text-zinc-400' : 'text-zinc-900 dark:text-zinc-100',
                 )}
               >
-                {formatUSD(row.amountUSD)}
+                {rowPrimaryAmount(row)}
               </div>
               <div
                 className={cn(
@@ -565,10 +589,10 @@ const QueueRowItem = React.memo(function QueueRowItem({
           <div
             className={cn(
               'font-mono text-sm font-semibold tabular-nums',
-              row.amountUSD == null ? 'text-zinc-400' : 'text-zinc-900 dark:text-zinc-100',
+              rowPrimaryNull(row) ? 'text-zinc-400' : 'text-zinc-900 dark:text-zinc-100',
             )}
           >
-            {formatUSD(row.amountUSD)}
+            {rowPrimaryAmount(row)}
           </div>
           <div
             className={cn(

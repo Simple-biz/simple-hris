@@ -31,6 +31,7 @@ export interface PaystubQueueListItem {
   recipient_email: string;
   personal_email: string | null;
   recipient_name: string | null;
+  department_key: string | null;
   excluded: boolean;
   exclude_reason: string | null;
   amount_php: number | null;
@@ -43,7 +44,6 @@ export interface PaystubQueueListItem {
 
 /** Full row including the n8n payload — used by the single-send path. */
 export interface PaystubQueueEntry extends PaystubQueueListItem {
-  department_key: string | null;
   pay_period: Record<string, unknown> | null;
   payload: Record<string, unknown> | null;
   locked_at: string | null;
@@ -51,7 +51,7 @@ export interface PaystubQueueEntry extends PaystubQueueListItem {
 }
 
 const LIST_COLUMNS =
-  "id, cycle_source_file, recipient_email, personal_email, recipient_name, excluded, exclude_reason, amount_php, amount_usd, sent_at, sent_by, send_count, last_error";
+  "id, cycle_source_file, recipient_email, personal_email, recipient_name, department_key, excluded, exclude_reason, amount_php, amount_usd, sent_at, sent_by, send_count, last_error";
 
 function norm(email: string): string {
   return email.trim().toLowerCase();

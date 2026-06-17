@@ -1139,12 +1139,21 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
     );
   }, [rate]);
 
+  // PAB + Tech amounts + per-department eligibility resolved server-side by
+  // /api/manager/member-monthly-pay (Payment Catalog System Bonuses). Falls back
+  // to the legacy constants + "applies to everyone" before the data loads.
+  const pabBonusPhpAmt = memberPay?.pabBonusAmountPHP ?? PERFECT_ATTENDANCE_BONUS_PHP;
+  const techBonusPhpAmt = memberPay?.techBonusAmountPHP ?? TECHNOLOGY_BONUS_PHP;
+  const pabDeptOk = memberPay?.pabDeptEligible ?? true;
+  const techDeptOk = memberPay?.techDeptEligible ?? true;
+
   /** PAB Bonus: paid once per calendar month if every weekday in the month logged ≥7h. */
   const pabBonusAmount = useMemo(() => {
     if (!hasRates) return 0;
     if (!isPAEligible) return 0;
-    return PERFECT_ATTENDANCE_BONUS_PHP;
-  }, [hasRates, isPAEligible]);
+    if (!pabDeptOk) return 0;
+    return pabBonusPhpAmt;
+  }, [hasRates, isPAEligible, pabDeptOk, pabBonusPhpAmt]);
 
   /** True once the displayed month has fully concluded (today is past its last day). */
   const monthHasEnded = useMemo(() => {
@@ -1185,6 +1194,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
    */
   const isTechnologyBonusActive = useMemo(() => {
     if (!hasRates) return false;
+    if (!techDeptOk) return false;
     if (!monthHasEnded) return false;
     if (!employeeStartDate) return true;
     const eligibleFrom = new Date(
@@ -1193,9 +1203,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
       employeeStartDate.getDate() + 30,
     );
     return techBonusPayPeriod.weekStart.getTime() >= eligibleFrom.getTime();
-  }, [hasRates, employeeStartDate, techBonusPayPeriod, monthHasEnded]);
+  }, [hasRates, employeeStartDate, techBonusPayPeriod, monthHasEnded, techDeptOk]);
 
-  const technologyBonusAmount = isTechnologyBonusActive ? TECHNOLOGY_BONUS_PHP : 0;
+  const technologyBonusAmount = isTechnologyBonusActive ? techBonusPhpAmt : 0;
 
   /** Take-home estimate including bonuses. Null until rates are on file. */
   const monthTakeHomePay = useMemo(() => {
@@ -1974,9 +1984,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                   weekly total. Hours are grouped by Mon–Sun calendar week; only the portion of a week&apos;s
                   total that exceeds <span className="font-medium">40h</span> is paid at the OT rate.
                   <span className="font-medium text-indigo-600/80 dark:text-indigo-400/80"> PAB</span> pays{' '}
-                  {formatPHP(PERFECT_ATTENDANCE_BONUS_PHP).replace(/\.\d{2}$/, '')} when every weekday hits ≥7h;
+                  {formatPHP(pabBonusPhpAmt).replace(/\.\d{2}$/, '')} when every weekday hits ≥7h;
                   <span className="font-medium text-sky-600/80 dark:text-sky-400/80"> Tech Bonus</span> pays{' '}
-                  {formatPHP(TECHNOLOGY_BONUS_PHP).replace(/\.\d{2}$/, '')} once per month after 30 days of
+                  {formatPHP(techBonusPhpAmt).replace(/\.\d{2}$/, '')} once per month after 30 days of
                   service. Final pay may differ after payroll.
                 </p>
               </>
