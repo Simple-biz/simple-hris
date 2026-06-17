@@ -39,7 +39,9 @@
       "Bash(git --no-pager diff HEAD --numstat -- src/components/ceo/CeoApp.tsx src/components/ceo/CeoSidebar.tsx app/admin/page.tsx src/components/admin/AdminSidebar.tsx)",
       "Bash(cat)",
       "Bash(bash /tmp/check_integration.sh)",
-      "Bash(git --no-pager log --oneline -4)"
+      "Bash(git --no-pager log --oneline -4)",
+      "PowerShell(cd 'c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris'; npx tsc --noEmit; \"TSC_EXIT=$LASTEXITCODE\")",
+      "PowerShell(cd 'c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris'; if \\(Test-Path package.json\\) { \\(Get-Content package.json | ConvertFrom-Json\\).scripts.PSObject.Properties | Where-Object { $_.Name -match 'check|lint|tsc|type' } | ForEach-Object { \"$\\($_.Name\\): $\\($_.Value\\)\" } })"
     ]
   }
 }

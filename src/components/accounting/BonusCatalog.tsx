@@ -49,6 +49,7 @@ import {
   Loader2,
   Award,
   Star,
+  LayoutDashboard,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -96,6 +97,7 @@ import {
   phpPerUnit,
   type FxRates,
 } from '@/lib/fx/currency-fx';
+import PaymentCatalogOverview from './PaymentCatalogOverview';
 
 // Always render exactly 2 decimals so the exact amount is shown without ever
 // rounding cents away to a whole number (1500 -> "₱1,500.00", 1500.5 -> "₱1,500.50").
@@ -490,7 +492,7 @@ function buildRoster(initialData?: InitialAccountingData | null): RosterEntry[] 
 // Top-level component
 // ---------------------------------------------------------------------------
 
-type CatalogTab = 'pay-structure' | 'library' | 'assignments' | 'system-bonuses';
+type CatalogTab = 'overview' | 'pay-structure' | 'library' | 'assignments' | 'system-bonuses';
 
 export default function BonusCatalog({ initialData }: { initialData?: InitialAccountingData | null }) {
   const [bonuses, setBonuses] = useState<BonusDef[]>([]);
@@ -499,7 +501,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   const [systemBonuses, setSystemBonuses] = useState<SystemBonus[]>(initialData?.systemBonuses ?? []);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [tab, setTab] = useState<CatalogTab>('pay-structure');
+  const [tab, setTab] = useState<CatalogTab>('overview');
   const instanceId = useId();
 
   const roster = useMemo(() => buildRoster(initialData), [initialData]);
@@ -738,6 +740,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   );
 
   const tabs = [
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard, count: 0 },
     { id: 'pay-structure', label: 'Pay Structure', icon: Wallet, count: payStructures.length },
     { id: 'library', label: 'Bonus Library', icon: Sparkles, count: bonuses.length },
     { id: 'assignments', label: 'Assignments', icon: Building2, count: assignments.length },
@@ -823,6 +826,24 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
               className="p-10 text-center text-sm text-zinc-400"
             >
               Loading catalog...
+            </motion.div>
+          ) : tab === 'overview' ? (
+            <motion.div
+              key="overview"
+              initial={{ opacity: 0, x: -14 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 14 }}
+              transition={{ duration: 0.24, ease: EASE }}
+              className="h-full"
+            >
+              <PaymentCatalogOverview
+                payStructures={payStructures}
+                bonuses={bonuses}
+                assignments={assignments}
+                systemBonuses={systemBonuses}
+                roster={roster}
+                fx={fx}
+              />
             </motion.div>
           ) : tab === 'pay-structure' ? (
             <motion.div

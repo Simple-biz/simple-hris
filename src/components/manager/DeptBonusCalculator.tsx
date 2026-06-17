@@ -68,6 +68,8 @@ import {
   type HubstaffSourceFilesResponse,
 } from '@/lib/hubstaff/current-upload';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import KpiCalculatorLoading from './KpiCalculatorLoading';
 import { validateFormula, evaluateFormula } from '@/lib/bonus-catalog/formula';
 import type { BonusDef, BonusAssignment } from '@/lib/bonus-catalog/types';
 import { effectiveUsdToPhpRateFromStored } from '@/lib/fx/usd-php';
@@ -778,6 +780,47 @@ export default function DeptBonusCalculator({
       void supabase.removeChannel(channel);
     };
   }, [fetchCatalog]);
+
+  // ── Live refresh ───────────────────────────────────────────────────────────
+  // Reload every visible dept, skipping any with unsaved local edits (`dirty`)
+  // or an in-flight save so another scorer's change can't clobber work in
+  // progress. Used by both the manual Refresh button and the live subscription.
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshAll = useCallback(async () => {
+    await Promise.all(
+      visibleDeptKeys.map((k) => {
+        const d = state[k];
+        if (d?.dirty || d?.saving) return Promise.resolve();
+        return loadDept(k);
+      }),
+    );
+  }, [visibleDeptKeys, state, loadDept]);
+
+  const manualRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      // Pull fresh catalog defs too, in case a bonus was added/retired elsewhere.
+      await Promise.all([fetchCatalog(), refreshAll()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchCatalog, refreshAll]);
+
+  // See other scorers' applied bonuses as they land: watch the applied + status
+  // tables and re-pull (debounced). Falls back to a 30s poll + tab-focus refresh
+  // when Realtime isn't available for these tables.
+  useLiveRefresh({
+    tables: ['bonus_catalog_applied', 'hsl_bonus_period_status'],
+    onRefresh: refreshAll,
+    channel: 'dept-bonus-calc-live',
+    enabled: catalogLoaded && visibleDeptKeys.length > 0,
+  });
+
+  // First-load gate: the catalog plus every visible dept's applied rows must be
+  // in before we reveal the calculator — otherwise switching to the tab flashes
+  // an empty grid. (`.every` is vacuously true when nothing is visible, which
+  // the parent already guards against.)
+  const ready = catalogLoaded && visibleDeptKeys.every((k) => state[k]?.loaded);
 
   // Pin the KPI week to the Hubstaff batch accounting is dispatching — the
   // Initialized (is_current) upload, NOT merely the newest file. The public
@@ -2009,6 +2052,22 @@ export default function DeptBonusCalculator({
 
   // -- Landing -------------------------------------------------------------------
 
+  if (!ready) {
+    return (
+      <KpiCalculatorLoading
+        variant="departments"
+        title={
+          isElevated
+            ? 'All Departments'
+            : visibleDeptKeys.length === 1
+              ? (DEPARTMENTS.find((d) => d.key === visibleDeptKeys[0])?.name ?? 'Department')
+              : 'My Departments'
+        }
+        cards={Math.max(visibleDeptKeys.length, isElevated ? 6 : 1)}
+      />
+    );
+  }
+
   return (
     <div className="flex min-h-0 flex-col">
       {/* Header + controls */}
@@ -2098,6 +2157,17 @@ export default function DeptBonusCalculator({
             )}
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 text-xs"
+              onClick={() => void manualRefresh()}
+              disabled={refreshing}
+              title="Reload bonuses (also updates live as other scorers edit)"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </Button>
             <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-400">Open as</span>
             <ViewSwitch mode={mode} onChange={setMode} />
           </div>

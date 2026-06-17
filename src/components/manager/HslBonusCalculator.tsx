@@ -22,7 +22,9 @@ import {
   type HubstaffSourceFilesResponse,
 } from '@/lib/hubstaff/current-upload';
 import HslBonusReadyPreview from './HslBonusReadyPreview';
+import KpiCalculatorLoading from './KpiCalculatorLoading';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -359,9 +361,53 @@ export default function HslBonusCalculator({
     }
   }, [weekStart, monthStart]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // First-load gate: show a loading screen until every visible dept's initial
+  // fetch has settled, so switching to the tab doesn't flash an empty calculator.
+  const [booted, setBooted] = useState(false);
   useEffect(() => {
-    visibleDepts.forEach((k) => void loadDept(k));
+    let cancelled = false;
+    void (async () => {
+      await Promise.all(visibleDepts.map((k) => loadDept(k)));
+      if (!cancelled) setBooted(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [visibleDepts, loadDept]);
+
+  // ── Live refresh ───────────────────────────────────────────────────────────
+  // Reload every visible dept, but skip any with unsaved local edits (`dirty`)
+  // or an in-flight save so another scorer's change can't clobber work in
+  // progress. Used by both the manual Refresh button and the live subscription.
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshAll = useCallback(async () => {
+    await Promise.all(
+      visibleDepts.map((k) => {
+        const d = deptState[k];
+        if (d?.dirty || d?.saving) return Promise.resolve();
+        return loadDept(k);
+      }),
+    );
+  }, [visibleDepts, deptState, loadDept]);
+
+  const manualRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refreshAll();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshAll]);
+
+  // See teammates' scoring as it lands: watch the entry + status tables and
+  // re-pull (debounced). Falls back to a 30s poll + tab-focus refresh when
+  // Realtime isn't available for these tables.
+  useLiveRefresh({
+    tables: ['hsl_bonus_entries', 'hsl_bonus_period_status'],
+    onRefresh: refreshAll,
+    channel: 'hsl-bonus-calc-live',
+    enabled: visibleDepts.length > 0,
+  });
 
   // Pin the KPI week to the Hubstaff batch accounting is dispatching — the
   // Initialized (is_current) upload, NOT merely the newest file. The public
@@ -577,6 +623,22 @@ export default function HslBonusCalculator({
     );
   }
 
+  if (!booted) {
+    return (
+      <KpiCalculatorLoading
+        variant="hsl"
+        title={
+          isElevated
+            ? 'All Departments'
+            : visibleDepts.length === 1
+              ? HSL_DEPTS[visibleDepts[0]!].name
+              : 'My Departments'
+        }
+        cards={visibleDepts.length}
+      />
+    );
+  }
+
   return (
     <div className="flex min-h-0 flex-col bg-gradient-to-b from-white via-blue-50/20 to-white text-zinc-900 dark:from-black dark:via-blue-950/15 dark:to-black dark:text-zinc-100">
       {/* Top bar */}
@@ -601,6 +663,17 @@ export default function HslBonusCalculator({
               </span>
               <span className="font-mono text-[10px] text-zinc-500">{totalPeople} ppl</span>
             </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 text-xs"
+              onClick={() => void manualRefresh()}
+              disabled={refreshing}
+              title="Reload scores (also updates live as teammates edit)"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </Button>
             {isElevated && (
               <Button
                 size="sm"
