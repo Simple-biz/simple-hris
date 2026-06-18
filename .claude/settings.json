@@ -41,7 +41,14 @@
       "Bash(bash /tmp/check_integration.sh)",
       "Bash(git --no-pager log --oneline -4)",
       "PowerShell(cd 'c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris'; npx tsc --noEmit; \"TSC_EXIT=$LASTEXITCODE\")",
-      "PowerShell(cd 'c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris'; if \\(Test-Path package.json\\) { \\(Get-Content package.json | ConvertFrom-Json\\).scripts.PSObject.Properties | Where-Object { $_.Name -match 'check|lint|tsc|type' } | ForEach-Object { \"$\\($_.Name\\): $\\($_.Value\\)\" } })"
+      "PowerShell(cd 'c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris'; if \\(Test-Path package.json\\) { \\(Get-Content package.json | ConvertFrom-Json\\).scripts.PSObject.Properties | Where-Object { $_.Name -match 'check|lint|tsc|type' } | ForEach-Object { \"$\\($_.Name\\): $\\($_.Value\\)\" } })",
+      "PowerShell(if \\($?\\) { \"TSC OK\" } else { \"TSC FAILED\" })",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(bash \"c:/tmp/sort_references.sh\")",
+      "Bash(PORT=3005 npx next dev --port 3005)",
+      "Bash(echo \"started dev server pid $!\")",
+      "Bash(git -C /c/Users/Itachi/Desktop/simple-hris status --short)"
     ]
   }
 }

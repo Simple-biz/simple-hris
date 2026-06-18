@@ -95,6 +95,9 @@ type OpenMode = 'drawer' | 'focus' | 'modal';
 const EASE = [0.22, 1, 0.36, 1] as const;
 const PESO = '₱';
 
+/** Departments whose calculator table is paginated, and how many rows per page. */
+const PAGED_DEPTS: Record<string, number> = { lead_gen: 5 };
+
 /** Per-member, per-bonus applied state. `vars` holds formula inputs as strings. */
 interface AppliedState {
   on: boolean;
@@ -594,6 +597,10 @@ export default function DeptBonusCalculator({
   const [deptSearch, setDeptSearch] = useState('');
   // Per-department people search, used inside the open calculator panel.
   const [cardSearch, setCardSearch] = useState<Record<string, string>>({});
+  // Lead Gen's roster is long, so its calculator table pages 5 people at a time
+  // (zero-based; reset when the open dept or its search changes). Other depts
+  // render every row in one scroll.
+  const [leadGenPage, setLeadGenPage] = useState(0);
   // The open department (rendered in the overlay) + how the overlay presents:
   // a right-side drawer, or a full-screen focus workspace with a dept rail.
   const [openId, setOpenId] = useState<string | null>(null);
@@ -1269,6 +1276,11 @@ export default function DeptBonusCalculator({
     if (openId && !visibleDeptKeys.includes(openId)) setOpenId(null);
   }, [openId, visibleDeptKeys]);
 
+  // Reset the paginated table to its first page whenever the open dept changes.
+  useEffect(() => {
+    setLeadGenPage(0);
+  }, [openId]);
+
   // Auto-dismiss the confirmation a moment after it succeeds (lock is lighter,
   // so it lingers less than a payroll submission).
   useEffect(() => {
@@ -1352,6 +1364,15 @@ export default function DeptBonusCalculator({
     const tableReady = !!d?.loaded && hasAnyBonus && allMembers.length > 0;
     const chipBonuses = [...v.normalCommon, ...v.sharedCommon];
 
+    // Pagination (Lead Gen only today): slice the search-filtered rows into
+    // pages. Footer subtotals, header tri-states and progress are all computed
+    // over allMembers, so they stay whole-department correct regardless of page.
+    const pageSize = PAGED_DEPTS[key];
+    const paginated = !!pageSize && members.length > pageSize;
+    const pageCount = paginated ? Math.ceil(members.length / pageSize) : 1;
+    const page = Math.min(leadGenPage, pageCount - 1);
+    const pagedMembers = paginated ? members.slice(page * pageSize, page * pageSize + pageSize) : members;
+
     return (
       <div className="flex h-full min-h-0 w-full flex-col bg-white dark:bg-[#0b0e15]">
         {/* Panel header: identity, KPI schema chips, dept nav, mode switch, close */}
@@ -1424,23 +1445,20 @@ export default function DeptBonusCalculator({
                 type="search"
                 placeholder={`Search ${allMembers.length} ${allMembers.length === 1 ? 'person' : 'people'}…`}
                 value={cardSearch[key] ?? ''}
-                onChange={(e) => setCardSearch((prev) => ({ ...prev, [key]: e.target.value }))}
+                onChange={(e) => {
+                  setCardSearch((prev) => ({ ...prev, [key]: e.target.value }));
+                  if (PAGED_DEPTS[key]) setLeadGenPage(0);
+                }}
                 className="h-8 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-900 outline-none transition-colors focus:border-emerald-400 focus:ring-1 focus:ring-emerald-200 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-100"
               />
             </div>
-            <div className="flex shrink-0 items-center gap-2 font-mono text-[11px]">
-              <span className="text-zinc-500 dark:text-zinc-400">
-                {entered} / {allMembers.length} entered
-              </span>
-              {toFill > 0 ? (
-                <span className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 font-semibold text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
-                  <AlertTriangle className="h-3 w-3" /> {toFill} to fill
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300">
-                  <Check className="h-3 w-3" /> complete
-                </span>
-              )}
+            <div className="flex shrink-0 items-center">
+              <CompletionGauge
+                entered={entered}
+                total={allMembers.length}
+                toFill={toFill}
+                reduce={!!reduceMotion}
+              />
             </div>
           </div>
         )}
@@ -1582,7 +1600,7 @@ export default function DeptBonusCalculator({
               </thead>
 
               <tbody>
-                {members.map((m) => {
+                {pagedMembers.map((m, ri) => {
                   const appl = applicableBonuses(key, m.email);
                   const applSet = new Set(appl.map((b) => b.id));
                   const mIndividual = appl.filter(
@@ -1590,8 +1608,14 @@ export default function DeptBonusCalculator({
                   );
                   const mTotal = memberTotal(key, m, d.shared);
                   return (
-                    <tr
+                    // Opacity-only fade (no transform) so the sticky Member / Total
+                    // columns keep sticking; replays as a soft cascade whenever the
+                    // visible rows change — a page turn or a search narrowing.
+                    <motion.tr
                       key={m.email}
+                      initial={reduceMotion ? false : { opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.24, ease: EASE, delay: Math.min(ri * 0.025, 0.2) }}
                       className="group/row border-b border-zinc-100 last:border-0 hover:bg-emerald-50/40 dark:border-zinc-800/60 dark:hover:bg-emerald-950/10"
                     >
                       {/* Member (sticky) */}
@@ -1748,7 +1772,7 @@ export default function DeptBonusCalculator({
                           {fmtTotals(mTotal)}
                         </span>
                       </td>
-                    </tr>
+                    </motion.tr>
                   );
                 })}
               </tbody>
@@ -1810,6 +1834,34 @@ export default function DeptBonusCalculator({
             </table>
           )}
         </div>
+
+        {/* Pager: only for paginated depts (Lead Gen) with more than one page */}
+        {paginated && (
+          <div className="flex flex-none items-center justify-between gap-3 border-t border-zinc-100 px-4 py-2 dark:border-zinc-800/70 sm:px-5">
+            <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+              {page * pageSize + 1}–{Math.min(members.length, (page + 1) * pageSize)} of {members.length}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <PanelIconButton
+                label="Previous page"
+                disabled={page <= 0}
+                onClick={() => setLeadGenPage((p) => Math.max(0, p - 1))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </PanelIconButton>
+              <span className="min-w-[5.5rem] text-center font-mono text-[11px] tabular-nums text-zinc-600 dark:text-zinc-300">
+                Page {page + 1} / {pageCount}
+              </span>
+              <PanelIconButton
+                label="Next page"
+                disabled={page >= pageCount - 1}
+                onClick={() => setLeadGenPage((p) => Math.min(pageCount - 1, p + 1))}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </PanelIconButton>
+            </div>
+          </div>
+        )}
 
         {/* Footer: department subtotal + actions */}
         <div className="flex flex-none items-center justify-between gap-4 border-t border-zinc-200/80 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-[#0b0e15] sm:px-5">
@@ -1893,6 +1945,27 @@ export default function DeptBonusCalculator({
       </div>
     );
   };
+
+  // Crossfade the open department's panel when the manager moves between
+  // departments (the header arrows or the focus-mode rail) so the swap reads as
+  // a page turn rather than a hard cut. `mode="wait"` keeps only one panel
+  // mounted at a time; `initial={false}` skips the fade on the first open (the
+  // overlay's own entrance covers that) and only animates subsequent switches.
+  // Opacity-only — never a transform — so the table's sticky columns survive.
+  const renderAnimatedPanel = (key: string) => (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={key}
+        className="flex h-full min-h-0 w-full flex-col"
+        initial={reduceMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.18, ease: EASE }}
+      >
+        {renderPanel(key)}
+      </motion.div>
+    </AnimatePresence>
+  );
 
   // The side panel never goes below the original 880px base, and extends wider
   // for column-heavy departments. The responsive max-width on the panel still
@@ -1985,7 +2058,7 @@ export default function DeptBonusCalculator({
                     </aside>
 
                     <div className="min-w-0 flex-1" style={{ borderTop: `3px solid ${deptColor(openId)}` }}>
-                      {renderPanel(openId)}
+                      {renderAnimatedPanel(openId)}
                     </div>
                   </motion.div>
               ) : mode === 'modal' ? (
@@ -2003,7 +2076,7 @@ export default function DeptBonusCalculator({
                   exit={reduceMotion ? { opacity: 0 } : { x: '-50%', y: '-48%', scale: 0.97, opacity: 0 }}
                   transition={{ duration: 0.48, ease: EASE }}
                 >
-                  {renderPanel(openId)}
+                  {renderAnimatedPanel(openId)}
                 </motion.div>
               ) : (
                 <motion.div
@@ -2020,7 +2093,7 @@ export default function DeptBonusCalculator({
                   exit={reduceMotion ? { opacity: 0 } : { x: '100%' }}
                   transition={{ type: 'tween', duration: 0.52, ease: EASE }}
                 >
-                  {renderPanel(openId)}
+                  {renderAnimatedPanel(openId)}
                 </motion.div>
               ))}
           </AnimatePresence>,
@@ -2177,37 +2250,43 @@ export default function DeptBonusCalculator({
       {/* Department cards */}
       <motion.div
         className={cn(
-          'grid gap-3.5 px-4 py-4 sm:px-6',
+          'relative grid gap-3.5 px-4 py-4 sm:px-6',
           filteredDeptKeys.length <= 1 ? 'mx-auto w-full max-w-3xl grid-cols-1' : 'grid-cols-1 lg:grid-cols-2',
         )}
         initial={reduceMotion ? false : 'hidden'}
         animate="show"
         variants={{ show: { transition: { staggerChildren: 0.06, delayChildren: 0.04 } } }}
       >
-        {filteredDeptKeys.map((key) => {
-          const v = buildDeptView(key);
-          return (
-            <DeptSummaryCard
-              key={key}
-              name={v.dept?.name ?? key}
-              desc={DEPT_DESCRIPTION[key] ?? ''}
-              color={v.color}
-              wp={v.wp}
-              monogram={initials(v.dept?.name ?? key)}
-              headcount={v.allMembers.length}
-              status={v.d?.status ?? 'draft'}
-              warn={closingSoon && !v.readOnly}
-              dirty={!!v.d?.dirty}
-              projected={v.total}
-              toFill={v.toFill}
-              hasAnyBonus={v.hasAnyBonus}
-              loading={!v.d?.loaded}
-              isOpen={openId === key}
-              reduce={!!reduceMotion}
-              onOpen={() => open(key)}
-            />
-          );
-        })}
+        {/* popLayout pops a filtered-out card from flow so the rest glide into
+            their new positions; each card's `layout` prop drives that reflow as
+            the search narrows or clears. */}
+        <AnimatePresence mode="popLayout">
+          {filteredDeptKeys.map((key) => {
+            const v = buildDeptView(key);
+            return (
+              <DeptSummaryCard
+                key={key}
+                name={v.dept?.name ?? key}
+                desc={DEPT_DESCRIPTION[key] ?? ''}
+                color={v.color}
+                wp={v.wp}
+                monogram={initials(v.dept?.name ?? key)}
+                headcount={v.allMembers.length}
+                entered={v.entered}
+                status={v.d?.status ?? 'draft'}
+                warn={closingSoon && !v.readOnly}
+                dirty={!!v.d?.dirty}
+                projected={v.total}
+                toFill={v.toFill}
+                hasAnyBonus={v.hasAnyBonus}
+                loading={!v.d?.loaded}
+                isOpen={openId === key}
+                reduce={!!reduceMotion}
+                onOpen={() => open(key)}
+              />
+            );
+          })}
+        </AnimatePresence>
       </motion.div>
 
       {filteredDeptKeys.length === 0 && (
@@ -2224,6 +2303,98 @@ export default function DeptBonusCalculator({
 
 // -- Bits -----------------------------------------------------------------------
 
+/** At-a-glance "is everyone scored?" gauge. A ring fills to entered / total and
+ *  the core flips between three states: a check once every member in the
+ *  department has at least one KPI applied, an amber warning when someone's
+ *  applied bonus is still missing a required input, or the running count while
+ *  it's being filled in. The big variant anchors the open panel's toolbar; the
+ *  small one rides each landing card so a manager can sweep the grid and spot
+ *  which departments are fully scored. The ring animates via stroke-dashoffset
+ *  (never a transform) so it stays safe beside the table's sticky columns. */
+function CompletionGauge({
+  entered,
+  total,
+  toFill,
+  size = 'lg',
+  reduce,
+}: {
+  entered: number;
+  total: number;
+  toFill: number;
+  size?: 'lg' | 'sm';
+  reduce?: boolean;
+}) {
+  const lg = size === 'lg';
+  const pct = total > 0 ? Math.min(1, entered / total) : 0;
+  const allIn = total > 0 && entered >= total;
+  const complete = allIn && toFill === 0;
+  const tone: 'emerald' | 'amber' | 'sky' | 'zinc' = complete
+    ? 'emerald'
+    : toFill > 0
+      ? 'amber'
+      : entered > 0
+        ? 'sky'
+        : 'zinc';
+  const palette = {
+    emerald: { ring: '#10b981', track: 'rgba(16,185,129,0.16)', text: 'text-emerald-600 dark:text-emerald-400' },
+    amber: { ring: '#f59e0b', track: 'rgba(245,158,11,0.18)', text: 'text-amber-600 dark:text-amber-400' },
+    sky: { ring: '#0ea5e9', track: 'rgba(14,165,233,0.16)', text: 'text-sky-600 dark:text-sky-400' },
+    zinc: { ring: '#a1a1aa', track: 'rgba(161,161,170,0.20)', text: 'text-zinc-400' },
+  }[tone];
+  const dim = lg ? 48 : 28;
+  const stroke = lg ? 5 : 3.25;
+  const r = (dim - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const title = complete
+    ? `All ${total} ${total === 1 ? 'person' : 'people'} scored`
+    : `${entered} of ${total} scored${toFill > 0 ? ` · ${toFill} still to fill` : ''}`;
+
+  return (
+    <div className="flex items-center gap-2" title={title}>
+      <div className="relative shrink-0" style={{ width: dim, height: dim }}>
+        <svg width={dim} height={dim} className="-rotate-90" aria-hidden>
+          <circle cx={dim / 2} cy={dim / 2} r={r} fill="none" stroke={palette.track} strokeWidth={stroke} />
+          <motion.circle
+            cx={dim / 2}
+            cy={dim / 2}
+            r={r}
+            fill="none"
+            stroke={palette.ring}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={circ}
+            initial={reduce ? false : { strokeDashoffset: circ }}
+            animate={{ strokeDashoffset: circ * (1 - pct) }}
+            transition={{ duration: 0.65, ease: EASE }}
+          />
+        </svg>
+        <span className="absolute inset-0 flex items-center justify-center">
+          {complete ? (
+            <Check className={cn(lg ? 'h-5 w-5' : 'h-3.5 w-3.5', palette.text)} strokeWidth={3} aria-hidden />
+          ) : allIn && toFill > 0 ? (
+            <AlertTriangle className={cn(lg ? 'h-4 w-4' : 'h-3 w-3', palette.text)} aria-hidden />
+          ) : (
+            <span className={cn('font-mono font-bold tabular-nums', lg ? 'text-[11px]' : 'text-[8.5px]', palette.text)}>
+              {entered}
+              <span className="opacity-50">/{total}</span>
+            </span>
+          )}
+        </span>
+      </div>
+      <div className="leading-tight">
+        <div className={cn('font-mono font-semibold', lg ? 'text-[12px]' : 'text-[10.5px]', palette.text)}>
+          {complete ? 'All scored' : toFill > 0 ? `${toFill} to fill` : `${entered}/${total} scored`}
+        </div>
+        {lg && (
+          <div className="font-mono text-[9px] uppercase tracking-wide text-zinc-400">
+            {complete ? 'every member has a KPI' : 'employees entered'}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Landing card: a department's at-a-glance summary. Opens the calculator. */
 function DeptSummaryCard({
   name,
@@ -2232,6 +2403,7 @@ function DeptSummaryCard({
   wp,
   monogram,
   headcount,
+  entered,
   status,
   warn,
   dirty,
@@ -2249,6 +2421,7 @@ function DeptSummaryCard({
   wp: Wallpaper | undefined;
   monogram: string;
   headcount: number;
+  entered: number;
   status: BonusStatus;
   warn: boolean;
   dirty: boolean;
@@ -2264,10 +2437,12 @@ function DeptSummaryCard({
     <motion.button
       type="button"
       onClick={onOpen}
+      layout="position"
       variants={{
         hidden: { opacity: 0, y: 8, scale: 0.98 },
         show: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.32, ease: EASE } },
       }}
+      exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.95, transition: { duration: 0.18, ease: EASE } }}
       whileHover={reduce ? undefined : { y: -3 }}
       whileTap={reduce ? undefined : { scale: 0.995 }}
       className={cn(
@@ -2323,10 +2498,10 @@ function DeptSummaryCard({
           )}
         </div>
         <p className="mt-0.5 line-clamp-1 text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">{desc}</p>
-        {hasAnyBonus && toFill > 0 && (
-          <p className="mt-1 font-mono text-[10.5px] text-amber-600 dark:text-amber-400">
-            {toFill} {toFill === 1 ? 'person' : 'people'} to fill
-          </p>
+        {hasAnyBonus && headcount > 0 && !loading && (
+          <div className="mt-1.5">
+            <CompletionGauge entered={entered} total={headcount} toFill={toFill} size="sm" reduce={reduce} />
+          </div>
         )}
       </div>
 
@@ -2621,14 +2796,15 @@ function ViewSwitch({ mode, onChange, compact }: { mode: OpenMode; onChange: (m:
 }
 
 /** Small ghost icon button used in the calculator panel header. */
-function PanelIconButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+function PanelIconButton({ label, onClick, children, disabled }: { label: string; onClick: () => void; children: React.ReactNode; disabled?: boolean }) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
       onClick={onClick}
-      className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+      disabled={disabled}
+      className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-500 transition-colors hover:bg-zinc-50 hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-white disabled:hover:text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200 dark:disabled:hover:bg-zinc-900/60 dark:disabled:hover:text-zinc-400"
     >
       {children}
     </button>
