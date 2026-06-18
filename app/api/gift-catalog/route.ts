@@ -4,6 +4,8 @@ import {
   upsertGiftCatalog,
   type GiftCatalogPayload,
 } from '@/lib/supabase/gift-catalog';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -16,6 +18,8 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
+    const authz = await requireFeatureEdit('hr', 'gift_tracker');
+    if (!authz.ok) return deniedResponse(authz);
     const body = (await request.json()) as {
       catalog?: GiftCatalogPayload;
       updated_by?: string | null;

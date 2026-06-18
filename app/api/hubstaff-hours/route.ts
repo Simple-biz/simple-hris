@@ -16,6 +16,8 @@ import {
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { normEmail } from "@/lib/email/norm-email";
 import { getSessionActor } from "@/lib/auth/session-actor";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
 import { NextRequest, NextResponse } from "next/server";
 
 // Columns on the hubstaff_hours row that may carry an employee's email.
@@ -228,6 +230,9 @@ export async function GET(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
+    const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
+    if (!authz.ok) return deniedResponse(authz);
+
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
       return NextResponse.json(
         {
@@ -271,6 +276,9 @@ export async function DELETE(req: NextRequest) {
 // rename only ever changes the descriptive prefix -- period parsing stays intact.
 export async function PATCH(req: NextRequest) {
   try {
+    const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
+    if (!authz.ok) return deniedResponse(authz);
+
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
       return NextResponse.json(
         {
@@ -352,6 +360,9 @@ export async function PATCH(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
+    if (!authz.ok) return deniedResponse(authz);
+
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
       return NextResponse.json(
         {

@@ -7,7 +7,8 @@ import {
   type UpdateHrPendingInput,
 } from "@/lib/supabase/hr-pending-employees";
 import { archiveHrOnboardingSubmission } from "@/lib/supabase/hr-onboarding-submissions";
-import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
+import { deniedResponse } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { splitFullName } from "@/lib/hr/work-email";
 import { createWorkspaceAccount } from "@/lib/hr/workspace-account";
 import {
@@ -37,7 +38,7 @@ export async function PATCH(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'onboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   const { id: rawId } = await context.params;
@@ -113,7 +114,7 @@ export async function DELETE(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'onboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   const { id: rawId } = await context.params;

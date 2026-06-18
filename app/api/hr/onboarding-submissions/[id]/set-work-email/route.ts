@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import {
-  deniedResponse,
-  requireElevatedSession,
-} from "@/lib/auth/authorize-email";
+import { deniedResponse } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import {
   getHrOnboardingSubmissionById,
   linkOnboardingToPendingHire,
@@ -45,7 +43,7 @@ export async function POST(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'onboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   const { id } = await context.params;

@@ -10,6 +10,8 @@ import {
   cancelTransferRequestIfOwned,
   applyDepartmentTransfer,
 } from '@/lib/supabase/department-transfer-requests';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -77,10 +79,8 @@ export async function PATCH(
     }
 
     // ── HR / admin decision ──
-    const isHr = roles.includes('hr_coordinator') || roles.includes('admin');
-    if (!isHr) {
-      return NextResponse.json({ error: 'HR or admin role required' }, { status: 403 });
-    }
+    const authz = await requireFeatureEdit('hr', 'transfers');
+    if (!authz.ok) return deniedResponse(authz);
     if (decision !== 'approved' && decision !== 'rejected') {
       return NextResponse.json({ error: "decision must be 'approved', 'rejected', or 'cancelled'" }, { status: 400 });
     }

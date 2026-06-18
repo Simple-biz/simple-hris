@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { saveOrphanagePay, listOrphanagePay, deleteOrphanagePay, type OrphanagePayRow } from '@/lib/supabase/orphanage-pay-db';
-import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
+import { deniedResponse } from '@/lib/auth/authorize-email';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -31,7 +32,7 @@ export async function GET(request: Request) {
  * recorded as `locked_by`.
  */
 export async function POST(request: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
   if (!authz.ok) return deniedResponse(authz);
 
   let body: { source_file?: string; rows?: OrphanagePayRow[] };
@@ -55,7 +56,7 @@ export async function POST(request: Request) {
 
 /** DELETE ?source_file=...&email=... — remove one locked-in orphanage row. */
 export async function DELETE(request: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
   if (!authz.ok) return deniedResponse(authz);
 
   const { searchParams } = new URL(request.url);

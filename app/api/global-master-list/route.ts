@@ -8,6 +8,8 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 
 import { getSessionActor } from "@/lib/auth/session-actor";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
 
 /** CSV layout / mapping problems — 400 so DevTools shows a client error with the message, not a generic 500. */
 function statusForMasterListImportError(message: string): number {
@@ -33,6 +35,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
+  const authz = await requireFeatureEdit('accounting', 'rates');
+  if (!authz.ok) return deniedResponse(authz);
   try {
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
       return NextResponse.json(

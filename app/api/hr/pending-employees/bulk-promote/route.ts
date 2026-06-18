@@ -11,7 +11,8 @@ import {
   type AppendMasterRowResult,
 } from "@/lib/google-sheets/append-master-sheet";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
-import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
+import { deniedResponse } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,7 +42,7 @@ export const maxDuration = 60;
  *    hires. The single-row promote route is unchanged.
  */
 export async function POST(req: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'onboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   // Optional explicit id list (multi-select). Tolerate an empty/malformed body.

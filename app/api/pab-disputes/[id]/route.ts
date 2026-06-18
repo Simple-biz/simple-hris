@@ -14,6 +14,7 @@ import {
 } from '@/lib/supabase/pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
 import { authorizeEmailAccess, deniedResponse } from '@/lib/auth/authorize-email';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,9 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
+    const feat = await requireFeatureEdit('accounting', 'disputes');
+    if (!feat.ok) return deniedResponse(feat);
+
     const { id } = await context.params;
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 
@@ -240,6 +244,9 @@ export async function DELETE(
 
     // Admin / payroll-manager hard delete path.
     if (mode === 'admin') {
+      const feat = await requireFeatureEdit('accounting', 'disputes');
+      if (!feat.ok) return deniedResponse(feat);
+
       const session = await getServerSession(authOptions);
       const user = session?.user as
         | { email?: string | null; roles?: string[] }

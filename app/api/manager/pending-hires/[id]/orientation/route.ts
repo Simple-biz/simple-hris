@@ -8,6 +8,8 @@ import {
   markPendingHireOrientation,
 } from '@/lib/supabase/hr-pending-employees';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -78,6 +80,9 @@ async function authorizeForHire(id: number) {
 
 /** POST — mark orientation as attended (idempotent). Body: { note?: string }. */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const feat = await requireFeatureEdit('manager', 'team');
+  if (!feat.ok) return deniedResponse(feat);
+
   const { id: idParam } = await params;
   const id = Number(idParam);
   if (!Number.isFinite(id)) {
@@ -105,6 +110,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
 /** DELETE — clears the orientation marker (manager changed their mind / typo). */
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const feat = await requireFeatureEdit('manager', 'team');
+  if (!feat.ok) return deniedResponse(feat);
+
   const { id: idParam } = await params;
   const id = Number(idParam);
   if (!Number.isFinite(id)) {

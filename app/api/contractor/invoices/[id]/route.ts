@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 function errMsg(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -21,6 +23,9 @@ export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
+  if (!authz.ok) return deniedResponse(authz);
+
   const { id } = await context.params;
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
   try {

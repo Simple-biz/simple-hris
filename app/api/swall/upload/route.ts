@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -9,6 +11,9 @@ const BUCKET = 'swall-media';
 const MAX_BYTES = 5 * 1024 * 1024;
 
 export async function POST(req: NextRequest) {
+  const authz = await requireFeatureEditAnyView('s_wall');
+  if (!authz.ok) return deniedResponse(authz);
+
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
   if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 

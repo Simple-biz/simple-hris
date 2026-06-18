@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { forwardPaystubDispatch } from '@/lib/payroll/paystub-dispatch';
-import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
+import { deniedResponse } from '@/lib/auth/authorize-email';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 
 /**
  * Forwards a paystub dispatch to the n8n workflow webhook.
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
   // stages to paystub_dispatch_queue and the per-employee send runs inside
   // /api/payment-dispatches). Without a gate this would let any authenticated
   // user fire arbitrary paystub emails through the n8n webhook.
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('accounting', 'payment_dispatch');
   if (!authz.ok) return deniedResponse(authz);
 
   let body: Record<string, unknown>;

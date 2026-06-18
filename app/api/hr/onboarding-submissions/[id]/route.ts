@@ -10,6 +10,7 @@ import {
   deniedResponse,
   requireElevatedSession,
 } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,7 +45,7 @@ export async function DELETE(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'onboarding');
   if (!authz.ok) return deniedResponse(authz);
   const { id } = await context.params;
   const hard = new URL(req.url).searchParams.get("hard") === "true";

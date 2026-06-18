@@ -13,6 +13,8 @@ import {
   isLeadGenDepartment,
   scheduledDeletionFrom,
 } from "@/lib/hr/offboard-webhooks";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -100,6 +102,9 @@ async function authorizeAndLoad(id: number) {
  * only fires at promote), so Hubstaff removal is a no-op.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const feat = await requireFeatureEdit("manager", "team");
+  if (!feat.ok) return deniedResponse(feat);
+
   const { id: idParam } = await params;
   const id = Number(idParam);
   if (!Number.isFinite(id)) {

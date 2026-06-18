@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
+import { deniedResponse } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { deleteMasterSheetRowsByEmail } from "@/lib/google-sheets/delete-master-sheet-rows";
 import { deleteOffboardedSheetRowsByEmail } from "@/lib/google-sheets/delete-offboarded-sheet-rows";
 import { deleteOffboardedSheetByEmails } from "@/lib/supabase/global-master-list-db";
@@ -29,7 +30,7 @@ export const runtime = "nodejs";
  * (not found) is not an error -- the row may already have been removed.
  */
 export async function POST(req: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'offboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   let body: { work_email?: string; personal_email?: string };

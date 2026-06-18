@@ -3,6 +3,8 @@ import {
   listDisbursementReports,
   markAllDisbursementRecordsPaid,
 } from "@/lib/payroll/disbursement-reports";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,6 +13,9 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ cycleId: string }> },
 ) {
+  const authz = await requireFeatureEdit('accounting', 'payment_dispatch');
+  if (!authz.ok) return deniedResponse(authz);
+
   const { cycleId } = await params;
   if (!cycleId) {
     return NextResponse.json({ error: "Missing cycleId" }, { status: 400 });

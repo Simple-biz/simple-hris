@@ -4,6 +4,8 @@ import {
   adminCreateOrphanageVisit,
 } from '@/lib/supabase/pab-day-disputes';
 import { normEmail } from '@/lib/email/norm-email';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -33,6 +35,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const authz = await requireFeatureEdit('accounting', 'disputes');
+    if (!authz.ok) return deniedResponse(authz);
+
     const body = (await request.json()) as {
       work_email?: string;
       visit_date?: string;

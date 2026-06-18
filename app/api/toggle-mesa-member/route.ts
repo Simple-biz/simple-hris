@@ -7,11 +7,15 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 const RATES_TABLE = process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() || 'employee_hourly_rates';
 
 // POST /api/toggle-mesa-member
 // Body: { workEmail?: string; personalEmail?: string; mesaMember: boolean; name?: string }
 export async function POST(req: Request) {
+  const authz = await requireFeatureEditAnyView('mesa');
+  if (!authz.ok) return deniedResponse(authz);
   try {
     const { workEmail, personalEmail, mesaMember, name } = (await req.json()) as {
       workEmail?: string;

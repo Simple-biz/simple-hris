@@ -6,6 +6,8 @@ import { normEmail } from '@/lib/email/norm-email';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 import {
   insertTransferRequest,
   listAllTransferRequests,
@@ -73,6 +75,9 @@ export async function GET() {
 /** POST — a manager raises a transfer request for an employee. */
 export async function POST(request: Request) {
   try {
+    const authz = await requireFeatureEdit('manager', 'team');
+    if (!authz.ok) return deniedResponse(authz);
+
     const session = await getServerSession(authOptions);
     const sessionEmail = normEmail(session?.user?.email ?? '') ?? '';
     if (!sessionEmail) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });

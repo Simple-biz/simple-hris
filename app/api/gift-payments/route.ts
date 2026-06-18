@@ -6,6 +6,8 @@ import {
 } from '@/lib/supabase/gift-payments';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -20,6 +22,8 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const authz = await requireFeatureEdit('hr', 'gift_tracker');
+    if (!authz.ok) return deniedResponse(authz);
     const body = (await request.json()) as {
       records?: GiftPaymentDraft[];
       created_by?: string | null;

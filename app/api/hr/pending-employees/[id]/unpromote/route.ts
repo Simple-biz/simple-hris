@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { revertHrPendingEmployeeToReady } from "@/lib/supabase/hr-pending-employees";
-import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
+import { deniedResponse } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,7 +18,7 @@ export async function POST(
   _req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'onboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   const { id: rawId } = await context.params;

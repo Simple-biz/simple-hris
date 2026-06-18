@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
-import { deniedResponse, requireElevatedSession } from '@/lib/auth/authorize-email';
+import { deniedResponse } from '@/lib/auth/authorize-email';
+import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -16,7 +17,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const authz = await requireElevatedSession();
+    const authz = await requireFeatureEditAnyView('mesa');
     if (!authz.ok) return deniedResponse(authz);
 
     const { id } = await params;
@@ -89,7 +90,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const authz = await requireElevatedSession();
+    const authz = await requireFeatureEditAnyView('mesa');
     if (!authz.ok) return deniedResponse(authz);
 
     const { id } = await params;

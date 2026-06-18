@@ -6,6 +6,8 @@ import { insertRateHistoryRow } from "@/lib/payroll/rate-history";
 import { NextResponse } from "next/server";
 
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 const RATES_TABLE = process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() || 'employee_hourly_rates';
 
 function parseDateOnly(v: unknown): Date | null {
@@ -34,6 +36,9 @@ function fmtFriendly(d: Date): string {
 
 export async function POST(req: Request) {
   try {
+    const authz = await requireFeatureEdit('accounting', 'rates');
+    if (!authz.ok) return deniedResponse(authz);
+
     const { workEmail, personalEmail, regularRate, otRate, effectiveDate } = await req.json();
 
     if (!workEmail && !personalEmail) {

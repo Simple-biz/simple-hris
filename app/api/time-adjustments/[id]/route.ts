@@ -9,6 +9,8 @@ import {
   recallTimeAdjustment,
 } from '@/lib/supabase/time-adjustments';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -34,6 +36,17 @@ export async function PATCH(
         { status: 400 },
       );
     }
+
+    // Per-tab edit gate: manager-stage actions need manager:time_adjustments;
+    // accounting-stage actions (approve/deny) need accounting:payroll_wizard.
+    const isManagerStage =
+      body.action === 'manager_approve' ||
+      body.action === 'manager_deny' ||
+      body.action === 'recall';
+    const authz = isManagerStage
+      ? await requireFeatureEdit('manager', 'time_adjustments')
+      : await requireFeatureEdit('accounting', 'payroll_wizard');
+    if (!authz.ok) return deniedResponse(authz);
 
     const session = await getServerSession(authOptions);
     const sessionEmail = ((session?.user as { email?: string | null } | undefined)?.email ?? '')
@@ -159,6 +172,9 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
+    const authz = await requireFeatureEdit('accounting', 'payroll_wizard');
+    if (!authz.ok) return deniedResponse(authz);
+
     const { id } = await context.params;
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 

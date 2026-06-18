@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminDeleteOrphanageVisit } from '@/lib/supabase/pab-day-disputes';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -9,6 +11,9 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
+    const authz = await requireFeatureEdit('accounting', 'disputes');
+    if (!authz.ok) return deniedResponse(authz);
+
     const { id } = await context.params;
     if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
 

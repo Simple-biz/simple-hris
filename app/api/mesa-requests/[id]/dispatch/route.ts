@@ -3,7 +3,8 @@ import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/l
 import { insertPaymentDispatch } from '@/lib/supabase/payment-dispatches';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
-import { deniedResponse, requireElevatedSession } from '@/lib/auth/authorize-email';
+import { deniedResponse } from '@/lib/auth/authorize-email';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -40,7 +41,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const authz = await requireElevatedSession();
+    const authz = await requireFeatureEdit('accounting', 'payment_dispatch');
     if (!authz.ok) return deniedResponse(authz);
 
     const { id } = await params;

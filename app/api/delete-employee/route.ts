@@ -2,10 +2,15 @@ import { createSupabaseServiceRoleClient, createSupabaseServerClient } from "@/l
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { getSessionActor } from "@/lib/auth/session-actor";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
 import { NextResponse } from "next/server";
 
 export async function DELETE(req: Request) {
   try {
+    const authz = await requireFeatureEdit('accounting', 'rates');
+    if (!authz.ok) return deniedResponse(authz);
+
     const { workEmail, personalEmail, name } = await req.json();
 
     if (!workEmail && !personalEmail && !name) {

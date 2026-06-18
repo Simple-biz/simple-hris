@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
-import {
-  deniedResponse,
-  requireElevatedSession,
-} from "@/lib/auth/authorize-email";
+import { deniedResponse } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,7 +15,7 @@ export const runtime = "nodejs";
  * Gated to elevated (HR/admin) sessions.
  */
 export async function POST() {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'onboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   const supabase = createSupabaseServiceRoleClient();

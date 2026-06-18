@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { deletePaymentDispatches } from "@/lib/supabase/payment-dispatches";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,6 +19,9 @@ interface Body {
  * the matching record back to pending.
  */
 export async function POST(req: NextRequest) {
+  const authz = await requireFeatureEdit('accounting', 'payment_dispatch');
+  if (!authz.ok) return deniedResponse(authz);
+
   let body: Body;
   try {
     body = (await req.json()) as Body;

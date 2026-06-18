@@ -4,6 +4,8 @@ import {
   updateOrphanage,
   type UpdateOrphanageInput,
 } from '@/lib/supabase/orphanages';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -13,6 +15,9 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const authz = await requireFeatureEdit('orphanage', 'budget');
+  if (!authz.ok) return deniedResponse(authz);
+
   const { id } = await params;
   if (!id) return NextResponse.json({ row: null, error: 'Missing id' }, { status: 400 });
 
@@ -35,6 +40,9 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const authz = await requireFeatureEdit('orphanage', 'budget');
+  if (!authz.ok) return deniedResponse(authz);
+
   const { id } = await params;
   if (!id) return NextResponse.json({ ok: false, error: 'Missing id' }, { status: 400 });
 

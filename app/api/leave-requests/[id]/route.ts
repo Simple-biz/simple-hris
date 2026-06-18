@@ -18,6 +18,8 @@ import {
 } from '@/lib/supabase/leave-requests';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { normEmail } from '@/lib/email/norm-email';
+import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -72,6 +74,11 @@ export async function PATCH(
 
       return NextResponse.json({ success: true, error: null });
     }
+
+    // Approve/reject is a privileged action — gate it. (The owner-only `cancel`
+    // branch above is self-serve and intentionally left ungated.)
+    const authz = await requireFeatureEditAnyView('leaves');
+    if (!authz.ok) return deniedResponse(authz);
 
     if (body.action !== 'approve' && body.action !== 'reject') {
       return NextResponse.json(
@@ -228,6 +235,11 @@ export async function DELETE(
 
       return NextResponse.json({ success: true, error: null });
     }
+
+    // Privileged (non-owner) admin/manager delete — gate it. (The owner-email
+    // self-delete path above is self-serve and intentionally left ungated.)
+    const feat = await requireFeatureEditAnyView('leaves');
+    if (!feat.ok) return deniedResponse(feat);
 
     const session = await getServerSession(authOptions);
     const user = session?.user as

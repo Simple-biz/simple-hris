@@ -4,9 +4,14 @@ import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profil
 import { NextResponse } from "next/server";
 
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export async function POST(req: Request) {
   try {
+    const authz = await requireFeatureEdit('accounting', 'rates');
+    if (!authz.ok) return deniedResponse(authz);
+
     const body = await req.json();
     const trim = (v: unknown) =>
       typeof v === "string" ? v.trim() : v === null || v === undefined ? v : v;

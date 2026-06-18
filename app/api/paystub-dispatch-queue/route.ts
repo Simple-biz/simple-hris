@@ -6,8 +6,8 @@ import {
 } from "@/lib/supabase/paystub-dispatch-queue";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
-import { requireElevatedSession, deniedResponse } from "@/lib/auth/authorize-email";
-import { requireFeatureAccess } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
+import { requireFeatureAccess, requireFeatureEdit } from "@/lib/auth/authorize-feature";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
   // the wizard's other writes (additions, final-pay snapshot) so any operator
   // who can run the wizard can also lock + send to dispatch. Lenny's
   // `payment_dispatch` grant is a separate, narrower permission.
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit("accounting", "payroll_wizard");
   if (!authz.ok) return deniedResponse(authz);
 
   let body: PostBody;

@@ -4,7 +4,8 @@ import {
   createSupabaseServerClient,
 } from "@/lib/supabase/server";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
-import { deniedResponse, requireElevatedSession } from "@/lib/auth/authorize-email";
+import { deniedResponse } from "@/lib/auth/authorize-email";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import {
   OFFBOARD_DEACTIVATE_SLUG,
   OFFBOARD_DELETE_SLUG,
@@ -36,7 +37,7 @@ function getClient() {
  * payload is always fresh (name, departments, off_boarded_at, etc.).
  */
 export async function POST(req: Request) {
-  const authz = await requireElevatedSession();
+  const authz = await requireFeatureEdit('hr', 'offboarding');
   if (!authz.ok) return deniedResponse(authz);
 
   let body: { work_email?: string; action?: string };

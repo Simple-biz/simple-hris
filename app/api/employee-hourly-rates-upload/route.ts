@@ -5,6 +5,8 @@ import {
 } from "@/lib/supabase/rates-upload-db";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
 
 function clientIp(req: NextRequest): string | null {
   const fwd = req.headers.get("x-forwarded-for");
@@ -41,6 +43,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authz = await requireFeatureEdit('accounting', 'rates');
+  if (!authz.ok) return deniedResponse(authz);
   try {
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
       return NextResponse.json(

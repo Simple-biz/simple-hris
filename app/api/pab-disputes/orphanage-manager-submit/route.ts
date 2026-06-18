@@ -3,7 +3,8 @@ import {
   createOrphanageManagerSubmittedDispute,
   isOrphanageStyleReason,
 } from '@/lib/supabase/pab-day-disputes';
-import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
+import { deniedResponse } from '@/lib/auth/authorize-email';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -17,7 +18,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(request: Request) {
   try {
-    const authz = await requireElevatedSession();
+    const authz = await requireFeatureEdit('orphanage', 'queue');
     if (!authz.ok) return deniedResponse(authz);
 
     const body = (await request.json()) as {

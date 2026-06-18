@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import type { NextRequest } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 import {
   listSwallPosts,
   listSwallReactionsForPosts,
@@ -67,6 +69,9 @@ export async function GET(req: NextRequest) {
 
 // POST /api/swall/posts
 export async function POST(req: NextRequest) {
+  const authz = await requireFeatureEditAnyView('s_wall');
+  if (!authz.ok) return deniedResponse(authz);
+
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
   if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 

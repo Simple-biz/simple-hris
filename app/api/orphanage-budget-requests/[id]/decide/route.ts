@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { decideOrphanageBudgetRequest } from '@/lib/supabase/orphanage-budget-requests';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -22,6 +24,9 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const authz = await requireFeatureEdit('orphanage', 'budget');
+  if (!authz.ok) return deniedResponse(authz);
+
   const { id } = await params;
   if (!id) {
     return NextResponse.json({ row: null, error: 'Missing id' }, { status: 400 });

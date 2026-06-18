@@ -8,6 +8,8 @@ import {
 } from '@/lib/supabase/orphanage-dispatches';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
+import { deniedResponse } from '@/lib/auth/authorize-email';
 
 /** GET /api/orphanage-dispatches
  *  ?pending=1  → pending items queue (budget requests + gift shippings awaiting payment)
@@ -33,6 +35,9 @@ export async function GET(req: NextRequest) {
 
 /** POST /api/orphanage-dispatches — Lenny logs a payment. */
 export async function POST(req: NextRequest) {
+  const authz = await requireFeatureEdit('accounting', 'payment_dispatch');
+  if (!authz.ok) return deniedResponse(authz);
+
   let body: Record<string, unknown>;
   try {
     body = (await req.json()) as Record<string, unknown>;

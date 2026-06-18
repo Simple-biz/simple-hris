@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { seedMissingDisbursementRecords } from "@/lib/payroll/disbursement-reports";
+import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { deniedResponse } from "@/lib/auth/authorize-email";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -7,6 +9,9 @@ export const maxDuration = 60;
 
 export async function POST() {
   try {
+    const authz = await requireFeatureEdit('accounting', 'payment_dispatch');
+    if (!authz.ok) return deniedResponse(authz);
+
     const { seeded, error } = await seedMissingDisbursementRecords();
     if (error) {
       return NextResponse.json({ seeded: 0, error }, { status: 500 });
