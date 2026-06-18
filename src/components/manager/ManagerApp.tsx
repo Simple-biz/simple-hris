@@ -395,7 +395,11 @@ export default function ManagerApp() {
               {activeTab === 'hsl-bonus' && (() => {
                 const managed = teamGate.kind === 'department' ? teamGate.departments : [];
                 const elevated = teamGate.kind === 'elevated';
-                const hslVisible = elevated || HSL_DEPT_KEYS.some((k) => canAccessHslDept(managed, k, false));
+                // HSL KPI Calculator is visible ONLY to managers explicitly assigned
+                // HSL sub-branches in Admin -> Roles & permissions (the `hsl:*`
+                // department_managers rows). Being elevated/admin alone no longer
+                // unlocks it — you must be an assigned HSL Manager.
+                const hslVisible = HSL_DEPT_KEYS.some((k) => canAccessHslDept(managed, k, false));
                 const deptVisible =
                   elevated ||
                   managed.some((dStr) => {
