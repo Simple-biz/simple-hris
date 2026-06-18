@@ -12,16 +12,28 @@ import {
 } from '@/lib/rbac/feature-permissions';
 
 /**
- * Server-side per-feature authorization, the mirror of the client tab overlay.
- *
- * Model: HIDDEN UNTIL GRANTED, the per-tab grant is the sole gate. To mutate a
- * feature the caller needs an explicit `edit` grant on it; `view` is read-only.
- * The `admin` role bypasses. There is no role-based special-casing -- whatever
- * the admin granted in the permission grid is what's allowed.
+ * Server-side per-feature authorization, the mirror of the client tab overlay
+ * (`src/lib/rbac/view-tabs.ts`). Two regimes, kept in sync with that file:
+ *   - ROLE GRANTS FULL ACCESS (manager, hr, orphanage, ceo, contractor):
+ *     holding the dashboard's role confers `edit` on every feature by default;
+ *     an explicit `view` row downgrades a single feature to read-only.
+ *   - HIDDEN UNTIL GRANTED (accounting): the per-tab grant is the sole gate —
+ *     `edit` needs an explicit `edit` grant, `view` is read-only.
+ * The `admin` role bypasses both.
  *
  * Returns the same `AuthzResult` shape as `authorize-email.ts`, so routes can
  * reuse `deniedResponse(authz)` on the `!authz.ok` branch.
  */
+
+/** Single-role dashboards where holding the mapped role grants full default
+ *  access. Mirrors `ROLE_BASELINE_VIEW_ROLES` in `view-tabs.ts`. */
+const ROLE_BASELINE_VIEWS = new Set<FeatureViewKey>(['manager', 'hr', 'orphanage', 'ceo', 'contractor']);
+
+/** True when the caller holds a role that grants full default access to `view`. */
+function roleGrantsFullView(view: FeatureViewKey, roles: string[]): boolean {
+  if (!ROLE_BASELINE_VIEWS.has(view)) return false;
+  return roles.some((r) => ROLE_TO_FEATURE_VIEW[r] === view);
+}
 
 function norm(s: string | null | undefined): string {
   return (s ?? '').trim().toLowerCase();
@@ -41,7 +53,8 @@ function ok(email: string, roles: string[]): AuthzResult {
 
 /**
  * Require `level` (default `edit`) access to a single (view, feature). Admin
- * bypasses; a missing grant is denied (default-hidden).
+ * bypasses. On role-baseline views the caller's role grants access by default
+ * (a `view` row downgrades to read-only); elsewhere a missing grant is denied.
  */
 export async function requireFeatureAccess(
   view: FeatureViewKey,
@@ -53,7 +66,12 @@ export async function requireFeatureAccess(
   if (sess.roles.includes('admin')) return ok(sess.email, sess.roles);
 
   const perms = await fetchFeaturePermissionsForEmail(sess.email);
-  const access = resolveFeatureAccess(perms, view, feature);
+  const explicit = resolveFeatureAccess(perms, view, feature);
+  // Role-baseline views grant `edit` by default; an explicit `view` row is the
+  // only override that downgrades it. Other views stay hidden-until-granted.
+  const access = roleGrantsFullView(view, sess.roles)
+    ? (explicit === 'view' ? 'view' : 'edit')
+    : explicit;
   const allowed = level === 'edit' ? access === 'edit' : access === 'view' || access === 'edit';
   if (!allowed) {
     return { ok: false, status: 403, message: `You don't have ${level} access to this feature.` };
@@ -79,7 +97,13 @@ export async function requireFeatureEditAnyView(feature: string): Promise<AuthzR
   for (const role of sess.roles) {
     const view = ROLE_TO_FEATURE_VIEW[role] as FeatureViewKey | undefined;
     if (!view) continue;
-    if (resolveFeatureAccess(perms, view, feature) === 'edit') return ok(sess.email, sess.roles);
+    const explicit = resolveFeatureAccess(perms, view, feature);
+    if (roleGrantsFullView(view, sess.roles)) {
+      // Baseline edit unless this feature was explicitly downgraded to view.
+      if (explicit !== 'view') return ok(sess.email, sess.roles);
+    } else if (explicit === 'edit') {
+      return ok(sess.email, sess.roles);
+    }
   }
   return { ok: false, status: 403, message: `You don't have edit access to this feature.` };
 }
