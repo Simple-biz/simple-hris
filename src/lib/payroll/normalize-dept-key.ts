@@ -17,6 +17,10 @@ export function normalizeDeptToKey(raw: string | null | undefined): string | nul
     'ai & api team': 'devs',
     'lead gen': 'lead_gen',
     'lead generation': 'lead_gen',
+    'us team': 'us_manager_bonus',
+    'us - team': 'us_manager_bonus',
+    // Legacy labels — the department is now surfaced as "US Team", but keep
+    // these so older master/rates rows still resolve to the same key.
     'us - manager bonus': 'us_manager_bonus',
     'us manager bonus': 'us_manager_bonus',
     'manager bonus': 'us_manager_bonus',

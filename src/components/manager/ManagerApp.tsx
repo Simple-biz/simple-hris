@@ -534,15 +534,78 @@ function Overview({
   onJumpToTeam,
   onViewEmployee,
 }: OverviewProps) {
-  const firstName = viewerEmail?.includes('@')
-    ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ').split(' ')[0]
-    : 'there';
-  const greeting = firstName.charAt(0).toUpperCase() + firstName.slice(1);
+  // Resolve the manager's real first name. The email local part alone is
+  // unreliable (e.g. "j.delacruz@…" → "J"), so look up the employee record and
+  // use the first token of its "First Last" name; fall back to the email.
+  const [realName, setRealName] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!viewerEmail) return;
+    let alive = true;
+    fetch(`/api/employees?email=${encodeURIComponent(viewerEmail)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!alive) return;
+        const n = j?.employees?.[0]?.name;
+        if (typeof n === 'string' && n.trim()) setRealName(n.trim());
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [viewerEmail]);
+
+  const firstName = useMemo(() => {
+    const full = realName?.trim() ?? '';
+    if (full) {
+      // HR/master names are stored "Last, First M." (sometimes "First Last").
+      // The given name is the first token AFTER the comma, or the first token
+      // when there's no comma. Strip any nickname quotes/parens.
+      const afterComma = full.includes(',') ? full.split(',')[1] ?? '' : full;
+      const token = afterComma.replace(/["'()]/g, '').trim().split(/\s+/)[0];
+      if (token) return token;
+    }
+    const local = viewerEmail?.includes('@')
+      ? viewerEmail.split('@')[0]!.replace(/[._-]/g, ' ').trim().split(/\s+/)[0]
+      : '';
+    return local || 'there';
+  }, [realName, viewerEmail]);
+
+  // Proper-case all-caps names (e.g. "KANER" → "Kaner") while leaving names
+  // that already carry lowercase letters untouched (preserves "McDonald").
+  const greeting = useMemo(() => {
+    const f = /[a-z]/.test(firstName) ? firstName : firstName.toLowerCase();
+    return f.charAt(0).toUpperCase() + f.slice(1);
+  }, [firstName]);
+
+  // Warm, time-of-day welcome. Computed only after mount so the first client
+  // render matches the server (UTC) and we don't trip the Manila-vs-UTC
+  // hydration mismatch (React #418).
+  const welcome = useMemo(() => {
+    if (!mounted) return "Here's everything you need to look after your team today.";
+    const h = new Date().getHours();
+    const part = h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening';
+    return `Good ${part} — here's everything you need to look after your team today.`;
+  }, [mounted]);
 
   return (
     <div className="flex flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       {/* Compact header — no marketing banner */}
       <header className="flex items-start justify-between gap-4">
+        <style>{`
+          @keyframes wave {
+            0%, 60%, 100% { transform: rotate(0deg); }
+            10%, 30%      { transform: rotate(14deg); }
+            20%           { transform: rotate(-8deg); }
+            40%           { transform: rotate(10deg); }
+            50%           { transform: rotate(-4deg); }
+          }
+        `}</style>
         <div className="flex gap-3">
           <div className="mt-1.5 h-8 w-0.5 shrink-0 rounded-full bg-blue-500" />
           <div>
@@ -550,10 +613,10 @@ function Overview({
               Manager workspace
             </div>
             <h1 className="mt-0.5 text-2xl font-bold tracking-tight text-zinc-900 sm:text-3xl dark:text-white">
-              Hi {greeting}.
+              Hi {greeting} <span className="inline-block origin-[70%_70%] motion-safe:animate-[wave_1.6s_ease-in-out_1]" aria-hidden>👋</span>
             </h1>
             <p className="mt-1 max-w-lg text-sm text-zinc-500 dark:text-zinc-400">
-              Approve time adjustments, keep tabs on your direct reports, and submit KPI scores.
+              {welcome}
             </p>
           </div>
         </div>

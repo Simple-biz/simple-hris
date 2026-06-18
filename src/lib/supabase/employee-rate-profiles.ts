@@ -1729,13 +1729,15 @@ export async function getEmployeeRateProfileSummaries(): Promise<GetEmployeeRate
     }
   }
 
-  // Group every US-prefixed employee under the "US Manager Bonus" department
-  // for filter purposes — the seed migration spread them across HSL / HR /
-  // US Manager Bonus, but the user wants them all to surface under a single
-  // filter. Doesn't affect the underlying global_master_list row.
+  // Group every US-prefixed employee under the "US Team" department for filter
+  // purposes — the master data spread them across HSL / HR / US Team, but they
+  // all surface under a single filter. Doesn't affect the underlying
+  // global_master_list row. (The 2026-06-18 migration also writes "US Team" to
+  // the master/rates rows; this override keeps the roster consistent even for
+  // any US- person a future sync re-tags.)
   for (const p of profiles) {
     if (p.employeeId && p.employeeId.startsWith("US-")) {
-      p.department = "US Manager Bonus";
+      p.department = "US Team";
     }
   }
 

@@ -111,7 +111,7 @@ const DEPARTMENT_OPTIONS = [
   'HR',
   'Sales Assistant',
   'Smart Staff',
-  'US Manager Bonus',
+  'US Team',
   'Hogan Smith Law',
 ] as const;
 

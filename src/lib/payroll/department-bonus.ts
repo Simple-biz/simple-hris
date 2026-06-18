@@ -28,7 +28,7 @@ export const DEPARTMENTS: {
   { key: 'lead_gen',         name: 'Lead Gen',           bonuses: [] },
   {
     key: 'us_manager_bonus',
-    name: 'US - Manager Bonus',
+    name: 'US Team',
     bonuses: [
       { id: 'usmgr_leadership', label: 'Leadership Excellence Award', amount: 3500 },
       { id: 'usmgr_team',       label: 'Team Performance Bonus',      amount: 3000 },
@@ -243,7 +243,7 @@ export const DEPT_DESCRIPTION: Record<string, string> = {
   edit: 'Polishes and finalizes client tickets, turning rough drafts into delivered work.',
   devs: 'Builds and ships AI/API integrations, then delivers and quality-checks live sites.',
   lead_gen: 'Books qualified appointments and keeps the sales pipeline full.',
-  us_manager_bonus: 'US-based team leads recognized for leadership and overall team performance.',
+  us_manager_bonus: 'US-based team — individual contributors and team leads, recognized for leadership and overall team performance.',
   callback: 'Re-engages prospects through callbacks and converts them into booked appointments.',
   qc: 'Quality-checks finished units before they ship, protecting output standards.',
   discovery: 'Runs discovery calls and surfaces fresh sales opportunities each week.',
