@@ -223,7 +223,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
 
   // Roles that can post general announcements
   const canPostGeneral = roles.some((r) =>
-    ['admin', 'ceo', 'hr_coordinator', 'finance', 'payroll_coordinator', 'payroll_manager', 'orphanage_manager'].includes(r),
+    ['admin', 'ceo', 'hr_coordinator', 'accounting', 'orphanage_manager'].includes(r),
   );
   const isElevated = roles.includes('admin') || roles.includes('ceo');
 

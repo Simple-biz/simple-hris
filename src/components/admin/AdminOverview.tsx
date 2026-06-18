@@ -27,12 +27,13 @@ import { formatActionLabel, formatRelativeTime } from '@/components/audit/AuditL
 import { toast } from 'sonner';
 
 const ROLE_ORDER = [
-  { key: 'admin', label: 'admin', blurb: 'Full system access', color: '#a1a1aa' },
-  { key: 'payroll_manager', label: 'payroll_mgr', blurb: 'Payment dispatch only', color: '#fb923c' },
-  { key: 'finance', label: 'finance', blurb: 'Accounting dashboard', color: '#60a5fa' },
-  { key: 'payroll_coordinator', label: 'payroll_coord', blurb: 'CSV upload · pre-flight', color: '#c084fc' },
-  { key: 'hr_coordinator', label: 'hr_coord', blurb: 'Edit employee profiles', color: '#34d399' },
-  { key: 'viewer', label: 'viewer', blurb: 'Read-only dashboards', color: '#71717a' },
+  { key: 'admin', label: 'admin', blurb: 'Full system access', color: '#fb7185' },
+  { key: 'accounting', label: 'accounting', blurb: 'Accounting dashboard', color: '#60a5fa' },
+  { key: 'hr_coordinator', label: 'hr_coord', blurb: 'HR dashboard', color: '#34d399' },
+  { key: 'manager', label: 'manager', blurb: 'Manager dashboard', color: '#818cf8' },
+  { key: 'ceo', label: 'ceo', blurb: 'CEO dashboard', color: '#fbbf24' },
+  { key: 'orphanage_manager', label: 'orphanage', blurb: 'Orphanage dashboard', color: '#f472b6' },
+  { key: 'contractor', label: 'contractor', blurb: 'Contractor dashboard', color: '#38bdf8' },
 ] as const;
 
 type RoleKey = (typeof ROLE_ORDER)[number]['key'];
@@ -244,7 +245,7 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
   );
 
   const nonViewerElevated = useMemo(() => {
-    return ROLE_ORDER.filter((r) => r.key !== 'viewer').reduce(
+    return ROLE_ORDER.reduce(
       (s, r) => s + (roleCounts.get(r.key) ?? 0),
       0,
     );

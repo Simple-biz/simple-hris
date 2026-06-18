@@ -13,8 +13,7 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const CAN_POST_ROLES = new Set([
-  'admin', 'ceo', 'hr_coordinator', 'payroll_coordinator',
-  'payroll_manager', 'finance', 'manager', 'orphanage_manager',
+  'admin', 'ceo', 'hr_coordinator', 'accounting', 'manager', 'orphanage_manager',
 ]);
 
 async function getRoles(email: string): Promise<string[]> {

@@ -16,9 +16,7 @@ const GENERAL_POST_ROLES = new Set([
   'admin',
   'ceo',
   'hr_coordinator',
-  'finance',
-  'payroll_coordinator',
-  'payroll_manager',
+  'accounting',
   'orphanage_manager',
 ]);
 

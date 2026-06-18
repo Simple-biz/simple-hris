@@ -30,11 +30,8 @@ export type InitialAccountingData = {
 };
 
 const ACCOUNTING_ROLES = new Set([
-  'payroll_coordinator',
-  'payroll_manager',
-  'finance',
+  'accounting',
   'hr_coordinator',
-  'viewer',
   'admin',
 ]);
 

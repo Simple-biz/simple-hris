@@ -4,23 +4,21 @@ import { useEffect, useState } from 'react';
 
 export type AppView = 'employee' | 'admin' | 'accounting' | 'manager' | 'orphanage' | 'ceo' | 'hr' | 'contractor';
 export type Role =
-  | 'viewer'
   | 'hr_coordinator'
-  | 'payroll_coordinator'
-  | 'payroll_manager'
-  | 'finance'
+  | 'accounting'
   | 'admin'
   | 'manager'
   | 'orphanage_manager'
   | 'ceo'
   | 'contractor';
 
+// Roles that unlock the Accounting dashboard. `accounting` is the dedicated
+// dashboard role (renamed from the old `finance`); `hr_coordinator` keeps the
+// accounting access it had. The legacy payroll_coordinator / payroll_manager /
+// viewer roles were retired 2026-06-18 (roles are now strictly dashboard access).
 const ACCOUNTING_ROLES: Role[] = [
-  'payroll_coordinator',
-  'payroll_manager',
-  'finance',
+  'accounting',
   'hr_coordinator',
-  'viewer',
 ];
 
 export const VIEW_ROUTES: Record<AppView, string> = {

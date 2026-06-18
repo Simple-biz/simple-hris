@@ -11,11 +11,8 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const VALID_ROLES = [
-  'viewer',
   'hr_coordinator',
-  'payroll_coordinator',
-  'payroll_manager',
-  'finance',
+  'accounting',
   'admin',
   'manager',
   'orphanage_manager',
@@ -29,9 +26,71 @@ import {
   listDepartmentsForManager,
   revokeAllForManager,
 } from '@/lib/supabase/department-managers';
+import { FEATURE_CATALOG, ROLE_TO_FEATURE_VIEW } from '@/lib/rbac/feature-permissions';
 
 function getClient() {
   return createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+}
+
+type Sb = NonNullable<ReturnType<typeof getClient>>;
+
+/**
+ * Assigning a dashboard role auto-provisions every tab of that dashboard to
+ * `edit`, so a freshly-assigned dashboard is immediately usable. Admins then
+ * downgrade a tab to `view` or hide it in the permission grid. Existing active
+ * grants are left untouched (so a re-grant never clobbers admin customization);
+ * a previously-revoked row is un-revoked, otherwise a fresh row is inserted.
+ * No-op for `admin` and any role with no feature catalog.
+ */
+async function provisionDashboardTabs(sb: Sb, email: string, role: string, actorName: string): Promise<void> {
+  const view = ROLE_TO_FEATURE_VIEW[role];
+  if (!view) return;
+  const features = FEATURE_CATALOG[view] ?? [];
+  for (const f of features) {
+    const { data: active } = await sb
+      .from('employee_feature_permissions')
+      .select('id')
+      .eq('work_email', email)
+      .eq('view_key', view)
+      .eq('feature', f.key)
+      .is('revoked_at', null)
+      .limit(1);
+    if (active && active.length > 0) continue;
+
+    const { data: revoked } = await sb
+      .from('employee_feature_permissions')
+      .select('id')
+      .eq('work_email', email)
+      .eq('view_key', view)
+      .eq('feature', f.key)
+      .not('revoked_at', 'is', null)
+      .order('granted_at', { ascending: false })
+      .limit(1);
+
+    if (revoked && revoked.length > 0) {
+      await sb
+        .from('employee_feature_permissions')
+        .update({ revoked_at: null, access: 'edit', granted_by: actorName, granted_at: new Date().toISOString() })
+        .eq('id', (revoked[0] as { id: string }).id);
+    } else {
+      await sb
+        .from('employee_feature_permissions')
+        .insert({ work_email: email, view_key: view, feature: f.key, access: 'edit', granted_by: actorName });
+    }
+  }
+}
+
+/** Revoking a dashboard role tears down its per-tab permissions too, so removing
+ *  the dashboard fully removes access (and a re-grant re-provisions cleanly). */
+async function deprovisionDashboardTabs(sb: Sb, email: string, role: string): Promise<void> {
+  const view = ROLE_TO_FEATURE_VIEW[role];
+  if (!view) return;
+  await sb
+    .from('employee_feature_permissions')
+    .update({ revoked_at: new Date().toISOString() })
+    .eq('work_email', email)
+    .eq('view_key', view)
+    .is('revoked_at', null);
 }
 
 // GET /api/employee-roles            -> all active assignments
@@ -121,6 +180,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `${error}${hint}` }, { status: 500 });
     }
 
+    // Make the dashboard usable immediately by granting edit on all its tabs.
+    await provisionDashboardTabs(supabase, email, role, actor.user_name);
+
     void insertAuditLog({
       user_name: actor.user_name,
       user_role: actor.user_role,
@@ -182,6 +244,9 @@ export async function DELETE(request: Request) {
         await revokeAllForManager(email);
       }
     }
+
+    // Tear down the dashboard's per-tab permissions so the access is fully gone.
+    await deprovisionDashboardTabs(supabase, email, role);
 
     const actor2 = await getSessionActor();
     void insertAuditLog({

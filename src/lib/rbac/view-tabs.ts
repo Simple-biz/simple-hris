@@ -6,17 +6,12 @@ import type { FeatureAccess, FeaturePermissionsMap, FeatureViewKey } from '@/lib
  * accounting helper (`accounting-tabs.ts`) and every dashboard sidebar/app
  * build on, so all six views gate identically.
  *
- * Model — two regimes:
- *   1. ROLE GRANTS FULL ACCESS (single-role dashboards: manager, hr, orphanage,
- *      ceo, contractor). Holding the dashboard's role grants view+edit on every
- *      tab by default — assigning the role IS the grant, no per-tab provisioning.
- *      The overlay can still DOWNGRADE one tab to read-only (an explicit `view`
- *      row) for such a user, but absence of a row means full access, not hidden.
- *   2. HIDDEN UNTIL GRANTED (accounting only). A tab is visible only when the
- *      admin granted `view`/`edit`; the default (no row) is hidden. Accounting
- *      keeps this stricter model because it has many sub-roles (payroll,
- *      finance, viewer, …) and sensitive money tabs.
- * Two deliberate exceptions across both regimes:
+ * Model (attribute-based, default-deny) — applies to EVERY dashboard:
+ * a tab is visible only when the admin granted it `view` or `edit` in the
+ * per-tab permission grid; the default (no row) is hidden. Assigning a dashboard
+ * role AUTO-PROVISIONS all its tabs to `edit` (see the employee-roles grant
+ * route), so a freshly-assigned dashboard is instantly usable — the admin then
+ * downgrades a tab to `view` or hides it. Two deliberate exceptions:
  *   - `admin` role bypasses gating entirely (sees + edits everything).
  *   - the `overview` tab is always visible (read-only landing) so a dashboard
  *     is never fully blank.
@@ -109,51 +104,6 @@ function resolve(
   return perms?.[view]?.[feature] ?? 'hidden';
 }
 
-/**
- * Single-role dashboards where holding the dashboard's role grants full access
- * to every tab by default. Assigning the role is the grant — no per-tab
- * provisioning needed. Keep in sync with the server mirror in
- * `src/lib/auth/authorize-feature.ts`. Accounting is intentionally absent.
- */
-const ROLE_BASELINE_VIEW_ROLES: Partial<Record<FeatureViewKey, readonly string[]>> = {
-  manager: ['manager'],
-  hr: ['hr_coordinator'],
-  orphanage: ['orphanage_manager'],
-  ceo: ['ceo'],
-  contractor: ['contractor'],
-};
-
-/** True when the user holds a role that grants full default access to `view`. */
-function roleGrantsFullView(view: FeatureViewKey, roles: readonly string[]): boolean {
-  const grantRoles = ROLE_BASELINE_VIEW_ROLES[view];
-  return !!grantRoles && roles.some((r) => grantRoles.includes(r));
-}
-
-/**
- * The user's effective access to a (view, tab):
- *   - admin → `edit` (full bypass)
- *   - role grants the view → `edit` by default; an explicit `view` row
- *     downgrades that single tab to read-only
- *   - otherwise (accounting / non-holder) → exactly what the overlay granted,
- *     with `overview` always at least visible (read-only landing).
- */
-function effectiveAccess(
-  view: FeatureViewKey,
-  tabId: string,
-  roles: readonly string[],
-  perms: FeaturePermissionsMap | null | undefined,
-): FeatureAccess {
-  if (hasBypass(roles)) return 'edit';
-  const explicit = resolve(perms, view, tabFeatureKey(tabId));
-  if (roleGrantsFullView(view, roles)) {
-    // Role grants everything; the only override honored today is a deliberate
-    // downgrade to read-only.
-    return explicit === 'view' ? 'view' : 'edit';
-  }
-  if (ALWAYS_VISIBLE_TABS.has(tabId)) return explicit === 'edit' ? 'edit' : 'view';
-  return explicit;
-}
-
 /** Visible tab ids for a user, in catalog order. */
 export function allowedTabsForUser(
   view: FeatureViewKey,
@@ -161,7 +111,12 @@ export function allowedTabsForUser(
   perms: FeaturePermissionsMap | null | undefined,
 ): string[] {
   const ids = VIEW_TAB_IDS[view] ?? [];
-  return ids.filter((tabId) => effectiveAccess(view, tabId, roles, perms) !== 'hidden');
+  if (hasBypass(roles)) return [...ids];
+  return ids.filter((tabId) => {
+    if (ALWAYS_VISIBLE_TABS.has(tabId)) return true;
+    const access = resolve(perms, view, tabFeatureKey(tabId));
+    return access === 'view' || access === 'edit';
+  });
 }
 
 /** Whether a tab is visible to a user. */
@@ -171,17 +126,20 @@ export function canAccessTabForUser(
   roles: readonly string[],
   perms: FeaturePermissionsMap | null | undefined,
 ): boolean {
-  return effectiveAccess(view, tabId, roles, perms) !== 'hidden';
+  if (hasBypass(roles)) return true;
+  if (ALWAYS_VISIBLE_TABS.has(tabId)) return true;
+  const access = resolve(perms, view, tabFeatureKey(tabId));
+  return access === 'view' || access === 'edit';
 }
 
-/** Whether a user may edit (mutate) within a tab. Admin bypasses; a role that
- *  grants the view confers edit by default; otherwise an explicit `edit` grant
- *  is required (`overview` is read-only unless granted). */
+/** Whether a user may edit (mutate) within a tab. Admin bypasses; otherwise
+ *  requires an explicit `edit` grant. `overview` is read-only unless granted. */
 export function canEditTab(
   view: FeatureViewKey,
   tabId: string,
   roles: readonly string[],
   perms: FeaturePermissionsMap | null | undefined,
 ): boolean {
-  return effectiveAccess(view, tabId, roles, perms) === 'edit';
+  if (hasBypass(roles)) return true;
+  return resolve(perms, view, tabFeatureKey(tabId)) === 'edit';
 }

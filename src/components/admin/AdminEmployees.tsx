@@ -36,12 +36,12 @@ interface RoleAssignmentRow {
 }
 
 const ROLE_LABELS: Record<string, string> = {
-  viewer: 'Viewer',
   hr_coordinator: 'HR Coordinator',
-  payroll_coordinator: 'Payroll Coordinator',
-  payroll_manager: 'Payroll Manager',
+  accounting: 'Accounting',
+  manager: 'Manager',
   orphanage_manager: 'Orphanage Manager',
-  finance: 'Finance',
+  ceo: 'CEO',
+  contractor: 'Contractor',
   admin: 'Admin',
 };
 

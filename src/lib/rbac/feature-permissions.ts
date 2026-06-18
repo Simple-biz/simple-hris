@@ -70,7 +70,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
  *  lives under. `admin` intentionally has no entry — admins bypass tab
  *  gating in every view. */
 export const ROLE_TO_FEATURE_VIEW: Record<string, FeatureViewKey> = {
-  finance:            "accounting",
+  accounting:         "accounting",
   hr_coordinator:     "hr",
   manager:            "manager",
   orphanage_manager:  "orphanage",

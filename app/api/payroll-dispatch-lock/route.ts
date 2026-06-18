@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
       const { data: roleRows } = await supabase
         .from("employee_roles")
         .select("work_email")
-        .in("role", ["admin", "hr_coordinator", "payroll_coordinator", "payroll_manager", "finance"])
+        .in("role", ["admin", "hr_coordinator", "accounting"])
         .is("revoked_at", null);
       // Don't notify the actor about their own start/stop action — `actor` is
       // their lowercased email (see getSessionActor).

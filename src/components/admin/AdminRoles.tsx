@@ -33,16 +33,13 @@ import { FEATURE_CATALOG, ROLE_TO_FEATURE_VIEW, type FeatureAccess, type Feature
 import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 import { normalizeCurrency, CONTRACTOR_CURRENCIES, type ContractorCurrency } from '@/lib/contractor-currency';
 
-// All known role keys — kept so legacy assignments in the DB (e.g. `viewer`,
-// `payroll_coordinator`, `payroll_manager`) still render correctly in the
-// assigned-roles pill list. Only the keys in `ASSIGNABLE_ROLE_KEYS` below
-// are exposed as assign buttons in the right-hand panel.
+// Roles are strictly DASHBOARD ACCESS now: one role unlocks one dashboard.
+// The legacy viewer / payroll_coordinator / payroll_manager roles were retired
+// 2026-06-18 and `finance` was renamed to `accounting`. Every role here is also
+// assignable (see ASSIGNABLE_ROLE_KEYS).
 const ROLES = [
-  { key: 'viewer', label: 'Viewer', blurb: 'Read-only dashboard access.' },
   { key: 'hr_coordinator', label: 'HR', blurb: 'Unlocks the HR dashboard.' },
-  { key: 'payroll_coordinator', label: 'Payroll Coordinator', blurb: 'Upload CSVs, pre-flight payroll.' },
-  { key: 'payroll_manager', label: 'Payroll Manager', blurb: 'Payment dispatch only.' },
-  { key: 'finance', label: 'Accounting', blurb: 'Unlocks the Accounting dashboard.' },
+  { key: 'accounting', label: 'Accounting', blurb: 'Unlocks the Accounting dashboard.' },
   { key: 'manager', label: 'Manager', blurb: 'Unlocks the Manager dashboard.' },
   { key: 'orphanage_manager', label: 'Orphanage', blurb: 'Unlocks the Orphanage dashboard.' },
   { key: 'contractor', label: 'Contractor', blurb: 'Unlocks the Contractor dashboard (invoice management).' },
@@ -60,7 +57,7 @@ const ASSIGNABLE_ROLE_KEYS = [
   'admin',
   'ceo',
   'hr_coordinator',
-  'finance',
+  'accounting',
   'orphanage_manager',
   'contractor',
   'manager',
@@ -76,15 +73,9 @@ const ROLE_GROUPS: { title: string; caption: string; keys: RoleKey[] }[] = [
 
 function rolePillClasses(role: RoleKey): string {
   const map: Record<RoleKey, string> = {
-    viewer:
-      'border-zinc-200/90 bg-zinc-100/90 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800/80 dark:text-zinc-200',
     hr_coordinator:
       'border-emerald-500/35 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300/95 dark:border-emerald-600/40',
-    payroll_coordinator:
-      'border-violet-500/35 bg-violet-500/10 text-violet-800 dark:text-violet-300/95 dark:border-violet-600/40',
-    payroll_manager:
-      'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200/95 dark:border-amber-600/45',
-    finance:
+    accounting:
       'border-sky-500/35 bg-sky-500/10 text-sky-900 dark:text-sky-200/95 dark:border-sky-600/40',
     manager:
       'border-indigo-500/35 bg-indigo-500/10 text-indigo-800 dark:text-indigo-300/95 dark:border-indigo-600/40',
@@ -97,23 +88,23 @@ function rolePillClasses(role: RoleKey): string {
     admin:
       'border-rose-500/40 bg-rose-500/10 text-rose-900 dark:text-rose-200/95 dark:border-rose-600/45',
   };
-  return map[role];
+  // Legacy/unknown role keys (e.g. retired roles still sitting in the DB until
+  // the migration runs) fall back to neutral styling instead of crashing.
+  return (map as Record<string, string>)[role] ??
+    'border-zinc-200/90 bg-zinc-100/90 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800/80 dark:text-zinc-200';
 }
 
 function roleRowAccent(role: RoleKey): string {
   const map: Record<RoleKey, string> = {
-    viewer: 'border-l-zinc-400 dark:border-l-zinc-500',
     hr_coordinator: 'border-l-emerald-500',
-    payroll_coordinator: 'border-l-violet-500',
-    payroll_manager: 'border-l-amber-500',
-    finance: 'border-l-sky-500',
+    accounting: 'border-l-sky-500',
     manager: 'border-l-indigo-500',
     orphanage_manager: 'border-l-pink-500',
     contractor: 'border-l-blue-500',
     ceo: 'border-l-yellow-500',
     admin: 'border-l-rose-500',
   };
-  return map[role];
+  return (map as Record<string, string>)[role] ?? 'border-l-zinc-400 dark:border-l-zinc-500';
 }
 
 function employeeIdentityEmail(e: EmployeeRow | null): string {
@@ -1000,7 +991,7 @@ export default function AdminRoles() {
                                   rolePillClasses(r.role),
                                 )}
                               >
-                                {ROLE_BY_KEY[r.role].label}
+                                {ROLE_BY_KEY[r.role]?.label ?? r.role}
                               </span>
                             ))}
                             {assignedRoles.length > 3 && (

@@ -9,11 +9,8 @@
 
 export const ELEVATED_ROLES = [
   'admin',
-  'payroll_coordinator',
-  'payroll_manager',
-  'finance',
+  'accounting',
   'hr_coordinator',
-  'viewer',
 ] as const;
 
 export type ElevatedRole = (typeof ELEVATED_ROLES)[number];

@@ -210,14 +210,14 @@ export async function deleteLeaveRequestIfOwned(params: {
  * the per-row authorization.
  */
 export const LEAVE_DELETE_ROLES: readonly string[] = [
-  'payroll_manager',
+  'accounting',
   'admin',
   'manager',
 ];
 
 /** Roles whose delete authority is unrestricted (no per-department check). */
 export const LEAVE_DELETE_UNRESTRICTED_ROLES: readonly string[] = [
-  'payroll_manager',
+  'accounting',
   'admin',
 ];
 

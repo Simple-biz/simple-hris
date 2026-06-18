@@ -65,9 +65,7 @@ export function disputeIsFinallyDenied(row: Pick<PabDayDisputeRow, 'status'>): b
 }
 
 export const DISPUTE_ACTOR_ROLES: readonly string[] = [
-  'payroll_coordinator',
-  'payroll_manager',
-  'finance',
+  'accounting',
   'hr_coordinator',
   'admin',
 ];
@@ -79,7 +77,7 @@ export const DISPUTE_ACTOR_ROLES: readonly string[] = [
  * leadership + admin.
  */
 export const DISPUTE_DELETE_ROLES: readonly string[] = [
-  'payroll_manager',
+  'accounting',
   'admin',
 ];
 
@@ -130,7 +128,7 @@ export async function resolveUserRole(
   if (!e) return fallback;
   const roles = await fetchActiveRoles(e);
   if (roles.length === 0) return fallback;
-  const priority = ['admin', 'finance', 'payroll_coordinator', 'hr_coordinator', 'payroll_manager'];
+  const priority = ['admin', 'accounting', 'hr_coordinator'];
   for (const p of priority) {
     if (roles.includes(p)) return p;
   }

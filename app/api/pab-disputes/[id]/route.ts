@@ -252,7 +252,7 @@ export async function DELETE(
       const allowedRole = roles.find((r) => DISPUTE_DELETE_ROLES.includes(r));
       if (!allowedRole) {
         return NextResponse.json(
-          { error: 'Requires admin or payroll_manager' },
+          { error: 'Requires admin or accounting' },
           { status: 403 },
         );
       }

@@ -467,8 +467,8 @@ export default function PabDisputeQueue() {
           </>
         ) : (
           <>
-            You can review disputes but not act on them. Approve, Deny, Return, and Edit require payroll_coordinator,
-            payroll_manager, finance, hr_coordinator, or admin in employee_roles.
+            You can review disputes but not act on them. Approve, Deny, Return, and Edit require accounting,
+            hr_coordinator, or admin in employee_roles.
           </>
         )}
       </div>
@@ -645,7 +645,7 @@ export default function PabDisputeQueue() {
                               size="sm"
                               variant="outline"
                               disabled={!canApprove || approvingId === d.id}
-                              title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
+                              title={!canApprove ? 'Requires accounting, hr_coordinator, or admin' : undefined}
                               className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
                               onClick={() => void handleApprove(d)}
                             >
@@ -655,7 +655,7 @@ export default function PabDisputeQueue() {
                               size="sm"
                               variant="outline"
                               disabled={!canApprove}
-                              title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
+                              title={!canApprove ? 'Requires accounting, hr_coordinator, or admin' : undefined}
                               className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
                               onClick={() => { setDecideDialog({ dispute: d, action: 'deny' }); setDecisionNote(''); setOverrideHrs(''); setOverrideMins(''); }}
                             >
@@ -666,7 +666,7 @@ export default function PabDisputeQueue() {
                                 size="sm"
                                 variant="outline"
                                 disabled={!canApprove}
-                                title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : 'Send back to Orphanage managers'}
+                                title={!canApprove ? 'Requires accounting, hr_coordinator, or admin' : 'Send back to Orphanage managers'}
                                 className="h-7 border-amber-300 px-2 text-[11px] text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-700 dark:text-amber-300"
                                 onClick={() => {
                                   setReturnToOrphanageRow(d);
@@ -693,7 +693,7 @@ export default function PabDisputeQueue() {
                               size="sm"
                               variant="outline"
                               disabled={!canApprove}
-                              title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
+                              title={!canApprove ? 'Requires accounting, hr_coordinator, or admin' : undefined}
                               className="h-7 border-zinc-300 px-2 text-[11px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300"
                               onClick={() => openEdit(d)}
                             >
@@ -704,7 +704,7 @@ export default function PabDisputeQueue() {
                               size="sm"
                               variant="outline"
                               disabled={!canDelete}
-                              title={!canDelete ? 'Requires admin or payroll_manager' : 'Revoke this dispute'}
+                              title={!canDelete ? 'Requires admin or accounting' : 'Revoke this dispute'}
                               className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
                               onClick={() => setDeleteTarget(d)}
                             >
@@ -717,7 +717,7 @@ export default function PabDisputeQueue() {
                           <Button
                             size="sm"
                             variant="outline"
-                            title="Permanently delete this dispute (admin / payroll_manager only)"
+                            title="Permanently delete this dispute (admin / accounting only)"
                             className="h-7 w-7 border-zinc-200 p-0 text-rose-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 dark:border-zinc-700 dark:text-rose-400 dark:hover:border-rose-800 dark:hover:bg-rose-950/40"
                             onClick={() => setDeleteTarget(d)}
                           >
@@ -847,7 +847,7 @@ export default function PabDisputeQueue() {
                     size="sm"
                     variant="outline"
                     disabled={!canApprove || editing}
-                    title={!canApprove ? 'Requires payroll_coordinator, payroll_manager, finance, hr_coordinator, or admin' : undefined}
+                    title={!canApprove ? 'Requires accounting, hr_coordinator, or admin' : undefined}
                     className="h-8 w-full border-rose-300 text-[11px] text-rose-800 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-200 dark:hover:bg-rose-950/40"
                     onClick={() => setRevokeForgivenessOpen(true)}
                   >

@@ -241,7 +241,7 @@ export async function DELETE(
     const allowedRole = roles.find((r) => LEAVE_DELETE_ROLES.includes(r));
     if (!allowedRole) {
       return NextResponse.json(
-        { error: 'Requires admin, payroll_manager, or manager' },
+        { error: 'Requires admin, accounting, or manager' },
         { status: 403 },
       );
     }
