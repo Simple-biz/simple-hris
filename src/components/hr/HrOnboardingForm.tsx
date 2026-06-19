@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
   Archive,
+  Banknote,
   CheckCircle2,
   CheckIcon,
   ChevronDownIcon,
@@ -16,6 +17,7 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Globe,
   Landmark,
   Link2,
   Loader2,
@@ -27,6 +29,7 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  UploadCloud,
   User,
   UserCheck,
   Users,
@@ -52,6 +55,7 @@ import {
   PrivacyText,
 } from '@/components/onboarding/agreement-texts';
 import { formatLongDate } from '@/lib/onboarding/ip-assignment-text';
+import { currencyForCountry, resolveOnboardingCountry, ONBOARDING_COUNTRIES } from '@/lib/onboarding/countries';
 import {
   Dialog,
   DialogContent,
@@ -124,10 +128,19 @@ type SubmissionRow = {
   invite_name: string | null;
   invite_personal_email: string | null;
   invite_department: string | null;
+  invite_country: string | null;
   invite_note: string | null;
   full_name: string | null;
   phone: string | null;
   email: string | null;
+  location: string | null;
+  country: string | null;
+  address_street: string | null;
+  address_city: string | null;
+  address_state: string | null;
+  address_province: string | null;
+  address_region: string | null;
+  address_postal_code: string | null;
   ip_agreement_agreed: boolean | null;
   ip_agreement_name: string | null;
   ip_agreement_signature: string | null;
@@ -712,6 +725,44 @@ function publicLinkFor(token: string): string {
   return `${window.location.origin}/onboarding/${token}`;
 }
 
+/**
+ * Neon-green treatment for the primary "Generate link" CTA.
+ *   • Standby: a soft neon pulse roughly once every 10s, hinting "press me".
+ *   • Hover:   a running neon-green border + glow (idle pulse pauses).
+ * Honors prefers-reduced-motion (static border on hover, no pulse/spin).
+ */
+const GEN_NEON_CSS = `
+@property --gen-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes gen-neon-spin { to { --gen-angle: 360deg; } }
+@keyframes gen-neon-idle {
+  0%, 84%, 100% { box-shadow: 0 4px 14px rgba(16,185,129,0.25); }
+  90%, 95%      { box-shadow: 0 0 18px 2px rgba(57,255,20,0.85), 0 0 5px rgba(57,255,20,0.9); }
+}
+.gen-neon { position: relative; display: inline-flex; border-radius: 0.55rem; }
+/* Only the 2px BORDER is painted — the conic fills the box but a content-box
+   mask punches out the center, so there is no rotating "radar" sweep behind the
+   button, just a glowing segment running along the edge. */
+.gen-neon__run {
+  --gen-angle: 0deg;
+  position: absolute; inset: -2px; border-radius: 0.55rem; padding: 2px;
+  background: conic-gradient(from var(--gen-angle),
+    transparent 0deg, transparent 250deg,
+    #34d399 300deg, #39ff14 338deg, #d9ffcf 354deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  opacity: 0; transition: opacity .25s ease; pointer-events: none;
+}
+.gen-neon:hover .gen-neon__run { opacity: 1; animation: gen-neon-spin 1.4s linear infinite; }
+.gen-neon__btn { position: relative; animation: gen-neon-idle 10s ease-in-out infinite; }
+.gen-neon:hover .gen-neon__btn { animation: none; box-shadow: 0 0 16px 1px rgba(57,255,20,0.5); }
+@media (prefers-reduced-motion: reduce) {
+  .gen-neon__btn { animation: none; }
+  .gen-neon:hover .gen-neon__run { animation: none; }
+}
+`;
+
 export default function HrOnboardingForm() {
   const reduceMotion = useReducedMotion();
   const [rows, setRows] = useState<SubmissionRow[]>([]);
@@ -725,6 +776,7 @@ export default function HrOnboardingForm() {
   const [showFailedOnly, setShowFailedOnly] = useState(false);
 
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [payPlansOpen, setPayPlansOpen] = useState(false);
   const [linkCreated, setLinkCreated] = useState<SubmissionRow | null>(null);
   const [viewRow, setViewRow] = useState<SubmissionRow | null>(null);
   const [workEmailFor, setWorkEmailFor] = useState<SubmissionRow | null>(null);
@@ -1148,12 +1200,24 @@ export default function HrOnboardingForm() {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <style>{GEN_NEON_CSS}</style>
+            <span className="gen-neon">
+              <span aria-hidden className="gen-neon__run" />
+              <Button
+                className="gen-neon__btn bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25"
+                onClick={() => setGenerateOpen(true)}
+              >
+                <Plus className="mr-1.5 h-4 w-4" />
+                Generate link
+              </Button>
+            </span>
             <Button
-              className="bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:opacity-95"
-              onClick={() => setGenerateOpen(true)}
+              variant="outline"
+              className="border-emerald-200 text-emerald-800"
+              onClick={() => setPayPlansOpen(true)}
             >
-              <Plus className="mr-1.5 h-4 w-4" />
-              Generate link
+              <Banknote className="mr-1.5 h-4 w-4" />
+              Pay Plans
             </Button>
             <Button
               variant="outline"
@@ -1707,6 +1771,8 @@ export default function HrOnboardingForm() {
         onSent={() => void load()}
       />
 
+      <PayPlansDialog open={payPlansOpen} onClose={() => setPayPlansOpen(false)} />
+
       <SubmissionDetailDialog
         row={viewRow}
         onClose={() => setViewRow(null)}
@@ -1863,22 +1929,44 @@ export default function HrOnboardingForm() {
 
 // ─── Generate link dialog ─────────────────────────────────────────────────
 
-/** Parses a blob of pasted text (Excel rows, comma-lists, etc.) into distinct
- *  email addresses. Returns { valid, invalid } where invalid are tokens that
- *  look like they were meant to be emails but failed the plausibility check. */
-function parseBulkEmails(raw: string): { valid: string[]; invalid: string[] } {
-  const tokens = raw
-    .split(/[\n\r\t,;|]+/)
-    .map((t) => t.trim().toLowerCase())
-    .filter(Boolean);
+/** One parsed bulk hire: an email plus an optional country (canonical name, or
+ *  '' when the pasted line carried no recognizable country). */
+type BulkRow = { email: string; country: string };
+
+/** Parses pasted text (Excel rows, comma-lists, etc.) into per-hire rows. Each
+ *  LINE is one hire; within a line, tab / comma / semicolon / pipe separate the
+ *  fields. The first email-like field is the address; the first field that
+ *  resolves to an onboarding country (US / Philippines / Colombia, incl. aliases
+ *  like "USA" / "Columbia" / "PH" / "CO") becomes that hire's country. Lines with
+ *  no country come back with country=''. `invalid` collects email-ish tokens on
+ *  lines where no valid email was found. Deduped by email. */
+function parseBulkRows(raw: string): { valid: BulkRow[]; invalid: string[] } {
+  const lines = raw.split(/[\n\r]+/).map((l) => l.trim()).filter(Boolean);
   const seen = new Set<string>();
-  const valid: string[] = [];
+  const valid: BulkRow[] = [];
   const invalid: string[] = [];
-  for (const t of tokens) {
-    if (seen.has(t)) continue;
-    seen.add(t);
-    if (isPlausibleEmail(t)) valid.push(t);
-    else if (t.includes('@') || t.includes('.')) invalid.push(t);
+  for (const line of lines) {
+    const fields = line.split(/[\t,;|]+/).map((f) => f.trim()).filter(Boolean);
+    let email = '';
+    let country = '';
+    for (const f of fields) {
+      if (!email && isPlausibleEmail(f)) {
+        email = f.toLowerCase();
+        continue;
+      }
+      if (!country) {
+        const resolved = resolveOnboardingCountry(f);
+        if (resolved) country = resolved.name;
+      }
+    }
+    if (email) {
+      if (seen.has(email)) continue;
+      seen.add(email);
+      valid.push({ email, country });
+    } else {
+      const culprit = fields.find((f) => f.includes('@') || f.includes('.'));
+      if (culprit) invalid.push(culprit.toLowerCase());
+    }
   }
   return { valid, invalid };
 }
@@ -1894,12 +1982,35 @@ function GenerateLinkDialog({
   onClose: () => void;
   onCreated: (row: SubmissionRow) => void;
 }) {
+  const reduceMotion = useReducedMotion();
+  // Smoothly elongate the modal: measure the body's natural height so the wrapper
+  // can animate TO it (box grows/shrinks instead of snapping) on toggle. A ref
+  // callback + ResizeObserver keeps it live across mode swaps, pasting, and
+  // validation messages — and is robust to the dialog's portal mount timing.
+  const [bodyHeight, setBodyHeight] = useState<number | null>(null);
+  const bodyResizeObs = useRef<ResizeObserver | null>(null);
+  const measureBody = useCallback((el: HTMLDivElement | null) => {
+    bodyResizeObs.current?.disconnect();
+    bodyResizeObs.current = null;
+    if (!el) {
+      setBodyHeight(null);
+      return;
+    }
+    setBodyHeight(el.offsetHeight);
+    const ro = new ResizeObserver(() => setBodyHeight(el.offsetHeight));
+    ro.observe(el);
+    bodyResizeObs.current = ro;
+  }, []);
   const [email, setEmail] = useState('');
   const [dept, setDept] = useState('');
+  const [country, setCountry] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Lead Gen bulk state
+  // Bulk invite — a toggle available for ANY department (auto-on for Lead Gen).
+  const [bulkMode, setBulkMode] = useState(false);
+
+  // Bulk state
   const [bulkText, setBulkText] = useState('');
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
   const [bulkResults, setBulkResults] = useState<BulkResult[] | null>(null);
@@ -1907,10 +2018,33 @@ function GenerateLinkDialog({
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptsLoading, setDeptsLoading] = useState(false);
 
-  const isLeadGen = ['lead gen', 'lead generation'].includes(dept.trim().toLowerCase());
-  const { valid: parsedEmails, invalid: invalidTokens } = useMemo(
-    () => (isLeadGen ? parseBulkEmails(bulkText) : { valid: [], invalid: [] }),
-    [isLeadGen, bulkText],
+  // Per-hire country override in bulk mode (keyed by email). Lets HR target a
+  // mixed Lead Gen batch — e.g. some Colombia, some Philippines — even when the
+  // paste carried no country column.
+  const [rowCountry, setRowCountry] = useState<Record<string, string>>({});
+
+  const isLeadGenDept = ['lead gen', 'lead generation'].includes(dept.trim().toLowerCase());
+  const { valid: parsedRows, invalid: invalidTokens } = useMemo(
+    () => (bulkMode ? parseBulkRows(bulkText) : { valid: [], invalid: [] }),
+    [bulkMode, bulkText],
+  );
+
+  // Lead Gen auto-enables bulk (the common case); HR can still toggle it on for
+  // any other department, or off for Lead Gen.
+  useEffect(() => {
+    if (isLeadGenDept) setBulkMode(true);
+  }, [isLeadGenDept]);
+
+  // Effective country for a bulk row: a manual per-row pick wins, then the
+  // country parsed from the pasted line, then the batch-level default (the
+  // Country picker up top). May be '' → that hire's invite carries no pay plan.
+  const effectiveCountry = useCallback(
+    (r: BulkRow) => rowCountry[r.email] || r.country || country.trim(),
+    [rowCountry, country],
+  );
+  const rowsMissingCountry = useMemo(
+    () => parsedRows.filter((r) => !effectiveCountry(r)).length,
+    [parsedRows, effectiveCountry],
   );
 
   useEffect(() => {
@@ -1931,12 +2065,13 @@ function GenerateLinkDialog({
 
   useEffect(() => {
     if (!open) {
-      setEmail(''); setDept(''); setNote('');
+      setEmail(''); setDept(''); setCountry(''); setNote('');
       setBulkText(''); setBulkProgress(null); setBulkResults(null);
+      setRowCountry({}); setBulkMode(false);
     }
   }, [open]);
 
-  const emailInvalid = !isLeadGen && email.trim().length > 0 && !isPlausibleEmail(email);
+  const emailInvalid = !bulkMode && email.trim().length > 0 && !isPlausibleEmail(email);
 
   // ── Single-hire submit ──
   async function submitSingle() {
@@ -1950,6 +2085,7 @@ function GenerateLinkDialog({
           invite_name: null,
           invite_personal_email: email.trim() || null,
           invite_department: dept.trim() || null,
+          invite_country: country.trim() || null,
           invite_note: note.trim() || null,
         }),
       });
@@ -1964,16 +2100,19 @@ function GenerateLinkDialog({
     }
   }
 
-  // ── Lead Gen bulk submit: create + send for every parsed email ──
+  // ── Lead Gen bulk submit: create + send for every parsed row ──
+  // Each row carries its OWN country (per-row pick → parsed-from-paste → batch
+  // default), so a mixed batch emails each hire the pay plan for their country.
   async function submitBulk() {
-    if (parsedEmails.length === 0) return;
+    if (parsedRows.length === 0) return;
     setBusy(true);
-    setBulkProgress({ done: 0, total: parsedEmails.length });
+    setBulkProgress({ done: 0, total: parsedRows.length });
     setBulkResults(null);
     const results: BulkResult[] = [];
 
-    for (let i = 0; i < parsedEmails.length; i++) {
-      const e = parsedEmails[i]!;
+    for (let i = 0; i < parsedRows.length; i++) {
+      const r = parsedRows[i]!;
+      const e = r.email;
       try {
         // 1. Create submission
         const createRes = await fetch('/api/hr/onboarding-submissions', {
@@ -1983,6 +2122,7 @@ function GenerateLinkDialog({
             invite_name: null,
             invite_personal_email: e,
             invite_department: dept.trim(),
+            invite_country: effectiveCountry(r) || null,
             invite_note: note.trim() || null,
           }),
         });
@@ -2007,7 +2147,7 @@ function GenerateLinkDialog({
       } catch (err) {
         results.push({ email: e, ok: false, error: err instanceof Error ? err.message : String(err) });
       }
-      setBulkProgress({ done: i + 1, total: parsedEmails.length });
+      setBulkProgress({ done: i + 1, total: parsedRows.length });
     }
 
     setBulkResults(results);
@@ -2041,7 +2181,7 @@ function GenerateLinkDialog({
               <p className="mt-1 text-[12px] text-zinc-500 dark:text-zinc-400">
                 <span className="font-semibold text-emerald-700 dark:text-emerald-400">{sent} sent</span>
                 {failed > 0 && <>, <span className="font-semibold text-rose-600 dark:text-rose-400">{failed} failed</span></>}
-                {' '}— Lead Gen batch
+                {dept.trim() ? ` — ${dept.trim()}` : ''}
               </p>
             </DialogHeader>
           </div>
@@ -2071,26 +2211,81 @@ function GenerateLinkDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className={cn('max-h-[92vh] overflow-y-auto', isLeadGen ? 'sm:max-w-2xl' : 'sm:max-w-md')}>
+      <DialogContent
+        className={cn(
+          'max-h-[92vh] overflow-y-auto transition-[max-width] duration-300 ease-out',
+          bulkMode ? 'sm:max-w-3xl' : 'sm:max-w-lg',
+        )}
+      >
         <div className="-mx-6 -mt-6 mb-1 overflow-hidden rounded-t-lg border-b border-emerald-100/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 px-6 py-5 dark:border-emerald-950/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25">
                 <Link2 className="h-4 w-4" />
               </span>
-              {isLeadGen ? 'Bulk onboarding — Lead Gen' : 'Generate onboarding link'}
+              {bulkMode
+                ? `Bulk onboarding${dept.trim() ? ` — ${dept.trim()}` : ''}`
+                : 'Generate onboarding link'}
             </DialogTitle>
             <p className="mt-1.5 text-[12px] leading-relaxed text-zinc-600 dark:text-zinc-400">
-              {isLeadGen
+              {bulkMode
                 ? 'Paste personal emails from your Excel sheet. Each hire gets their own one-time link sent immediately — they fill in their own name and sign the contracts on the form.'
                 : 'Mint a one-time, no-SSO link. The new hire fills in their name, signs contracts, and submits payment details directly on the form.'}
             </p>
           </DialogHeader>
         </div>
 
-        {/* Department — always on top */}
+        {/* Bulk-invite toggle — available for every department (auto-on for Lead Gen) */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={bulkMode}
+          onClick={() => setBulkMode((v) => !v)}
+          className={cn(
+            'mt-1 flex w-full items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-colors',
+            bulkMode
+              ? 'border-emerald-300 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/30'
+              : 'border-zinc-200 bg-white hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/40 dark:hover:border-zinc-700',
+          )}
+        >
+          <span className="flex items-center gap-2.5">
+            <span
+              className={cn(
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                bulkMode
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300'
+                  : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+              )}
+            >
+              <Users className="h-4 w-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                Bulk invite
+              </span>
+              <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">
+                Send one-time links to many hires at once — paste a list.
+              </span>
+            </span>
+          </span>
+          <span
+            className={cn(
+              'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
+              bulkMode ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600',
+            )}
+          >
+            <span
+              className={cn(
+                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                bulkMode ? 'translate-x-4' : 'translate-x-0.5',
+              )}
+            />
+          </span>
+        </button>
+
+        {/* Department + Country — always on top */}
         <DialogSection label="Where will they work?">
-          <DialogField label="Department" hint={deptsLoading ? 'Loading…' : isLeadGen ? 'Bulk mode active — paste emails below.' : 'Optional — helps HR sort submissions.'}>
+          <DialogField label="Department" hint={deptsLoading ? 'Loading…' : bulkMode ? 'Applied to every hire in this batch.' : 'Optional — helps HR sort submissions.'}>
             <DepartmentSelect
               value={dept}
               onChange={setDept}
@@ -2098,28 +2293,63 @@ function GenerateLinkDialog({
               loading={deptsLoading}
             />
           </DialogField>
+          <DialogField
+            label={bulkMode ? 'Default country' : 'Country'}
+            icon={<Globe className="h-3.5 w-3.5" />}
+            hint={
+              bulkMode
+                ? 'Default for the batch — override per hire below, or paste a country column. Sets which pay-plan PDF the invite carries.'
+                : 'Picks the pay-plan PDF emailed with the invite (matched by department + country). Leave blank to send no pay plan.'
+            }
+          >
+            <CountrySelect value={country} onChange={setCountry} />
+          </DialogField>
         </DialogSection>
 
-        {isLeadGen ? (
-          /* ── Lead Gen bulk mode ── */
+        {/* Smoothly ELONGATE on toggle: the outer wrapper animates its HEIGHT to
+            the measured body height (the box grows/shrinks instead of snapping)
+            while the modal width CSS-transitions in step; the inner keyed layer
+            crossfades the swapped content. The footer lives OUTSIDE this clip so
+            its full-bleed background isn't cut off. Dropdowns here are portaled,
+            so overflow-hidden won't clip them. */}
+        <motion.div
+          initial={false}
+          animate={{ height: bodyHeight ?? 'auto' }}
+          transition={{ duration: reduceMotion ? 0 : 0.36, ease: [0.22, 1, 0.36, 1] }}
+          className="-mx-1 overflow-hidden px-1"
+        >
+          <div ref={measureBody}>
+            <motion.div
+              key={bulkMode ? 'bulk' : 'single'}
+              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: reduceMotion ? 0 : 0.25, ease: [0.16, 1, 0.3, 1] }}
+            >
+        {bulkMode ? (
+          /* ── Bulk mode (any department) ── */
           <>
-            <DialogSection label="Paste emails">
+            <DialogSection label="Paste hires">
               <div className="flex flex-col gap-2">
                 <textarea
                   value={bulkText}
                   onChange={(e) => setBulkText(e.target.value)}
-                  placeholder={'Paste from Excel — one email per row, or comma/tab separated:\n\njane@gmail.com\njohn@yahoo.com\nrose@gmail.com'}
-                  rows={10}
+                  placeholder={'Paste from Excel — one hire per row. Add a country column to target each (else uses the default above):\n\njane@gmail.com\tColombia\njohn@yahoo.com\tPhilippines\nrose@gmail.com'}
+                  rows={6}
                   disabled={busy}
                   className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-2 font-mono text-xs leading-relaxed outline-none transition-colors placeholder:text-zinc-400 focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900/40 dark:placeholder:text-zinc-600"
                 />
 
                 {/* Parsed summary */}
                 {bulkText.trim() && (
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-                    {parsedEmails.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                    {parsedRows.length > 0 && (
                       <span className="font-medium text-emerald-700 dark:text-emerald-400">
-                        ✓ {parsedEmails.length} valid email{parsedEmails.length !== 1 ? 's' : ''}
+                        ✓ {parsedRows.length} hire{parsedRows.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {rowsMissingCountry > 0 && (
+                      <span className="text-amber-600 dark:text-amber-400">
+                        {rowsMissingCountry} without a country (no pay plan)
                       </span>
                     )}
                     {invalidTokens.length > 0 && (
@@ -2127,21 +2357,46 @@ function GenerateLinkDialog({
                         ⚠ {invalidTokens.length} skipped (not valid emails)
                       </span>
                     )}
-                    {parsedEmails.length === 0 && invalidTokens.length === 0 && (
-                      <span className="text-zinc-400">No emails detected yet</span>
+                    {parsedRows.length === 0 && invalidTokens.length === 0 && (
+                      <span className="text-zinc-400">No hires detected yet</span>
                     )}
                   </div>
                 )}
 
-                {/* Scrollable parsed email list */}
-                {parsedEmails.length > 0 && (
-                  <div className="max-h-36 overflow-y-auto rounded-lg border border-emerald-200/80 bg-emerald-50/40 px-3 py-2 dark:border-emerald-900/40 dark:bg-emerald-950/20">
-                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">Will receive a link</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {parsedEmails.map((e) => (
-                        <span key={e} className="inline-flex items-center rounded-full border border-emerald-200 bg-white px-2 py-0.5 font-mono text-[11px] text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-200">
-                          {e}
-                        </span>
+                {/* Per-hire list — each row's country drives its pay plan */}
+                {parsedRows.length > 0 && (
+                  <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+                    <div className="flex items-center justify-between gap-2 border-b border-emerald-200/70 px-3 py-1.5 dark:border-emerald-900/40">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">
+                        Will receive a link — country per hire
+                      </p>
+                      {country.trim() && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRowCountry(
+                              Object.fromEntries(parsedRows.map((r) => [r.email, country.trim()])),
+                            )
+                          }
+                          className="shrink-0 text-[10px] font-medium text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-400"
+                        >
+                          Set all to {country.trim()}
+                        </button>
+                      )}
+                    </div>
+                    <div className="max-h-56 overflow-y-auto p-1.5">
+                      {parsedRows.map((r) => (
+                        <div key={r.email} className="flex items-center gap-2 px-1.5 py-1">
+                          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-emerald-900 dark:text-emerald-200">
+                            {r.email}
+                          </span>
+                          <div className="w-40 shrink-0">
+                            <CountrySelect
+                              value={effectiveCountry(r)}
+                              onChange={(v) => setRowCountry((m) => ({ ...m, [r.email]: v }))}
+                            />
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -2168,30 +2423,6 @@ function GenerateLinkDialog({
                 />
               </DialogField>
             </DialogSection>
-
-            <DialogFooter className="gap-2 pt-2 sm:gap-0">
-              <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
-              <Button
-                size="sm"
-                className="bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:from-emerald-500 hover:to-teal-600 disabled:opacity-60"
-                onClick={() => void submitBulk()}
-                disabled={busy || parsedEmails.length === 0}
-              >
-                {busy ? (
-                  <>
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    {bulkProgress ? `Sending ${bulkProgress.done} / ${bulkProgress.total}…` : 'Working…'}
-                  </>
-                ) : (
-                  <>
-                    <Send className="mr-1.5 h-3.5 w-3.5" />
-                    {parsedEmails.length > 0
-                      ? `Generate & send ${parsedEmails.length} link${parsedEmails.length !== 1 ? 's' : ''}`
-                      : 'Paste emails above'}
-                  </>
-                )}
-              </Button>
-            </DialogFooter>
           </>
         ) : (
           /* ── Single-hire mode ── */
@@ -2224,21 +2455,42 @@ function GenerateLinkDialog({
                 />
               </DialogField>
             </DialogSection>
-
-            <DialogFooter className="gap-2 pt-2 sm:gap-0">
-              <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
-              <Button
-                size="sm"
-                className="bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:from-emerald-500 hover:to-teal-600"
-                onClick={() => void submitSingle()}
-                disabled={busy || emailInvalid}
-              >
-                {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-1 h-3.5 w-3.5" />}
-                {busy ? 'Generating…' : 'Generate link'}
-              </Button>
-            </DialogFooter>
           </>
         )}
+            </motion.div>
+          </div>
+        </motion.div>
+
+        {/* Unified footer — outside the height clip so its full-bleed bg shows */}
+        <DialogFooter className="gap-2 pt-2 sm:gap-0">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button
+            size="sm"
+            className="bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md shadow-emerald-600/25 hover:from-emerald-500 hover:to-teal-600 disabled:opacity-60"
+            onClick={() => void (bulkMode ? submitBulk() : submitSingle())}
+            disabled={busy || (bulkMode ? parsedRows.length === 0 : emailInvalid)}
+          >
+            {busy ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                {bulkMode
+                  ? bulkProgress
+                    ? `Sending ${bulkProgress.done} / ${bulkProgress.total}…`
+                    : 'Working…'
+                  : 'Generating…'}
+              </>
+            ) : (
+              <>
+                <Send className="mr-1.5 h-3.5 w-3.5" />
+                {bulkMode
+                  ? parsedRows.length > 0
+                    ? `Generate & send ${parsedRows.length} link${parsedRows.length !== 1 ? 's' : ''}`
+                    : 'Paste hires above'
+                  : 'Generate link'}
+              </>
+            )}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -3838,6 +4090,441 @@ function DepartmentSelect({
   );
 }
 
+// --- Country dropdown (onboarding currencies) ----------------------------
+
+/** Compact picker over the three onboarding countries (US / PH / CO). Shows the
+ *  derived currency next to each so HR knows what the plan targets. */
+function CountrySelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <SelectPrimitive.Root value={value} onValueChange={(v) => onChange(v ?? '')}>
+      <SelectPrimitive.Trigger
+        className={cn(
+          'flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-zinc-300 bg-transparent px-3 py-2 text-sm whitespace-nowrap transition-colors outline-none select-none dark:border-input',
+          'data-placeholder:text-muted-foreground',
+          'hover:border-zinc-400 dark:hover:border-zinc-500',
+          'focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20',
+          'disabled:cursor-not-allowed disabled:opacity-50',
+          'dark:bg-input/30',
+        )}
+      >
+        <SelectPrimitive.Value placeholder="Select country" className="flex-1 text-left" />
+        <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      </SelectPrimitive.Trigger>
+      <SelectPrimitive.Portal>
+        <SelectPrimitive.Positioner side="bottom" sideOffset={4} alignItemWithTrigger className="isolate z-50">
+          <SelectPrimitive.Popup className="w-(--anchor-width) min-w-56 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg shadow-black/8 dark:border-zinc-700 dark:bg-zinc-900 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
+            <SelectPrimitive.List className="max-h-64 overflow-y-auto p-1">
+              {ONBOARDING_COUNTRIES.map((c) => (
+                <SelectPrimitive.Item
+                  key={c.name}
+                  value={c.name}
+                  className={cn(
+                    'relative flex w-full cursor-default items-center justify-between rounded-lg px-3 py-2 text-sm outline-none select-none',
+                    'focus:bg-emerald-50 focus:text-emerald-900 dark:focus:bg-emerald-950/50 dark:focus:text-emerald-100',
+                    'data-highlighted:bg-emerald-50 data-highlighted:text-emerald-900 dark:data-highlighted:bg-emerald-950/50 dark:data-highlighted:text-emerald-100',
+                  )}
+                >
+                  <SelectPrimitive.ItemText className="flex-1 truncate pr-2">
+                    {c.name}
+                  </SelectPrimitive.ItemText>
+                  <span className="mr-2 text-[10px] font-medium text-zinc-400">{c.currency}</span>
+                  <SelectPrimitive.ItemIndicator className="flex h-4 w-4 items-center justify-center">
+                    <CheckIcon className="h-3.5 w-3.5 text-emerald-600" />
+                  </SelectPrimitive.ItemIndicator>
+                </SelectPrimitive.Item>
+              ))}
+            </SelectPrimitive.List>
+          </SelectPrimitive.Popup>
+        </SelectPrimitive.Positioner>
+      </SelectPrimitive.Portal>
+    </SelectPrimitive.Root>
+  );
+}
+
+// --- Pay Plans dialog -----------------------------------------------------
+
+/** One configured pay plan, as returned by GET /api/hr/pay-plans. */
+type PayPlanApi = {
+  id: string;
+  department: string;
+  country: string;
+  file_name: string;
+  content_type: string | null;
+  file_size: number | null;
+  uploaded_by: string | null;
+  created_at: string;
+  updated_at: string;
+  download_url: string | null;
+};
+
+const PAY_PLAN_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+
+function fmtBytes(n: number | null): string {
+  if (n == null || !Number.isFinite(n)) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * HR config modal: upload one pay-plan PDF per (Department, Country). When HR
+ * generates an onboarding link and picks a Department + Country, the matching
+ * plan rides the onboarding invite email (the `onboarding_send` webhook) as a
+ * download link + attachment.
+ */
+function PayPlansDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [plans, setPlans] = useState<PayPlanApi[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [deptsLoading, setDeptsLoading] = useState(false);
+
+  const [dept, setDept] = useState('');
+  const [country, setCountry] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const loadPlans = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/hr/pay-plans', { cache: 'no-store' });
+      const json = (await res.json()) as { rows?: PayPlanApi[]; error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load pay plans');
+      setPlans(json.rows ?? []);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load pay plans');
+      setPlans([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Load plans + departments whenever the modal opens.
+  useEffect(() => {
+    if (!open) return;
+    void loadPlans();
+    setDeptsLoading(true);
+    fetch('/api/departments', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { departments?: string[] }) => setDepartments(j.departments ?? []))
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not load departments'))
+      .finally(() => setDeptsLoading(false));
+  }, [open, loadPlans]);
+
+  // Reset the entry form each time the modal is closed so it opens fresh.
+  useEffect(() => {
+    if (open) return;
+    setDept('');
+    setCountry('');
+    setFile(null);
+    setPendingDeleteId(null);
+  }, [open]);
+
+  function onPickFile(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] ?? null;
+    // Allow re-picking the same file later.
+    e.target.value = '';
+    if (!f) return;
+    const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+    if (!isPdf) {
+      toast.error('Only PDF files are accepted.');
+      return;
+    }
+    if (f.size > PAY_PLAN_MAX_BYTES) {
+      toast.error('File too large (max 10 MB).');
+      return;
+    }
+    setFile(f);
+  }
+
+  // A plan already exists for the chosen pair (case-insensitive) -> the upload
+  // replaces it. Surfaced as a hint so HR isn't surprised.
+  const replacingExisting = useMemo(() => {
+    if (!dept || !country) return false;
+    const d = dept.trim().toLowerCase();
+    const c = country.trim().toLowerCase();
+    return plans.some(
+      (p) => p.department.trim().toLowerCase() === d && p.country.trim().toLowerCase() === c,
+    );
+  }, [plans, dept, country]);
+
+  async function handleUpload() {
+    if (!dept) {
+      toast.error('Pick a department.');
+      return;
+    }
+    if (!country) {
+      toast.error('Pick a country.');
+      return;
+    }
+    if (!file) {
+      toast.error('Choose a PDF file.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('department', dept);
+      fd.append('country', country);
+      fd.append('file', file);
+      const res = await fetch('/api/hr/pay-plans', { method: 'POST', body: fd });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Upload failed');
+      toast.success(
+        `Pay plan ${replacingExisting ? 'replaced' : 'saved'} for ${dept} · ${country}`,
+      );
+      setFile(null);
+      await loadPlans();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/hr/pay-plans/${id}`, { method: 'DELETE' });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Delete failed');
+      toast.success('Pay plan removed');
+      setPendingDeleteId(null);
+      await loadPlans();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <div className="-mx-6 -mt-6 mb-2 overflow-hidden rounded-t-lg border-b border-emerald-100/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 px-6 py-5 dark:border-emerald-950/40 dark:from-emerald-950/30 dark:via-zinc-950 dark:to-teal-950/20">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2.5 text-base font-semibold">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 text-white shadow-md">
+                <Banknote className="h-4 w-4" />
+              </span>
+              Onboarding Pay Plans
+            </DialogTitle>
+            <DialogDescription className="text-xs leading-relaxed">
+              Upload one pay-plan PDF per <strong>Department + Country</strong>. When you generate an
+              onboarding link and pick that Department + Country, the matching plan is attached to
+              the hire's invite email (download link + attachment).
+            </DialogDescription>
+          </DialogHeader>
+        </div>
+
+        {/* Upload / replace form */}
+        <DialogSection label="Add or replace a pay plan">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <DialogField label="Department" icon={<Users className="h-3.5 w-3.5" />}>
+              <DepartmentSelect
+                value={dept}
+                onChange={setDept}
+                departments={departments}
+                loading={deptsLoading}
+              />
+            </DialogField>
+            <DialogField label="Country" icon={<Globe className="h-3.5 w-3.5" />}>
+              <CountrySelect value={country} onChange={setCountry} />
+            </DialogField>
+          </div>
+
+          <DialogField
+            label="Pay plan PDF"
+            icon={<FileText className="h-3.5 w-3.5" />}
+            hint="PDF only, up to 10 MB."
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              aria-label="Upload pay plan PDF"
+              onChange={onPickFile}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className={cn(
+                'flex w-full items-center gap-3 rounded-lg border border-dashed px-3 py-3 text-left text-sm transition-colors',
+                file
+                  ? 'border-emerald-300 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/20'
+                  : 'border-zinc-300 hover:border-emerald-400 hover:bg-emerald-50/40 dark:border-zinc-700 dark:hover:border-emerald-700',
+              )}
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+                <UploadCloud className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium text-zinc-800 dark:text-zinc-100">
+                  {file ? file.name : 'Choose a PDF file'}
+                </span>
+                <span className="block text-[11px] text-zinc-500">
+                  {file ? fmtBytes(file.size) : 'Click to browse'}
+                </span>
+              </span>
+              {file && (
+                <span className="shrink-0 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+                  Change
+                </span>
+              )}
+            </button>
+          </DialogField>
+
+          {replacingExisting && (
+            <p className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              A plan already exists for {dept} · {country} — uploading replaces it.
+            </p>
+          )}
+
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              className="bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm hover:opacity-95"
+              disabled={uploading || !dept || !country || !file}
+              onClick={() => void handleUpload()}
+            >
+              {uploading ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              {replacingExisting ? 'Replace plan' : 'Upload plan'}
+            </Button>
+          </div>
+        </DialogSection>
+
+        {/* Existing plans */}
+        <DialogSection label={`Configured plans${plans.length ? ` (${plans.length})` : ''}`} last>
+          <div className="-mt-1 mb-1 flex justify-end">
+            <button
+              type="button"
+              onClick={() => void loadPlans()}
+              disabled={loading}
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:text-emerald-900 disabled:opacity-60 dark:text-emerald-400"
+            >
+              <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} />
+              Refresh
+            </button>
+          </div>
+
+          {loading && plans.length === 0 ? (
+            <div className="flex items-center justify-center py-8 text-zinc-400">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : plans.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-zinc-300 py-8 text-center text-xs text-zinc-500 dark:border-zinc-700">
+              No pay plans yet. Upload one above to get started.
+            </div>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {plans.map((p) => {
+                const currency = currencyForCountry(p.country);
+                return (
+                  <li
+                    key={p.id}
+                    className="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40"
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400">
+                      <FileText className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                          {p.department}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+                          <Globe className="h-2.5 w-2.5" />
+                          {p.country}
+                          {currency ? ` · ${currency}` : ''}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
+                        <span className="truncate">{p.file_name}</span>
+                        {p.file_size != null && <span>· {fmtBytes(p.file_size)}</span>}
+                        <span>· {fmtDate(p.updated_at)}</span>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {p.download_url && (
+                        <a
+                          href={p.download_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                        >
+                          <Download className="h-3 w-3" />
+                          View
+                        </a>
+                      )}
+                      {pendingDeleteId === p.id ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-[11px] text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/30"
+                            disabled={deletingId === p.id}
+                            onClick={() => void handleDelete(p.id)}
+                          >
+                            {deletingId === p.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              'Confirm'
+                            )}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-[11px]"
+                            disabled={deletingId === p.id}
+                            onClick={() => setPendingDeleteId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setPendingDeleteId(p.id)}
+                          title="Delete pay plan"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </DialogSection>
+
+        <DialogFooter className="mt-2">
+          <Button size="sm" variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // --- Hubstaff project multi-select dropdown ------------------------------
 
 /**
@@ -4437,6 +5124,23 @@ function SubmissionDetailDialog({
                         <DetailRow label="Full name" value={row.full_name} />
                         <DetailRow label="Phone" value={row.phone} />
                         <DetailRow label="Email" value={row.email} mono />
+                        <DetailRow label="Country" value={row.country} />
+                        <DetailRow
+                          label="Currency"
+                          value={currencyForCountry(row.country) ?? undefined}
+                        />
+                        {row.address_street || row.address_city || row.address_state || row.address_province || row.address_region || row.address_postal_code ? (
+                          <>
+                            <DetailRow label="Street address" value={row.address_street} wrap />
+                            <DetailRow label="City / Municipality" value={row.address_city} />
+                            <DetailRow label="State" value={row.address_state} />
+                            <DetailRow label="Province" value={row.address_province} />
+                            <DetailRow label="Region" value={row.address_region} />
+                            <DetailRow label="Postal code" value={row.address_postal_code} />
+                          </>
+                        ) : (
+                          <DetailRow label="Address" value={row.location} wrap />
+                        )}
                       </DetailSection>
 
                       <DetailSection title="IP Assignment">

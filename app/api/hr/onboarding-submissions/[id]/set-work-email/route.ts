@@ -234,6 +234,15 @@ export async function POST(
   // designated work email (200) apart from a minted-but-failed one. A retry
   // that finally succeeds re-runs this and flips the row to confirmed.
   const { first, last } = splitFullName(name);
+  // The hire's "Gmail Surname" (from the onboarding paperwork) is the surname we
+  // provision the @simple.biz Google account with — sent to the webhook IN PLACE
+  // OF the legal last name, on purpose: the Workspace account never exposes the
+  // hire's full surname (so they can't be looked up / stalked elsewhere). It's
+  // the minimal disambiguating last-name slice (e.g. "R", or "RE" when "R" is
+  // taken). Fallback for legacy rows is just the last-name INITIAL — never the
+  // full surname.
+  const gmailSurname =
+    (row.gmail_surname ?? "").trim() || (last ? last.charAt(0).toUpperCase() : "");
   const payRate =
     regularRateStr != null && Number.isFinite(Number(regularRateStr))
       ? Number(regularRateStr)
@@ -242,7 +251,7 @@ export async function POST(
     otRateStr != null && Number.isFinite(Number(otRateStr)) ? Number(otRateStr) : null;
   const workspace = await createWorkspaceAccount({
     firstName: first,
-    lastName: last,
+    lastName: gmailSurname,
     workEmail,
     personalEmail,
     projectNames,
@@ -315,6 +324,7 @@ export async function POST(
       pending_employee_id: pending.id,
       department,
       name,
+      gmail_surname: gmailSurname,
       project_names: projectNames,
       regular_rate: regularRateStr,
       ot_rate: otRateStr,

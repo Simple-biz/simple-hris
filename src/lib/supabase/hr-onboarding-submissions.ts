@@ -22,12 +22,33 @@ export type HrOnboardingSubmissionRow = {
   invite_name: string | null;
   invite_personal_email: string | null;
   invite_department: string | null;
+  /** Country HR picks at invite time — selects the pay-plan PDF (by department +
+   *  country) that rides the onboarding invite email. Distinct from `country`,
+   *  which the HIRE selects on the paperwork. */
+  invite_country: string | null;
   invite_note: string | null;
 
   full_name: string | null;
+  /** Surname for the @simple.biz Google account — sent to the workspace-account
+   *  webhook in place of the legal last name (falls back to it when null). */
+  gmail_surname: string | null;
   phone: string | null;
   email: string | null;
+  /**
+   * Composed "street, city, region, postal" address. Kept for downstream
+   * consumers (promote -> hr_pending_employees -> global_master_list."Location").
+   * The structured parts below are the source; this is derived on submit.
+   */
   location: string | null;
+  /** Country the hire selected — derives their currency (USD/PHP/COP). */
+  country: string | null;
+  // Structured address — the broken-down Location field.
+  address_street: string | null;
+  address_city: string | null;
+  address_state: string | null;
+  address_province: string | null;
+  address_region: string | null;
+  address_postal_code: string | null;
 
   // Intellectual Property Assignment — standalone document signed first, before
   // the rest of the onboarding paperwork. The generated PDF lives in storage.
@@ -106,9 +127,22 @@ export type WorkspaceAccountOutcome = {
 /** Fields the public form route accepts on submit. Token comes from the URL. */
 export type SubmitOnboardingInput = {
   full_name: string;
+  /** Optional surname for the @simple.biz Google account (falls back to the
+   *  legal last name when blank). */
+  gmail_surname?: string | null;
   phone: string;
   email: string;
+  /** Optional pre-composed location; normally derived from the parts below. */
   location?: string | null;
+  /** Country the hire selected — derives their currency (USD/PHP/COP). */
+  country?: string | null;
+  // Structured address parts (the broken-down Location field).
+  address_street?: string | null;
+  address_city?: string | null;
+  address_state?: string | null;
+  address_province?: string | null;
+  address_region?: string | null;
+  address_postal_code?: string | null;
 
   ip_agreement_agreed: boolean;
   ip_agreement_name: string;
@@ -146,6 +180,7 @@ export type CreateOnboardingLinkInput = {
   invite_name?: string | null;
   invite_personal_email?: string | null;
   invite_department?: string | null;
+  invite_country?: string | null;
   invite_note?: string | null;
   created_by?: string | null;
 };
@@ -262,6 +297,7 @@ export async function createHrOnboardingLink(
     invite_personal_email:
       input.invite_personal_email?.trim().toLowerCase() || null,
     invite_department: input.invite_department?.trim() || null,
+    invite_country: input.invite_country?.trim() || null,
     invite_note: input.invite_note?.trim() || null,
     created_by: input.created_by?.trim().toLowerCase() || null,
   };
@@ -294,13 +330,39 @@ export async function submitHrOnboarding(
   // Both 'pending' and 'submitted' are accepted — submitted rows can be updated
   // when HR resends the link and the hire wants to correct their details.
 
+  // Compose the legacy `location` string from the structured parts so anything
+  // reading it (promote -> hr_pending_employees -> master "Location") keeps
+  // working. Fall back to any pre-composed value the client sent.
+  const addressParts = [
+    input.address_street,
+    input.address_city,
+    input.address_state,
+    input.address_province,
+    input.address_region,
+    input.address_postal_code,
+  ]
+    .map((p) => p?.trim())
+    .filter((p): p is string => Boolean(p));
+  const composedLocation =
+    addressParts.length > 0
+      ? addressParts.join(", ")
+      : input.location?.trim() || null;
+
   const update: Record<string, unknown> = {
     status: "submitted" as HrOnboardingStatus,
     submitted_at: new Date().toISOString(),
     full_name: input.full_name.trim(),
+    gmail_surname: input.gmail_surname?.trim() || null,
     phone: input.phone.trim(),
     email: input.email.trim().toLowerCase(),
-    location: input.location?.trim() || null,
+    location: composedLocation,
+    country: input.country?.trim() || null,
+    address_street: input.address_street?.trim() || null,
+    address_city: input.address_city?.trim() || null,
+    address_state: input.address_state?.trim() || null,
+    address_province: input.address_province?.trim() || null,
+    address_region: input.address_region?.trim() || null,
+    address_postal_code: input.address_postal_code?.trim() || null,
     ip_agreement_agreed: input.ip_agreement_agreed,
     ip_agreement_name: input.ip_agreement_name?.trim() || null,
     ip_agreement_signature: input.ip_agreement_signature,

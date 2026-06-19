@@ -9,6 +9,7 @@ import AdminEmployees from '@/components/admin/AdminEmployees';
 import AdminWebhooks from '@/components/admin/AdminWebhooks';
 import AdminCsvImports from '@/components/admin/AdminCsvImports';
 import AdminWorkspace from '@/components/admin/AdminWorkspace';
+import AdminApiKeys from '@/components/admin/AdminApiKeys';
 import AdminPages from '@/components/admin/AdminPages';
 import AuditLogPanel from '@/components/audit/AuditLogPanel';
 import SystemDiagnostics from '@/components/SystemDiagnostics';
@@ -193,10 +194,9 @@ function AdminPageInner() {
         );
       case 'api-tokens':
         return (
-          <Placeholder
-            title="API tokens"
-            hint="Token management is not wired yet. Use Supabase and server env for service access."
-          />
+          <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+            <AdminApiKeys />
+          </div>
         );
       case 'backups':
         return (

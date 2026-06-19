@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
+  ChevronDown,
   CloudUpload,
   Eraser,
   FileText,
@@ -35,12 +36,21 @@ import {
   formatLongDate,
   todayLocalIso,
 } from '@/lib/onboarding/ip-assignment-text';
+import { ONBOARDING_COUNTRIES, currencyForCountry } from '@/lib/onboarding/countries';
 
 type PriorData = {
   full_name: string | null;
+  gmail_surname: string | null;
   phone: string | null;
   email: string | null;
   location: string | null;
+  country: string | null;
+  address_street: string | null;
+  address_city: string | null;
+  address_state: string | null;
+  address_province: string | null;
+  address_region: string | null;
+  address_postal_code: string | null;
   ip_agreement_agreed: boolean | null;
   ip_agreement_name: string | null;
   ip_agreement_signature: string | null;
@@ -78,9 +88,18 @@ type LinkInfo = {
 type FormState = {
   first_name: string;
   last_name: string;
+  /** Surname used for the @simple.biz Google (Gmail) account — sent to the
+   *  workspace-account webhook in place of the legal last name. */
+  gmail_surname: string;
   phone: string;
   email: string;
-  location: string;
+  country: string;
+  address_street: string;
+  address_city: string;
+  address_state: string;
+  address_province: string;
+  address_region: string;
+  address_postal_code: string;
   ip_agreement_agreed: boolean;
   ip_agreement_name: string;
   ip_agreement_signature: string;
@@ -108,9 +127,16 @@ type FormState = {
 const emptyForm: FormState = {
   first_name: '',
   last_name: '',
+  gmail_surname: '',
   phone: '',
   email: '',
-  location: '',
+  country: '',
+  address_street: '',
+  address_city: '',
+  address_state: '',
+  address_province: '',
+  address_region: '',
+  address_postal_code: '',
   ip_agreement_agreed: false,
   ip_agreement_name: '',
   ip_agreement_signature: '',
@@ -173,6 +199,9 @@ export default function OnboardingFormPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  // True while the Gmail-surname lookup is in flight (debounce + request) — drives
+  // the inline "searching Google Workspace" indicator on the read-only field.
+  const [surnameLoading, setSurnameLoading] = useState(false);
 
   // Honour the OS "reduce motion" setting — fall back to a plain cross-fade.
   const reduceMotion = useReducedMotion();
@@ -210,9 +239,18 @@ export default function OnboardingFormPage() {
           setForm({
             first_name: nameTokens[0] ?? '',
             last_name: nameTokens.slice(1).join(' '),
+            gmail_surname: prior.gmail_surname ?? '',
             phone: prior.phone ?? '',
             email: prior.email ?? '',
-            location: prior.location ?? '',
+            country: prior.country ?? '',
+            // Prefer the structured parts; fall back to the legacy combined
+            // `location` (dropped into Street) so old submissions aren't lost.
+            address_street: prior.address_street ?? (prior.address_city ? '' : prior.location ?? ''),
+            address_city: prior.address_city ?? '',
+            address_state: prior.address_state ?? '',
+            address_province: prior.address_province ?? '',
+            address_region: prior.address_region ?? '',
+            address_postal_code: prior.address_postal_code ?? '',
             ip_agreement_agreed: prior.ip_agreement_agreed ?? false,
             ip_agreement_name: prior.ip_agreement_name ?? prior.full_name ?? '',
             ip_agreement_signature: prior.ip_agreement_signature ?? '',
@@ -280,6 +318,58 @@ export default function OnboardingFormPage() {
     setForm((f) => (f.ip_agreement_date ? f : { ...f, ip_agreement_date: todayLocalIso() }));
   }, []);
 
+  // Auto-derive the read-only "Gmail Surname" from first + last name via the
+  // same roster the work-email suggester uses, so a 2nd "Kane R…" gets "RE", a
+  // 3rd "Kane Res…" gets "RES", etc. The endpoint works for both a real
+  // onboarding token AND the HR "/onboarding/preview" (session-gated there), so
+  // preview is collision-aware too. Debounced so it doesn't fire per keystroke.
+  useEffect(() => {
+    const first = form.first_name.trim();
+    const last = form.last_name.trim();
+    // Clear any surname computed for a PREVIOUS name up front, so a stale value
+    // (e.g. "RER" from an earlier name) can never linger if this lookup is slow,
+    // fails, or the name is incomplete.
+    setForm((f) => (f.gmail_surname === '' ? f : { ...f, gmail_surname: '' }));
+    if (!first || !last) {
+      setSurnameLoading(false);
+      return;
+    }
+    // Show the "searching" state immediately on keystroke (covers the debounce
+    // + the request), so the field reacts the moment a last name is entered.
+    setSurnameLoading(true);
+    let cancelled = false;
+    // Short debounce so it feels like a live search but doesn't hit the roster
+    // on every keystroke.
+    const handle = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/onboarding/${token}/gmail-surname`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ first, last }),
+          });
+          const json = (await res.json().catch(() => ({}))) as { gmail_surname?: string };
+          if (cancelled) return;
+          if (res.ok && typeof json.gmail_surname === 'string') {
+            setForm((f) =>
+              f.gmail_surname === json.gmail_surname ? f : { ...f, gmail_surname: json.gmail_surname! },
+            );
+          }
+          // On failure: leave the field blank (no error message, no stale value).
+        } catch {
+          /* non-blocking — leave the field blank */
+        } finally {
+          // Only the latest (non-superseded) request clears the indicator.
+          if (!cancelled) setSurnameLoading(false);
+        }
+      })();
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [form.first_name, form.last_name, token]);
+
   const update = useCallback(<K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
   }, []);
@@ -296,6 +386,19 @@ export default function OnboardingFormPage() {
         if (!form.last_name.trim()) return 'Please enter your last name.';
         if (!form.phone.trim()) return 'Please enter your phone number.';
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return 'Please enter a valid email.';
+        if (!form.country.trim()) return 'Please select your country.';
+        if (!form.address_street.trim()) return 'Please enter your street address.';
+        if (!form.address_city.trim()) return 'Please enter your city / municipality.';
+        if (!form.address_postal_code.trim()) return 'Please enter your postal code.';
+        // State / Province / Region are country-specific (US uses State; PH uses
+        // Province + Region; Colombia a Department≈Province) — require at least
+        // one rather than forcing fields that don't apply.
+        if (
+          !form.address_state.trim() &&
+          !form.address_province.trim() &&
+          !form.address_region.trim()
+        )
+          return 'Please enter your State, Province, or Region.';
         return null;
       case 2:
         if (!form.non_solicitation_signature) return 'Please sign the non-solicitation agreement.';
@@ -424,9 +527,16 @@ export default function OnboardingFormPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           full_name: [form.first_name.trim(), form.last_name.trim()].filter(Boolean).join(' '),
+          gmail_surname: form.gmail_surname.trim() || null,
           phone: form.phone.trim(),
           email: form.email.trim(),
-          location: form.location.trim() || null,
+          country: form.country.trim() || null,
+          address_street: form.address_street.trim() || null,
+          address_city: form.address_city.trim() || null,
+          address_state: form.address_state.trim() || null,
+          address_province: form.address_province.trim() || null,
+          address_region: form.address_region.trim() || null,
+          address_postal_code: form.address_postal_code.trim() || null,
           ip_agreement_agreed: form.ip_agreement_agreed,
           ip_agreement_name: form.ip_agreement_name.trim(),
           ip_agreement_signature: form.ip_agreement_signature,
@@ -568,7 +678,7 @@ export default function OnboardingFormPage() {
               transition={{ duration: reduceMotion ? 0.15 : 0.26, ease: [0.22, 1, 0.36, 1] }}
             >
               {step === 0 && <StepIpAssignment form={form} update={update} preview={isPreview} onPreview={generateIpPreviewPdf} previewBusy={submitting} />}
-              {step === 1 && <Step1Welcome form={form} update={update} link={link} />}
+              {step === 1 && <Step1Welcome form={form} update={update} link={link} surnameLoading={surnameLoading} />}
               {step === 2 && <Step2NonSolicitation form={form} update={update} />}
               {step === 3 && <Step3Privacy form={form} update={update} />}
               {step === 4 && <Step4W8Ben token={token!} form={form} update={update} preview={isPreview} />}
@@ -749,11 +859,16 @@ function Step1Welcome({
   form,
   update,
   link,
+  surnameLoading,
 }: {
   form: FormState;
   update: <K extends keyof FormState>(k: K, v: FormState[K]) => void;
   link: LinkInfo;
+  surnameLoading: boolean;
 }) {
+  // Currency is derived from the selected country (United States → USD,
+  // Philippines → PHP, Colombia → COP) — knowing the country is how we know it.
+  const selectedCurrency = currencyForCountry(form.country);
   return (
     <div className="space-y-6 p-5 sm:p-7">
       <div>
@@ -787,6 +902,34 @@ function Step1Welcome({
             autoComplete="family-name"
           />
         </Field>
+        <Field label="Gmail Surname" className="sm:col-span-2">
+          <div className="relative">
+            <Input
+              value={surnameLoading ? '' : form.gmail_surname ?? ''}
+              readOnly
+              tabIndex={-1}
+              aria-readonly
+              placeholder={
+                surnameLoading
+                  ? ''
+                  : form.first_name.trim() && form.last_name.trim()
+                    ? 'Auto-generated from your name'
+                    : 'Enter your first and last name above'
+              }
+              className="font-mono tracking-wide"
+            />
+            {surnameLoading && (
+              <span className="pointer-events-none absolute left-3 top-1/2 inline-flex -translate-y-1/2 items-center gap-1.5 text-[11px] font-medium text-emerald-600">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+                Searching Google Workspace…
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] leading-relaxed text-zinc-500">
+            Auto-generated surname for your @simple.biz Google account (for privacy, it&rsquo;s not your full last
+            name). If your initials are already in use, extra letters are added automatically to keep it unique.
+          </p>
+        </Field>
         <Field label="Phone Number" required>
           <Input
             value={form.phone ?? ''}
@@ -805,12 +948,87 @@ function Step1Welcome({
             autoComplete="email"
           />
         </Field>
-        <Field label="Location" className="sm:col-span-2">
+        <Field label="Country" required className="sm:col-span-2">
+          <div className="relative">
+            <select
+              value={form.country ?? ''}
+              onChange={(e) => update('country', e.target.value)}
+              autoComplete="country-name"
+              className={cn(
+                'h-10 w-full cursor-pointer appearance-none rounded-lg border bg-white pl-3 pr-10 text-sm font-medium shadow-sm outline-none transition-all',
+                'border-zinc-300 hover:border-emerald-300 hover:shadow',
+                'focus-visible:border-emerald-500 focus-visible:ring-4 focus-visible:ring-emerald-500/20',
+                form.country ? '!text-zinc-900' : '!text-zinc-400',
+              )}
+            >
+              <option value="" disabled>
+                Select your country…
+              </option>
+              {ONBOARDING_COUNTRIES.map((c) => (
+                <option key={c.name} value={c.name} className="text-zinc-900">
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-600" />
+          </div>
+          {selectedCurrency && (
+            <span className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              You&apos;ll be paid in {selectedCurrency}
+            </span>
+          )}
+        </Field>
+
+        {/* Home address — the former single Location field, broken down. */}
+        <Field label="Street address" required className="sm:col-span-2">
           <Input
-            value={form.location ?? ''}
-            onChange={(e) => update('location', e.target.value)}
-            placeholder="City, Country (e.g. Manila, Philippines)"
+            value={form.address_street ?? ''}
+            onChange={(e) => update('address_street', e.target.value)}
+            placeholder="123 Main St, Apt / Barangay"
+            autoComplete="street-address"
+          />
+        </Field>
+        <Field label="City / Municipality" required>
+          <Input
+            value={form.address_city ?? ''}
+            onChange={(e) => update('address_city', e.target.value)}
+            placeholder="Quezon City"
             autoComplete="address-level2"
+          />
+        </Field>
+        <Field label="Postal code" required>
+          <Input
+            value={form.address_postal_code ?? ''}
+            onChange={(e) => update('address_postal_code', e.target.value)}
+            placeholder="1100"
+            autoComplete="postal-code"
+            inputMode="numeric"
+          />
+        </Field>
+        <p className="text-[11px] leading-relaxed text-zinc-500 sm:col-span-2">
+          Fill the parts that apply to your country — at least one of State / Province / Region is required.
+        </p>
+        <Field label="State">
+          <Input
+            value={form.address_state ?? ''}
+            onChange={(e) => update('address_state', e.target.value)}
+            placeholder="e.g. Texas (US)"
+            autoComplete="address-level1"
+          />
+        </Field>
+        <Field label="Province">
+          <Input
+            value={form.address_province ?? ''}
+            onChange={(e) => update('address_province', e.target.value)}
+            placeholder="e.g. Cavite (PH)"
+          />
+        </Field>
+        <Field label="Region">
+          <Input
+            value={form.address_region ?? ''}
+            onChange={(e) => update('address_region', e.target.value)}
+            placeholder="e.g. Metro Manila / NCR"
           />
         </Field>
       </div>

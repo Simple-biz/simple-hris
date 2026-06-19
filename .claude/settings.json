@@ -54,7 +54,19 @@
       "Bash(grep -rln \"pab-disputes/orphanage-visits\" src)",
       "PowerShell(npx tsc --noEmit -p c:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\tsconfig.json; \"EXIT=$LASTEXITCODE\")",
       "Bash(grep -o '\"problems\":\\\\[[^]]*\\\\]' \"/c/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/0e4e57d8-8397-4bf4-b65f-eee04f4d6ada/tasks/we1bb38km.output\" | head -c 3000; echo; echo \"=== applied:no entries ===\"; grep -o '\"applied\":\"no\"[^}]*}' \"/c/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/0e4e57d8-8397-4bf4-b65f-eee04f4d6ada/tasks/we1bb38km.output\" | head -c 2000)",
-      "Read(//c/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/0e4e57d8-8397-4bf4-b65f-eee04f4d6ada/tasks/**)"
+      "Read(//c/Users/Itachi/AppData/Local/Temp/claude/c--Users-Itachi-Desktop-simple-hris/0e4e57d8-8397-4bf4-b65f-eee04f4d6ada/tasks/**)",
+      "Bash(git --no-pager diff -- app/api/onboarding app/api/hr/pay-plans src/lib/supabase/onboarding-pay-plans.ts src/lib/onboarding/send-pay-plan.ts src/components/hr/HrOnboardingForm.tsx src/components/admin/AdminWebhooks.tsx)",
+      "Bash(git --no-pager diff --stat -- app/api/onboarding app/api/hr/pay-plans src/lib/supabase/onboarding-pay-plans.ts src/lib/onboarding/send-pay-plan.ts src/components/hr/HrOnboardingForm.tsx src/components/admin/AdminWebhooks.tsx references/sql)",
+      "Bash(git --no-pager diff -- src/components/hr/HrOnboardingForm.tsx)",
+      "Bash(git --no-pager diff -- app/api/hr/onboarding-submissions app/api/onboarding src/lib/supabase/hr-onboarding-submissions.ts src/components/hr/HrOnboardingForm.tsx src/components/admin/AdminWebhooks.tsx references/sql)",
+      "Bash(git --no-pager diff -- app/onboarding app/api/onboarding app/api/hr/onboarding-submissions src/lib/supabase/hr-onboarding-submissions.ts src/components/hr/HrOnboardingForm.tsx)",
+      "Bash(git --no-pager diff HEAD -- app/api/onboarding/[token]/gmail-surname/route.ts)",
+      "Bash(git status *)",
+      "Bash(git --no-pager diff HEAD -- app/api/hr/onboarding-submissions/[id]/set-work-email/route.ts)",
+      "Bash(git --no-pager diff app/onboarding/[token]/page.tsx)",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(git --no-pager diff --stat src/components/PayrollWizard.tsx)"
     ]
   }
 }

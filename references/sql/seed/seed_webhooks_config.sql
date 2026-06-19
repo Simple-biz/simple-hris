@@ -22,7 +22,7 @@
 --   paystub_dispatch          -> Payroll Wizard Step 5 paystub dispatch
 --   create_workspace_account  -> HR "Save and stage hire"
 --   hubstaff_invite_user      -> HR Pending-Hires "Promote"
---   onboarding_send           -> HR Onboarding "Send" (invite email)
+--   onboarding_send           -> HR Onboarding "Send" (invite email + dept+country pay-plan PDF)
 --   offboarding_deactivate    -> Offboard (non-Lead-Gen): suspend account + email + Hubstaff removal
 --   offboarding_delete        -> Offboard (Lead Gen now / others after 14d): permanently delete account
 --
@@ -83,7 +83,7 @@ BEGIN
       'label', 'Onboarding Email Send (n8n)',
       'url', COALESCE(legacy_url, 'https://simpledotbiz.app.n8n.cloud/webhook/7cb7afed-ef97-4cb9-92d5-31938695df18'),
       'active', false,
-      'description', 'Sends the onboarding invite email. Used by HR Onboarding "Send" (falls back to the legacy hr.onboarding_webhook_url key).'
+      'description', 'Sends the onboarding invite email (now also carries the matching pay-plan PDF by department + country). Used by HR Onboarding "Send" (falls back to the legacy hr.onboarding_webhook_url key).'
     ),
     jsonb_build_object(
       'slug', 'offboarding_deactivate',

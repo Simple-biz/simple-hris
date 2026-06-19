@@ -105,6 +105,21 @@ export async function requireElevatedSession(): Promise<AuthzResult> {
 }
 
 /**
+ * Require that the current session holds the `admin` role specifically — a
+ * stricter gate than {@link requireElevatedSession}, which also admits
+ * `accounting` and `hr_coordinator` (see `elevated-roles.ts`). Use for actions
+ * reserved for true administrators (e.g. managing API credentials).
+ */
+export async function requireAdminSession(): Promise<AuthzResult> {
+  const authz = await requireElevatedSession();
+  if (!authz.ok) return authz;
+  if (!authz.roles.includes('admin')) {
+    return { ok: false, status: 403, message: 'Forbidden — admin only' };
+  }
+  return authz;
+}
+
+/**
  * Convenience: turn a denied AuthzResult into a NextResponse error.
  * Accepts the full AuthzResult so callers can pass it directly after a `!result.ok` check
  * without needing extra narrowing ceremony (tsconfig has strict: false).

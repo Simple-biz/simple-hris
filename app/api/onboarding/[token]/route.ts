@@ -99,9 +99,17 @@ export async function GET(
   const priorData = row.status === "submitted"
     ? {
         full_name: row.full_name,
+        gmail_surname: row.gmail_surname,
         phone: row.phone,
         email: row.email,
         location: row.location,
+        country: row.country,
+        address_street: row.address_street,
+        address_city: row.address_city,
+        address_state: row.address_state,
+        address_province: row.address_province,
+        address_region: row.address_region,
+        address_postal_code: row.address_postal_code,
         ip_agreement_agreed: row.ip_agreement_agreed,
         ip_agreement_name: row.ip_agreement_name,
         ip_agreement_signature: row.ip_agreement_signature,
@@ -161,6 +169,7 @@ export async function POST(
   if (!body.full_name?.trim()) missing.push("full_name");
   if (!body.phone?.trim()) missing.push("phone");
   if (!body.email?.trim()) missing.push("email");
+  if (!body.country?.trim()) missing.push("country");
   if (!body.non_solicitation_signature) missing.push("non_solicitation_signature");
   if (!body.privacy_signature) missing.push("privacy_signature");
   if (typeof body.w8ben_applicable !== "boolean") missing.push("w8ben_applicable");

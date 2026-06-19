@@ -61,7 +61,7 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
     slug: 'onboarding_send',
     label: 'Onboarding Email Send (n8n)',
     description:
-      'Sends the onboarding invite email. Used by HR Onboarding "Send" (falls back to the legacy hr.onboarding_webhook_url key).',
+      'Sends the onboarding invite email — now also carries the matching pay-plan PDF (by department + country) as an attachment + download link. Used by HR Onboarding "Send" (falls back to the legacy hr.onboarding_webhook_url key).',
   },
   {
     slug: 'offboarding_deactivate',

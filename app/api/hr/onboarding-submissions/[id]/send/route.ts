@@ -6,6 +6,11 @@ import {
   getHrOnboardingSubmissionById,
   rotateHrOnboardingToken,
 } from "@/lib/supabase/hr-onboarding-submissions";
+import {
+  findPayPlanForDeptCountry,
+  getPayPlanSignedUrl,
+} from "@/lib/supabase/onboarding-pay-plans";
+import { currencyForCountry } from "@/lib/onboarding/countries";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
@@ -143,6 +148,36 @@ Let us know if you have any questions.
 
 — The Simple.biz Team`;
 
+  // Resolve the pay-plan PDF for this hire's (invite_department, invite_country)
+  // so it rides the invite email — both as an in-email download link and as an
+  // attachment for n8n to fetch. Best-effort: a missing plan / signing failure
+  // must never block sending the onboarding link (it just ships without one).
+  // The signed URL is long-lived because it sits in the hire's inbox.
+  const PAY_PLAN_SIGNED_URL_TTL = 60 * 60 * 24 * 14; // 14 days
+  let payPlan:
+    | { url: string; fileName: string; department: string; country: string; currency: string | null }
+    | null = null;
+  try {
+    const { row: plan } = await findPayPlanForDeptCountry(
+      row.invite_department,
+      row.invite_country,
+    );
+    if (plan) {
+      const { url } = await getPayPlanSignedUrl(plan.file_path, PAY_PLAN_SIGNED_URL_TTL);
+      if (url) {
+        payPlan = {
+          url,
+          fileName: plan.file_name,
+          department: plan.department,
+          country: plan.country,
+          currency: currencyForCountry(plan.country),
+        };
+      }
+    }
+  } catch {
+    /* non-fatal — send the invite without a pay plan */
+  }
+
   const subject = overrideSubject ?? defaultSubject;
   const plainBody = overrideBody ?? (isResend ? resendBody : defaultBody);
   const html = renderOnboardingEmailHtml({
@@ -152,8 +187,39 @@ Let us know if you have any questions.
     note: row.invite_note,
     department: row.invite_department,
     w8benUrl,
+    payPlan,
     isResend,
   });
+
+  /**
+   * Files n8n should attach. In n8n: feed each `url` into an HTTP Request node
+   * (response type: file), then pass the binary into the Gmail/SMTP node's
+   * "Attachments" field with the matching `filename`. If you'd rather not
+   * attach (older n8n versions, big attachments), just drop the field — the
+   * HTML body already links to the same URL.
+   */
+  const attachments: Array<{
+    url: string;
+    filename: string;
+    contentType: string;
+    description: string;
+  }> = [
+    {
+      url: w8benUrl,
+      filename: "FW8BEN.pdf",
+      contentType: "application/pdf",
+      description:
+        "IRS W-8BEN form — required for contract workers outside the US.",
+    },
+  ];
+  if (payPlan) {
+    attachments.push({
+      url: payPlan.url,
+      filename: payPlan.fileName,
+      contentType: "application/pdf",
+      description: `Pay plan for ${payPlan.department}${payPlan.country ? ` (${payPlan.country})` : ""}.`,
+    });
+  }
 
   const payload = {
     submission_id: row.id,
@@ -163,6 +229,7 @@ Let us know if you have any questions.
     to: recipient,
     invite_name: row.invite_name,
     invite_department: row.invite_department,
+    invite_country: row.invite_country,
     invite_note: row.invite_note,
     subject,
     /** Plain-text fallback for clients that don't render HTML. */
@@ -170,21 +237,20 @@ Let us know if you have any questions.
     /** Pre-rendered HTML — wire this into the Gmail/SMTP node's "HTML" field. */
     html,
     /**
-     * Files n8n should attach. In n8n: feed each `url` into an HTTP Request
-     * node (response type: file), then pass the binary into the Gmail/SMTP
-     * node's "Attachments" field with the matching `filename`. If you'd
-     * rather not attach (older n8n versions, big attachments), just drop the
-     * field — the HTML body already links to the same URL.
+     * The matched pay-plan PDF (by invite_department + invite_country), or null
+     * when none is configured. `url` is a 14-day signed download link.
      */
-    attachments: [
-      {
-        url: w8benUrl,
-        filename: "FW8BEN.pdf",
-        contentType: "application/pdf",
-        description:
-          "IRS W-8BEN form — required for contract workers outside the US.",
-      },
-    ],
+    pay_plan: payPlan
+      ? {
+          url: payPlan.url,
+          file_name: payPlan.fileName,
+          content_type: "application/pdf",
+          department: payPlan.department,
+          country: payPlan.country,
+          currency: payPlan.currency,
+        }
+      : null,
+    attachments,
   };
 
   let webhookStatus: number | null = null;
@@ -279,15 +345,27 @@ function renderOnboardingEmailHtml(args: {
   note: string | null;
   department: string | null;
   w8benUrl: string | null;
+  payPlan?: {
+    url: string;
+    fileName: string;
+    department: string;
+    country: string;
+    currency: string | null;
+  } | null;
   isResend?: boolean;
 }): string {
-  const { greeting, link, logoUrl, note, department, w8benUrl, isResend = false } = args;
+  const { greeting, link, logoUrl, note, department, w8benUrl, payPlan = null, isResend = false } = args;
   const safeLink = escapeHtml(link);
   const safeGreeting = escapeHtml(greeting);
   const safeLogo = escapeHtml(logoUrl);
   const safeNote = note ? escapeHtml(note) : null;
   const safeDept = department ? escapeHtml(department) : null;
   const safeW8Ben = w8benUrl ? escapeHtml(w8benUrl) : null;
+  const safePayPlanUrl = payPlan ? escapeHtml(payPlan.url) : null;
+  const safePayPlanName = payPlan ? escapeHtml(payPlan.fileName) : null;
+  const safePayPlanDept = payPlan ? escapeHtml(payPlan.department) : null;
+  const safePayPlanCountry = payPlan ? escapeHtml(payPlan.country) : null;
+  const safePayPlanCurrency = payPlan?.currency ? escapeHtml(payPlan.currency) : null;
 
   return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -394,6 +472,36 @@ function renderOnboardingEmailHtml(args: {
                             IRS W-8BEN form. Required only if you're a contract worker outside the US — fill it out, then upload it on step 4 of the onboarding form.
                           </p>
                           <a href="${safeW8Ben}" target="_blank" style="display:inline-block;font-size:12px;font-weight:600;color:${COLORS.navy};text-decoration:underline;">Download FW8BEN.pdf &rarr;</a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>`
+                  : ""
+              }
+
+              ${
+                safePayPlanUrl
+                  ? `
+              <!-- Pay-plan card (only renders when a plan matched the dept + country) -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0 0;border:1px solid ${COLORS.ruleLight};border-radius:10px;background-color:#ffffff;">
+                <tr>
+                  <td style="padding:16px 18px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td valign="top" style="width:44px;">
+                          <div style="width:38px;height:46px;background-color:${COLORS.navySoft};border:1px solid ${COLORS.navy};border-radius:6px;text-align:center;line-height:44px;font-size:10px;font-weight:700;letter-spacing:0.5px;color:${COLORS.navy};">PDF</div>
+                        </td>
+                        <td valign="top" style="padding-left:14px;">
+                          <p style="margin:0 0 2px 0;font-size:13px;font-weight:700;color:${COLORS.navy};">
+                            ${safePayPlanName}
+                            <span style="font-weight:500;color:${COLORS.inkMute};font-size:11px;">&nbsp; (your pay plan)</span>
+                          </p>
+                          <p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:${COLORS.inkMute};">
+                            Your compensation plan${safePayPlanDept ? ` for <strong>${safePayPlanDept}</strong>` : ""}${safePayPlanCountry ? ` (${safePayPlanCountry}${safePayPlanCurrency ? ` &middot; paid in ${safePayPlanCurrency}` : ""})` : ""}. Please download it and keep a copy for your records.
+                          </p>
+                          <a href="${safePayPlanUrl}" target="_blank" style="display:inline-block;font-size:12px;font-weight:600;color:${COLORS.navy};text-decoration:underline;">Download your pay plan &rarr;</a>
                         </td>
                       </tr>
                     </table>

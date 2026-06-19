@@ -52,6 +52,7 @@ export async function POST(req: Request) {
     invite_name: body.invite_name,
     invite_personal_email: body.invite_personal_email,
     invite_department: body.invite_department,
+    invite_country: body.invite_country,
     invite_note: body.invite_note,
     created_by: authz.sessionEmail,
   });

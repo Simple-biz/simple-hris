@@ -681,8 +681,8 @@ const steps = [
   },
   { id: 2, label: 'Initial Calculation', icon: DollarSign, description: 'Hubstaff hours × employee_hourly_rates → Initial Pay' },
   { id: 3, label: 'Orphanage', icon: Heart, description: 'Approved orphanage visits and the hours/wages they cover' },
-  { id: 4, label: 'Additions', icon: Calculator, description: 'Apply bonuses and adjustments' },
-  { id: 5, label: 'HSL', icon: Building2, description: 'Hogan Smith Law — initial pay, KPI bonuses, and accounting overrides' },
+  { id: 4, label: 'HSL', icon: Building2, description: 'Hogan Smith Law — initial pay, KPI bonuses, and accounting overrides' },
+  { id: 5, label: 'Additions', icon: Calculator, description: 'Apply bonuses and adjustments' },
   { id: 6, label: 'Contractors', icon: HardHat, description: 'Pending contractor invoices — review and approve before dispatch' },
   { id: 7, label: 'Validation', icon: ShieldCheck, description: 'Pre-flight check and final review' },
   { id: 8, label: 'Dispatch', icon: Send, description: 'Trigger paystubs and payments' },
@@ -933,7 +933,7 @@ export default function PayrollWizard({
   // only: skipped while replaying a past period).
   const [payStructures, setPayStructures] = useState<PayStructure[]>([]);
 
-  // ── HSL step: per-dept KPI bonus data loaded on demand (step 5) ─────────────
+  // ── HSL step: per-dept KPI bonus data loaded on demand (step 4) ─────────────
   const [hslStepBonusByEmail, setHslStepBonusByEmail] = useState<Record<string, number>>({});
   const [hslStepPeriods, setHslStepPeriods] = useState<{
     department: string;
@@ -947,6 +947,11 @@ export default function PayrollWizard({
   const [hslStepLoading, setHslStepLoading] = useState(false);
   const [hslStepError, setHslStepError] = useState<string | null>(null);
   const [hslRefreshKey, setHslRefreshKey] = useState(0);
+  // Active HSL sub-department in the wizard HSL tab rail ('all' = every HSL employee).
+  const [activeHslDept, setActiveHslDept] = useState<string>('all');
+  // lower(email) → HSL sub-department key, from the hsl_team_members roster. Powers
+  // the HSL tab's per-department rail (mirrors the Additions tab's dept grouping).
+  const [hslDeptByEmail, setHslDeptByEmail] = useState<Record<string, string>>({});
 
   // ── Step 5: Contractor invoices ──────────────────────────────────────────────
   // The /api/contractor/invoices endpoint returns the full invoice row (line
@@ -2199,7 +2204,7 @@ export default function PayrollWizard({
 
   // Real-time: when a manager marks a dept ready/unready, update accounting's view live.
   useEffect(() => {
-    if (currentStep !== 5) return;
+    if (currentStep !== 4) return;
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
     const channel = supabase
@@ -2211,20 +2216,36 @@ export default function PayrollWizard({
     return () => { void supabase.removeChannel(channel); };
   }, [currentStep]);
 
-  // ── HSL step (5): load all dept KPI bonus entries when accounting enters the step
+  // ── HSL step (4): load all dept KPI bonus entries when accounting enters the step
   useEffect(() => {
-    if (currentStep !== 5) return;
+    if (currentStep !== 4) return;
     let cancelled = false;
     setHslStepLoading(true);
     setHslStepError(null);
     const hslKeys = new Set<string>(HSL_DEPT_KEYS);
     (async () => {
       try {
-        const statusRes = await fetch('/api/hsl-bonus/period-status', { cache: 'no-store' });
+        const [statusRes, membersRes] = await Promise.all([
+          fetch('/api/hsl-bonus/period-status', { cache: 'no-store' }),
+          fetch('/api/hsl-bonus/team-members', { cache: 'no-store' }).catch(() => null),
+        ]);
         if (!statusRes.ok) throw new Error(`Period status fetch failed: HTTP ${statusRes.status}`);
         const statusJson = (await statusRes.json()) as {
           rows?: { department: string; period_start: string; period_end: string; period_type: string; status: string }[];
         };
+        // Roster: lower(email) → HSL sub-department. Best-effort — a failure just
+        // leaves employees ungrouped ("Unassigned") rather than breaking the cards.
+        if (membersRes && membersRes.ok) {
+          try {
+            const membersJson = (await membersRes.json()) as { rows?: { email: string; dept_key: string }[] };
+            const deptMap: Record<string, string> = {};
+            for (const m of membersJson.rows ?? []) {
+              const em = (m.email ?? '').toLowerCase();
+              if (em && m.dept_key) deptMap[em] = m.dept_key;
+            }
+            if (!cancelled) setHslDeptByEmail(deptMap);
+          } catch { /* roster unavailable — keep the existing map */ }
+        }
         // Pick latest ready/locked period per HSL dept (locked beats ready on tie)
         const chosen = new Map<string, { period_start: string; period_end: string; period_type: string; status: string }>();
         for (const row of statusJson.rows ?? []) {
@@ -2453,7 +2474,7 @@ export default function PayrollWizard({
   }, []);
 
   useEffect(() => {
-    if (currentStep !== 4) return;
+    if (currentStep !== 5) return;
     fetchTimeAdjustmentReview();
   }, [currentStep, fetchTimeAdjustmentReview]);
 
@@ -2477,7 +2498,7 @@ export default function PayrollWizard({
   }, []);
 
   useEffect(() => {
-    if (currentStep !== 4) return;
+    if (currentStep !== 5) return;
     fetchMesaDisbursements();
   }, [currentStep, fetchMesaDisbursements]);
 
@@ -2596,7 +2617,7 @@ export default function PayrollWizard({
   );
 
   useEffect(() => {
-    if (currentStep !== 4 || !pabMonthRange) return;
+    if (currentStep !== 5 || !pabMonthRange) return;
     const s = pabMonthRange.start;
     const e = pabMonthRange.end;
     const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
@@ -6212,7 +6233,7 @@ export default function PayrollWizard({
                 <div className="mt-2 flex items-center gap-1.5 rounded-md border border-violet-200 bg-violet-50 px-2.5 py-1.5 dark:border-violet-800/50 dark:bg-violet-950/20">
                   <Building2 className="h-3 w-3 shrink-0 text-violet-500 dark:text-violet-400" />
                   <p className="text-[11px] text-violet-700 dark:text-violet-300">
-                    Hogan Smith Law employees are not listed here &mdash; see the <span className="font-semibold">HSL</span> tab (step 5) for their initial pay and KPI bonuses.
+                    Hogan Smith Law employees are not listed here &mdash; see the <span className="font-semibold">HSL</span> tab (step 4) for their initial pay and KPI bonuses.
                   </p>
                 </div>
               </div>
@@ -6920,9 +6941,9 @@ export default function PayrollWizard({
           </div>
         );
       }
-      case 4: {
+      case 5: {
         // ──────────── Additions step ────────────
-        // (Defined here after the Orphanage block; Orphanage = step 3, Additions = step 4.)
+        // (Defined here after the Orphanage block; Orphanage = step 3, HSL = step 4, Additions = step 5.)
         const activeDept = DEPARTMENTS.find(d => d.key === activeDeptTab) ?? DEPARTMENTS[0]!;
         // Hide the PAB / Tech columns entirely for a department that the bonus
         // is not assigned to (or is globally disabled) — no empty placeholder.
@@ -9098,7 +9119,7 @@ export default function PayrollWizard({
           </div>
         );
       }
-      case 5: {
+      case 4: {
         // ── HSL (Hogan Smith Law) ─────────────────────────────────────────────
         const hslCalcRows = effectiveCalcResults.filter(
           r => employeeDepts[r.email] === 'hogan_smith_law',
@@ -9122,6 +9143,48 @@ export default function PayrollWizard({
           }
           return `Wk of ${p.period_start}`;
         };
+
+        // ── HSL sub-department grouping (mirrors the Additions dept rail) ──────────
+        // Each Hogan employee is mapped to an HSL sub-department via the
+        // hsl_team_members roster (hslDeptByEmail); rows with no roster match fall
+        // into an "Unassigned" bucket. The rail drives BOTH the employee table and
+        // the KPI Bonus Period cards — selecting a department shows only its people
+        // and only its KPI period card.
+        const hslKeySet = new Set<string>(HSL_DEPT_KEYS);
+        const hslDeptOfRow = (email: string): string => {
+          const k = hslDeptByEmail[(email ?? '').toLowerCase()];
+          return k && hslKeySet.has(k) ? k : 'unassigned';
+        };
+        const hslDeptCounts = new Map<string, number>();
+        for (const r of hslCalcRows) {
+          const d = hslDeptOfRow(r.email);
+          hslDeptCounts.set(d, (hslDeptCounts.get(d) ?? 0) + 1);
+        }
+        const hslPeriodDeptSet = new Set(hslStepPeriods.map(p => p.department));
+        // Rail order follows canonical HSL_DEPT_KEYS; a dept appears if it has people
+        // this cycle OR a ready/locked KPI period.
+        const hslRailDeptKeys = HSL_DEPT_KEYS.filter(
+          k => (hslDeptCounts.get(k) ?? 0) > 0 || hslPeriodDeptSet.has(k),
+        );
+        const hslHasUnassigned = (hslDeptCounts.get('unassigned') ?? 0) > 0;
+        const hslValidDeptKeys = new Set<string>([
+          'all',
+          ...hslRailDeptKeys,
+          ...(hslHasUnassigned ? ['unassigned'] : []),
+        ]);
+        // Guard against a stale selection (dept emptied out between refreshes).
+        const activeHslDeptSafe = hslValidDeptKeys.has(activeHslDept) ? activeHslDept : 'all';
+        const visibleHslRows = activeHslDeptSafe === 'all'
+          ? hslCalcRows
+          : hslCalcRows.filter(r => hslDeptOfRow(r.email) === activeHslDeptSafe);
+        const visibleHslPeriods = activeHslDeptSafe === 'all'
+          ? hslStepPeriods
+          : hslStepPeriods.filter(p => p.department === activeHslDeptSafe);
+        const activeHslDeptName = activeHslDeptSafe === 'all'
+          ? 'All HSL Departments'
+          : activeHslDeptSafe === 'unassigned'
+            ? 'Unassigned'
+            : (HSL_DEPTS as Record<string, { name: string }>)[activeHslDeptSafe]?.name ?? activeHslDeptSafe;
 
         return (
           <div className="flex min-w-0 flex-col gap-5">
@@ -9157,6 +9220,82 @@ export default function PayrollWizard({
               </div>
             </div>
 
+            {/* Department workspace: HSL sub-dept rail (left) + content (right).
+                Mirrors the Additions tab. The rail filters BOTH the KPI Bonus
+                Period cards and the employee table to the selected department. */}
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+              {/* HSL department rail */}
+              <div className="flex gap-1.5 overflow-x-auto pb-1 xl:w-48 xl:shrink-0 xl:flex-col xl:gap-1 xl:overflow-visible xl:pb-0 [-ms-overflow-style:none] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-zinc-300/80 dark:[&::-webkit-scrollbar-thumb]:bg-zinc-600">
+                <p className="hidden px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 xl:block dark:text-zinc-500">
+                  HSL Departments
+                </p>
+                {(() => {
+                  const railItems: { key: string; name: string; count: number; color?: string }[] = [
+                    { key: 'all', name: 'All HSL', count: hslCalcRows.length },
+                    ...hslRailDeptKeys.map(k => ({
+                      key: k as string,
+                      name: (HSL_DEPTS as Record<string, { name: string; color?: string }>)[k]?.name ?? k,
+                      count: hslDeptCounts.get(k) ?? 0,
+                      color: (HSL_DEPTS as Record<string, { name: string; color?: string }>)[k]?.color,
+                    })),
+                    ...(hslHasUnassigned
+                      ? [{ key: 'unassigned', name: 'Unassigned', count: hslDeptCounts.get('unassigned') ?? 0 }]
+                      : []),
+                  ];
+                  return railItems.map(item => {
+                    const isActive = activeHslDeptSafe === item.key;
+                    return (
+                      <motion.button
+                        key={item.key}
+                        type="button"
+                        onClick={() => { setActiveHslDept(item.key); setHslSearch(''); setHslPage(1); }}
+                        whileTap={{ scale: 0.97 }}
+                        className={cn(
+                          'relative flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium xl:w-full xl:justify-between',
+                          isActive
+                            ? 'border-violet-500/50 text-violet-700 dark:text-violet-300'
+                            : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50',
+                        )}
+                        style={!isActive && item.color ? { borderLeftColor: item.color, borderLeftWidth: 3 } : undefined}
+                      >
+                        {isActive && (
+                          <motion.span
+                            layoutId="hsl-dept-active-bg"
+                            className="absolute inset-0 rounded-[7px] bg-violet-600/10 dark:bg-violet-500/15"
+                            transition={{ type: 'spring', stiffness: 400, damping: 34 }}
+                          />
+                        )}
+                        <span className="relative truncate">{item.name}</span>
+                        {item.count > 0 && (
+                          <span
+                            className={cn(
+                              'relative shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none',
+                              isActive
+                                ? 'bg-violet-600 text-white'
+                                : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400',
+                            )}
+                          >
+                            {item.count}
+                          </span>
+                        )}
+                      </motion.button>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* Content: KPI cards + employee table (filtered to the active dept) */}
+              <div className="min-w-0 flex-1">
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={activeHslDeptSafe}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15, ease: 'easeOut' }}
+                    className="flex flex-col gap-5"
+                  >
+
             {/* KPI Bonus summary per department */}
             {hslStepLoading ? (
               <div className="flex items-center justify-center gap-2 rounded-xl border border-violet-100 bg-violet-50/50 py-8 dark:border-violet-900/30 dark:bg-violet-950/20">
@@ -9167,13 +9306,15 @@ export default function PayrollWizard({
               <p className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 dark:border-rose-800/50 dark:bg-rose-950/20 dark:text-rose-400">
                 {hslStepError}
               </p>
-            ) : hslStepPeriods.length > 0 ? (
+            ) : visibleHslPeriods.length > 0 ? (
               <div className="flex flex-col gap-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                  KPI Bonus Periods (from manager submissions)
+                  {activeHslDeptSafe === 'all'
+                    ? 'KPI Bonus Periods (from manager submissions)'
+                    : `${activeHslDeptName} — KPI Bonus Period`}
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {hslStepPeriods.map(p => {
+                  {visibleHslPeriods.map(p => {
                     const cfg = (HSL_DEPTS as Record<string, { name: string; color?: string }>)[p.department];
                     const deptColor = cfg?.color ?? '#6d28d9';
                     return (
@@ -9210,24 +9351,30 @@ export default function PayrollWizard({
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-violet-200 bg-violet-50/30 px-4 py-6 text-center text-xs text-violet-600 dark:border-violet-800/40 dark:bg-violet-950/10 dark:text-violet-400">
-                No ready or locked KPI periods found. Managers submit bonuses via the HSL Bonus Calculator.
+                {activeHslDeptSafe === 'all'
+                  ? 'No ready or locked KPI periods found. Managers submit bonuses via the HSL Bonus Calculator.'
+                  : `No ready or locked KPI period for ${activeHslDeptName} yet.`}
               </div>
             )}
 
             {/* Employee table: initial pay + KPI bonus + override */}
-            {hslCalcRows.length === 0 ? (
+            {visibleHslRows.length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-16 text-center text-zinc-500 dark:text-zinc-400">
                 <Building2 className="h-10 w-10 opacity-25" />
-                <p className="text-sm">No HSL employees found in this payroll cycle.</p>
+                <p className="text-sm">
+                  {activeHslDeptSafe === 'all'
+                    ? 'No HSL employees found in this payroll cycle.'
+                    : `No employees in ${activeHslDeptName} for this cycle.`}
+                </p>
               </div>
             ) : (() => {
               const needle = hslSearch.toLowerCase().trim();
               const filteredHsl = needle
-                ? hslCalcRows.filter(r =>
+                ? visibleHslRows.filter(r =>
                     (r.name ?? '').toLowerCase().includes(needle) ||
                     (r.email ?? '').toLowerCase().includes(needle),
                   )
-                : hslCalcRows;
+                : visibleHslRows;
               const totalHslPages = Math.max(1, Math.ceil(filteredHsl.length / HSL_PAGE_SIZE));
               const safePage = Math.min(hslPage, totalHslPages);
               const pagedHsl = filteredHsl.slice((safePage - 1) * HSL_PAGE_SIZE, safePage * HSL_PAGE_SIZE);
@@ -9257,7 +9404,7 @@ export default function PayrollWizard({
                     </div>
                     {needle && (
                       <p className="mt-1.5 text-[10px] text-zinc-500 dark:text-zinc-400">
-                        {filteredHsl.length} of {hslCalcRows.length} employees
+                        {filteredHsl.length} of {visibleHslRows.length} employees
                       </p>
                     )}
                   </div>
@@ -9472,9 +9619,10 @@ export default function PayrollWizard({
                         </tbody>
                         <tfoot className="border-t-2 border-zinc-200 bg-zinc-50/60 dark:border-zinc-800 dark:bg-zinc-900/40">
                           {(() => {
-                            let totalPab = 0, totalTech = 0, totalKpi = 0, totalAdj = 0, totalOrphanage = 0, totalWkndPremium = 0;
-                            for (const r of hslCalcRows) {
+                            let totalInitialPay = 0, totalPab = 0, totalTech = 0, totalKpi = 0, totalAdj = 0, totalOrphanage = 0, totalWkndPremium = 0;
+                            for (const r of visibleHslRows) {
                               const em = (r.email ?? '').toLowerCase();
+                              totalInitialPay += r.initialPay ?? 0;
                               totalKpi += hslStepBonusByEmail[em] ?? 0;
                               totalAdj += bonusOverrides[r.email] ?? 0;
                               totalOrphanage += orphanageAmounts[r.email] ?? 0;
@@ -9487,13 +9635,13 @@ export default function PayrollWizard({
                             return (
                               <tr>
                                 <td colSpan={2} className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                                  Totals ({hslCalcRows.length} employees)
+                                  Totals ({visibleHslRows.length} employees)
                                 </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-amber-600 dark:text-amber-400">
                                   {totalWkndPremium > 0 ? `+${formatPHP(Math.round(totalWkndPremium * 100) / 100)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-700 dark:text-zinc-300">
-                                  {formatPHP(totalHslInitialPay)}
+                                  {formatPHP(totalInitialPay)}
                                 </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                                   {totalKpi > 0 ? `+${formatPHP(totalKpi)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
@@ -9515,7 +9663,7 @@ export default function PayrollWizard({
                                   {totalOrphanage > 0 ? `+${formatPHP(totalOrphanage)}` : <span className="text-zinc-400 dark:text-zinc-600">—</span>}
                                 </td>
                                 <td className="px-3 py-2.5 text-right font-mono text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-                                  {formatPHP(totalHslInitialPay + totalKpi + totalAdj + totalOrphanage + totalPab + totalTech)}
+                                  {formatPHP(totalInitialPay + totalKpi + totalAdj + totalOrphanage + totalPab + totalTech)}
                                 </td>
                               </tr>
                             );
@@ -9601,6 +9749,10 @@ export default function PayrollWizard({
                 </div>
               );
             })()}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+            </div>
           </div>
         );
       }

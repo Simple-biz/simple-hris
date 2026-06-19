@@ -10,6 +10,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import CeoSidebar, { type CeoTab } from './CeoSidebar';
+import CeoChatBubble from './CeoChatBubble';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
 import SWall from '@/components/swall/SWall';
@@ -180,6 +181,9 @@ export default function CeoApp() {
       </main>
 
       <Toaster richColors position="top-center" />
+
+      {/* Floating AI assistant — CEO dashboard only */}
+      <CeoChatBubble />
     </div>
   );
 }

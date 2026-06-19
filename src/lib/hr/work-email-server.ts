@@ -27,11 +27,19 @@ export async function loadTakenWorkEmails(): Promise<Set<string>> {
   if (!sb) throw new Error("Supabase client missing");
 
   const taken = new Set<string>();
-
+  const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
   const add = (v: unknown) => {
-    const e = String(v ?? "").trim().toLowerCase();
+    const e = norm(v);
     if (e) taken.add(e);
   };
+
+  // Off-boarded addresses are recyclable (per HR), so we DON'T reserve them.
+  // But the same address also lingers in employee_ids / employee_roles (which
+  // have no off-boarded flag), so we track which master addresses are active vs
+  // off-boarded and drop the off-boarded-only ones from those tables too —
+  // otherwise an off-boarded person's address would stay reserved forever.
+  const activeEmails = new Set<string>();
+  const offboardedEmails = new Set<string>();
 
   // 1. Global master list (payroll roster)
   const { data: gml, error: gmlErr } = await sb
@@ -40,11 +48,22 @@ export async function loadTakenWorkEmails(): Promise<Set<string>> {
     .range(0, 99999);
   if (gmlErr) throw new Error(`global_master_list: ${gmlErr.message}`);
   for (const r of (gml ?? []) as Array<Record<string, unknown>>) {
-    if (r["off_boarded_at"]) continue;
-    add(r["Work Email"]);
-    add(r["Alternate Work Email"]);
-    add(r["Alternate Work Email 2"]);
+    const emails = [r["Work Email"], r["Alternate Work Email"], r["Alternate Work Email 2"]]
+      .map(norm)
+      .filter(Boolean);
+    if (r["off_boarded_at"]) {
+      emails.forEach((e) => offboardedEmails.add(e));
+      continue; // off-boarded → recyclable, don't reserve
+    }
+    emails.forEach((e) => {
+      taken.add(e);
+      activeEmails.add(e);
+    });
   }
+
+  // Addresses whose ONLY active presence is an off-boarded master row — recycle
+  // them, i.e. ignore any lingering employee_ids / employee_roles rows below.
+  const freed = new Set([...offboardedEmails].filter((e) => !activeEmails.has(e)));
 
   // 2. employee_ids — covers admins and non-payroll staff with workspace accounts
   const { data: ids, error: idsErr } = await sb
@@ -53,7 +72,8 @@ export async function loadTakenWorkEmails(): Promise<Set<string>> {
     .range(0, 9999);
   if (!idsErr) {
     for (const r of (ids ?? []) as Array<{ work_email: string | null }>) {
-      add(r.work_email);
+      const e = norm(r.work_email);
+      if (e && !freed.has(e)) taken.add(e);
     }
   }
 
@@ -65,7 +85,8 @@ export async function loadTakenWorkEmails(): Promise<Set<string>> {
     .range(0, 9999);
   if (!rolesErr) {
     for (const r of (roles ?? []) as Array<{ work_email: string | null }>) {
-      add(r.work_email);
+      const e = norm(r.work_email);
+      if (e && !freed.has(e)) taken.add(e);
     }
   }
 
