@@ -46,6 +46,10 @@ docs/
 | [identity-resolution.md](./features/identity-resolution.md) | Master-authoritative identity + Department; alternate-work-email bridging for hours/rate matching across Rates & Profiles, Payroll Wizard, manager + employee dashboards |
 | [manager-my-team.md](./features/manager-my-team.md) | Manager portal → My Team: roster, rates/pay hidden on every surface, Recognition-medal card, attendance-only Hours tab (HSL rule via `department` prop) |
 | [onboarding-ip-assignment.md](./features/onboarding-ip-assignment.md) | IP Assignment / Talent Release / Copyright Waiver as the first public onboarding step; signed PDF via pdf-lib stored in `hr-onboarding-files`; HR IP Assignment tab; `/onboarding/preview` no-save preview mode (migration #73 PENDING) |
+| [onboarding-pay-plans.md](./features/onboarding-pay-plans.md) | HR uploads one pay-plan PDF per (Department, Country); the matched plan rides the onboarding **invite** email (in-email card + attachment + `pay_plan`) via a Country picker stored as `invite_country`. Migration #80 (two files) PENDING |
+| [onboarding-gmail-surname.md](./features/onboarding-gmail-surname.md) | Read-only auto-derived `@simple.biz` surname slice (collision-aware via `loadTakenWorkEmails`), sent to the workspace-account webhook in place of the legal surname for privacy. Migration #81 PENDING |
+| [ceo-assistant.md](./features/ceo-assistant.md) | Floating Claude (Sonnet) chat widget on the CEO dashboard with read-only payroll tools over `disbursement_records`, admin-managed API key, audit logging |
+| [admin-api-keys.md](./features/admin-api-keys.md) | Admin "API tokens" tab for the Anthropic key; DB value overrides env, masked-only display, `requireAdminSession` gate, and the `secret.*` admin-only tier in `/api/app-settings` |
 | [paystub.html](./features/paystub.html) | Paystub HTML template |
 
 ## design/ -- UI/UX standards

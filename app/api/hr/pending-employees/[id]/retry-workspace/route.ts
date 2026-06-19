@@ -3,7 +3,7 @@ import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { getHrPendingEmployeeById } from "@/lib/supabase/hr-pending-employees";
 import { createWorkspaceAccount } from "@/lib/hr/workspace-account";
-import { splitFullName } from "@/lib/hr/work-email";
+import { splitFullName, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
@@ -61,7 +61,8 @@ export async function POST(
 
   const workspace = await createWorkspaceAccount({
     firstName: first,
-    lastName: last,
+    // Send the email-derived surname slice, never the full legal surname.
+    lastName: gmailSurnameFromWorkEmail(first, workEmail, last),
     workEmail,
     personalEmail: row.personal_email,
     projectNames,

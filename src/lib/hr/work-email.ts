@@ -117,3 +117,30 @@ export function suggestWorkEmail(
   while (isTaken(`${base}${n}`)) n++;
   return make(`${base}${n}`);
 }
+
+/**
+ * The "Gmail surname" to provision the @simple.biz Google account with. It is
+ * sent to the workspace webhook IN PLACE OF the legal last name, on purpose: the
+ * account must never expose the hire's full surname (so they can't be looked up
+ * / stalked elsewhere). It's the WORK EMAIL's local part with the first-name
+ * prefix removed, UPPER-cased — e.g. first "Kane" + `kanere@simple.biz` -> "RE",
+ * `kaneres@` -> "RES" — so the surname always matches the address.
+ *
+ * Falls back to the last-name INITIAL when the email doesn't start with the
+ * first name (HR picked a custom address) — never the full surname.
+ */
+export function gmailSurnameFromWorkEmail(
+  first: string,
+  workEmail: string,
+  lastNameFallback = "",
+): string {
+  const f = normalizeNamePart(first);
+  const lnorm = normalizeNamePart(lastNameFallback);
+  const local = (workEmail.split("@")[0] ?? "").trim().toLowerCase();
+  const slice = f && local.startsWith(f) ? local.slice(f.length) : "";
+  // Trust the slice only when it's a clean prefix of the last name (the standard
+  // firstname+lastslice address). Anything else — a custom address, digits, a
+  // dot — falls back to the last-name initial, so we never emit garbage.
+  if (slice && lnorm && lnorm.startsWith(slice)) return slice.toUpperCase();
+  return (lnorm[0] ?? "").toUpperCase();
+}

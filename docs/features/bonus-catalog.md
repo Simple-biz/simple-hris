@@ -144,6 +144,8 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
   "KPI Sub." stays PHP and round-trips back to the native currency in the Payment
   Dispatch USD/COP tab. Add an entry to `FORCED_DEPT_CURRENCY` (e.g. a Colombian
   team → `'COP'`) to force more.
+
+  > **Note (2026-06-18):** the `us_manager_bonus` department is now **labelled "US Team"** (the internal key is unchanged). All US-based staff — not just the former *US Manager Bonus* members — fold into it. See the "US Team department consolidation" section in `docs/reference/business-logic.md`.
 - **Assign:** an "Add common" picker assigns a bonus department-wide; an employee
   picker (optionally filtered to one department) assigns to a single person.
   Remove via the trash icon on each assignment row.

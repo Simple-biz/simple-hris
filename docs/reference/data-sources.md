@@ -449,7 +449,7 @@ One staged row per `(cycle, employee)` carrying the authoritative paystub payloa
 
 ### 14. `hr_onboarding_submissions` — IP Assignment columns *(migration #73, PENDING)*
 
-> **PENDING:** `references/migrations/add_ip_assignment_to_onboarding.sql` has not been confirmed run. Required before the IP Assignment onboarding step works in production. See [onboarding-ip-assignment.md](../features/onboarding-ip-assignment.md).
+> **PENDING:** `references/add_ip_assignment_to_onboarding.sql` has not been confirmed run. Required before the IP Assignment onboarding step works in production. See [onboarding-ip-assignment.md](../features/onboarding-ip-assignment.md).
 
 Adds 6 columns to the existing `hr_onboarding_submissions` table for the new first-step "Intellectual Property Assignment, Talent Release, and Copyright Waiver" agreement (mirrors the W-8BEN flow):
 
@@ -474,6 +474,22 @@ Beyond `auth.force_logout_map` (§9), the wizard/dispatch flow stores two per-pa
 |---|---|---|
 | `payroll.wizard.exclusions.<sourceFile>` | JSON array of work emails | Per-period "do not pay" exclude set toggled in the wizard's Validation step (`PayrollWizard.tsx`). |
 | `payroll.dispatch_lock.<sourceFile>` | `{ locked, lockedAt, lockedBy }` | Realtime reversible wizard dispatch lock. "Lock & Send" sets `locked=true`; the Dispatch queue is empty until locked, and Unlock (payroll/admin) reverses it. Hooks: `useWizardDispatchLock.ts`, `useDispatchQueue.ts`. Propagated live via the `app_settings` realtime publication. |
+
+---
+
+## Where the SQL lives
+
+All migrations/seeds referenced above live under `references/sql/`, organized by intent into subfolders:
+
+| Folder | Holds |
+|---|---|
+| `references/sql/create/` | `CREATE TABLE` / new-object scripts (e.g. `create_employee_rate_history.sql`, `add_mesa_requests.sql`) |
+| `references/sql/alter/` | `ALTER TABLE` column/constraint additions (e.g. `add_alternate_work_emails_to_global_master_list.sql`) |
+| `references/sql/migrate/` | Date-stamped structural migrations (e.g. `2026-06-18_roles_dashboard_only.sql`) |
+| `references/sql/seed/` | Data backfills / re-seeds (e.g. `seed_disbursement_records.sql`, `seed_global_master_list.sql`) |
+| `references/sql/fix/` | One-off data corrections (e.g. `fix_sheen_gobalani_work_email.sql`) |
+
+> File paths elsewhere in this doc that read `references/<file>.sql` resolve under the matching subfolder above. The running ledger of which scripts are **applied vs PENDING** is not in the repo — it is tracked in the team's working memory (`pending_sql`); treat any script not confirmed there as not-yet-run.
 
 ---
 

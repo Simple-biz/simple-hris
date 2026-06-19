@@ -10,7 +10,7 @@ import {
   updateHrPendingEmployee,
 } from "@/lib/supabase/hr-pending-employees";
 import { loadTakenWorkEmails } from "@/lib/hr/work-email-server";
-import { WORK_EMAIL_DOMAIN, splitFullName } from "@/lib/hr/work-email";
+import { WORK_EMAIL_DOMAIN, splitFullName, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { createWorkspaceAccount, verifyWorkspaceAccount } from "@/lib/hr/workspace-account";
 import { listPayStructures } from "@/lib/supabase/pay-structures-db";
@@ -234,15 +234,13 @@ export async function POST(
   // designated work email (200) apart from a minted-but-failed one. A retry
   // that finally succeeds re-runs this and flips the row to confirmed.
   const { first, last } = splitFullName(name);
-  // The hire's "Gmail Surname" (from the onboarding paperwork) is the surname we
-  // provision the @simple.biz Google account with — sent to the webhook IN PLACE
-  // OF the legal last name, on purpose: the Workspace account never exposes the
-  // hire's full surname (so they can't be looked up / stalked elsewhere). It's
-  // the minimal disambiguating last-name slice (e.g. "R", or "RE" when "R" is
-  // taken). Fallback for legacy rows is just the last-name INITIAL — never the
-  // full surname.
-  const gmailSurname =
-    (row.gmail_surname ?? "").trim() || (last ? last.charAt(0).toUpperCase() : "");
+  // Surname sent to the workspace webhook IN PLACE OF the legal last name, on
+  // purpose: the Workspace account must never expose the hire's full surname (so
+  // they can't be looked up / stalked elsewhere). We derive it from the chosen
+  // work email's slice (e.g. kanere@ -> "RE") so the account surname always
+  // matches its address; this mirrors the read-only "Gmail Surname" the hire saw
+  // on the paperwork. Falls back to the last-name INITIAL — never the full name.
+  const gmailSurname = gmailSurnameFromWorkEmail(first, workEmail, last);
   const payRate =
     regularRateStr != null && Number.isFinite(Number(regularRateStr))
       ? Number(regularRateStr)

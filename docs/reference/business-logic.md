@@ -952,16 +952,30 @@ When `AdminRoles → toggleRole` revokes a role, it fires `POST /api/auth/force-
 
 **Lightbox:** Rates & Profiles profile-header avatar is clickable; opens a max-380px-wide lightbox dialog showing the photo. Clicking the image or pressing Escape closes it.
 
-## Rates & Profiles — US-employee inclusion *(added 2026-05-15)*
+## Rates & Profiles — US-employee inclusion *(added 2026-05-15, updated 2026-06-18)*
 
 US-based employees (Carla, Jeff, Thomas, Brandon, etc.) were seeded into `global_master_list` manually (migration #18) and are not part of the Google Sheet master sync. The `active_employees` view's `last_seen_upload_id = current` filter drops them on every re-sync.
 
 **Fix in `getEmployeeRateProfileSummaries` and `getEmployeeRateProfileByEmail`:**
 - After fetching `active_employees`, also pull every `global_master_list` row whose `Work Email` or `Personal Email` matches an `employee_ids.employee_id LIKE 'US-%'` entry (and is not off-boarded).
 - Deduped against active rows by row id.
-- For these 12 US employees, the `Department` field on the summary is **overridden to "US Manager Bonus"** so the department dropdown in the rates roster can surface them all under a single filter, regardless of their actual `global_master_list."Department"` value (which spans Hogan Smith Law / US Manager Bonus / HR).
+- For these 12 US employees, the `Department` field on the summary is **overridden to "US Team"** (see "US Team department consolidation" below) so the department dropdown in the rates roster surfaces them all under a single filter, regardless of their underlying `global_master_list."Department"` value. This override runs **only in `getEmployeeRateProfileSummaries`** (`src/lib/supabase/employee-rate-profiles.ts`), keyed on `employeeId.startsWith("US-")`, so it holds for the roster even if a future sync re-tags someone. It does **not** run in `getEmployeeRateProfileByEmail` — that function returns an `EmployeeRateProfile` (no `employeeId` field), so a single-profile-by-email lookup reflects the underlying `global_master_list."Department"` (which, post-migration, is already "US Team" on the master row).
 
 Same widening was applied to `/api/employees` (`fetchActiveEmployees` in `src/lib/supabase/employees.ts`) so Roles & Permissions, HR, and the manager team list also surface them.
+
+## US Team department consolidation *(added 2026-06-18)*
+
+Every US-based person — both individual contributors and team leads — is now a single department, **"US Team"**, replacing the old split across *US Manager Bonus*, *Hogan Smith Law*, and *HR*. The authoritative US cohort is keyed by `employee_ids.employee_id LIKE 'US-%'`.
+
+**Key vs. label.** The internal department **key stays `us_manager_bonus`**; only the user-facing **label** changed to "US Team". The label is set in code (`DEPARTMENTS[].name` and `DEPT_DESCRIPTION` in `src/lib/payroll/department-bonus.ts`); `normalizeDeptToKey` (`src/lib/payroll/normalize-dept-key.ts`) maps `"us team"` / `"us - team"` **and** the legacy `"us manager bonus"` / `"us - manager bonus"` / `"manager bonus"` strings all to `us_manager_bonus`. Keeping the key preserves the USD currency forcing, the Payment-Catalog assignments, and the saved `bonus_catalog_applied` history.
+
+**Why it matters for grouping.** Before, only people tagged *US Manager Bonus* surfaced in the manager **KPI Calculator** (`MANAGER_BONUS_DEPT_KEYS` = the keys of `DEPT_INPUT_CONFIG`); the US folks tagged *Hogan Smith Law* (incl. Thomas Arndt) were dropped because `hogan_smith_law` is not a KPI-Calculator key, and Teal sat alone under *HR*. After consolidation they all normalize to `us_manager_bonus` and appear together on one card. That dept uses **toggle bonuses** (`useToggleBonuses: true`): Leadership Excellence Award ₱3,500 and Team Performance Bonus ₱3,000.
+
+**USD.** `us_manager_bonus` is the USD-anchored department — `FORCED_DEPT_CURRENCY = { us_manager_bonus: 'USD' }` in the KPI Calculator, and it is the one key **excluded** from PAB/Tech system bonuses (`EXCLUDED_DEPT_KEYS` in `src/lib/payment-catalog/overview-metrics.ts`, and the System Bonuses dept allowlist). Consolidation does not change any of that; it only widens *which people* land on the USD dept.
+
+**Migration** `references/sql/migrate/2026-06-18_us_team_department.sql` — **PENDING** (not confirmed run). Per its header, deploy the code first (so `normalizeDeptToKey('US Team')` resolves), then run it. It: (1) collapses each US person's duplicate active `global_master_list` rows to one keeper (partitioned by Work Email, not dept) and **retires the siblings reversibly** via `off_boarded_at` (reason `duplicate_cleanup`) to respect the `global_master_list_work_email_dept_uniq` partial unique index; (2) relabels the surviving master rows + every matching `employee_hourly_rates` row to `"US Team"`. `employee_hourly_rates` has no (email, dept) unique index, so its update tolerates dupes and is not collapsed. Undo SQL for the retired rows is at the bottom of the file. The HSL/SSD bonus system (`hsl_team_members`) is untouched — these US rows were never part of it.
+
+**Belt-and-suspenders.** Independent of the migration, `getEmployeeRateProfileSummaries` forces `p.department = "US Team"` for any `US-`-prefixed profile (see the section above), so the **roster** stays consistent even if a future sync re-tags someone. This guarantee is **summaries-only**: `getEmployeeRateProfileByEmail` returns an `EmployeeRateProfile` (no `employeeId` field) and applies no such override, so a single-profile-by-email lookup (Dashboard/Profile dialog "by email" path) reflects the raw `global_master_list."Department"` — which is already "US Team" once the migration has run.
 
 ## Roles & Permissions UI tabs *(added 2026-05-15)*
 

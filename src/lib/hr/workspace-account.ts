@@ -51,6 +51,10 @@ function resolveVerifyWorkspaceUrl(): Promise<string | null> {
 export type CreateWorkspaceAccountInput = {
   firstName: string;
   lastName: string;
+  /** Privacy-safe surname for the Google account (the work-email slice, e.g.
+   *  "RE"). Sent as `gmail_surname` in the webhook body; defaults to lastName
+   *  (which is already set to this slice by every caller). */
+  gmailSurname?: string;
   workEmail: string;
   personalEmail: string;
   /** Hubstaff project names the hire will be assigned to. */
@@ -117,6 +121,9 @@ export async function createWorkspaceAccount(
   const payload: Record<string, unknown> = {
     first_name: input.firstName.trim(),
     last_name: input.lastName.trim(),
+    // Explicit privacy-safe surname (the work-email slice) — same value as
+    // last_name, exposed under its own key so n8n can reference it directly.
+    gmail_surname: (input.gmailSurname ?? input.lastName).trim(),
     work_email: workEmail,
     personal_email: input.personalEmail.trim().toLowerCase(),
     organization_id: ORGANIZATION_ID,

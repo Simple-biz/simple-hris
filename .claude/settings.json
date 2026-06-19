@@ -72,7 +72,10 @@
       "PowerShell($pkg = Get-Content package.json -Raw | ConvertFrom-Json; $pkg.scripts | Format-List)",
       "PowerShell(npx tsc --noEmit -p \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\tsconfig.json\"; \"EXIT=$LASTEXITCODE\")",
       "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1 | Select-Object -First 40; \"exit=$LASTEXITCODE\")",
-      "Bash(rm -f /tmp/parsecheck.mjs)"
+      "Bash(rm -f /tmp/parsecheck.mjs)",
+      "Bash(ls *.sql)",
+      "Bash(find . -name \"*.sql\" -not -path \"./sql/*\")",
+      "Bash(ls -d migrations)"
     ],
     "additionalDirectories": [
       "\\tmp"

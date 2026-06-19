@@ -9,7 +9,7 @@ import {
 import { archiveHrOnboardingSubmission } from "@/lib/supabase/hr-onboarding-submissions";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
-import { splitFullName } from "@/lib/hr/work-email";
+import { splitFullName, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
 import { createWorkspaceAccount } from "@/lib/hr/workspace-account";
 import {
   OFFBOARD_DELETE_SLUG,
@@ -78,7 +78,8 @@ export async function PATCH(
           : 0;
       workspace = await createWorkspaceAccount({
         firstName: first,
-        lastName: last,
+        // Send the email-derived surname slice, never the full legal surname.
+        lastName: gmailSurnameFromWorkEmail(first, workEmail, last),
         workEmail,
         personalEmail,
         projectNames,
