@@ -55,7 +55,7 @@ import {
   PrivacyText,
 } from '@/components/onboarding/agreement-texts';
 import { formatLongDate } from '@/lib/onboarding/ip-assignment-text';
-import { currencyForCountry, resolveOnboardingCountry, ONBOARDING_COUNTRIES } from '@/lib/onboarding/countries';
+import { currencyForCountry, ONBOARDING_COUNTRIES } from '@/lib/onboarding/countries';
 import {
   Dialog,
   DialogContent,
@@ -1929,43 +1929,39 @@ export default function HrOnboardingForm() {
 
 // ─── Generate link dialog ─────────────────────────────────────────────────
 
-/** One parsed bulk hire: an email plus an optional country (canonical name, or
- *  '' when the pasted line carried no recognizable country). */
+/** One bulk hire: an email plus the canonical country of the paste box it was
+ *  pasted into (which selects that hire's pay-plan PDF). */
 type BulkRow = { email: string; country: string };
 
-/** Parses pasted text (Excel rows, comma-lists, etc.) into per-hire rows. Each
- *  LINE is one hire; within a line, tab / comma / semicolon / pipe separate the
- *  fields. The first email-like field is the address; the first field that
- *  resolves to an onboarding country (US / Philippines / Colombia, incl. aliases
- *  like "USA" / "Columbia" / "PH" / "CO") becomes that hire's country. Lines with
- *  no country come back with country=''. `invalid` collects email-ish tokens on
- *  lines where no valid email was found. Deduped by email. */
-function parseBulkRows(raw: string): { valid: BulkRow[]; invalid: string[] } {
-  const lines = raw.split(/[\n\r]+/).map((l) => l.trim()).filter(Boolean);
+/** Extracts a deduped list of valid emails from free-pasted text. Newlines,
+ *  commas, tabs, spaces, semicolons and pipes all separate tokens, so an Excel
+ *  column, a comma-list, or "Name <email>" rows all work. Tokens that look
+ *  email-ish (contain @ or .) but don't validate come back as `invalid` so HR
+ *  can spot typos; plain words (stray names) are ignored. Lower-cased + deduped. */
+function parseEmailList(raw: string): { valid: string[]; invalid: string[] } {
+  const tokens = raw.split(/[\s,;|]+/).map((t) => t.trim()).filter(Boolean);
   const seen = new Set<string>();
-  const valid: BulkRow[] = [];
+  const seenInvalid = new Set<string>();
+  const valid: string[] = [];
   const invalid: string[] = [];
-  for (const line of lines) {
-    const fields = line.split(/[\t,;|]+/).map((f) => f.trim()).filter(Boolean);
-    let email = '';
-    let country = '';
-    for (const f of fields) {
-      if (!email && isPlausibleEmail(f)) {
-        email = f.toLowerCase();
-        continue;
-      }
-      if (!country) {
-        const resolved = resolveOnboardingCountry(f);
-        if (resolved) country = resolved.name;
-      }
-    }
-    if (email) {
-      if (seen.has(email)) continue;
-      seen.add(email);
-      valid.push({ email, country });
-    } else {
-      const culprit = fields.find((f) => f.includes('@') || f.includes('.'));
-      if (culprit) invalid.push(culprit.toLowerCase());
+  for (const t of tokens) {
+    // Peel off the cruft that rides along when pasting "Name <addr>", a
+    // mailto: link, or a trailing comma/period from a list — so the address
+    // itself validates instead of being stored (or skipped) with the brackets.
+    const cleaned = t
+      .replace(/^mailto:/i, '')
+      .replace(/^[<("']+/, '')
+      .replace(/[>)"'.,;]+$/, '');
+    if (isPlausibleEmail(cleaned)) {
+      const e = cleaned.toLowerCase();
+      if (seen.has(e)) continue;
+      seen.add(e);
+      valid.push(e);
+    } else if (cleaned.includes('@') || cleaned.includes('.')) {
+      const bad = cleaned.toLowerCase();
+      if (seenInvalid.has(bad)) continue;
+      seenInvalid.add(bad);
+      invalid.push(bad);
     }
   }
   return { valid, invalid };
@@ -2010,23 +2006,57 @@ function GenerateLinkDialog({
   // Bulk invite — a toggle available for ANY department (auto-on for Lead Gen).
   const [bulkMode, setBulkMode] = useState(false);
 
-  // Bulk state
-  const [bulkText, setBulkText] = useState('');
+  // Bulk state — one paste box per onboarding country (keyed by canonical
+  // country name). Every email pasted into a box inherits that box's country
+  // (which selects its pay-plan PDF), so HR no longer tags hires one-by-one.
+  const [bulkByCountry, setBulkByCountry] = useState<Record<string, string>>({});
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
   const [bulkResults, setBulkResults] = useState<BulkResult[] | null>(null);
 
   const [departments, setDepartments] = useState<string[]>([]);
   const [deptsLoading, setDeptsLoading] = useState(false);
 
-  // Per-hire country override in bulk mode (keyed by email). Lets HR target a
-  // mixed Lead Gen batch — e.g. some Colombia, some Philippines — even when the
-  // paste carried no country column.
-  const [rowCountry, setRowCountry] = useState<Record<string, string>>({});
-
   const isLeadGenDept = ['lead gen', 'lead generation'].includes(dept.trim().toLowerCase());
-  const { valid: parsedRows, invalid: invalidTokens } = useMemo(
-    () => (bulkMode ? parseBulkRows(bulkText) : { valid: [], invalid: [] }),
-    [bulkMode, bulkText],
+
+  // Parse each country box into a deduped email list (+ skipped tokens). A box
+  // holds only emails for ONE country, so the country comes from the box, not
+  // the paste.
+  const parsedByCountry = useMemo(() => {
+    if (!bulkMode) return [];
+    return ONBOARDING_COUNTRIES.map((c) => {
+      const { valid, invalid } = parseEmailList(bulkByCountry[c.name] ?? '');
+      return { country: c.name, currency: c.currency, emails: valid, invalid };
+    });
+  }, [bulkMode, bulkByCountry]);
+
+  // Flatten the boxes to per-hire rows, deduped GLOBALLY so an email pasted into
+  // two boxes is sent once (first country wins); the rest are surfaced as
+  // cross-country duplicates (each shown once, with the country it was kept as,
+  // so HR can catch a mis-paste before sending).
+  const { parsedRows, crossDupes } = useMemo(() => {
+    const keptCountry = new Map<string, string>();
+    const rows: BulkRow[] = [];
+    const dupeSeen = new Set<string>();
+    const dupes: { email: string; keptAs: string }[] = [];
+    for (const b of parsedByCountry) {
+      for (const email of b.emails) {
+        if (keptCountry.has(email)) {
+          if (!dupeSeen.has(email)) {
+            dupeSeen.add(email);
+            dupes.push({ email, keptAs: keptCountry.get(email) ?? '' });
+          }
+          continue;
+        }
+        keptCountry.set(email, b.country);
+        rows.push({ email, country: b.country });
+      }
+    }
+    return { parsedRows: rows, crossDupes: dupes };
+  }, [parsedByCountry]);
+
+  const invalidTokens = useMemo(
+    () => [...new Set(parsedByCountry.flatMap((b) => b.invalid))],
+    [parsedByCountry],
   );
 
   // Lead Gen auto-enables bulk (the common case); HR can still toggle it on for
@@ -2034,18 +2064,6 @@ function GenerateLinkDialog({
   useEffect(() => {
     if (isLeadGenDept) setBulkMode(true);
   }, [isLeadGenDept]);
-
-  // Effective country for a bulk row: a manual per-row pick wins, then the
-  // country parsed from the pasted line, then the batch-level default (the
-  // Country picker up top). May be '' → that hire's invite carries no pay plan.
-  const effectiveCountry = useCallback(
-    (r: BulkRow) => rowCountry[r.email] || r.country || country.trim(),
-    [rowCountry, country],
-  );
-  const rowsMissingCountry = useMemo(
-    () => parsedRows.filter((r) => !effectiveCountry(r)).length,
-    [parsedRows, effectiveCountry],
-  );
 
   useEffect(() => {
     if (!open) return;
@@ -2066,8 +2084,8 @@ function GenerateLinkDialog({
   useEffect(() => {
     if (!open) {
       setEmail(''); setDept(''); setCountry(''); setNote('');
-      setBulkText(''); setBulkProgress(null); setBulkResults(null);
-      setRowCountry({}); setBulkMode(false);
+      setBulkByCountry({}); setBulkProgress(null); setBulkResults(null);
+      setBulkMode(false);
     }
   }, [open]);
 
@@ -2100,9 +2118,9 @@ function GenerateLinkDialog({
     }
   }
 
-  // ── Lead Gen bulk submit: create + send for every parsed row ──
-  // Each row carries its OWN country (per-row pick → parsed-from-paste → batch
-  // default), so a mixed batch emails each hire the pay plan for their country.
+  // ── Bulk submit: create + send for every parsed row ──
+  // Each row carries the country of the paste box it was pasted into, so a mixed
+  // batch emails each hire the pay plan for their country.
   async function submitBulk() {
     if (parsedRows.length === 0) return;
     setBusy(true);
@@ -2122,7 +2140,7 @@ function GenerateLinkDialog({
             invite_name: null,
             invite_personal_email: e,
             invite_department: dept.trim(),
-            invite_country: effectiveCountry(r) || null,
+            invite_country: r.country || null,
             invite_note: note.trim() || null,
           }),
         });
@@ -2229,7 +2247,7 @@ function GenerateLinkDialog({
             </DialogTitle>
             <p className="mt-1.5 text-[12px] leading-relaxed text-zinc-600 dark:text-zinc-400">
               {bulkMode
-                ? 'Paste personal emails from your Excel sheet. Each hire gets their own one-time link sent immediately — they fill in their own name and sign the contracts on the form.'
+                ? 'Paste personal emails into each country below. Every hire gets a one-time link sent immediately, carrying their country pay plan — they fill in their own name and sign the contracts on the form.'
                 : 'Mint a one-time, no-SSO link. The new hire fills in their name, signs contracts, and submits payment details directly on the form.'}
             </p>
           </DialogHeader>
@@ -2293,17 +2311,15 @@ function GenerateLinkDialog({
               loading={deptsLoading}
             />
           </DialogField>
-          <DialogField
-            label={bulkMode ? 'Default country' : 'Country'}
-            icon={<Globe className="h-3.5 w-3.5" />}
-            hint={
-              bulkMode
-                ? 'Default for the batch — override per hire below, or paste a country column. Sets which pay-plan PDF the invite carries.'
-                : 'Picks the pay-plan PDF emailed with the invite (matched by department + country). Leave blank to send no pay plan.'
-            }
-          >
-            <CountrySelect value={country} onChange={setCountry} />
-          </DialogField>
+          {!bulkMode && (
+            <DialogField
+              label="Country"
+              icon={<Globe className="h-3.5 w-3.5" />}
+              hint="Picks the pay-plan PDF emailed with the invite (matched by department + country). Leave blank to send no pay plan."
+            >
+              <CountrySelect value={country} onChange={setCountry} />
+            </DialogField>
+          )}
         </DialogSection>
 
         {/* Smoothly ELONGATE on toggle: the outer wrapper animates its HEIGHT to
@@ -2328,87 +2344,96 @@ function GenerateLinkDialog({
         {bulkMode ? (
           /* ── Bulk mode (any department) ── */
           <>
-            <DialogSection label="Paste hires">
-              <div className="flex flex-col gap-2">
-                <textarea
-                  value={bulkText}
-                  onChange={(e) => setBulkText(e.target.value)}
-                  placeholder={'Paste from Excel — one hire per row. Add a country column to target each (else uses the default above):\n\njane@gmail.com\tColombia\njohn@yahoo.com\tPhilippines\nrose@gmail.com'}
-                  rows={6}
-                  disabled={busy}
-                  className="w-full rounded-lg border border-zinc-300 bg-transparent px-3 py-2 font-mono text-xs leading-relaxed outline-none transition-colors placeholder:text-zinc-400 focus-visible:border-emerald-500 focus-visible:ring-2 focus-visible:ring-emerald-500/20 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900/40 dark:placeholder:text-zinc-600"
-                />
+            <DialogSection label="Paste hires by country">
+              <p className="-mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                Paste personal emails into the matching country — one per line (commas, tabs and spaces also work). Every email in a box is invited as that country, so there&apos;s no need to tag hires one-by-one.
+              </p>
 
-                {/* Parsed summary */}
-                {bulkText.trim() && (
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
-                    {parsedRows.length > 0 && (
-                      <span className="font-medium text-emerald-700 dark:text-emerald-400">
-                        ✓ {parsedRows.length} hire{parsedRows.length !== 1 ? 's' : ''}
+              {/* One paste box per country — the box IS the country picker */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {parsedByCountry.map((b) => (
+                  <div
+                    key={b.country}
+                    className="flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40"
+                  >
+                    <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+                      <span className="flex items-center gap-1.5 text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                        <Globe className="h-3.5 w-3.5 text-emerald-500" />
+                        {b.country}
                       </span>
-                    )}
-                    {rowsMissingCountry > 0 && (
-                      <span className="text-amber-600 dark:text-amber-400">
-                        {rowsMissingCountry} without a country (no pay plan)
+                      <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                        {b.currency}
                       </span>
-                    )}
-                    {invalidTokens.length > 0 && (
-                      <span className="text-amber-600 dark:text-amber-400">
-                        ⚠ {invalidTokens.length} skipped (not valid emails)
-                      </span>
-                    )}
-                    {parsedRows.length === 0 && invalidTokens.length === 0 && (
-                      <span className="text-zinc-400">No hires detected yet</span>
-                    )}
-                  </div>
-                )}
-
-                {/* Per-hire list — each row's country drives its pay plan */}
-                {parsedRows.length > 0 && (
-                  <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/20">
-                    <div className="flex items-center justify-between gap-2 border-b border-emerald-200/70 px-3 py-1.5 dark:border-emerald-900/40">
-                      <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">
-                        Will receive a link — country per hire
-                      </p>
-                      {country.trim() && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRowCountry(
-                              Object.fromEntries(parsedRows.map((r) => [r.email, country.trim()])),
-                            )
-                          }
-                          className="shrink-0 text-[10px] font-medium text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-400"
-                        >
-                          Set all to {country.trim()}
-                        </button>
+                    </div>
+                    <textarea
+                      value={bulkByCountry[b.country] ?? ''}
+                      onChange={(e) =>
+                        setBulkByCountry((m) => ({ ...m, [b.country]: e.target.value }))
+                      }
+                      placeholder={'jane@gmail.com\njohn@yahoo.com'}
+                      rows={4}
+                      disabled={busy}
+                      className="w-full resize-y border-0 bg-transparent px-3 py-2 font-mono text-xs leading-relaxed outline-none transition-colors placeholder:text-zinc-400 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500/30 disabled:opacity-50 dark:placeholder:text-zinc-600"
+                    />
+                    <div className="flex items-center justify-between gap-2 border-t border-zinc-100 px-3 py-1.5 text-[11px] dark:border-zinc-800">
+                      {b.emails.length > 0 ? (
+                        <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                          ✓ {b.emails.length} hire{b.emails.length !== 1 ? 's' : ''}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-400">No emails yet</span>
+                      )}
+                      {b.invalid.length > 0 && (
+                        <span className="text-amber-600 dark:text-amber-400">
+                          ⚠ {b.invalid.length} skipped
+                        </span>
                       )}
                     </div>
-                    <div className="max-h-56 overflow-y-auto p-1.5">
-                      {parsedRows.map((r) => (
-                        <div key={r.email} className="flex items-center gap-2 px-1.5 py-1">
-                          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-emerald-900 dark:text-emerald-200">
-                            {r.email}
-                          </span>
-                          <div className="w-40 shrink-0">
-                            <CountrySelect
-                              value={effectiveCountry(r)}
-                              onChange={(v) => setRowCountry((m) => ({ ...m, [r.email]: v }))}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
                   </div>
-                )}
-
-                {invalidTokens.length > 0 && (
-                  <div className="rounded-lg border border-amber-200/80 bg-amber-50/40 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20">
-                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-amber-600 dark:text-amber-400">Skipped</p>
-                    <p className="font-mono text-[11px] text-amber-800 dark:text-amber-300">{invalidTokens.join(', ')}</p>
-                  </div>
-                )}
+                ))}
               </div>
+
+              {/* Batch summary + cross-box warnings */}
+              {(parsedRows.length > 0 || invalidTokens.length > 0 || crossDupes.length > 0) && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                  {parsedRows.length > 0 && (
+                    <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                      {parsedRows.length} hire{parsedRows.length !== 1 ? 's' : ''} ready to send
+                    </span>
+                  )}
+                  {crossDupes.length > 0 && (
+                    <span className="text-amber-600 dark:text-amber-400">
+                      {crossDupes.length} in more than one country (see below)
+                    </span>
+                  )}
+                  {invalidTokens.length > 0 && (
+                    <span className="text-amber-600 dark:text-amber-400">
+                      {invalidTokens.length} skipped (not valid emails)
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {crossDupes.length > 0 && (
+                <div className="rounded-lg border border-amber-200/80 bg-amber-50/40 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20">
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-amber-600 dark:text-amber-400">In more than one country — kept as the first</p>
+                  <div className="space-y-0.5">
+                    {crossDupes.map((d) => (
+                      <p key={d.email} className="font-mono text-[11px] text-amber-800 dark:text-amber-300">
+                        {d.email}
+                        {d.keptAs ? <span className="not-italic text-amber-600 dark:text-amber-400"> — kept as {d.keptAs}</span> : null}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {invalidTokens.length > 0 && (
+                <div className="rounded-lg border border-amber-200/80 bg-amber-50/40 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20">
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-amber-600 dark:text-amber-400">Skipped</p>
+                  <p className="font-mono text-[11px] text-amber-800 dark:text-amber-300">{invalidTokens.join(', ')}</p>
+                </div>
+              )}
             </DialogSection>
 
             <DialogSection label="Cover note" last>

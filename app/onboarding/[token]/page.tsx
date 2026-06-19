@@ -326,16 +326,23 @@ export default function OnboardingFormPage() {
   useEffect(() => {
     const first = form.first_name.trim();
     const last = form.last_name.trim();
-    // Clear any surname computed for a PREVIOUS name up front, so a stale value
-    // (e.g. "RER" from an earlier name) can never linger if this lookup is slow,
-    // fails, or the name is incomplete.
-    setForm((f) => (f.gmail_surname === '' ? f : { ...f, gmail_surname: '' }));
+    // The bare last-name initial — the guaranteed minimal surname. Strip combining
+    // marks (NFD + U+0300–U+036F) so an accented first letter folds to ASCII.
+    const fallback =
+      (last.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z]/g, '')[0] ?? '').toUpperCase();
+    const apply = (val: string) =>
+      setForm((f) => (f.gmail_surname === val ? f : { ...f, gmail_surname: val }));
+
     if (!first || !last) {
       setSurnameLoading(false);
+      apply(''); // nothing to generate until both names are present
       return;
     }
-    // Show the "searching" state immediately on keystroke (covers the debounce
-    // + the request), so the field reacts the moment a last name is entered.
+    // RULE: ALWAYS generate a surname. Seed the initial immediately — so the
+    // field is never blank and never shows a stale value from a previous name —
+    // then refine it with the collision-aware roster result. If the lookup can't
+    // run, the seeded initial stays.
+    apply(fallback);
     setSurnameLoading(true);
     let cancelled = false;
     // Short debounce so it feels like a live search but doesn't hit the roster
@@ -350,14 +357,10 @@ export default function OnboardingFormPage() {
           });
           const json = (await res.json().catch(() => ({}))) as { gmail_surname?: string };
           if (cancelled) return;
-          if (res.ok && typeof json.gmail_surname === 'string') {
-            setForm((f) =>
-              f.gmail_surname === json.gmail_surname ? f : { ...f, gmail_surname: json.gmail_surname! },
-            );
-          }
-          // On failure: leave the field blank (no error message, no stale value).
+          // Use the roster result when present; otherwise keep the initial.
+          apply(res.ok && json.gmail_surname ? json.gmail_surname : fallback);
         } catch {
-          /* non-blocking — leave the field blank */
+          if (!cancelled) apply(fallback);
         } finally {
           // Only the latest (non-superseded) request clears the indicator.
           if (!cancelled) setSurnameLoading(false);
@@ -905,21 +908,19 @@ function Step1Welcome({
         <Field label="Gmail Surname" className="sm:col-span-2">
           <div className="relative">
             <Input
-              value={surnameLoading ? '' : form.gmail_surname ?? ''}
+              value={form.gmail_surname ?? ''}
               readOnly
               tabIndex={-1}
               aria-readonly
               placeholder={
-                surnameLoading
+                form.first_name.trim() && form.last_name.trim()
                   ? ''
-                  : form.first_name.trim() && form.last_name.trim()
-                    ? 'Auto-generated from your name'
-                    : 'Enter your first and last name above'
+                  : 'Enter your first and last name above'
               }
-              className="font-mono tracking-wide"
+              className="pr-52 font-mono tracking-wide"
             />
             {surnameLoading && (
-              <span className="pointer-events-none absolute left-3 top-1/2 inline-flex -translate-y-1/2 items-center gap-1.5 text-[11px] font-medium text-emerald-600">
+              <span className="pointer-events-none absolute right-3 top-1/2 inline-flex -translate-y-1/2 items-center gap-1.5 text-[11px] font-medium text-emerald-600">
                 <span className="h-3 w-3 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
                 Searching Google Workspace…
               </span>

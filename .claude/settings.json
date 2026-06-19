@@ -66,7 +66,16 @@
       "Bash(git --no-pager diff app/onboarding/[token]/page.tsx)",
       "Skill(claude-api)",
       "Skill(claude-api:*)",
-      "Bash(git --no-pager diff --stat src/components/PayrollWizard.tsx)"
+      "Bash(git --no-pager diff --stat src/components/PayrollWizard.tsx)",
+      "PowerShell(npx next lint --file src/components/hr/HrOnboardingForm.tsx 2>&1)",
+      "PowerShell(npx eslint src/components/hr/HrOnboardingForm.tsx 2>&1)",
+      "PowerShell($pkg = Get-Content package.json -Raw | ConvertFrom-Json; $pkg.scripts | Format-List)",
+      "PowerShell(npx tsc --noEmit -p \"C:\\\\Users\\\\Itachi\\\\Desktop\\\\simple-hris\\\\tsconfig.json\"; \"EXIT=$LASTEXITCODE\")",
+      "PowerShell(npx tsc --noEmit -p tsconfig.json 2>&1 | Select-Object -First 40; \"exit=$LASTEXITCODE\")",
+      "Bash(rm -f /tmp/parsecheck.mjs)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
     ]
   }
 }
